@@ -168,9 +168,23 @@ internal fun ColumnScope.ScreensPanel(
                 val source = loader(file.path) ?: continue
                 val fns = previewFunctionsOf(source)
                 fns.forEachIndexed { index, fn ->
-                    val end = fns.getOrNull(index + 1)?.line?.minus(1)
-                        ?: (source.lines().size + 1)
-                    val content = extractComposePreview(source, fn.name)
+                    // Texts and errors come from inside this function's own braces, never from
+                    // the file around it: the next function's button is not this card's button,
+                    // and a neighbour's broken line is not this card's failure.
+                    val bodyRange = functionBodyOf(source, fn.line)
+                    val body = bodyRange?.let { source.substring(it.first, it.last + 1) } ?: ""
+                    val content = extractComposePreview(body, fn.name)
+                    val (fromLine, endLine) = if (bodyRange != null) {
+                        // The declaration line belongs to the card too: a fault in the
+                        // parameter list fails this function, not the file around it. The
+                        // range is the inner span, so its last + 1 is the closing brace.
+                        fn.line to lineOfOffset(source, bodyRange.last + 1)
+                    } else {
+                        fn.line to (
+                            fns.getOrNull(index + 1)?.line?.minus(1)
+                                ?: (source.lines().size + 1)
+                            )
+                    }
                     out.add(
                         ScreenPreview(
                             function = fn.name,
@@ -179,7 +193,7 @@ internal fun ColumnScope.ScreensPanel(
                             title = content.title,
                             subtitle = content.subtitle,
                             button = content.button,
-                            error = previewErrorFor(errors, file.name, fn.line, end),
+                            error = previewErrorFor(errors, file.name, fromLine, endLine),
                         ),
                     )
                 }
@@ -288,6 +302,7 @@ internal fun ColumnScope.ScreensPanel(
         ),
         selected = view.ordinal,
         onSelect = { view = ScreensView.entries[it] },
+        modifier = Modifier.padding(top = 8.dp),
     )
 
     val current = previews
@@ -299,6 +314,44 @@ internal fun ColumnScope.ScreensPanel(
         if (current != null) lastGood = current
     }
     val shown = current ?: lastGood
+    // Errors the cards did not claim, by file: a file whose problems all sit outside every
+    // preview body keeps normal cards and says so in a banner, instead of failing a card
+    // whose own body is clean.
+    val claimed = remember(shown) { shown.mapNotNull { it.error }.toSet() }
+    val banners = remember(shown, errors) {
+        files.mapNotNull { file ->
+            val outside = errors.filter { row ->
+                row.fileName == file.name &&
+                    row.diagnostic.severity == Severity.ERROR &&
+                    row !in claimed
+            }
+            if (outside.isEmpty()) null else file to outside
+        }
+    }
+    banners.forEach { (file, outside) ->
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(c.warnPillBg)
+                .clickable {
+                    onOpenFile(file.path, outside.first().diagnostic.line.coerceAtLeast(1))
+                }
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(
+                text = "${file.name} has ${outside.size} " +
+                    "${if (outside.size == 1) "error" else "errors"} · View errors",
+                color = c.warnPillTx,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
     val rendering = current == null
     when {
         rendering && lastGood.isEmpty() -> {
@@ -629,23 +682,33 @@ private fun ScreenCardView(
         }
         }
         Spacer(Modifier.height(6.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = preview.function,
+                    color = c.text,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(6.dp))
+                if (dimmed) {
+                    CcIcon(CcIcons.Clock, c.textMuted, 12.dp)
+                } else if (preview.error != null) {
+                    CcIcon(CcIcons.Cross, Color(0xFFEF5B5B), 12.dp)
+                } else {
+                    CcIcon(CcIcons.Check, c.success, 12.dp)
+                }
+            }
+            // The drawings are sketches from declared strings, not renders: the card says so.
             Text(
-                text = preview.function,
-                color = c.text,
-                fontSize = 12.sp,
+                text = "Approximate preview",
+                color = c.textMuted,
+                fontSize = 10.sp,
                 fontFamily = Sans,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.width(6.dp))
-            if (dimmed) {
-                CcIcon(CcIcons.Clock, c.textMuted, 12.dp)
-            } else if (preview.error != null) {
-                CcIcon(CcIcons.Cross, Color(0xFFEF5B5B), 12.dp)
-            } else {
-                CcIcon(CcIcons.Check, c.success, 12.dp)
-            }
         }
     }
 }

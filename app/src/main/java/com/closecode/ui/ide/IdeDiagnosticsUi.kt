@@ -159,6 +159,20 @@ internal val GutterFoldTapLeft: androidx.compose.ui.unit.Dp =
 val NumberColumnWidth = GutterWidth
 
 /**
+ * Shortens a long file name through the middle, keeping the start (which names the file) and
+ * the extension (which says what it is). End-cutting keeps the start and loses exactly the
+ * part that tells one `...ViewModel.kt` from another, so the middle goes instead.
+ */
+internal fun ellipsizeMiddle(name: String, maxChars: Int = 26): String {
+    if (name.length <= maxChars || maxChars < 8) return name
+    val dot = name.lastIndexOf('.')
+    val tail = if (dot > 0) name.substring(dot) else ""
+    val headLen = (maxChars - tail.length - 1).coerceAtLeast(8)
+    if (headLen + tail.length + 1 >= name.length) return name
+    return name.take(headLen) + "…" + tail
+}
+
+/**
  * Character offset of a 1-based [line] and [column], for text-layout lookups.
  */
 fun offsetOfLineColumn(source: String, line: Int, column: Int): Int {
@@ -174,6 +188,94 @@ fun offsetOfLineColumn(source: String, line: Int, column: Int): Int {
         i++
     }
     return (lineStart + (column - 1)).coerceIn(0, source.length)
+}
+
+/**
+ * One pass over the buffer that answers every question scrolling asks, so a row-crossed frame
+ * never walks the file again.
+ *
+ * Built once per text change and read per scroll frame: line starts (binary-searched), the brace
+ * depth at each line start, and through those the offset of any line/column and the line of any
+ * offset. The depth scan mirrors [openBlockDepth][com.closecode.ui.ide.openBlockDepth] character
+ * for character — strings, escapes and both comment kinds included — so a depth read here
+ * colours exactly what the old substring-and-scan coloured.
+ */
+class LineIndex(val text: String) {    /** 0-based offset of each 1-based line's first character. Always non-empty. */
+    val starts: IntArray
+    /** Brace depth at each line start, in the same slots as [starts]. */
+    val depths: IntArray
+    val lineCount: Int get() = starts.size
+
+    init {
+        val s = ArrayList<Int>(1024)
+        val d = ArrayList<Int>(1024)
+        s.add(0)
+        d.add(0)
+        var depth = 0
+        var inString = false
+        var quote = ' '
+        var inLineComment = false
+        var blockComment = 0
+        var i = 0
+        while (i < text.length) {
+            val ch = text[i]
+            when {
+                inLineComment -> if (ch == '\n') inLineComment = false
+                blockComment > 0 -> {
+                    if (ch == '/' && i + 1 < text.length && text[i + 1] == '*') blockComment++
+                    else if (ch == '*' && i + 1 < text.length && text[i + 1] == '/') blockComment--
+                }
+                inString -> {
+                    if (ch == '\\') i++
+                    else if (ch == quote) inString = false
+                }
+                ch == '/' && i + 1 < text.length && text[i + 1] == '/' -> inLineComment = true
+                ch == '/' && i + 1 < text.length && text[i + 1] == '*' -> blockComment++
+                ch == '"' || ch == '\'' -> {
+                    inString = true
+                    quote = ch
+                }
+                ch == '{' || ch == '(' || ch == '[' -> depth++
+                ch == '}' || ch == ')' || ch == ']' -> depth = (depth - 1).coerceAtLeast(0)
+            }
+            if (ch == '\n') {
+                s.add(i + 1)
+                d.add(depth)
+            }
+            i++
+        }
+        // A trailing newline opens a line past the end; it takes no depth and no offset.
+        if (s.size > 1 && s.last() >= text.length) {
+            s.removeAt(s.lastIndex)
+            d.removeAt(d.lastIndex)
+        }
+        starts = s.toIntArray()
+        depths = d.toIntArray()
+    }
+
+    /** 0-based offset of a 1-based line's first character. */
+    fun lineStart(line: Int): Int = starts[(line - 1).coerceIn(0, starts.lastIndex)]
+
+    /** Offset of a 1-based [line] and [column], clamped into the text. */
+    fun offsetOf(line: Int, column: Int): Int {
+        if (line < 1 || column < 1) return 0
+        return (lineStart(line) + (column - 1)).coerceIn(0, text.length)
+    }
+
+    /** 1-based line holding [offset]. */
+    fun lineOf(offset: Int): Int {
+        val safe = offset.coerceIn(0, text.length)
+        var lo = 0
+        var hi = starts.lastIndex
+        while (lo < hi) {
+            val mid = (lo + hi + 1) / 2
+            if (starts[mid] <= safe) lo = mid else hi = mid - 1
+        }
+        return lo + 1
+    }
+
+    /** Brace depth at the start of a 0-based line — the base the slice highlight builds on. */
+    fun depthAtLine0(line0: Int): Int = depths[line0.coerceIn(0, depths.lastIndex)]
 }
 
 /**
@@ -401,15 +503,13 @@ fun lineTopFromLayout(
 }
 
 /** Rows of slack above and below the viewport, so a fast fling never lands on an unmeasured gap. */
-private const val GutterWindowOverhang = 2
+private const val GutterWindowOverhang = 10
 
 /**
- * The same slack for the code text, one row deeper.
- *
- * The gutter can afford a momentary gap because it only draws numbers; the text layer is what the
- * user is reading, so it gets the extra row.
+ * The same slack for the code text: ten rows above and below what is visible, so composing and
+ * drawing stay inside the window on every scroll frame.
  */
-private const val CodeWindowOverhang = 3
+private const val CodeWindowOverhang = 10
 
 /**
  * The slice of zero-based line indices the gutter should actually compose for a scroll position.
@@ -1173,7 +1273,7 @@ fun charWidthPx(layout: TextLayoutResult?): Float? {
  */
 @Composable
 fun SquiggleLayer(
-    problems: ProblemsByLine,
+    problems: List<Diagnostic>,
     layout: androidx.compose.ui.text.TextLayoutResult?,
     window: CodeWindow = CodeWindow.Full,
     modifier: Modifier = Modifier,
@@ -1188,7 +1288,9 @@ fun SquiggleLayer(
     val minWidthPx = with(density) { 4.dp.toPx() }
 
     androidx.compose.foundation.Canvas(modifier) {
-        for (diagnostic in problems.all) {
+        // The caller hands over only the diagnostics inside the window: drawing iterates what
+        // is given, so a 200-error file costs the visible handful per frame, not the file.
+        for (diagnostic in problems) {
             val tone = if (diagnostic.severity == Severity.WARNING) c.warnText else c.error
             val range = squiggleRange(layout, diagnostic, minWidthPx, window) ?: continue
             val left = range.first
@@ -1408,6 +1510,10 @@ fun BracketGuideLayer(
     lineHeightPx: Float,
     window: CodeWindow = CodeWindow.Full,
     modifier: Modifier = Modifier,
+    // The buffer's index when the caller has one (the editor remembers it per text): every pair
+    // then costs two binary searches instead of two full walks, which is what makes guides free
+    // while scrolling. Null falls back to the walks, for callers without an index.
+    lineIndex: LineIndex? = null,
 ) {
     val c = LocalPageColors.current
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -1421,8 +1527,8 @@ fun BracketGuideLayer(
         // a rule at the wrong x is worse than no rule at all.
         if (charWidthPx <= 0f) return@Canvas
         for (pair in pairs) {
-            val openLine = lineOfOffset(source, pair.first)
-            val closeLine = lineOfOffset(source, pair.last)
+            val openLine = lineIndex?.lineOf(pair.first) ?: lineOfOffset(source, pair.first)
+            val closeLine = lineIndex?.lineOf(pair.last) ?: lineOfOffset(source, pair.last)
             val span = guideSpan(openLine, closeLine) ?: continue
             val openIndent = indents.getOrElse(openLine - 1) { 0 }
             val x = guideColumn(openIndent, tabSize) * charWidthPx + halfStroke
@@ -2340,10 +2446,79 @@ internal fun namesADeclaration(head: String): Boolean {
     return word.lowercase() !in BlockIntroducers
 }
 
+/**
+ * The sticky header's answer for every line, computed in one pass per text change instead of
+ * re-walking the file on every row the window crosses.
+ *
+ * `enclosing[line0]` is the (1-based line, name) [enclosingDeclarationAt] would return for the
+ * line after it — same per-line string-skipping scan, same control-structure rule — so a scroll
+ * frame reads one array slot instead of scanning up to the whole file.
+ */
+internal class DeclarationIndex(code: String) {
+    private val enclosing: Array<Pair<Int, String>?>
+
+    init {
+        val lines = code.lines()
+        enclosing = arrayOfNulls(lines.size)
+        // Both stacks move together: openers holds every unclosed `{` (or -1 for a control
+        // block) and topNamed mirrors it with the nearest named line at or below each slot,
+        // so reading the header is one slot lookup and building stays one linear pass.
+        val openers = ArrayList<Int>()
+        val topNamed = ArrayList<Int>()
+        for (i in lines.indices) {
+            val top = topNamed.lastOrNull()?.takeIf { it >= 0 }
+            enclosing[i] = if (top == null) null else (top + 1) to declarationOf(lines[top])
+            val text = lines[i]
+            var inString = false
+            var quote = ' '
+            var j = 0
+            while (j < text.length) {
+                val ch = text[j]
+                when {
+                    inString -> {
+                        if (ch == '\\') j++
+                        else if (ch == quote) inString = false
+                    }
+                    ch == '"' || ch == '\'' -> {
+                        inString = true
+                        quote = ch
+                    }
+                    ch == '{' -> {
+                        val named = if (namesADeclaration(text.substring(0, j))) i else -1
+                        openers.add(named)
+                        topNamed.add(if (named >= 0) named else topNamed.lastOrNull() ?: -1)
+                    }
+                    ch == '}' -> if (openers.isNotEmpty()) {
+                        openers.removeAt(openers.lastIndex)
+                        topNamed.removeAt(topNamed.lastIndex)
+                    }
+                }
+                j++
+            }
+        }
+    }
+
+    /** The declaration enclosing 0-based [line0], or null when it names none. */
+    operator fun get(line0: Int): Pair<Int, String>? =
+        enclosing.getOrNull(line0.coerceAtLeast(0))
+}
+
 /** The words that open a block rather than declare something. */
 private val BlockIntroducers = setOf(
     "if", "else", "when", "while", "for", "do", "try", "catch", "finally", "init",
 )
+
+/**
+ * Whether [line] declares [symbol] — a val, var, function, class, object, interface or
+ * typealias carrying its name. Usages do not count: selecting `foo` in `println(foo)` is a
+ * selection, not a name with a declaration, and earns no details strip.
+ */
+internal fun declaresSymbol(line: String, symbol: String): Boolean {
+    if (symbol.isEmpty() || !symbol.all(::isWordChar)) return false
+    return Regex(
+        """\b(val|var|fun|class|object|interface|typealias)\s+""" + Regex.escape(symbol) + """\b""",
+    ).containsMatchIn(line)
+}
 
 internal fun declarationOf(line: String): String {
     val brace = line.indexOf('{')

@@ -124,7 +124,10 @@ fun GitHubSignIn(
     onDismiss: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    BackHandler(onBack = onDismiss)
+    BackHandler(onBack = {
+        BackLog.press("github-signin", "branch=dismiss")
+        onDismiss()
+    })
     Column(
         Modifier
             .fillMaxSize()

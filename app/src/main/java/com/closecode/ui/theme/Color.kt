@@ -209,6 +209,7 @@ data class PageColors(
     val fileRowActive: Color,   // open file's row background (#1B2850)
     val htmlIcon: Color,        // HTML file icon
     val keyRowBg: Color,        // terminal key row background (#12151D)
+    val keyBg: Color,           // editor + terminal key background (#1A1F2B)
     val cmdButtonBg: Color,      // commands panel Keyboard button
     val cmdAddBg: Color,         // commands panel Add background
 )
@@ -391,6 +392,7 @@ val LightColors = PageColors(
     fileRowActive = Color(0xFFE3EAFF),
     htmlIcon = Color(0xFFC25A2E),
     keyRowBg = Color(0xFFE8ECF3),
+    keyBg = Color(0xFFE0E5EE),
     cmdButtonBg = Color(0xFFE8ECF3),
     cmdAddBg = Color(0xFFE3EAFF),
 )
@@ -416,6 +418,8 @@ val DarkColors = PageColors(
     warnPillTx = Color(0xFFF5C26B),
     errorUnderline = Color(0xFFEF4444),
     warnUnderline = Color(0xFFE0A100),
+
+    keyBg = Color(0xFF1A1F2B),
 
     keyword = Color(0xFFB794FF),
     string = Color(0xFF6FE0B0),

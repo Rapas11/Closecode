@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +19,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,6 +57,62 @@ enum class ToolAction {
  */
 /** Row height. Exported so the editor can reserve exactly this much while the row is hidden. */
 val ToolRowHeight = 46.dp
+
+/** Height of the keyboard key row: 34 dp keys with 4 dp breathing room top and bottom. */
+val EditorKeyRowHeight = 42.dp
+
+/**
+ * The keyboard key row: Tab plus every bracket, quote and symbol a phone keyboard hides.
+ * Shown only while the keyboard is up, directly above it, with the bottom bar stepped aside.
+ * The first seven keys fit a 380 dp screen; the rest arrive on a sideways swipe.
+ */
+@Composable
+fun EditorKeyRow(
+    onTab: () -> Unit,
+    onKey: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalPageColors.current
+    Row(
+        modifier
+            .fillMaxWidth()
+            .height(EditorKeyRowHeight)
+            .background(c.keyRowBg)
+            .border(1.dp, c.divider, RoundedCornerShape(0.dp))
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        EditorKey("Tab", wide = true, onClick = onTab)
+        listOf("{", "}", "(", ")", ";", "\"", "=", "[", "]", "'", "<", ">", "/", ":", ",", ".", "|")
+            .forEach { glyph -> EditorKey(glyph, wide = false) { onKey(glyph) } }
+    }
+}
+
+/** One 34 dp key: #1A1F2B fill, 12sp mono #C5CAD6, Tab twice as wide. */
+@Composable
+private fun EditorKey(label: String, wide: Boolean, onClick: () -> Unit) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .width(if (wide) 64.dp else 44.dp)
+            .height(34.dp)
+            .clip(RoundedCornerShape(7.dp))
+            .background(c.keyBg)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = if (label == "Tab") "Tab" else label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = c.popupText,
+            fontSize = 12.sp,
+            fontFamily = Mono,
+            maxLines = 1,
+        )
+    }
+}
 
 /**
  * Whether the tool row belongs on screen right now.

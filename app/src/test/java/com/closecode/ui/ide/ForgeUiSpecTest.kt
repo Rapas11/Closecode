@@ -120,6 +120,15 @@ class ForgeUiSpecTest {
         assertTrue(findInSources("   ", listOf(file("A.kt", "a/A.kt") to "hello")).isEmpty())
     }
 
+    @Test
+    fun findInSourcesWholeWordSkipsLongerWords() {
+        val sources = listOf(file("A.kt", "a/A.kt") to "val name = 1\nval names = 2\nrename()")
+        assertEquals(1, findInSources("name", sources, wholeWord = true).size)
+        assertEquals(3, findInSources("name", sources).size)
+        // A needle with no word characters still matches: there is no word to bound it.
+        assertEquals(1, findInSources("= 1", sources, wholeWord = true).size)
+    }
+
     private fun file(name: String, path: String) =
         com.closecode.ui.model.ProjectFile(
             name = name,
@@ -618,5 +627,19 @@ class RetainTabsTest {
         val tabs = listOf(tab("a"), tab("b"), tab("c"), tab("d"))
         val kept = retainTabs(tabs, active = "d", isDirty = { true })
         assertEquals(4, kept.size)
+    }
+
+    @Test
+    fun twoTabsWithTheSameNameAreTwoTabs() {
+        // Identity is the path: opening src/index.js must not merge into, close, or evict
+        // an open index.js from another folder — that duplicate key crashed the strip.
+        val tabs = listOf(
+            ProjectFile(name = "index.js", kind = FileKind.Js, language = "Js", depth = 1, path = "a/index.js"),
+            ProjectFile(name = "index.js", kind = FileKind.Js, language = "Js", depth = 1, path = "b/index.js"),
+            tab("c"),
+            tab("d"),
+        )
+        val kept = retainTabs(tabs, active = "b/index.js", isDirty = nothingDirty)
+        assertEquals(listOf("b/index.js", "c", "d"), kept.map { it.path })
     }
 }

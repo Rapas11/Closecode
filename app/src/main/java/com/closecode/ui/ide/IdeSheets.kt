@@ -3,6 +3,9 @@ package com.closecode.ui.ide
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +19,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,21 +30,30 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.theme.LocalPageColors
@@ -73,6 +86,7 @@ internal data class SearchMode(
     val pattern: String,
     val caseSensitive: Boolean = false,
     val regex: Boolean = false,
+    val wholeWord: Boolean = false,
 )
 
 /**
@@ -85,15 +99,18 @@ internal data class SearchMode(
 internal fun lineMatcher(mode: SearchMode): ((String) -> Boolean)? {
     val needle = mode.pattern.trim()
     if (needle.isEmpty()) return null
-    if (!mode.regex) {
+    val options = if (mode.caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
+    if (!mode.regex && !mode.wholeWord) {
         return if (mode.caseSensitive) {
             { line -> line.contains(needle) }
         } else {
             { line -> line.contains(needle, ignoreCase = true) }
         }
     }
-    val options = if (mode.caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
-    val compiled = runCatching { Regex(needle, options) }.getOrNull() ?: return null
+    // Whole words are word-boundary guards around the needle: a plain needle is escaped first
+    // so `(` still searches for a bracket, while a pattern is wrapped untouched.
+    val body = if (mode.regex) "(?:$needle)" else Regex.escape(needle)
+    val compiled = runCatching { Regex("(?<!\\w)$body(?!\\w)", options) }.getOrNull() ?: return null
     return { line -> compiled.containsMatchIn(line) }
 }
 
@@ -112,8 +129,9 @@ fun findInSources(
     limit: Int = MAX_SEARCH_HITS,
     caseSensitive: Boolean = false,
     regex: Boolean = false,
+    wholeWord: Boolean = false,
 ): List<SearchHit> {
-    val matches = lineMatcher(SearchMode(query, caseSensitive, regex)) ?: return emptyList()
+    val matches = lineMatcher(SearchMode(query, caseSensitive, regex, wholeWord)) ?: return emptyList()
     val hits = ArrayList<SearchHit>()
     for ((file, text) in sources) {
         if (file.kind == FileKind.Folder) continue
@@ -194,6 +212,94 @@ data class MoreAction(
 )
 
 /**
+ * The surface More and Search sit on: a scrim over everything above the bottom bar, and the
+ * sheet pinned to the bar's top edge with no gap, growing upward to at most 60% of the screen.
+ * The bar stays visible and tappable underneath (its active item stays highlighted), content
+ * taller than the cap scrolls inside its own region, and a tap outside, a downward drag or
+ * Back closes the sheet.
+ *
+ * [barHeight] is the measured bottom bar (0 while the keyboard hides it); the sheet and the
+ * scrim both stop at the bar's top so neither can cover it.
+ */
+@Composable
+fun IdeAnchoredSheet(
+    onDismiss: () -> Unit,
+    barHeight: androidx.compose.ui.unit.Dp = 0.dp,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val c = LocalPageColors.current
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * 0.6f
+    val dismissPx = with(density) { 96.dp.toPx() }
+    val dragOffset = remember { Animatable(0f) }
+    Box(
+        modifier
+            .fillMaxSize()
+            // Stop at the bar: no gap above it, nothing over it.
+            .padding(bottom = barHeight)
+            .imePadding()
+            .navigationBarsPadding(),
+    ) {
+        // The scrim ends where the sheet begins and where the bar begins: taps above the
+        // sheet dismiss, taps on the bar reach the bar.
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(c.scrim)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss,
+                ),
+        )
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .heightIn(max = maxHeight)
+                .graphicsLayer { translationY = dragOffset.value }
+                .draggable(
+                    orientation = Orientation.Vertical,
+                    state = rememberDraggableState { dy ->
+                        scope.launch { dragOffset.snapTo((dragOffset.value + dy).coerceAtLeast(0f)) }
+                    },
+                    onDragStopped = {
+                        scope.launch {
+                            if (dragOffset.value > dismissPx) onDismiss()
+                            else dragOffset.animateTo(0f)
+                        }
+                    },
+                )
+                .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                .background(c.panel)
+                .border(1.dp, c.ln, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                // An enabled no-op, not `enabled = false`: a disabled clickable adds no input
+                // handler at all, so taps on the sheet body would fall through to the scrim
+                // and dismiss the sheet the user is reading.
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {},
+                )
+                .padding(bottom = 10.dp),
+        ) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .padding(top = 10.dp, bottom = 6.dp)
+                    .width(40.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(c.ln),
+            )
+            content()
+        }
+    }
+}
+
+/**
  * The rows the bottom More sheet draws, in order. Kept as data so a unit test can pin them without
  * rendering anything — and so every row the editor does not own has one home here rather than
  * turning up in the header's overflow as well.
@@ -214,9 +320,10 @@ internal val MoreLabels = listOf(
 fun IdeMoreSheet(
     actions: List<MoreAction>,
     onDismiss: () -> Unit,
+    barHeight: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
     val c = LocalPageColors.current
-    IdeBottomSheet(onDismiss = onDismiss) {
+    IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
         Text(
             text = "MORE",
             color = c.mu,
@@ -273,9 +380,13 @@ fun IdeSearchSheet(
     regex: Boolean = false,
     onCaseSensitiveChange: (Boolean) -> Unit = {},
     onRegexChange: (Boolean) -> Unit = {},
+    wholeWord: Boolean = false,
+    onWholeWordChange: (Boolean) -> Unit = {},
+    barHeight: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
     val c = LocalPageColors.current
-    IdeBottomSheet(onDismiss = onDismiss) {
+    var optionsOpen by remember { mutableStateOf(false) }
+    IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -316,41 +427,51 @@ fun IdeSearchSheet(
                     maxLines = 1,
                 )
             }
-        }
-        // The two switches sit under the query and beside the count, which is where a reader's eye
-        // already is after typing. Letters rather than a glyph font: Aa and .* are the marks every
-        // search box has carried for thirty years.
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            SearchToggle(
-                label = "Aa",
-                spoken = "Match capitalisation",
-                on = caseSensitive,
-                onToggle = onCaseSensitiveChange,
-            )
-            SearchToggle(
-                label = ".*",
-                spoken = "Treat the query as a pattern",
-                on = regex,
-                onToggle = onRegexChange,
-            )
-            Spacer(Modifier.weight(1f))
-            val patternBroken = regex && query.isNotBlank() &&
-                lineMatcher(SearchMode(query, caseSensitive, regex)) == null
-            if (patternBroken) {
-                Text(
-                    text = "Not a valid pattern",
-                    color = c.amber,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    maxLines = 1,
-                )
+            // The options live behind one icon at the field's end: plain words with check
+            // marks, instead of cryptic Aa and .* buttons beside the field.
+            Box {
+                Box(
+                    Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { optionsOpen = true }
+                        .semantics { contentDescription = "Search options" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "⋯",
+                        color = if (caseSensitive || regex || wholeWord) c.ac else c.mu,
+                        fontSize = 16.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                androidx.compose.material3.DropdownMenu(
+                    expanded = optionsOpen,
+                    onDismissRequest = { optionsOpen = false },
+                ) {
+                    SearchOptionItem("Match case", caseSensitive) {
+                        onCaseSensitiveChange(!caseSensitive)
+                    }
+                    SearchOptionItem("Whole word", wholeWord) {
+                        onWholeWordChange(!wholeWord)
+                    }
+                    SearchOptionItem("Regex", regex) { onRegexChange(!regex) }
+                }
             }
+        }
+        // A broken pattern says so under the field, where the eye already is after typing.
+        val patternBroken = regex && query.isNotBlank() &&
+            lineMatcher(SearchMode(query, caseSensitive, regex, wholeWord)) == null
+        if (patternBroken) {
+            Text(
+                text = "Not a valid pattern",
+                color = c.amber,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                maxLines = 1,
+                modifier = Modifier.padding(horizontal = 18.dp),
+            )
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(c.ln))
         when {
@@ -696,37 +817,37 @@ private fun RowScope.SheetButton(
     }
 }
 
-/**
- * One of the search sheet's two switches.
- *
- * Outlined rather than filled when off and filled when on, which is the same pair of states the rest
- * of the app's switches use, so the mark reads the same way here as anywhere else.
- */
+/** One row of the search options menu: a plain word and a check mark when it is on. */
 @Composable
-private fun SearchToggle(
+private fun SearchOptionItem(
     label: String,
-    spoken: String,
     on: Boolean,
-    onToggle: (Boolean) -> Unit,
+    onToggle: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    Box(
-        Modifier
-            .height(30.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (on) c.selection else Color.Transparent)
-            .border(1.dp, if (on) c.ac else c.ln, RoundedCornerShape(8.dp))
-            .clickable { onToggle(!on) }
-            .semantics { contentDescription = spoken }
-            .padding(horizontal = 10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = if (on) c.tx else c.mu,
-            fontSize = 12.sp,
-            fontFamily = Mono,
-            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
-        )
-    }
+    androidx.compose.material3.DropdownMenuItem(
+        text = {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    text = if (on) "✓" else "",
+                    color = c.ac,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.width(18.dp),
+                )
+                Text(
+                    text = label,
+                    color = c.tx,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                )
+            }
+        },
+        onClick = onToggle,
+    )
 }

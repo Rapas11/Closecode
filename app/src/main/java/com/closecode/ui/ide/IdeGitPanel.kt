@@ -133,8 +133,18 @@ fun IdeGitPanel(
     var error by remember(projectRoot) { mutableStateOf<String?>(null) }
     var namingBranch by remember(projectRoot) { mutableStateOf(false) }
     var switchingBranch by remember(projectRoot) { mutableStateOf(false) }
-    var branches by remember(projectRoot) { mutableStateOf(emptyList<String>()) }
     var confirmingDiscard by remember(projectRoot) { mutableStateOf(false) }
+    var branches by remember(projectRoot) { mutableStateOf(emptyList<String>()) }
+    // Composed deepest in the drawer, so Back dismisses these before the drawer's own chain
+    // can close the drawer out from under them.
+    androidx.activity.compose.BackHandler(
+        enabled = namingBranch || switchingBranch || confirmingDiscard,
+    ) {
+        BackLog.press("git-drawer", "branch=dialogs")
+        namingBranch = false
+        switchingBranch = false
+        confirmingDiscard = false
+    }
 
     // GitHub. The token is read once from private preferences and kept in memory only for as
     // long as this panel is composed; everything that touches the network runs off the main
@@ -1312,7 +1322,10 @@ internal fun DiffScreen(projectRoot: File?, path: String, onBack: () -> Unit) {
         )
     }
 
-    BackHandler(onBack = onBack)
+    BackHandler(onBack = {
+        BackLog.press("git-diff", "branch=close")
+        onBack()
+    })
     Column(
         Modifier
             .fillMaxSize()

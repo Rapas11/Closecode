@@ -9,6 +9,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import com.closecode.ui.ide.TerminalSessions
 import androidx.compose.runtime.remember
@@ -25,9 +26,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import com.closecode.ui.HeroScreen
 import com.closecode.ui.ide.IdeScreen
 import com.closecode.ui.model.SelectedTemplate
@@ -41,6 +47,35 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    private var keyboardLayoutListener: android.view.ViewTreeObserver.OnGlobalLayoutListener? = null
+
+    // Keyboard visibility from the window height, registered while attached: the visible frame
+    // shrinks by the keyboard while some devices report zero inset height with a stuck visible
+    // flag. Runs on the UI thread, so it writes the state directly. Re-registered on every
+    // resume, so backgrounding and rotation never leave a stale reading behind.
+    override fun onResume() {
+        super.onResume()
+        val contentView = findViewById<android.view.View>(android.R.id.content)
+        keyboardLayoutListener =
+            android.view.ViewTreeObserver.OnGlobalLayoutListener {
+                val frame = android.graphics.Rect()
+                contentView.getWindowVisibleDisplayFrame(frame)
+                com.closecode.ui.ide.KeyboardVisibility.update(
+                    visibleHeight = frame.height(),
+                    rootHeight = contentView.rootView.height,
+                )
+            }.also { contentView.viewTreeObserver.addOnGlobalLayoutListener(it) }
+    }
+
+    override fun onPause() {
+        keyboardLayoutListener?.let {
+            findViewById<android.view.View>(android.R.id.content)
+                .viewTreeObserver.removeOnGlobalLayoutListener(it)
+        }
+        keyboardLayoutListener = null
+        super.onPause()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         CrashReport.install(filesDir)
@@ -69,9 +104,7 @@ class MainActivity : ComponentActivity() {
                     )
                 }
                 var encoded by rememberSaveable { mutableStateOf("") }
-                var settingsOpen by rememberSaveable { mutableStateOf(false) }
                 var section by rememberSaveable { mutableStateOf("general") }
-                var recentOpen by rememberSaveable { mutableStateOf(false) }
 
                 val repository = rememberProjectRepository()
                 val project = ProjectCodec.decode(encoded)
@@ -89,88 +122,152 @@ class MainActivity : ComponentActivity() {
                     if (!settings.openLastProject) encoded = ""
                 }
 
-                // Above the screen switch on purpose. The settings screen replaces the IDE rather
-                // than sitting over it, so anything the IDE owns in a plain remember is destroyed
-                // the moment settings opens — which is how changing the terminal's colour could kill
-                // the shell and leave nothing to recolour.
-                val terminalSessions = remember(project?.slug) { TerminalSessions() }
+                // One back stack for the top-level screens. Inner panels stay explicit state
+                // with an ordered BackHandler chain inside IdeScreen — they share one composition
+                // and its state, which a route per panel would destroy and rebuild on every switch.
+                val nav = rememberNavController()
+                val backStack by nav.currentBackStackEntryAsState()
+                // Back forensics: every route change lands on the stack the press log prints.
+                DisposableEffect(nav) {
+                    val listener = androidx.navigation.NavController.OnDestinationChangedListener {
+                            _,
+                            destination,
+                            _,
+                        ->
+                        com.closecode.ui.ide.BackLog.routeChanged(destination.route)
+                    }
+                    nav.addOnDestinationChangedListener(listener)
+                    onDispose { nav.removeOnDestinationChangedListener(listener) }
+                }
+                // Shells outlive the settings screen and the project switch: leaving the IDE must
+                // never kill a running server just because the route changed.
+                val sessionHolders = remember { mutableMapOf<String, TerminalSessions>() }
+                val terminalSessions =
+                    sessionHolders.getOrPut(project?.slug ?: "") { TerminalSessions() }
+                // Set by the IDE as edits land; read when leaving it.
+                var ideDirty by rememberSaveable { mutableStateOf(false) }
+
+                // Opening a project lands on the IDE route, unless already there (cloning from
+                // inside swaps the record under the same route, keyed by slug below).
+                fun openEncoded(value: String) {
+                    encoded = value
+                    if (backStack?.destination?.route != "ide") nav.navigate("ide")
+                }
 
                 CompositionLocalProvider(LocalSettings provides settings) {
-                    when {
-                        project == null && recentOpen -> RecentProjectsRoute(
-                            repository = repository,
-                            onOpen = { record ->
-                                recentOpen = false
-                                encoded = encodeRecord(record)
-                            },
-                            onBack = { recentOpen = false },
-                        )
+                    NavHost(navController = nav, startDestination = "hero") {
+                        composable("hero") {
+                            // First Back warns, second within 2 s exits. Never from an inner
+                            // screen: those pop their own routes first.
+                            val context = LocalContext.current
+                            var lastBack by rememberSaveable { mutableStateOf(0L) }
+                            BackHandler {
+                                com.closecode.ui.ide.BackLog.press("hero", "branch=exit-guard")
+                                val now = System.currentTimeMillis()
+                                if (now - lastBack < 2000) {
+                                    (context as? android.app.Activity)?.finish()
+                                } else {
+                                    lastBack = now
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Press back again to exit",
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                            }
+                            HeroScreen(
+                                recentCount = recentCount,
+                                onProjectCreated = { name, selection, templateName, config ->
+                                    val record = repository.create(name, selection, config)
+                                    openEncoded(
+                                        ProjectCodec.encode(
+                                            Project(
+                                                record.name,
+                                                selection,
+                                                templateName,
+                                                config,
+                                            ),
+                                        ),
+                                    )
+                                },
+                                // A clone already owns its directory and its record, so it carries
+                                // its own slug rather than deriving one from the name.
+                                onProjectCloned = { record -> openEncoded(encodeRecord(record)) },
+                                onOpenRecent = { nav.navigate("recent") },
+                            )
+                        }
 
-                        project == null -> HeroScreen(
-                            recentCount = recentCount,
-                            onProjectCreated = { name, selection, templateName, config ->
-                                val record = repository.create(name, selection, config)
-                                encoded = ProjectCodec.encode(
-                                    Project(record.name, selection, templateName, config)
-                                )
-                            },
-                            // A clone already owns its directory and its record, so it carries its
-                            // own slug rather than deriving one from the name.
-                            onProjectCloned = { record -> encoded = encodeRecord(record) },
-                            onOpenRecent = { recentOpen = true },
-                        )
+                        composable("recent") {
+                            RecentProjectsRoute(
+                                repository = repository,
+                                onOpen = { record -> openEncoded(encodeRecord(record)) },
+                                onBack = { nav.popBackStack() },
+                            )
+                        }
 
-                        settingsOpen -> {
-                            BackHandler { settingsOpen = false }
+                        composable("settings") {
                             SettingsScreen(
                                 activeId = section,
                                 onActiveChange = { section = it },
-                                onBack = { settingsOpen = false },
+                                onBack = { nav.popBackStack() },
                                 settings = settings,
                                 onSettingsChange = { settings = settingsStore.write(it) },
                             )
                         }
 
-                        // Keyed on the project, not on composable identity. Cloning from inside the
-                        // IDE swaps `project` while this branch stays composed, and every
-                        // per-project holder — tabs, open buffers, the tree walk, the GitHub
-                        // snapshot — would otherwise carry the old project's contents into the new.
-                        else -> key(project.slug) {
-                            IdeScreen(
-                                projectName = project.name,
-
-                                templateName = project.templateName,
-                                slug = project.slug,
-                                repository = repository,
-                                onOpenSettings = {
-                                    section = "general"
-                                    settingsOpen = true
-                                },
-                                onExit = { encoded = "" },
-                                terminalSessions = terminalSessions,
-                                // A clone already owns its directory and its record, so it carries
-                                // its own slug rather than deriving one from the name — and it
-                                // lands here, in the IDE, without the hero screen in between.
-                                onProjectCloned = { record -> encoded = encodeRecord(record) },
-                                onToggleTheme = {
-                                    val next = when (settings.theme) {
-                                        "System" -> "Dark"
-                                        "Dark" -> "Light"
-                                        else -> "System"
-                                    }
-                                    settings = settingsStore.write(
-                                        settings.withOption(OptionSetting.THEME, next)
+                        composable("ide") {
+                            val current = project
+                            if (current == null) {
+                                // Deep in the stack with nothing open (e.g. after a process
+                                // death): back out rather than showing an empty IDE.
+                                LaunchedEffect(Unit) { nav.popBackStack("hero", false) }
+                            } else {
+                                // Keyed on the project, not on composable identity. Cloning from
+                                // inside the IDE swaps `project` while this route stays put, and
+                                // every per-project holder would otherwise carry the old
+                                // project's contents into the new.
+                                key(current.slug) {
+                                    IdeScreen(
+                                        projectName = current.name,
+                                        templateName = current.templateName,
+                                        slug = current.slug,
+                                        repository = repository,
+                                        onOpenSettings = {
+                                            section = "general"
+                                            nav.navigate("settings")
+                                        },
+                                        onExit = { nav.popBackStack("hero", false) },
+                                        onDirtyChange = { ideDirty = it },
+                                        terminalSessions = terminalSessions,
+                                        // A clone already owns its directory and its record, so it
+                                        // carries its own slug rather than deriving one from the
+                                        // name — and it lands here, in the IDE, without the hero
+                                        // screen in between.
+                                        onProjectCloned = { record ->
+                                            encoded = encodeRecord(record)
+                                        },
+                                        onToggleTheme = {
+                                            val next = when (settings.theme) {
+                                                "System" -> "Dark"
+                                                "Dark" -> "Light"
+                                                else -> "System"
+                                            }
+                                            settings = settingsStore.write(
+                                                settings.withOption(OptionSetting.THEME, next),
+                                            )
+                                        },
                                     )
-                                },
-                            )
+                                }
+                            }
                         }
                     }
                 }
+
             }
         }
     }
 
-    private fun encodeRecord(record: ProjectRecord): String = ProjectCodec.encode(
+        private fun encodeRecord(record: ProjectRecord): String = ProjectCodec.encode(
         Project(
             name = record.name,
             selection = SelectedTemplate(record.tab, record.templateIndex),

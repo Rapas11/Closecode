@@ -52,6 +52,10 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.activity:activity-compose:1.9.3")
+    // One back stack for the top-level screens (list, recent, settings, IDE). Inner panels
+    // stay explicit state with an ordered BackHandler chain — they share one composition and
+    // its state, which a route per panel would destroy and rebuild on every switch.
+    implementation("androidx.navigation:navigation-compose:2.7.7")
     implementation(platform("androidx.compose:compose-bom:2024.04.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")

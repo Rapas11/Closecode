@@ -190,6 +190,56 @@ internal fun extractComposePreview(source: String, fileName: String): ComposePre
     )
 }
 
+/**
+ * The 0-based offset range of the body of the function declared on 1-based [funLine], or null
+ * when the declaration cannot be delimited (expression bodies, unparseable headers).
+ *
+ * Cards read texts only from inside their own function's braces: without this, a card for
+ * HomeScreen would show the button of whatever function comes next in the file. Errors are
+ * scoped to the same range, so a broken function fails its own card instead of its neighbour's.
+ */
+internal fun functionBodyOf(source: String, funLine: Int): IntRange? {
+    if (funLine < 1) return null
+    var lineStart = 0
+    var line = 1
+    while (line < funLine && lineStart < source.length) {
+        if (source[lineStart] == '\n') line++
+        lineStart++
+    }
+    if (line != funLine) return null
+    val funAt = source.indexOf("fun", lineStart)
+    if (funAt < 0 || (funAt > 0 && isKotlinIdentifierChar(source[funAt - 1]))) return null
+    // The declaration lives on this line: a `fun` past the next newline belongs to a function
+    // below, and borrowing its body would reintroduce the neighbour's texts.
+    if (source.indexOf('\n', lineStart).let { it >= 0 && it < funAt }) return null
+    val parenAt = source.indexOf('(', funAt)
+    if (parenAt < 0) return null
+    val params = parseDelimitedRange(source, parenAt, '(', ')') ?: return null
+    // Inner span again: the character past the closer sits two past its end.
+    val afterParams = params.last + 2
+    var next = skipTriviaAndComments(source, afterParams)
+    // A return type sits between the parameters and the body: skip one `: Type` span, which
+    // ends at the first character that can open neither a type nor the body.
+    if (next < source.length && source[next] == ':') {
+        var t = next + 1
+        var angle = 0
+        while (t < source.length) {
+            val ch = source[t]
+            if (ch == '<') angle++
+            else if (ch == '>') angle--
+            else if (angle == 0 && (ch == '{' || ch == '=' || ch == '\n')) break
+            t++
+        }
+        // The brace may sit on the next line; an `=` means an expression body, which has none.
+        val braced = skipTriviaAndComments(source, t).takeIf {
+            it < source.length && source[it] == '{'
+        }
+        next = braced ?: skipTriviaAndComments(source, afterParams)
+    }
+    if (next >= source.length || source[next] != '{') return null
+    return parseDelimitedRange(source, next, '{', '}')
+}
+
 private fun extractComposeTexts(source: String, limit: Int): List<String> {
     val out = ArrayList<String>()
     var search = 0
@@ -217,7 +267,9 @@ private fun findComposeButtonLabel(source: String): String? {
             search = call + 1
             continue
         }
-        var next = skipTriviaAndComments(source, arguments.last + 1)
+        // parseDelimitedRange returns the inner span, so last + 1 is the closer itself:
+        // the body hunt starts past it.
+        var next = skipTriviaAndComments(source, arguments.last + 2)
         if (next < source.length && source[next] == '{') {
             val body = parseDelimitedRange(source, next, '{', '}')
             if (body != null) {
@@ -653,20 +705,24 @@ internal fun IdePreviewPanel(
                 onConsole = { consoleOpen = !consoleOpen },
             )
         } else {
-            PreviewToolbar(
-                loading = startingWeb,
-                canOpenInBrowser = webUrl != null,
-                onRefresh = onRefresh,
-                onOpenInBrowser = {
-                    webUrl?.let { url ->
-                        runCatching {
-                            context.startActivity(
-                                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)),
-                            )
+            // The screens panel owns its own chrome (device row, theme, refresh): a second
+            // toolbar above it would be an empty gray strip with a duplicate refresh icon.
+            if (route != PreviewRoute.KotlinMock) {
+                PreviewToolbar(
+                    loading = startingWeb,
+                    canOpenInBrowser = webUrl != null,
+                    onRefresh = onRefresh,
+                    onOpenInBrowser = {
+                        webUrl?.let { url ->
+                            runCatching {
+                                context.startActivity(
+                                    android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)),
+                                )
+                            }
                         }
-                    }
-                },
-            )
+                    },
+                )
+            }
         }
 
         when (route) {
@@ -710,7 +766,6 @@ internal fun IdePreviewPanel(
                 projectPath = projectPath,
                 loader = loader,
                 binaryLoader = binaryLoader,
-                isImage = isImage,
                 refreshToken = refreshToken,
             )
         }
@@ -1031,7 +1086,6 @@ private fun StaticPreview(
     projectPath: String,
     loader: (String) -> String?,
     binaryLoader: (String) -> ByteArray?,
-    isImage: Boolean,
     refreshToken: Int = 0,
 ) {
     val c = LocalPageColors.current

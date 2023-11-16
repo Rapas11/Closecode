@@ -1,5 +1,7 @@
 package com.closecode.ui.ide
 
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
 
@@ -23,6 +25,25 @@ internal fun wordAt(text: String, caret: Int): Pair<Int, String> {
     var start = at
     while (start > 0 && !text[start - 1].isWhitespace()) start--
     return start to text.substring(start, at)
+}
+
+/**
+ * Splices a completion into the prompt line: [replacement] takes the word's place and the caret
+ * lands past it. Every index is clamped into the line first, because the round that computed
+ * [start] may belong to an older, longer line — slicing that crashed on an empty prompt.
+ */
+internal fun applyCompletion(
+    text: String,
+    cursor: Int,
+    start: Int,
+    replacement: String,
+): TextFieldValue {
+    val safeCursor = cursor.coerceIn(0, text.length)
+    val from = start.coerceIn(0, safeCursor)
+    return TextFieldValue(
+        text.substring(0, from) + replacement + text.substring(safeCursor),
+        TextRange(from + replacement.length),
+    )
 }
 
 /**

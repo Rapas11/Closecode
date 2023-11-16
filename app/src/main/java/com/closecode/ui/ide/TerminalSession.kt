@@ -58,6 +58,23 @@ import kotlinx.coroutines.channels.Channel
  * background would fill its pipe and wedge its shell, which is precisely the hang that folding
  * standard error into standard output was there to prevent.
  */
+
+/**
+ * How far the list is from its bottom, in px: zero at the last line, unbounded when the last
+ * line is not even composed. Follow mode treats 24 dp as the edge — nearer scrolls back on,
+ * farther scrolls off.
+ */
+internal fun distanceToBottomPx(
+    totalItems: Int,
+    lastVisibleIndex: Int,
+    lastVisibleEndPx: Int,
+    viewportEndPx: Int,
+): Float {
+    if (totalItems <= 0) return 0f
+    if (lastVisibleIndex < totalItems - 1) return Float.MAX_VALUE
+    return (viewportEndPx - lastVisibleEndPx).toFloat().coerceAtLeast(0f)
+}
+
 internal class TerminalSession(val number: Int) {
     val output = Channel<String>(Channel.UNLIMITED)
     val lines = mutableStateListOf<String>()
@@ -72,8 +89,14 @@ internal class TerminalSession(val number: Int) {
     var historyIndex by mutableStateOf(0)
     var draft by mutableStateOf("")
     var followOutput by mutableStateOf(true)
+    /** Output arrived while unfollowed: the Latest pill's blue dot until the reader catches up. */
+    var hasNewOutput by mutableStateOf(false)
 
     private var shell: ShellProcess? = null
+    // The last measured size. Kept here (not only on the process) so a resize that lands
+    // before the shell starts — or while it is dead between commands — is still applied.
+    private var pendingCols: Int = 80
+    private var pendingRows: Int = 24
 
     val isRunning: Boolean get() = shell?.isRunning == true
 
@@ -84,11 +107,22 @@ internal class TerminalSession(val number: Int) {
             onLine = { line -> output.trySend(line) },
         )
         started.start()
+        started.setSize(pendingCols, pendingRows)
         shell = started
     }
 
     fun run(command: String) {
         shell?.run(command)
+    }
+
+    /**
+     * The width the panel measured, in characters. Exported to the running shell now
+     * (COLUMNS/LINES) and kept on the process for the PTY's own size call later.
+     */
+    fun setSize(cols: Int, rows: Int = 24) {
+        pendingCols = cols.coerceIn(20, 512)
+        pendingRows = rows.coerceIn(10, 512)
+        shell?.setSize(pendingCols, pendingRows)
     }
 
     fun killRunning() {

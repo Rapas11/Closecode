@@ -184,4 +184,63 @@ class PreviewRoutingTest {
         ),
     )
 
+    // -- Function-body scoping -----------------------------------------------------
+
+    private val scopedSource = """
+        fun HomeScreen() {
+            Text("Welcome back")
+            Button(onClick = {}) { Text("Sign in") }
+        }
+        fun SettingsScreen() {
+            Text("Settings")
+        }
+        fun brokenOne() {
+            val x: Int = "oops"
+        }
+    """.trimIndent()
+
+    @Test
+    fun bodiesCoverTheirOwnFunctionOnly() {
+        val home = functionBodyOf(scopedSource, 1)!!
+        val homeText = scopedSource.substring(home.first, home.last + 1)
+        assertTrue(homeText.contains("Welcome back"))
+        assertTrue(homeText.contains("Sign in"))
+        assertTrue(!homeText.contains("Settings"))
+        val settings = functionBodyOf(scopedSource, 5)!!
+        assertTrue(!scopedSource.substring(settings.first, settings.last + 1).contains("Sign in"))
+    }
+
+    @Test
+    fun cardsReadOnlyTheirOwnFunction() {
+        val home = functionBodyOf(scopedSource, 1)!!
+        val content = extractComposePreview(
+            scopedSource.substring(home.first, home.last + 1),
+            "HomeScreen",
+        )
+        assertEquals("Welcome back", content.title)
+        assertEquals("Sign in", content.button)
+    }
+
+    @Test
+    fun aNeighbourErrorDoesNotFailTheCard() {
+        val home = functionBodyOf(scopedSource, 1)!!
+        val settings = functionBodyOf(scopedSource, 5)!!
+        val errors = listOf(previewError("MainActivity.kt", 9))
+        fun lines(range: IntRange) =
+            lineOfOffset(scopedSource, range.first) to lineOfOffset(scopedSource, range.last)
+        val (homeFrom, homeEnd) = lines(home)
+        val (setFrom, setEnd) = lines(settings)
+        assertTrue(homeEnd < setFrom)
+        assertNull(previewErrorFor(errors, "MainActivity.kt", homeFrom, homeEnd))
+        assertNull(previewErrorFor(errors, "MainActivity.kt", setFrom, setEnd))
+        val broken = functionBodyOf(scopedSource, 8)!!
+        val (bFrom, bEnd) = lines(broken)
+        assertEquals(9, previewErrorFor(errors, "MainActivity.kt", bFrom, bEnd)?.diagnostic?.line)
+    }
+
+    @Test
+    fun expressionBodiesHaveNoBody() {
+        assertNull(functionBodyOf("fun answer() = 42\n", 1))
+        assertNull(functionBodyOf("fun missing() {\n", 1))
+    }
 }

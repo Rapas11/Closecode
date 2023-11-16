@@ -1,5 +1,6 @@
 package com.closecode.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -101,6 +102,12 @@ fun StartProjectSheet(
     }
 
     Box(Modifier.fillMaxSize()) {
+        // System Back dismisses the sheet, exactly like the scrim tap and the X: without this
+        // the press falls through to the hero's exit guard underneath.
+        BackHandler(onBack = {
+            com.closecode.ui.ide.BackLog.press("start-sheet", "branch=dismiss")
+            onDismiss()
+        })
         Box(
             Modifier
                 .fillMaxSize()

@@ -646,8 +646,9 @@ class GutterWindowTest {
     @Test
     fun aTwoThousandLineFileComposesAFewDozenRowsNotTwoThousand() {
         // The whole point: the gutter used to build one composable per line in the file.
+        // Ten rows of slack sit above and below the forty-odd visible ones.
         val window = gutterWindow(2000, scrollTopPx = 0f, viewportHeightPx = viewport, lineHeightPx = lineHeight)
-        assertTrue("expected a bounded window, got ${window.count()} rows", window.count() <= 60)
+        assertTrue("expected a bounded window, got ${window.count()} rows", window.count() <= 70)
     }
 
     @Test
@@ -660,8 +661,8 @@ class GutterWindowTest {
     @Test
     fun scrollingDownMovesTheWindowWithIt() {
         val window = gutterWindow(2000, scrollTopPx = 2_200f, viewportHeightPx = viewport, lineHeightPx = lineHeight)
-        assertEquals(98, window.first)
-        assertEquals(143, window.last)
+        assertEquals(90, window.first)
+        assertEquals(151, window.last)
     }
 
     @Test
@@ -680,7 +681,7 @@ class GutterWindowTest {
         // A fling lands on the next frame's window, and if that window began exactly at the first
         // visible row there would be one frame of gutter with a hole in it.
         val window = gutterWindow(2000, scrollTopPx = 2_200f, viewportHeightPx = viewport, lineHeightPx = lineHeight)
-        assertEquals(98, window.first)
+        assertEquals(90, window.first)
         assertTrue("no slack above the first visible row", window.first < 100)
         assertTrue("no slack below the last visible row", window.last > 140)
     }

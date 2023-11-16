@@ -1,6 +1,7 @@
 package com.closecode.ui
 
 import androidx.activity.compose.BackHandler
+import com.closecode.ui.ide.BackLog
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -147,7 +148,10 @@ fun GitHubCloneScreen(
 
     // The screen underneath installs its own handler, and it always goes one level up — out of
     // the project entirely. So this route has to claim Back for itself while it is composed.
-    BackHandler(onBack = onDismiss)
+    BackHandler(onBack = {
+        BackLog.press("github-clone", "branch=dismiss")
+        onDismiss()
+    })
 
     LaunchedEffect(token) {
         val active = token

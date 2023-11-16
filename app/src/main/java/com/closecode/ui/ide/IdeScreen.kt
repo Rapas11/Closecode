@@ -19,6 +19,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +36,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
@@ -58,7 +60,10 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -88,6 +93,11 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalTextToolbar
+import androidx.compose.ui.platform.TextToolbar
+import androidx.compose.ui.platform.TextToolbarStatus
 import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -171,12 +181,13 @@ internal fun IdeScreen(
     repository: ProjectRepository,
     onOpenSettings: () -> Unit,
     onExit: () -> Unit,
+    // Reports whether any open tab has unsaved changes, so leaving can ask first.
+    onDirtyChange: (Boolean) -> Unit = {},
     // A clone performed inside the IDE finishes with a record for a *different* project. The
     // caller decides where that lands; this screen never navigates itself.
     onProjectCloned: (ProjectRecord) -> Unit = {},
     onToggleTheme: () -> Unit = {},
 ) {
-    BackHandler { onExit() }
     // The one place the settings are read from for this screen: saving and the editor both honour
     // them, and reading them once keeps a row changed on the settings screen in force immediately.
     val settings = LocalSettings.current
@@ -214,7 +225,53 @@ internal fun IdeScreen(
         )
     }
     LaunchedEffect(slug, collapsedFolders) {
-        kvStore.putString("collapsed_$slug", collapsedFolders.joinToString("\u001F"))
+        kvStore.putString("collapsed_$slug", collapsedFolders.joinToString(""))
+    }
+    // Reopening restores the last session: open tabs, the active file, and each file's caret
+    // and scroll. Entries use the unit separator like the collapsed set; a corrupt value parses
+    // to nothing rather than to a tab that does not exist.
+    val restoredTabNames = remember(slug) {
+        kvStore.getString("restore_tabs_$slug", null).orEmpty()
+            .split('').filter { it.isNotEmpty() }
+    }
+    val restoredActive = remember(slug) {
+        kvStore.getString("restore_active_$slug", null)?.takeIf { it.isNotEmpty() }
+    }
+    val restoredCaret = remember(slug) {
+        kvStore.getString("restore_caret_$slug", null).orEmpty()
+            .split('').mapNotNull { entry ->
+                val (name, at) = entry.split('', limit = 2).let {
+                    it.getOrElse(0) { "" } to it.getOrNull(1)?.toIntOrNull()
+                }
+                if (name.isNotEmpty() && at != null) name to at else null
+            }.toMap()
+    }
+    val restoredScroll = remember(slug) {
+        kvStore.getString("restore_scroll_$slug", null).orEmpty()
+            .split('').mapNotNull { entry ->
+                val parts = entry.split('', limit = 2)
+                val counts = parts.getOrNull(1)?.split(',')?.mapNotNull { it.toIntOrNull() }
+                if (parts[0].isNotEmpty() && counts?.size == 2) {
+                    parts[0] to (counts[0] to counts[1])
+                } else {
+                    null
+                }
+            }.toMap()
+    }
+    fun persistSession() {
+        if (tabs.isEmpty()) return
+        kvStore.putString("restore_tabs_$slug", tabs.joinToString("") { it.path })
+        kvStore.putString("restore_active_$slug", active)
+    }
+    fun persistPlaces(caret: Map<String, Int>, scroll: Map<String, Pair<Int, Int>>) {
+        kvStore.putString(
+            "restore_caret_$slug",
+            caret.entries.joinToString("") { "${it.key}${it.value}" },
+        )
+        kvStore.putString(
+            "restore_scroll_$slug",
+            scroll.entries.joinToString("") { "${it.key}${it.value.first},${it.value.second}" },
+        )
     }
     val diskContents = remember(slug) { mutableStateMapOf<String, String>() }
     var activePanel by remember(slug) { mutableStateOf("Code") }
@@ -300,24 +357,61 @@ internal fun IdeScreen(
     var githubTokenEpoch by remember { mutableStateOf(0) }
     var query by remember { mutableStateOf("") }
     var findQuery by remember { mutableStateOf("") }
-    // The search sheet's two switches. They hold while the sheet is open so a pattern survives a
+    // The search sheet's switches. They hold while the sheet is open so a pattern survives a
     // detour to look at a result and back.
     var findCaseSensitive by remember { mutableStateOf(false) }
     var findRegex by remember { mutableStateOf(false) }
+    var findWholeWord by remember { mutableStateOf(false) }
     var explorerFilter by remember { mutableStateOf("") }
     var toast by remember { mutableStateOf<String?>(null) }
     var building by remember { mutableStateOf(false) }
     // The build and logcat streams. The log still carries nothing but what a build reports; the
     // build now reports a real sweep of the project's own files.
     val logLines = remember { mutableStateListOf<LogLine>() }
+    // Scroll forensics, on demand: while Frame stats is on, every programmatic scroll move
+    // (and every move nobody asked for) is mirrored into the Logcat panel, so the phone
+    // itself produces the log — no adb needed. Off otherwise, so ordinary scrolling never
+    // spams the panel builds use.
+    // Diagnostics mirroring is unconditional for now: the More bar (and with it the Frame
+    // stats toggle) can be unreachable exactly when these logs are needed, so the Logcat
+    // panel always carries the scroll/back/keyboard forensics. Re-gate once the row is fixed.
+    LaunchedEffect(Unit) {
+        ScrollLog.mirror = { message ->
+            logLines.appendCapped(LogLine(LogLevel.DEBUG, "Scroll", message))
+        }
+        BackLog.mirror = { message ->
+            logLines.appendCapped(LogLine(LogLevel.DEBUG, "Back", message))
+        }
+    }
     // True while the suggestion popup is up. It is the tool row's other reason to hide: the popup
     // covers the row, and a row under a popup only steals taps.
     var suggestionsOpen by remember { mutableStateOf(false) }
     // The soft keyboard is what the tool row exists for — tab, brace, quote and comment are not on
-    // a phone keyboard — so its presence decides whether the row is there. Reading the inset rather
-    // than watching a timer is what fixes the row disappearing four seconds into a thought while
-    // the keyboard is still up.
-    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    // a phone keyboard — so its presence decides whether the row is there. Measured from the
+    // window height, never cached in a flag and never from the inset APIs: one reading drives
+    // the key row, the bottom bar and the back handler, so the three can never disagree. The
+    // inset values survive below as log columns, so the log still shows when they disagree.
+    val imeOpen = KeyboardVisibility.open
+    val imeBottomPx = WindowInsets.ime.getBottom(LocalDensity.current)
+    val imeInsetOpen = WindowInsets.isImeVisible
+    LaunchedEffect(imeOpen, imeBottomPx, imeInsetOpen, KeyboardVisibility.heightPx) {
+        ScrollLog.record(
+            "ime",
+            if (imeOpen) 1 else 0,
+            KeyboardVisibility.heightPx,
+            (if (imeOpen) "ime-open" else "ime-closed") +
+                " wInsets=$imeInsetOpen bottom=$imeBottomPx",
+        )
+    }
+    // Tapping outside the code — a tab, the bar, the drawer, another panel — puts the
+    // keyboard away: the key row follows the keyboard, so it follows these taps too, within
+    // the row's own 100 ms. Typing-adjacent taps (save, undo, search field) keep it.
+    val navKeyboard = LocalSoftwareKeyboardController.current
+    val navFocus = LocalFocusManager.current
+    fun dismissKeyboard() {
+        navKeyboard?.hide()
+        navFocus.clearFocus()
+    }
     // How far the code text is pinched away from the size the settings chose. The gesture is heard
     // on the whole screen — a pinch over the top bar or the tool row zooms the editor too — so the
     // state lives here rather than down in the editor that only reads it.
@@ -426,23 +520,34 @@ internal fun IdeScreen(
         val files = withContext(Dispatchers.IO) { repository.tree(slug) }
         diskTree = files
         if (treeVersion != 0) return@LaunchedEffect
-        val sources = files.filter { it.kind != FileKind.Folder }.take(3)
+        // Reopening restores the last session when it still matches the tree; otherwise the
+        // first three files open as before. Paths that no longer exist are dropped silently;
+        // entries saved by older builds held names and simply match nothing.
+        val remembered = restoredTabNames.mapNotNull { path ->
+            files.firstOrNull { it.kind != FileKind.Folder && it.path == path }
+        }
+        val sources = if (remembered.isNotEmpty()) remembered
+        else files.filter { it.kind != FileKind.Folder }.take(3)
         tabs = sources
-        active = sources.firstOrNull()?.name.orEmpty()
-        selectedPath = sources.firstOrNull()?.path
+        active = sources.firstOrNull { it.path == restoredActive }?.path
+            ?: sources.firstOrNull()?.path.orEmpty()
+        selectedPath = active.ifEmpty { null }
         val loaded = withContext(Dispatchers.IO) {
             sources.mapNotNull { file ->
                 runCatching { repository.readFile(slug, file.path) }.getOrNull()
-                    ?.let { file.name to it }
+                    ?.let { file.path to it }
             }
         }
-        loaded.forEach { (name, text) ->
-            diskContents[name] = text
-            noteContent(name)
+        loaded.forEach { (path, text) ->
+            diskContents[path] = text
+            noteContent(path)
         }
     }
 
-    val activeFile = tabs.firstOrNull { it.name == active }
+    val activeFile = tabs.firstOrNull { it.path == active }
+    // The open file's display name. Identity below is the path — two files called index.js in
+    // different folders are two buffers — and this is only ever shown or matched by name.
+    val activeName = activeFile?.name ?: active.substringAfterLast('/')
     val language = activeFile?.language ?: "Kotlin"
 
     // One place writes the active file, so the header button, the palette, Save-on-Preview and the
@@ -498,6 +603,12 @@ internal fun IdeScreen(
         if (liveBuffers[active] == buffer) saveActiveFile(notify = false)
     }
 
+    // The session persists on every tab switch, never on keystroke: tabs, active file and
+    // places only move when the reader moves between files.
+    LaunchedEffect(tabs, active) {
+        persistSession()
+    }
+
     // Every tree mutation ends here, so a file created from the drawer, a file created from the
     // command palette and a file deleted from the shell all repaint the drawer the same way.
     fun refreshTree() {
@@ -519,33 +630,90 @@ internal fun IdeScreen(
     // Unsaved files by path, for the tree's yellow dots. Recomputed when the revision counter
     // moves, which is every route that could have changed an answer.
     val dirtyPaths = remember(tabs, contentRevision) {
-        tabs.filter { isDirtyTab(it.name) }.map { it.path }.toSet()
+        tabs.filter { isDirtyTab(it.path) }.map { it.path }.toSet()
+    }
+
+    // Leaving asks first when dirty; the plain onExit only runs for a clean exit or after the
+    // dialog. The ordered chain further down ends here, never past it. Declared beside the
+    // dirty helpers because only they can answer the question.
+    var exitConfirm by remember { mutableStateOf(false) }
+    fun requestExit() {
+        exitConfirm = tabs.any { isDirtyTab(it.path) }
+        if (!exitConfirm) onExit()
+    }
+
+    // The exit question reads this, so report it whenever it could have moved. The compare is
+    // one pass over open tabs, not over file contents — the contents were already compared by
+    // noteContent on the writes that changed them.
+    LaunchedEffect(tabs, contentRevision) {
+        onDirtyChange(tabs.any { isDirtyTab(it.path) })
+    }
+
+    /**
+     * Writes every dirty buffer back, with the same format-on-save the single save applies, so
+     * leaving via Save never writes a different file than tapping Save would have. Reports false
+     * when anything failed, so the exit confirm can stay open on the failure instead of leaving
+     * a half-saved project behind.
+     */
+    fun saveAllDirty(): Boolean {
+        var ok = true
+        tabs.filter { isDirtyTab(it.path) }.forEach { file ->
+            val raw = liveBuffers[file.path] ?: return@forEach
+            val buffer = if (settings.formatOnSave) {
+                if (file.name.endsWith(".kt", true)) SourceEdits.formatKotlin(raw)
+                else SourceEdits.normalizeTrailingWhitespace(raw)
+            } else {
+                raw
+            }
+            runCatching { repository.writeFile(slug, file.path, buffer) }
+                .onSuccess {
+                    liveBuffers[file.path] = buffer
+                    diskContents[file.path] = buffer
+                    noteContent(file.path)
+                }
+                .onFailure {
+                    ok = false
+                    toast = "Could not save ${file.name}"
+                }
+        }
+        previewRefresh++
+        gitRevision++
+        return ok
+    }
+
+    // Set when a search result opens a file: the next Back returns to the results sheet with
+    // its query and hits intact, instead of leaving the project.
+    var findReturn by remember { mutableStateOf(false) }
+    LaunchedEffect(activePanel) {
+        // A search result's way back is its results sheet, but only while the reader stays
+        // where the result put them: leaving for another panel orphans the return, and a stale
+        // flag would later resurrect an empty sheet over unrelated work.
+        if (activePanel != "Code" && findReturn) findReturn = false
     }
 
     /** Opens a file in a tab, reading it only when it has not been read before. */
     fun openFile(file: ProjectFile) {
         if (file.kind == FileKind.Folder) return
-        active = file.name
+        active = file.path
         selectedPath = file.path
-        if (tabs.none { it.name == file.name }) tabs = tabs + file
+        if (tabs.none { it.path == file.path }) tabs = tabs + file
         tabs = retainTabs(tabs, active, ::isDirtyTab)
-        if (diskContents[file.name] == null) {
+        if (diskContents[file.path] == null) {
             // Off the main thread: this runs from a tap on a drawer row, and a cold read of a big
             // file used to be the frame that opened it. The tab shows nothing until it lands rather
             // than freezing — and a freshly opened buffer is never dirty, so no dot flashes.
-            val name = file.name
             val path = file.path
             fileScope.launch {
                 val text = withContext(Dispatchers.IO) {
                     runCatching { repository.readFile(slug, path) }.getOrNull()
                 }
-                if (text != null && diskContents[name] == null) {
-                    diskContents[name] = text
-                    noteContent(name)
+                if (text != null && diskContents[path] == null) {
+                    diskContents[path] = text
+                    noteContent(path)
                     // The editor seeds from an empty buffer while this read is in flight, so tell
                     // it to seed again now that there is something to seed with. A tab the reader
                     // has already typed into is left alone: that buffer is theirs, not ours.
-                    if (active == name && liveBuffers[name] == null) sourceRevision++
+                    if (active == path && liveBuffers[path] == null) sourceRevision++
                 }
             }
         }
@@ -588,38 +756,26 @@ internal fun IdeScreen(
     }
 
     /**
-     * Where a renamed or moved entry leaves the editor. Tabs hold the path, buffers and dirty flags
-     * are keyed by the name, and the drawer highlights by path — all three have to follow the file,
-     * or the tab keeps drawing a path that no longer exists and the next save writes to the old
-     * place.
+     * Where a renamed or moved entry leaves the editor. Tabs hold the path, and buffers and
+     * dirty flags are keyed by it too — two files called index.js in different folders are two
+     * buffers — so all three follow the file, or the tab keeps drawing a path that no longer
+     * exists and the next save writes to the old place.
      */
     fun retargetPath(from: ProjectFile, to: ProjectFile) {
         tabs = tabs.map { if (it.path == from.path) to else it }
-        if (from.name != to.name) {
-            liveBuffers.remove(from.name)?.let { liveBuffers[to.name] = it }
-            diskContents.remove(from.name)?.let { diskContents[to.name] = it }
-            dirtyTabs.remove(from.name)?.let { dirtyTabs[to.name] = it }
-            if (active == from.name) active = to.name
+        if (from.path != to.path) {
+            liveBuffers.remove(from.path)?.let { liveBuffers[to.path] = it }
+            diskContents.remove(from.path)?.let { diskContents[to.path] = it }
+            dirtyTabs.remove(from.path)?.let { dirtyTabs[to.path] = it }
+            if (active == from.path) active = to.path
         }
         if (selectedPath == from.path) selectedPath = to.path
     }
 
-    /**
-     * Whether some other file already goes by [name]. Buffers are keyed by name, so a rename that
-     * lands on one does not overwrite it — it makes two tabs draw the same text. Refused here,
-     * before anything on disk moves.
-     */
-    fun nameIsHeldByAnother(name: String, path: String): Boolean {
-        val holders = tabs.filter { it.name == name }
-        if (holders.any { it.path != path }) return true
-        return holders.isEmpty() && liveBuffers.containsKey(name)
-    }
-
+    // Renames may land on a name another folder already uses. Buffers are keyed by path, so
+    // the two files stay two buffers and nothing is refused: tabs sharing a name show their
+    // parent folder beside it instead.
     fun renameEntry(target: ProjectFile, newName: String) {
-        if (nameIsHeldByAnother(newName, target.path)) {
-            toast = "A file called $newName is already open"
-            return
-        }
         runCatching { repository.renamePath(slug, target.path, newName) }
             .onSuccess { landed ->
                 val isFolder = target.kind == FileKind.Folder
@@ -631,13 +787,6 @@ internal fun IdeScreen(
     }
 
     fun transferEntry(target: ProjectFile, destination: String, copy: Boolean) {
-        if (!copy && target.kind != FileKind.Folder) {
-            val leaf = destination.trim().removePrefix("/").substringAfterLast('/')
-            if (nameIsHeldByAnother(leaf, target.path)) {
-                toast = "A file called $leaf is already open"
-                return
-            }
-        }
         runCatching {
             if (copy) repository.copyPath(slug, target.path, destination)
             else repository.movePath(slug, target.path, destination)
@@ -662,14 +811,14 @@ internal fun IdeScreen(
                 fun inside(file: ProjectFile) = file.path == target.path || file.path.startsWith(prefix)
                 val gone = tabs.filter(::inside)
                 gone.forEach { file ->
-                    liveBuffers.remove(file.name)
-                    diskContents.remove(file.name)
-                    dirtyTabs.remove(file.name)
+                    liveBuffers.remove(file.path)
+                    diskContents.remove(file.path)
+                    dirtyTabs.remove(file.path)
                 }
                 tabs = tabs.filterNot(::inside)
-                if (gone.any { it.name == active }) active = tabs.lastOrNull()?.name.orEmpty()
+                if (gone.any { it.path == active }) active = tabs.lastOrNull()?.path.orEmpty()
                 if (selectedPath?.let { it == target.path || it.startsWith(prefix) } == true) {
-                    selectedPath = tabs.firstOrNull { it.name == active }?.path
+                    selectedPath = tabs.firstOrNull { it.path == active }?.path
                 }
                 refreshTree()
                 toast = "Deleted ${target.name}"
@@ -811,7 +960,7 @@ internal fun IdeScreen(
         val sources = diskTree
             .filter { it.kind == FileKind.Kotlin }
             .take(PROJECT_ANALYSIS_MAX_FILES)
-            .map { it.name to (liveBuffers[it.name] ?: diskContents[it.name].orEmpty()) }
+            .map { it.name to (liveBuffers[it.path] ?: diskContents[it.path].orEmpty()) }
         if (sources.isEmpty()) {
             projectErrorList = emptyList()
             projectWarningList = emptyList()
@@ -864,7 +1013,7 @@ internal fun IdeScreen(
         val sources = diskTree
             .filter { it.kind == FileKind.Kotlin }
             .take(PROJECT_ANALYSIS_MAX_FILES)
-            .map { it.name to (liveBuffers[it.name] ?: diskContents[it.name].orEmpty()) }
+            .map { it.name to (liveBuffers[it.path] ?: diskContents[it.path].orEmpty()) }
         buildFileCount = sources.size
         buildPhase = BuildPhase.SYMBOLS
         buildProgress = 0f
@@ -937,33 +1086,131 @@ internal fun IdeScreen(
             toast = "Build successful · 0 errors"
         }
     }
-    // The Android back button closes what is open, newest first, and only leaves the project when
-    // there is nothing left to close. Composed after the exit handler above so it wins while armed.
-    BackHandler(
-        enabled = moreOpen || findOpen || searchOpen || menuOpen ||
-            prompt != null || confirmDelete != null || explorerOpen || addBlockOpen,
-    ) {
+    // The Android back button closes what is open, newest first, in one fixed order, and only
+    // leaves the project when there is nothing left to close. One function, called by the system
+    // BackHandler below AND by every header back arrow, so the two can never disagree: an arrow
+    // closes the keyboard, the popups, the sheets and the full pages exactly like Back does.
+    // Full pages return to where they were opened from; Preview and the other views drop back
+    // to Code first; a search result returns to its results sheet; the editor asks about
+    // unsaved work and only then leaves.
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val screenFocus = LocalFocusManager.current
+    fun handleBackPress() {
+        // Back forensics: the state that armed the chain plus the branch that consumed the
+        // press, so a dead Back leaves the exact reason in the log instead of a guess.
+        fun backState() = "panel=$activePanel ime=$imeOpen popups=" + listOfNotNull(
+            "addBlock".takeIf { addBlockOpen },
+            "prompt".takeIf { prompt != null },
+            "confirmDelete".takeIf { confirmDelete != null },
+            "clone".takeIf { cloneOpen },
+            "problems".takeIf { problemSheet.value != null },
+            "more".takeIf { moreOpen },
+            "find".takeIf { findOpen },
+            "search".takeIf { searchOpen },
+            "menu".takeIf { menuOpen },
+            "explorer".takeIf { explorerOpen },
+            "diff".takeIf { diffPath != null },
+            "buildLog".takeIf { buildLogOpen },
+            "findReturn".takeIf { findReturn },
+        ).joinToString("+").ifEmpty { "none" }
         when {
-            addBlockOpen -> addBlockOpen = false
-            prompt != null -> prompt = null
-            confirmDelete != null -> confirmDelete = null
-            moreOpen -> moreOpen = false
+            // 1. The keyboard goes first: Back while typing just puts the keys away.
+            imeOpen -> {
+                BackLog.press("main", "${backState()} branch=keyboard")
+                keyboardController?.hide()
+                screenFocus.clearFocus()
+            }
+            // 2. The top popup or panel: dialogs, sheets, the drawer, the palette.
+            addBlockOpen -> {
+                BackLog.press("main", "${backState()} branch=addBlock")
+                addBlockOpen = false
+            }
+            prompt != null -> {
+                BackLog.press("main", "${backState()} branch=prompt")
+                prompt = null
+            }
+            confirmDelete != null -> {
+                BackLog.press("main", "${backState()} branch=confirmDelete")
+                confirmDelete = null
+            }
+            cloneOpen -> {
+                BackLog.press("main", "${backState()} branch=clone")
+                cloneOpen = false
+            }
+            problemSheet.value != null -> {
+                BackLog.press("main", "${backState()} branch=problems")
+                problemSheet.value = null
+            }
+            moreOpen -> {
+                BackLog.press("main", "${backState()} branch=more")
+                moreOpen = false
+            }
             findOpen -> {
+                BackLog.press("main", "${backState()} branch=find")
                 findOpen = false
                 findQuery = ""
             }
 
             searchOpen -> {
+                BackLog.press("main", "${backState()} branch=search")
                 searchOpen = false
                 query = ""
             }
 
-            menuOpen -> menuOpen = false
-            explorerOpen -> explorerOpen = false
+            menuOpen -> {
+                BackLog.press("main", "${backState()} branch=menu")
+                menuOpen = false
+            }
+            explorerOpen -> {
+                BackLog.press("main", "${backState()} branch=explorer")
+                explorerOpen = false
+            }
+            // 3. Full pages, back to the screen that opened them. The log and the diff are
+            // overlays above the panels, so they close before the panel beneath can.
+            diffPath != null -> {
+                BackLog.press("main", "${backState()} branch=diff")
+                diffPath = null
+            }
+            buildLogOpen -> {
+                BackLog.press("main", "${backState()} branch=buildLog")
+                buildLogOpen = false
+            }
+            activePanel == "Terminal" || activePanel == "Logcat" || activePanel == "Build" -> {
+                BackLog.press("main", "${backState()} branch=tool-to-$panelBeforeTool")
+                activePanel = panelBeforeTool
+            }
+            // 4. Preview and the other views drop back to Code first.
+            activePanel != "Code" -> {
+                BackLog.press("main", "${backState()} branch=view-to-Code")
+                activePanel = "Code"
+            }
+            // 5. A search result returns to its results sheet, results still there.
+            findReturn -> {
+                BackLog.press("main", "${backState()} branch=findReturn")
+                findReturn = false
+                findOpen = true
+            }
+            // 6. Nothing left open: leave the project (asking about unsaved work first).
+            else -> {
+                BackLog.press("main", "${backState()} branch=exit")
+                requestExit()
+            }
         }
     }
+    // Composed after the exit request below and after the editor's own chain, so both win while
+    // armed: the editor's chain is deeper (suggestions, tooltip, selection, quick fix) and the
+    // exit dialog's own handler is composed last.
+    BackHandler(
+        // Always armed: with nothing left open Back leaves through requestExit (which asks
+        // about unsaved work first), never through a bare route pop that would skip the ask.
+        enabled = true,
+        onBack = ::handleBackPress,
+    )
 
     Box(Modifier.fillMaxSize()) {
+        // The sheets pin themselves to the bottom bar's top edge, so its measured height lives
+        // at this scope: 0 while the keyboard hides the bar, its real height otherwise.
+        var navBarHeightPx by remember { mutableStateOf(0) }
         Column(
             Modifier
                 .fillMaxSize()
@@ -984,16 +1231,20 @@ internal fun IdeScreen(
         ) {
 
             val activePath = activeFile?.path ?: active
+            // Terminal owns its chrome: no app top bar there — drawer, undo, save and run are
+            // editor actions, and the drawer still opens from the left edge. Everywhere else
+            // the bar stays exactly as it is.
+            if (activePanel != "Terminal") {
             IdeTopBar(
                 projectName = projectName,
                 dirty = isDirtyTab(active),
                 canUndo = canUndo,
                 canRedo = canRedo,
-                onDrawer = { explorerOpen = !explorerOpen },
+                onDrawer = { dismissKeyboard(); explorerOpen = !explorerOpen },
                 onSave = { saveActiveFile() },
                 onUndo = { undoRequest++ },
                 onRedo = { redoRequest++ },
-                onTerminal = { activePanel = "Terminal" },
+                onTerminal = { dismissKeyboard(); activePanel = "Terminal" },
                 onRun = {
                     // Spec 7: running is blocked while the project has compile errors, and jumps
                     // to the problem sheet instead.
@@ -1009,20 +1260,21 @@ internal fun IdeScreen(
                 onMore = { menuOpen = true },
                 menuActive = menuOpen,
             )
+            }
 
             when (activePanel) {
                 "AI" -> AgentPanel(projectName = projectName, modifier = Modifier.weight(1f))
                 "Logcat" -> IdeLogcatPanel(
                     lines = logLines,
-                    onBack = { activePanel = panelBeforeTool },
+                    onBack = ::handleBackPress,
                     modifier = Modifier.weight(1f),
                 )
                 "Build" -> IdeBuildPanel(
                     appName = projectName,
                     packageName = diskTree.firstOrNull { it.path.endsWith("AndroidManifest.xml") }
-                        ?.let { manifestPackageOf(diskContents[it.name]) },
+                        ?.let { manifestPackageOf(diskContents[it.path]) },
                     version = diskTree.filter { it.path.endsWith("build.gradle.kts") }
-                        .firstNotNullOfOrNull { gradleVersionOf(diskContents[it.name]) },
+                        .firstNotNullOfOrNull { gradleVersionOf(diskContents[it.path]) },
                     building = building,
                     errorCount = buildErrorCount,
                     warningCount = buildWarningCount,
@@ -1052,15 +1304,15 @@ internal fun IdeScreen(
                     onOpenFile = { name, line ->
                         diskTree.firstOrNull { it.name == name }?.let { file ->
                             openFile(file)
-                            val text = liveBuffers[file.name]
-                                ?: diskContents[file.name].orEmpty()
+                            val text = liveBuffers[file.path]
+                                ?: diskContents[file.path].orEmpty()
                             caretRequest = offsetOfLine(text, line)
                             sourceRevision++
                             activePanel = "Code"
                         }
                     },
                     onAskAi = { activePanel = "AI" },
-                    onBack = { activePanel = panelBeforeTool },
+                    onBack = ::handleBackPress,
                     modifier = Modifier.weight(1f),
                 )
                 "Terminal" -> IdeTerminal(
@@ -1085,7 +1337,7 @@ internal fun IdeScreen(
                     // A file made or removed in the terminal is a file the drawer should list,
                     // rather than one that quietly stays wrong until something else refreshes it.
                     onFilesChanged = { refreshTree() },
-                    onBack = { activePanel = panelBeforeTool },
+                    onBack = ::handleBackPress,
                     modifier = Modifier.weight(1f),
                 )
                 else -> {
@@ -1111,7 +1363,7 @@ internal fun IdeScreen(
                     )
                     when (activePanel) {
                         "Preview" -> IdePreviewPanel(
-                            fileName = active,
+                            fileName = activeName,
                             fileKind = activeFile?.kind,
                             projectPath = activeFile?.path.orEmpty(),
                             loader = { path ->
@@ -1130,8 +1382,8 @@ internal fun IdeScreen(
                             onOpenFile = { path, line ->
                                 diskTree.firstOrNull { it.path == path }?.let { file ->
                                     openFile(file)
-                                    val text = liveBuffers[file.name]
-                                        ?: diskContents[file.name].orEmpty()
+                                    val text = liveBuffers[file.path]
+                                        ?: diskContents[file.path].orEmpty()
                                     caretRequest = offsetOfLine(text, line)
                                     sourceRevision++
                                     activePanel = "Code"
@@ -1144,7 +1396,7 @@ internal fun IdeScreen(
                         )
 
                         "Blocks" -> IdeBlockPanel(
-                            fileName = active,
+                            fileName = activeName,
                             language = language,
                             source = liveBuffers[active] ?: diskContents[active].orEmpty(),
                             onChange = { next ->
@@ -1227,22 +1479,23 @@ internal fun IdeScreen(
                                     tabs = tabs,
                                     active = active,
                                     language = language,
-                                    contentFor = { name -> liveBuffers[name] ?: diskContents[name] ?: "" },
-                                    onSelectTab = { name ->
-                                        active = name
-                                        selectedPath = tabs.firstOrNull { it.name == name }?.path
+                                    contentFor = { path -> liveBuffers[path] ?: diskContents[path] ?: "" },
+                                    onSelectTab = { path ->
+                                        dismissKeyboard()
+                                        active = path
+                                        selectedPath = path
                                     },
-                                    onCloseTab = { name ->
-                                        tabs = tabs.filterNot { it.name == name }
-                                        if (active == name) {
-                                            active = tabs.lastOrNull()?.name.orEmpty()
+                                    onCloseTab = { path ->
+                                        tabs = tabs.filterNot { it.path == path }
+                                        if (active == path) {
+                                            active = tabs.lastOrNull()?.path.orEmpty()
                                             selectedPath = tabs.lastOrNull()?.path
                                         }
                                     },
-                                    onCloseOthers = { name ->
-                                        tabs = tabs.filter { it.name == name }
-                                        if (active != name) {
-                                            active = name
+                                    onCloseOthers = { path ->
+                                        tabs = tabs.filter { it.path == path }
+                                        if (active != path) {
+                                            active = path
                                             selectedPath = tabs.firstOrNull()?.path
                                         }
                                     },
@@ -1276,12 +1529,27 @@ internal fun IdeScreen(
                                     onSaveRequest = { saveActiveFile() },
                                     relativePath = activeFile?.path,
                                     projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                                    initialCaret = restoredCaret,
+                                    initialScroll = restoredScroll,
+                                    onPlaceChange = { caret, scroll ->
+                                        kvStore.putString(
+                                            "restore_caret_$slug",
+                                            caret.entries.joinToString("") { "${it.key}${it.value}" },
+                                        )
+                                        kvStore.putString(
+                                            "restore_scroll_$slug",
+                                            scroll.entries.joinToString("") {
+                                                "${it.key}${it.value.first},${it.value.second}"
+                                            },
+                                        )
+                                    },
                                     onHistoryState = { undo, redo ->
                                         canUndo = undo
                                         canRedo = redo
                                     },
                                     onSuggestionsOpen = { suggestionsOpen = it },
-                                    showToolRow = showToolRow(imeVisible, suggestionsOpen),
+                                    showToolRow = showToolRow(imeOpen, suggestionsOpen),
+                                    imeOpen = imeOpen,
                                     editorScale = editorScale,
                                 )
                             }
@@ -1303,12 +1571,10 @@ internal fun IdeScreen(
                 }
             }
 
-            // The terminal owns its strip above the keyboard, so while it is open the
-            // bottom bar steps aside: one row of keys plus the keyboard is already two.
-            // Read once here rather than in the terminal so the whole screen recomposes
-            // only on open and close, never per keystroke.
-            val imeOpen = androidx.compose.foundation.layout.WindowInsets.isImeVisible
-            if (!(activePanel == "Terminal" && imeOpen)) {
+            // The terminal owns its strip above the keyboard, and it owns the whole bottom
+            // edge besides: no Search / AI / More bar there, only its own key row. Everywhere
+            // else the bar follows the keyboard as before.
+            if (activePanel != "Terminal" && !((activePanel == "Code") && imeOpen)) {
                 IdeNav(
                     active = when {
                         findOpen -> "Search"
@@ -1319,12 +1585,14 @@ internal fun IdeScreen(
                     onSelect = { item ->
                         // Spec item 4's save-on-Preview now lives on the path bar, because Preview is
                         // no longer something the bottom bar selects directly.
+                        dismissKeyboard()
                         when (item) {
                             "Search" -> findOpen = true
                             "AI" -> activePanel = if (activePanel == "AI") "Code" else "AI"
                             "More" -> moreOpen = true
                         }
                     },
+                    modifier = Modifier.onSizeChanged { navBarHeightPx = it.height },
                 )
             }
         }
@@ -1386,6 +1654,26 @@ internal fun IdeScreen(
                     }))
                     add(PaletteCommand("Toggle theme", null, {
                         onToggleTheme()
+                        searchOpen = false
+                    }))
+                    // Diagnostics out without Settings, adb or logcat: the back/scroll/keyboard
+                    // lines go on the clipboard for pasting into a bug report. Temporary, like
+                    // the red line — both leave once the row and Back are proven.
+                    add(PaletteCommand("Copy diagnostics log", null, {
+                        val report = buildString {
+                            appendLine("=== back ===")
+                            BackLog.snapshot().forEach { appendLine(it) }
+                            appendLine("=== scroll/ime ===")
+                            ScrollLog.snapshot().forEach {
+                                appendLine(
+                                    "scroll ${it.axis} ${it.from}->${it.to} ${it.reason}",
+                                )
+                            }
+                        }
+                        treeClipboard.setText(
+                            androidx.compose.ui.text.AnnotatedString(report),
+                        )
+                        toast = "Diagnostics copied"
                         searchOpen = false
                     }))
                     // Spec 5: one "Open <file>" command per file in the project.
@@ -1476,6 +1764,7 @@ internal fun IdeScreen(
             searchSources,
             caseSensitive = findCaseSensitive,
             regex = findRegex,
+            wholeWord = findWholeWord,
         )
             }
             IdeSearchSheet(
@@ -1484,16 +1773,21 @@ internal fun IdeScreen(
                 hits = hits,
                 caseSensitive = findCaseSensitive,
                 regex = findRegex,
+                wholeWord = findWholeWord,
                 onCaseSensitiveChange = { findCaseSensitive = it },
                 onRegexChange = { findRegex = it },
+                onWholeWordChange = { findWholeWord = it },
                 onOpen = { hit ->
                     diskTree.firstOrNull { it.path == hit.path }?.let { openFile(it) }
                     activePanel = "Code"
+                    // Back from the opened file returns here, with results intact.
+                    findReturn = true
                 },
                 onDismiss = {
                     findOpen = false
                     findQuery = ""
                 },
+                barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
             )
         }
 
@@ -1523,6 +1817,7 @@ internal fun IdeScreen(
                     MoreAction("Toggle theme", "◐") { onToggleTheme() },
                 ),
                 onDismiss = { moreOpen = false },
+                barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
             )
         }
 
@@ -1602,7 +1897,7 @@ internal fun IdeScreen(
             DiffScreen(
                 projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                 path = path,
-                onBack = { diffPath = null },
+                onBack = ::handleBackPress,
             )
         }
 
@@ -1614,17 +1909,113 @@ internal fun IdeScreen(
                 onOpenFile = { name, line ->
                     diskTree.firstOrNull { it.name == name }?.let { file ->
                         openFile(file)
-                        val text = liveBuffers[file.name]
-                            ?: diskContents[file.name].orEmpty()
+                        val text = liveBuffers[file.path]
+                            ?: diskContents[file.path].orEmpty()
                         caretRequest = offsetOfLine(text, line)
                         sourceRevision++
                         activePanel = "Code"
                     }
                     buildLogOpen = false
                 },
-                onBack = { buildLogOpen = false },
+                onBack = ::handleBackPress,
             )
         }
+
+        // Leaving with unsaved work asks first. Composed last so Back dismisses it before
+        // anything underneath can act: Cancel stays, Discard leaves, Save writes then leaves
+        // (and stays put on a failed write, so nothing is silently lost).
+        BackHandler(enabled = exitConfirm) {
+            BackLog.press("exit-dialog", "branch=cancel")
+            exitConfirm = false
+        }
+        if (exitConfirm) {
+            val c = LocalPageColors.current
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(c.scrim)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { exitConfirm = false },
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    Modifier
+                        .padding(horizontal = 28.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(c.panel)
+                        .border(1.dp, c.ln, RoundedCornerShape(14.dp))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {},
+                        )
+                        .padding(18.dp),
+                ) {
+                    Text(
+                        text = "Unsaved changes",
+                        color = c.tx,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                    Text(
+                        text = "Some files have edits that are not saved yet.",
+                        color = c.mu,
+                        fontSize = 13.sp,
+                        lineHeight = 19.sp,
+                        fontFamily = Sans,
+                    )
+                    Row(
+                        Modifier.padding(top = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        ExitDialogButton(label = "Cancel", primary = false) {
+                            exitConfirm = false
+                        }
+                        ExitDialogButton(label = "Discard", primary = false) {
+                            exitConfirm = false
+                            onExit()
+                        }
+                        ExitDialogButton(label = "Save", primary = true) {
+                            if (saveAllDirty()) {
+                                exitConfirm = false
+                                onExit()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.ExitDialogButton(label: String, primary: Boolean, onClick: () -> Unit) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .weight(1f)
+            .height(44.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .then(
+                if (primary) Modifier.background(c.accent)
+                else Modifier.border(1.dp, c.ln, RoundedCornerShape(10.dp)),
+            )
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = if (primary) Color.White else c.text,
+            fontSize = 13.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }
 
@@ -1662,8 +2053,9 @@ private fun IdeTopBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // The one door into the drawer. No logo tile beside it: the bar shows the project name,
-        // never the file name and never a file path, and nothing else competes for the left edge.
+        // The drawer button opens the file list; the project name fills the free width so the
+        // actions sit against the right edge. Going back is the system Back button and gesture,
+        // which the screen's own handler owns — no arrow here.
         HeaderIconButton(
             icon = CcIcons.Drawer,
             label = "Menu",
@@ -1923,6 +2315,10 @@ internal fun uniqueLeafIn(folder: String, wanted: String, taken: (String) -> Boo
  * Original order is preserved — a strip that reshuffles itself as files open is harder to follow
  * than one that only grows from the right.
  */
+/**
+ * Which tabs survive opening one too many. Identity is the path: two tabs called index.js in
+ * different folders are two tabs, and dropping by name would close the wrong one.
+ */
 internal fun retainTabs(
     tabs: List<ProjectFile>,
     active: String,
@@ -1931,16 +2327,16 @@ internal fun retainTabs(
 ): List<ProjectFile> {
     if (tabs.size <= limit) return tabs
     val keep = tabs
-        .filter { it.name == active || isDirty(it.name) }
-        .map { it.name }
+        .filter { it.path == active || isDirty(it.path) }
+        .map { it.path }
         .toMutableSet()
     if (keep.size < limit) {
         for (tab in tabs.asReversed()) {
             if (keep.size >= limit) break
-            keep += tab.name
+            keep += tab.path
         }
     }
-    return tabs.filter { it.name in keep }
+    return tabs.filter { it.path in keep }
 }
 
 /**
@@ -2532,6 +2928,10 @@ private fun IdeEditorArea(
     // Whether the tool row is on screen. It is the only way to reach tab, brace, quote and
     // comment on a soft keyboard, so it follows the keyboard rather than a timer.
     showToolRow: Boolean = true,
+    // Whether the soft keyboard is open right now, read live by the screen. The editor uses it
+    // to keep the tapped line visible once the keyboard (and the key row) has settled, because
+    // at tap time the layout still shows the pre-keyboard size.
+    imeOpen: Boolean = false,
     // How far the code text is pinched. The gesture lives on the screen above; this is just the
     // number the text size is drawn from.
     editorScale: Float = 1f,
@@ -2574,6 +2974,11 @@ formatRequest: Int = 0,
     // The project's directory on disk, which the marks above are computed against. Null means
     // the project has no directory (a remote-only view), so the gutter marks nothing.
     projectRoot: java.io.File? = null,
+    // Restored places from the last session, keyed by file name. Seeded once: the maps below
+    // are the live copy afterwards, reported back through onPlaceChange on every switch.
+    initialCaret: Map<String, Int> = emptyMap(),
+    initialScroll: Map<String, Pair<Int, Int>> = emptyMap(),
+    onPlaceChange: (Map<String, Int>, Map<String, Pair<Int, Int>>) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -2593,8 +2998,9 @@ formatRequest: Int = 0,
     // Where each file was left: caret offset and both scroll positions, keyed by file name in
     // plain maps. Plain, because reading them seeds the field below during composition, and
     // mutating snapshot state mid-composition would schedule another one.
-    val caretByFile = remember { mutableMapOf<String, Int>() }
-    val scrollByFile = remember { mutableMapOf<String, Pair<Int, Int>>() }
+    val caretByFile = remember { mutableMapOf<String, Int>().also { it.putAll(initialCaret) } }
+    val scrollByFile =
+        remember { mutableMapOf<String, Pair<Int, Int>>().also { it.putAll(initialScroll) } }
     // Fold state: source start-lines collapsed, per file. Entries that stop being foldable after
     // an edit are ignored by the map builder rather than cleaned up, so no bookkeeping here can
     // ever hide the wrong lines.
@@ -2603,6 +3009,17 @@ formatRequest: Int = 0,
     // this, while the field, the layout and the caret read the folded display text below. The
     // two meet only in commit(), commitSource() and the fold toggle — nowhere else.
     var sourceText by remember(active, language, sourceRevision) { mutableStateOf(fromDisk) }
+    // The only thing that may move the view on the reader's behalf, and when. Typing, taps,
+    // suggestions, formatting, undo and explicit jumps bump it; restores, analysis, layout
+    // changes, popups and the keyboard never do. The follow effects key on this alone, so
+    // nothing else can move the view no matter how often it recomposes.
+    var followSeq by remember { mutableStateOf(0) }
+    // True while one of this editor's own scroll calls is in flight, so the external-change
+    // observer does not mistake our own animation frames for a scroll nobody asked for.
+    var selfScrolling by remember { mutableStateOf(false) }
+    // True while the horizontal pan handler owns the gesture (raw deltas never mark the state
+    // in progress), for the same observer.
+    var hPanActive by remember { mutableStateOf(false) }
     val foldMap = remember(sourceText, foldedFirstLines) {
         FoldMap.build(sourceText, foldedFirstLines)
     }
@@ -2661,6 +3078,10 @@ formatRequest: Int = 0,
     }
 
     fun commit(next: TextFieldValue) {
+        // Typing, taps, suggestions, formatting and jumps all come through here, so this is
+        // where the view earns the right to follow the cursor. Restores and reseeds assign
+        // the field directly and never bump, so they can never drag the view along.
+        followSeq++
         if (next.text != fieldValue.text) {
             // Built fresh rather than reading the remembered map: two keystrokes can land in one
             // frame, and the second sees the first's field text with the first's map still
@@ -2697,6 +3118,8 @@ formatRequest: Int = 0,
      */
     fun commitSource(newSource: String, sourceCaret: Int, sourceAnchor: Int = sourceCaret) {
         if (newSource == sourceText) return
+        // Formatting and import surgery are the reader's own actions: the view may follow.
+        followSeq++
         pushUndo()
         sourceText = newSource
         val map = FoldMap.build(newSource, foldedFirstLines)
@@ -2716,6 +3139,7 @@ formatRequest: Int = 0,
         redoStack.add(UndoEntry(fieldValue, sourceText))
         fieldValue = previous.field
         sourceText = previous.source
+        followSeq++
     }
 
     fun redoOnce() {
@@ -2723,6 +3147,7 @@ formatRequest: Int = 0,
         undoStack.add(UndoEntry(fieldValue, sourceText))
         fieldValue = next.field
         sourceText = next.source
+        followSeq++
     }
     // Folding a block hides its interior rows from the display text, and everything downstream —
     // gutter, overlays, caret — reads display coordinates, so no other layer needs to know folds
@@ -2790,6 +3215,20 @@ formatRequest: Int = 0,
     // drifted out of step with the code and error line numbers pointed at the wrong line.
     val codeScroll = rememberScrollState()
     val codeHScroll = rememberScrollState()
+    // A scroll nobody asked for — the field's own bring-into-view is the usual suspect — is
+    // still caught here, with the timestamp that says which finished job it followed.
+    LaunchedEffect(Unit) {
+        var lastV = codeScroll.value
+        var lastH = codeHScroll.value
+        snapshotFlow { codeScroll.value to codeHScroll.value }.collect { (v, h) ->
+            if (!codeScroll.isScrollInProgress && !selfScrolling && !hPanActive) {
+                if (v != lastV) ScrollLog.record("v", lastV, v, "external")
+                if (h != lastH) ScrollLog.record("h", lastH, h, "external")
+            }
+            lastV = v
+            lastH = h
+        }
+    }
     // The setting sets the base size and pinch zoom scales it on top, which is exactly the
     // relationship the fixed constant had — so zoom keeps working unchanged, and at the default
     // size with nobody pinching this computes the same 13 sp the constant held.
@@ -2808,6 +3247,15 @@ formatRequest: Int = 0,
     }
     val code = fieldValue.text
     val cursor = fieldValue.selection.start.coerceIn(0, code.length)
+    // Identity here is the path (see the screen above); the name is display and diagnostic
+    // matching only, since diagnostics arrive keyed by file name.
+    val activeName = tabs.firstOrNull { it.path == active }?.name
+        ?: active.substringAfterLast('/')
+    // One pass over the buffer per text change; every scroll frame below reads from it instead
+    // of walking the file (window offsets, the sticky header, the highlight base depth, the
+    // brace-guide lines). Rebuilding it is linear, so even a 5,000-line file stays cheap.
+    val lineIndex = remember(code) { LineIndex(code) }
+    val declarationIndex = remember(code) { DeclarationIndex(code) }
     // Leaving a tab records where it was left; coming back restores caret and both scrolls, so
     // tapping between two files keeps each file's place. The drawer opening a file does not go
     // through here — that path never had a place to keep, and still doesn't.
@@ -2816,26 +3264,45 @@ formatRequest: Int = 0,
     fun forgetPlace(name: String) {
         caretByFile.remove(name)
         scrollByFile.remove(name)
+        onPlaceChange(caretByFile.toMap(), scrollByFile.toMap())
     }
-    val selectTabKeepingPlace = { name: String ->
+    val selectTabKeepingPlace = { path: String ->
         // The caret is stored as a source offset so it survives folds opening and closing
         // underneath it; the scroll is display rows, coerced back into range on restore.
         caretByFile[active] = foldMap.sourceAt(cursor)
         scrollByFile[active] = codeScroll.value to codeHScroll.value
-        onSelectTab(name)
+        onPlaceChange(caretByFile.toMap(), scrollByFile.toMap())
+        onSelectTab(path)
     }
     LaunchedEffect(active, tabs.size) {
         // The active tab scrolls into view; a file opened off the right edge would otherwise sit
         // there selected with no visible mark of it.
-        val index = tabs.indexOfFirst { it.name == active }
+        val index = tabs.indexOfFirst { it.path == active }
         if (index >= 0) tabListState.animateScrollToItem(index)
         // Scroll comes back a frame after the caret because it needs the laid-out column, while
         // the caret is seeded into the field above before first draw.
         val saved = scrollByFile.remove(active)
         if (saved != null) {
-            codeScroll.scrollTo(saved.first.coerceIn(0, codeScroll.maxValue))
-            codeHScroll.scrollTo(saved.second.coerceIn(0, codeHScroll.maxValue))
+            selfScrolling = true
+            try {
+                ScrollLog.record("v", codeScroll.value, saved.first, "tab-place-restore")
+                codeScroll.scrollTo(saved.first.coerceIn(0, codeScroll.maxValue))
+                ScrollLog.record("h", codeHScroll.value, saved.second, "tab-place-restore")
+                codeHScroll.scrollTo(saved.second.coerceIn(0, codeHScroll.maxValue))
+            } finally {
+                selfScrolling = false
+            }
         }
+    }
+    // Go-to-line, go-to-error and search-result jumps land here as source offsets. Same-file
+    // jumps never reseed (the file is already open), so the caret is placed here directly and
+    // the view follows through the sequence below. Declared after the reseed above so that on
+    // a file switch the reseed wins the caret and this only adds the follow.
+    LaunchedEffect(caretRequest) {
+        if (caretRequest < 0) return@LaunchedEffect
+        val at = foldMap.toDisplay[caretRequest.coerceIn(0, sourceText.length)]
+            .coerceIn(0, code.length)
+        commit(TextFieldValue(code, TextRange(at)))
     }
     // Report the source buffer, not the display text: the parent saves it, diffs it for Preview
     // and counts diagnostics project wide, and none of those may ever see folded bodies missing.
@@ -2843,6 +3310,12 @@ formatRequest: Int = 0,
     val isKotlin = language.contains("Kotlin", true) || active.endsWith(".kt")
     val staticSuggestions = remember(language) { suggestionsFor(language) }
     var selectedSug by remember(language) { mutableStateOf(0) }
+    // Back dismisses the suggestion list without moving the caret, mirroring the signature
+    // tooltip's suppression: any edit or caret move lifts it on its own.
+    var suggestSuppressedAt by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    if (suggestSuppressedAt != null && suggestSuppressedAt != (code to cursor)) {
+        suggestSuppressedAt = null
+    }
 
     var apiIndex by remember { mutableStateOf(AndroidApiAssets.cached()) }
     val context = LocalContext.current
@@ -2910,6 +3383,10 @@ formatRequest: Int = 0,
     var codeLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
     var viewportWidthPx by remember { mutableStateOf(0f) }
     var viewportHeightPx by remember { mutableStateOf(0f) }
+    // The keyboard inset as the editor sees it, read live for the scroll forensics below. Under
+    // adjustResize the window shrinks instead and this reads 0 with the keyboard open — which is
+    // itself the fact the log is for.
+    val imeBottomPxEditor = WindowInsets.ime.getBottom(LocalDensity.current)
 
     // Row height measured off the rendered text, so the numbers and the labels cannot drift from
     // the code the way a hand-converted dp/sp value does.
@@ -2940,16 +3417,16 @@ formatRequest: Int = 0,
     val codeWindow = remember(codeRange.first, lineHeightPx, code) {
         CodeWindow(
             firstLine = codeRange.first,
-            startOffset = offsetOfLineColumn(code, codeRange.first + 1, 1),
+            startOffset = lineIndex.lineStart(codeRange.first + 1),
             topPx = windowTopPx(codeRange.first, lineHeightPx),
         )
     }
 
     // The function the top of the window is inside, for the sticky header. Null while its own opening
     // line is still on screen: the reader can see it, and a pinned copy above the code is a second
-    // thing saying what that line already says.
+    // thing saying what that line already says. One array slot per row crossed, not one file walk.
     val scopeHeader = remember(code, codeWindow.firstLine) {
-        enclosingDeclarationAt(code, codeWindow.firstLine + 1)
+        declarationIndex[codeWindow.firstLine]
             ?.takeIf { it.first < codeWindow.firstLine + 1 }
             ?.second
     }
@@ -2995,14 +3472,16 @@ formatRequest: Int = 0,
     // The selected symbol's details, for the selection bar's header: its name, where it is
     // declared, and how many times the file uses it. The declaration reads the source, not the
     // display text — folds hide bodies the symbol may live in — mapped through the fold map
-    // from the selected row. Shown for selections only: a caret merely passing through a word
-    // gets the glow but not the panel.
+    // from the selected row. Shown only when the selected line declares the name: a usage, or
+    // a general multi-word selection, earns the highlight but never the strip. (Long-press and
+    // double-tap are indistinguishable here — both select the word — so either may raise it.)
     val symbolDetails = remember(selectedSymbol, fieldValue.selection, code, foldMap, sourceText) {
         val symbol = selectedSymbol ?: return@remember null
         val caret = fieldValue.selection.min.coerceIn(0, code.length)
         val displayLine = caretPosition(code, caret).first
         val sourceLine = foldMap.displayLines.getOrNull(displayLine - 1) ?: displayLine
         val ownLine = sourceText.lines().getOrNull(sourceLine - 1).orEmpty()
+        if (!declaresSymbol(ownLine, symbol)) return@remember null
         val decl = declarationOf(ownLine).takeIf { it.contains(symbol) }
             ?: enclosingDeclarationAt(sourceText, sourceLine)?.second
                 ?.replace(Regex("\\s+"), " ")?.trim()?.take(SYMBOL_DETAILS_DECL_MAX)
@@ -3012,13 +3491,15 @@ formatRequest: Int = 0,
     }
     val highlighted = remember(codeRange, code, c, codeLanguage, bracketCycle, occurrenceSymbol) {
         val slice = sliceOfLines(codeLines, codeRange)
-        val above = code.substring(0, codeWindow.startOffset.coerceIn(0, code.length))
+        // The base depth used to be a substring of everything above the window plus a scan of
+        // it — a copy and a walk of up to the whole file on every row crossed. The index
+        // already holds that depth: same scan, done once per text change.
         val base = highlightCode(
             slice,
             c,
             codeLanguage,
             bracketCycle,
-            openBlockDepth(above),
+            lineIndex.depthAtLine0(codeRange.first),
         )
         // Other occurrences of the caret's symbol glow behind the text, so a tap on a name
         // shows everywhere that name is used. Spans join the slice's own highlighting, which
@@ -3062,13 +3543,19 @@ formatRequest: Int = 0,
     // Structural scans read the source: folded bodies still open blocks, pair braces and
     // indent lines, and none of that is visible in the display text. Their results are mapped
     // back into display coordinates for drawing, dropping anything the folds hide.
-    val braceGuidesSrc = remember(sourceText, settings.bracketGuides) {
-        if (settings.bracketGuides) bracePairs(sourceText) else emptyList()
+    // All three run off the main thread: on a big file the walk is the typing lag, and the layers
+    // read the last finished result while the next one computes — never a half-built structure.
+    val braceGuidesSrc by produceState(emptyList<IntRange>(), sourceText, settings.bracketGuides) {
+        value = withContext(Dispatchers.Default) {
+            if (settings.bracketGuides) bracePairs(sourceText) else emptyList()
+        }
     }
-    val indentColumnsSrc = remember(sourceText, settings.tabSize) {
-        indentColumnsOf(sourceText, settings.tabSize)
+    val indentColumnsSrc by produceState(IntArray(0), sourceText, settings.tabSize) {
+        value = withContext(Dispatchers.Default) { indentColumnsOf(sourceText, settings.tabSize) }
     }
-    val bracketPairsAllSrc = remember(sourceText) { allBracketPairs(sourceText) }
+    val bracketPairsAllSrc by produceState(emptyList<IntRange>(), sourceText) {
+        value = withContext(Dispatchers.Default) { allBracketPairs(sourceText) }
+    }
     fun FoldMap.displayRange(sourceRange: IntRange): IntRange? {
         val a = toDisplay[sourceRange.first.coerceIn(0, sourceText.length)]
         val b = toDisplay[sourceRange.last.coerceIn(0, sourceText.length)]
@@ -3118,18 +3605,7 @@ formatRequest: Int = 0,
 
 
     /** Character offset of a 1-based column on a 1-based line, for text-layout lookups. */
-    fun offsetOfLineColumn(line: Int, column: Int): Int {
-        if (line < 1 || column < 1) return 0
-        var offset = 0
-        var currentLine = 1
-        var i = 0
-        while (i < code.length && currentLine < line) {
-            if (code[i] == '\n') currentLine++
-            i++
-            offset++
-        }
-        return (offset + (column - 1)).coerceIn(0, code.length)
-    }
+    fun offsetOfLineColumn(line: Int, column: Int): Int = lineIndex.offsetOf(line, column)
 
     val kotlinItems = remember(code, cursor, isKotlin, currentAnalysis, foldMap) {
         val live = currentAnalysis
@@ -3207,12 +3683,15 @@ formatRequest: Int = 0,
         code,
         isKotlin,
         settings.autocomplete,
+        suggestSuppressedAt,
     ) {
         // A space ends the word being typed, so the list that was completing it has nothing to say
         // anymore. Without this the list lingered over the fresh word until the next keystroke gave
         // it a reason to leave.
         val typedSpace = cursor > 0 && cursor <= code.length && code[cursor - 1] == ' '
         when {
+            // Dismissed by Back: stays down until the code or the cursor moves on.
+            suggestSuppressedAt != null -> emptyList()
             // Checked first so a reader cannot mistake "switched off" for "nothing matched".
             !settings.autocomplete -> emptyList()
             typedSpace -> emptyList()
@@ -3354,18 +3833,50 @@ formatRequest: Int = 0,
     // scroller clamps against cannot move when a slice is laid out.
     val contentHeightPx =
         topPaddingPx + codeLines.size * lineHeightPx + with(autoDensity) { 40.dp.toPx() }
-    LaunchedEffect(caretLine, viewportHeightPx, lineHeightPx) {
+    // "Scroll the cursor into view" — and only this. It runs after the reader's own typing
+    // or cursor movement and after explicit jumps (the only things that bump the sequence),
+    // only when the cursor sits outside the visible band, never mid-drag or mid-fling, and
+    // never twice for the same place. Analysis finishing, layouts changing, popups opening
+    // and the keyboard animating cannot retrigger it, because none of them is a key.
+    LaunchedEffect(followSeq) {
+        if (followSeq == 0) return@LaunchedEffect
+        if (codeScroll.isScrollInProgress) {
+            ScrollLog.record("v", codeScroll.value, codeScroll.value, "follow-skipped-dragging")
+            return@LaunchedEffect
+        }
         val margin = with(autoDensity) { 24.dp.toPx() }
         val rowTop = rowTopPx(caretLine, lineHeightPx, topPaddingPx)
         val rowBottom = rowTop + lineHeightPx
         val maxScroll = (contentHeightPx - viewportHeightPx).coerceAtLeast(0f)
+        // Scroll forensics, temporary: every call logs the cursor line's bottom, the visible
+        // area's bottom, the keyboard and key row heights, and whether it scrolled.
+        val rowHeightPx = with(autoDensity) { EditorKeyRowHeight.toPx() }
+        fun forensics(scrolled: Boolean) =
+            "follow-cursor cursorBottom=${rowBottom.toInt()} " +
+                "visibleBottom=${(codeScroll.value + viewportHeightPx).toInt()} " +
+                "kb=$imeBottomPxEditor row=${if (showToolRow) rowHeightPx.toInt() else 0} " +
+                "scrolled=$scrolled"
         val target = when {
             rowTop - margin < codeScroll.value -> (rowTop - margin).coerceAtLeast(0f)
             rowBottom + margin > codeScroll.value + viewportHeightPx ->
                 (rowBottom + margin - viewportHeightPx).coerceIn(0f, maxScroll)
-            else -> codeScroll.value
+            else -> {
+                ScrollLog.record("v", codeScroll.value, codeScroll.value, forensics(false))
+                return@LaunchedEffect
+            }
         }
-        codeScroll.animateScrollTo(target.toInt().coerceAtLeast(0))
+        val to = target.toInt().coerceAtLeast(0)
+        if (to == codeScroll.value) {
+            ScrollLog.record("v", codeScroll.value, to, forensics(false))
+            return@LaunchedEffect
+        }
+        selfScrolling = true
+        try {
+            ScrollLog.record("v", codeScroll.value, to, forensics(true))
+            codeScroll.animateScrollTo(to)
+        } finally {
+            selfScrolling = false
+        }
     }
 
     // The same job sideways. Compose will not scroll a BasicTextField horizontally either, so the
@@ -3378,17 +3889,96 @@ formatRequest: Int = 0,
     // line produces, is animated so the eye can follow where it went; the small corrections typing
     // makes are applied straight away, because an animation restarted on every keystroke never
     // settles and the text ends up swimming.
-    LaunchedEffect(cursor, codeWidthPx, viewportWidthPx) {
+    LaunchedEffect(followSeq) {
+        if (followSeq == 0) return@LaunchedEffect
+        if (codeHScroll.isScrollInProgress) {
+            ScrollLog.record("h", codeHScroll.value, codeHScroll.value, "follow-skipped-dragging")
+            return@LaunchedEffect
+        }
         val caretContent = caretX(codeLayout, cursor, codeWindow) ?: return@LaunchedEffect
         val margin = with(autoDensity) { CaretHScrollMargin.toPx() }
         val now = codeHScroll.value.toFloat()
         val wanted = targetHScroll(caretContent, now, codeWidthPx, margin)
         if (wanted == now) return@LaunchedEffect
-        if (abs(wanted - now) > codeWidthPx / 2f) {
-            codeHScroll.animateScrollTo(wanted.roundToInt())
-        } else {
-            codeHScroll.scrollTo(wanted.roundToInt())
+        selfScrolling = true
+        try {
+            if (abs(wanted - now) > codeWidthPx / 2f) {
+                ScrollLog.record("h", now.toInt(), wanted.roundToInt(), "follow-cursor-far")
+                codeHScroll.animateScrollTo(wanted.roundToInt())
+            } else {
+                ScrollLog.record("h", now.toInt(), wanted.roundToInt(), "follow-cursor-near")
+                codeHScroll.scrollTo(wanted.roundToInt())
+            }
+        } finally {
+            selfScrolling = false
         }
+    }
+
+    // The tapped line stays visible when the keyboard opens. At tap time the layout still shows
+    // the pre-keyboard size, so this waits for the settled one: the measured code height after
+    // the keyboard (and key row) animation, debounced past the last frame of it. Keyed on both
+    // the live keyboard flag and the height — a flow keyed on Unit froze the flag at its first
+    // value and the pass never ran. Then, if the cursor line is not fully visible in the area
+    // above the keys, the view moves by the smallest amount that shows it whole with one extra
+    // line of space below, over 200 ms — and not at all when the line is already fully visible,
+    // or when the keyboard is closing. Tapping while open and typing on the last visible line
+    // land here the same way, through the height they change. Opening the keyboard by tapping
+    // is the reader's own action, so this scroll is allowed under the follow rule. The
+    // last-seen pair lives outside the effect so restarts compare against the previous run,
+    // not the first composition.
+    var lastHeightSeen by remember { mutableStateOf(viewportHeightPx) }
+    var lastImeSeen by remember { mutableStateOf(imeOpen) }
+    LaunchedEffect(imeOpen, viewportHeightPx) {
+        // Coalesce the animation frames: each new height restarts the wait, so the check runs
+        // once, 50 ms after the last frame, against the final layout.
+        kotlinx.coroutines.delay(50)
+        val height = viewportHeightPx
+        val ime = imeOpen
+        val opened = ime && !lastImeSeen
+        val resizedOpen = ime && height != lastHeightSeen
+        lastHeightSeen = height
+        lastImeSeen = ime
+        if (!opened && !resizedOpen) return@LaunchedEffect
+                if (codeScroll.isScrollInProgress) {
+                    ScrollLog.record(
+                        "v",
+                        codeScroll.value,
+                        codeScroll.value,
+                        "keyboard-settle-skipped-dragging",
+                    )
+                    return@LaunchedEffect
+                }
+                val viewTop = codeScroll.value.toFloat()
+                val viewBottom = viewTop + height.toFloat()
+                val rowTop = rowTopPx(caretLine, lineHeightPx, topPaddingPx)
+                val rowBottom = rowTop + lineHeightPx
+                val maxScroll = (contentHeightPx - height.toFloat()).coerceAtLeast(0f)
+                val rowHeightPx = with(autoDensity) { EditorKeyRowHeight.toPx() }
+                fun forensics(scrolled: Boolean) =
+                    "keyboard-settle cursorBottom=${rowBottom.toInt()} " +
+                        "visibleBottom=${viewBottom.toInt()} kb=$imeBottomPxEditor " +
+                        "row=${if (showToolRow) rowHeightPx.toInt() else 0} scrolled=$scrolled"
+                val target = when {
+                    rowTop < viewTop -> (rowTop - lineHeightPx).coerceAtLeast(0f)
+                    rowBottom + lineHeightPx > viewBottom ->
+                        (rowBottom + lineHeightPx - height.toFloat()).coerceIn(0f, maxScroll)
+                    else -> {
+                        ScrollLog.record("v", codeScroll.value, codeScroll.value, forensics(false))
+                        return@LaunchedEffect
+                    }
+                }
+                val to = target.toInt().coerceAtLeast(0)
+                if (to == codeScroll.value) {
+                    ScrollLog.record("v", codeScroll.value, to, forensics(false))
+                    return@LaunchedEffect
+                }
+                selfScrolling = true
+                try {
+                    ScrollLog.record("v", codeScroll.value, to, forensics(true))
+                    codeScroll.animateScrollTo(to, animationSpec = tween(200))
+                } finally {
+                    selfScrolling = false
+                }
     }
 
 val applySuggestion: (Int) -> Unit = { index ->
@@ -3651,10 +4241,19 @@ val applySuggestion: (Int) -> Unit = { index ->
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                itemsIndexed(tabs, key = { _, t -> "tab-${t.name}" }) { _, tab ->
-                    val isActive = tab.name == active
+                itemsIndexed(tabs, key = { _, t -> "tab-${t.path}" }) { _, tab ->
+                    val isActive = tab.path == active
                     // The unsaved dot shows only while the buffer differs from last saved.
-                    val dirty = dirtyOf(tab.name)
+                    val dirty = dirtyOf(tab.path)
+                    // Tabs sharing a name show their parent folder: two index.js rows that read
+                    // the same are a mis-tap away from editing the wrong file.
+                    val duplicates = tabs.count { it.name == tab.name } > 1
+                    val tabLabel = if (duplicates) {
+                        tab.path.substringBeforeLast('/').substringAfterLast('/')
+                            .takeIf { it.isNotEmpty() }?.let { "$it/${tab.name}" } ?: tab.name
+                    } else {
+                        tab.name
+                    }
                     val tabDensity = androidx.compose.ui.platform.LocalDensity.current
                     Box {
                         Row(
@@ -3671,8 +4270,8 @@ val applySuggestion: (Int) -> Unit = { index ->
                                     )
                                 }
                                 .combinedClickable(
-                                    onClick = { selectTabKeepingPlace(tab.name) },
-                                    onLongClick = { tabMenuFor = tab.name },
+                                    onClick = { selectTabKeepingPlace(tab.path) },
+                                    onLongClick = { tabMenuFor = tab.path },
                                 )
                                 .padding(horizontal = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -3688,7 +4287,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                                 )
                             }
                             Text(
-                                text = tab.name,
+                                text = ellipsizeMiddle(tabLabel),
                                 color = if (isActive) c.brightText else c.hintText,
                                 fontSize = 12.sp,
                                 fontFamily = Sans,
@@ -3701,30 +4300,30 @@ val applySuggestion: (Int) -> Unit = { index ->
                         // No close button on the tab itself. A long press is the deliberate gesture;
                         // a visible × is a mis-tap away from closing the file being read.
                         DropdownMenu(
-                            expanded = tabMenuFor == tab.name,
+                            expanded = tabMenuFor == tab.path,
                             onDismissRequest = { tabMenuFor = null },
                         ) {
                             DropdownMenuItem(
                                 text = { Text("Close", fontFamily = Sans) },
                                 onClick = {
                                     tabMenuFor = null
-                                    forgetPlace(tab.name)
-                                    onCloseTab(tab.name)
+                                    forgetPlace(tab.path)
+                                    onCloseTab(tab.path)
                                 },
                             )
                             DropdownMenuItem(
                                 text = { Text("Close others", fontFamily = Sans) },
                                 onClick = {
                                     tabMenuFor = null
-                                    tabs.forEach { forgetPlace(it.name) }
-                                    onCloseOthers(tab.name)
+                                    tabs.forEach { forgetPlace(it.path) }
+                                    onCloseOthers(tab.path)
                                 },
                             )
                             DropdownMenuItem(
                                 text = { Text("Close all", fontFamily = Sans) },
                                 onClick = {
                                     tabMenuFor = null
-                                    tabs.forEach { forgetPlace(it.name) }
+                                    tabs.forEach { forgetPlace(it.path) }
                                     onCloseAll()
                                 },
                             )
@@ -3811,8 +4410,98 @@ val applySuggestion: (Int) -> Unit = { index ->
             fieldValue.selection.max == fieldValue.selection.min &&
             problemSheetLine.value == null &&
             sigSuppressedAt == null
-        BackHandler(enabled = sigVisible) {
-            sigSuppressedAt = code to cursor
+        // Inside the editor, Back walks down its own stack first: suggestions, tooltip,
+        // selection collapse, quick fix. Composed deeper than the screen chain, so it wins
+        // while armed and the screen never sees the press.
+        val suggestionsVisible = visibleSuggestions.isNotEmpty()
+        val hasSelection = fieldValue.selection.max > fieldValue.selection.min
+        BackHandler(
+            enabled = suggestionsVisible || sigVisible || hasSelection || quickFixLine != null ||
+                tabMenuFor != null,
+        ) {
+            when {
+                suggestionsVisible -> {
+                    BackLog.press("editor", "branch=suggestions")
+                    suggestSuppressedAt = code to cursor
+                }
+                sigVisible -> {
+                    BackLog.press("editor", "branch=signature")
+                    sigSuppressedAt = code to cursor
+                }
+                hasSelection -> {
+                    BackLog.press("editor", "branch=selection")
+                    commit(
+                        fieldValue.copy(selection = TextRange(fieldValue.selection.start)),
+                    )
+                }
+                quickFixLine != null -> {
+                    BackLog.press("editor", "branch=quickfix")
+                    quickFixLine = null
+                }
+                else -> {
+                    BackLog.press("editor", "branch=tabmenu")
+                    tabMenuFor = null
+                }
+            }
+        }
+
+        // Milliseconds per frame over the code, for the scroll report. Off unless the Frame
+        // stats toggle in Settings says otherwise; while on, a frame clock keeps the last 120
+        // frames and reads out average, 95th percentile and worst, plus how many blew the 32 ms
+        // budget — updated every 30 frames so the readout itself costs nothing worth measuring.
+        if (settings.frameStats) {
+            var frameStats by remember { mutableStateOf(Triple(0.0, 0.0, 0.0)) }
+            var slowFrames by remember { mutableStateOf(0) }
+            LaunchedEffect(Unit) {
+                val ring = DoubleArray(120)
+                var filled = 0
+                var cursor = 0
+                var last = withFrameNanos { it }
+                var n = 0
+                while (true) {
+                    val now = withFrameNanos { it }
+                    val dt = (now - last) / 1_000_000.0
+                    last = now
+                    ring[cursor] = dt
+                    cursor = (cursor + 1) % ring.size
+                    if (filled < ring.size) filled++
+                    if (dt > 32.0) slowFrames++
+                    n++
+                    if (n >= 30) {
+                        val sorted = ring.take(filled).sorted()
+                        val avg = sorted.average()
+                        val p95 = sorted[((sorted.size * 0.95).toInt()).coerceIn(0, sorted.size - 1)]
+                        frameStats = Triple(avg, p95, sorted.last())
+                        n = 0
+                    }
+                }
+            }
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(c.panel2)
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "%.1f avg · %.1f p95 · %.1f max".format(
+                        frameStats.first,
+                        frameStats.second,
+                        frameStats.third,
+                    ),
+                    color = c.brightText,
+                    fontSize = 12.sp,
+                    fontFamily = Mono,
+                )
+                Text(
+                    text = "${codeRange.last - codeRange.first + 1} lines · " +
+                        "${lineIndex.lineCount} total · $slowFrames > 32 ms",
+                    color = c.mu,
+                    fontSize = 12.sp,
+                    fontFamily = Mono,
+                )
+            }
         }
 
         Box(
@@ -3823,6 +4512,17 @@ val applySuggestion: (Int) -> Unit = { index ->
                     viewportHeightPx = it.height.toFloat()
                 },
         ) {
+            // Scroll forensics, temporary and always on for one build: a 2 dp red line exactly
+            // at the bottom edge of the measured visible area. If it does not sit directly
+            // above the key row with the keyboard open, the container is not shrinking for the
+            // keyboard. Removed once the tapped-line evidence lands.
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .background(Color.Red),
+            )
             // One vertical scroll for the whole editor. The line numbers and the code are both
             // children of this box, so they share a coordinate space and cannot drift apart.
             // A press can land between characters, so the offset settles onto whole
@@ -3831,8 +4531,15 @@ val applySuggestion: (Int) -> Unit = { index ->
             fun snapHScroll() {
                 val w = charWidthPx(codeLayout) ?: return
                 val target = snapScrollToCharacter(codeHScroll.value.toFloat(), w)
-                if (target != codeHScroll.value) {
-                    editScope.launch { codeHScroll.scrollTo(target) }
+                if (target == codeHScroll.value) return
+                selfScrolling = true
+                editScope.launch {
+                    try {
+                        ScrollLog.record("h", codeHScroll.value, target, "snap-char")
+                        codeHScroll.scrollTo(target)
+                    } finally {
+                        selfScrolling = false
+                    }
                 }
             }
             LaunchedEffect(codeHScroll.isScrollInProgress) {
@@ -3865,7 +4572,14 @@ val applySuggestion: (Int) -> Unit = { index ->
                 Row(
                     Modifier
                         .horizontalScroll(codeHScroll)
-                        .panOnHorizontalDrag(codeHScroll, onRelease = ::snapHScroll)
+                        .panOnHorizontalDrag(
+                            state = codeHScroll,
+                            flingBehavior = androidx.compose.foundation.gestures.ScrollableDefaults.flingBehavior(),
+                            scope = editScope,
+                            slopPx = with(autoDensity) { 8.dp.toPx() },
+                            onPanActive = { hPanActive = it },
+                            onRelease = ::snapHScroll,
+                        )
                         // The code is clipped exactly at the gutter edge, so it never shows under
                         // the gutter or gets cut halfway through a character at the left edge.
                         .drawWithContent {
@@ -3911,6 +4625,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                             layout = codeLayout,
                             lineHeightPx = lineHeightPx,
                             window = codeWindow,
+                            lineIndex = lineIndex,
                             modifier = Modifier.matchParentSize(),
                         )
                         // A line under each of the active pair's braces, drawn after the guides so
@@ -3977,6 +4692,9 @@ val applySuggestion: (Int) -> Unit = { index ->
                             // pills and bulb drift away from the code.
                             onTextLayout = { codeLayout = it },
                         )
+                        // The editor draws its own selection bar, so Android's own Copy/Paste
+                        // menu is switched off at this field: two toolbars is one too many.
+                        CompositionLocalProvider(LocalTextToolbar provides NoSystemTextToolbar) {
                         BasicTextField(
                             value = fieldValue,
                             onValueChange = { incoming ->
@@ -4079,6 +4797,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                                     }
                                 },
                         )
+                        }
                         // The error pill, when the tooltip is closed: one pill for the cursor
                         // line's own error, on the line above it — or below it when the line above
                         // is too long to hold it.
@@ -4162,9 +4881,18 @@ val applySuggestion: (Int) -> Unit = { index ->
                         }
                         if (problems.byLine.isNotEmpty()) {
                             // Wavy lines under the exact bad characters. Drawn before the labels
-                            // so the labels stay readable on top of them.
+                            // so the labels stay readable on top of them. Only the window's own
+                            // diagnostics reach the draw scope: the filter runs once per row
+                            // crossed, not once per frame drawn.
+                            val visibleSquiggles = remember(problems, codeWindow) {
+                                val sliceEnd = lineIndex.lineStart(codeRange.last + 2)
+                                problems.all.filter { diagnostic ->
+                                    diagnostic.offset >= codeWindow.startOffset &&
+                                        diagnostic.offset <= sliceEnd
+                                }
+                            }
                             SquiggleLayer(
-                                problems = problems,
+                                problems = visibleSquiggles,
                                 layout = codeLayout,
                                 window = codeWindow,
                                 modifier = Modifier
@@ -4284,17 +5012,18 @@ val applySuggestion: (Int) -> Unit = { index ->
                     problems = if (problemSheetScope == ProblemScope.PROJECT) {
                         projectDiagnostics
                     } else {
-                        problems.all.map { ProjectDiagnostic(active, it) }
+                        problems.all.map { ProjectDiagnostic(activeName, it) }
                     },
                     scope = problemSheetScope,
-                    fileLabel = active,
+                    fileLabel = activeName,
                     onSelect = { row ->
                         // Tapping a row in project scope opens the file it came from, then puts the
                         // caret on its line. Jumping to a line number in a file that is not open
                         // would be a dead end.
                         // A row from another file has to open that file first: jumping to a line
-                        // number in a file that is not open would be a dead end.
-                        if (row.fileName != active) onOpenProjectFile(row.fileName)
+                        // number in a file that is not open would be a dead end. Diagnostics are
+                        // keyed by name, so twins resolve to the first match.
+                        if (row.fileName != activeName) onOpenProjectFile(row.fileName)
                         val offset = offsetOfLineColumn(code, row.diagnostic.line, row.diagnostic.column)
                         commit(TextFieldValue(code, TextRange(offset)))
                         problemSheetLine.value = null
@@ -4429,11 +5158,11 @@ val applySuggestion: (Int) -> Unit = { index ->
                 )
             }
 
-            // A selection earns its own bar. It is placed with the same helpers the suggestion
-            // popup uses, so it anchors to the rendered row rather than an assumed row height and
-            // flips above the selection when the keyboard leaves no room below. It stands down
-            // while the suggestion popup or a quick fix owns the space — two floating panels
-            // over the same caret is two panels fighting.
+            // A selection earns its own bar: 8 dp above the selection's start, left edge on
+            // it, kept 8 dp inside the screen edges — or below the handles with 16 dp of
+            // clearance when nothing fits above, so the handles never overlap it. It stands
+            // down while the suggestion popup or a quick fix owns the space — two floating
+            // panels over the same caret is two panels fighting.
             val selectedRange = fieldValue.selection
             val hasSelection = selectedRange.max > selectedRange.min
             if (hasSelection) {
@@ -4442,6 +5171,21 @@ val applySuggestion: (Int) -> Unit = { index ->
                     lineTopPx(codeLayout, code, selectedLine, codeWindow)
                         ?: pillTopPx(selectedLine, lineHeightPx)
                 val selectedTopViewport = topPaddingPx + selectedTopContent - codeScroll.value
+                val selectedEndLine = caretPosition(code, selectedRange.max).first
+                val selectedEndBottomViewport = topPaddingPx +
+                    (lineTopPx(codeLayout, code, selectedEndLine, codeWindow)
+                        ?: pillTopPx(selectedEndLine, lineHeightPx)) +
+                    lineHeightPx - codeScroll.value
+                // Full row when the screen minus 16 dp holds it, else Cut/Copy/Paste plus the
+                // overflow menu. The width feeds the placement below, so the bar never hangs
+                // off the edge it was measured against.
+                val barWidthDp = if (with(popupDensity) { viewportWidthPx.toDp() } - 16.dp >=
+                    SELECTION_FULL_WIDTH_DP
+                ) {
+                    SELECTION_FULL_WIDTH_DP
+                } else {
+                    SELECTION_COMPACT_WIDTH_DP
+                }
                 // Taller on a single-word selection: the bar grows a details header, and the
                 // positioned box must grow with it or the buttons would hang off its bottom.
                 val selectionBarHeight = if (symbolDetails != null) {
@@ -4452,22 +5196,24 @@ val applySuggestion: (Int) -> Unit = { index ->
                 val selectionBarHeightPx =
                     with(popupDensity) { selectionBarHeight.toPx() }
                 val selectionBarWidthPx =
-                    with(popupDensity) { SELECTION_BAR_WIDTH.toPx() }
-                val selectionBarTop = popupTopPx(
-                    caretTopPx = selectedTopViewport,
-                    lineHeightPx = lineHeightPx,
-                    gapPx = popupGapPx,
-                    popupHeightPx = selectionBarHeightPx,
-                    viewportHeightPx = viewportHeightPx,
-                    edgePx = popupEdgePx,
-                )
+                    with(popupDensity) { barWidthDp.toPx() }
+                val aboveTop = selectedTopViewport -
+                    with(popupDensity) { 8.dp.toPx() } - selectionBarHeightPx
+                val selectionBarTop = if (aboveTop >= 0f) {
+                    aboveTop
+                } else {
+                    // No room above: below the handles with 16 dp of clearance, clamped on
+                    // screen so a selection at the very bottom still owns a reachable bar.
+                    (selectedEndBottomViewport + with(popupDensity) { 16.dp.toPx() })
+                        .coerceIn(0f, (viewportHeightPx - selectionBarHeightPx).coerceAtLeast(0f))
+                }
                 val selectionBarLeft = popupLeftPx(
                     wordX = xForOffset(codeLayout, selectedRange.min, codeWindow) ?: 0f,
                     columnStartPx = with(popupDensity) { columnStart.toPx() },
                     hScrollPx = codeHScroll.value,
                     popupWidthPx = selectionBarWidthPx,
-                    codeWidthPx = codeWidthPx,
-                    insetPx = popupEdgePx,
+                    codeWidthPx = viewportWidthPx,
+                    insetPx = with(popupDensity) { 8.dp.toPx() },
                 )
                 val selectionRowVisible = selectedTopViewport + lineHeightPx > 0f &&
                     selectedTopViewport < viewportHeightPx
@@ -4481,7 +5227,10 @@ val applySuggestion: (Int) -> Unit = { index ->
                 }
                 // The bar stands down while the code moves under it and comes back about 200 ms
                 // after it stops: a bar that stays up during a scroll points at a selection the
-                // reader can no longer see.
+                // reader can no longer see. A drag through the handles fires one selection change
+                // per frame, a tap or long-press fires one: the first change shows the bar at
+                // once, a second within 300 ms means a drag is in progress, so the bar stands
+                // down until 200 ms after the last change.
                 var toolbarAllowed by remember { mutableStateOf(true) }
                 LaunchedEffect(codeScroll.isScrollInProgress, codeHScroll.isScrollInProgress) {
                     if (codeScroll.isScrollInProgress || codeHScroll.isScrollInProgress) {
@@ -4491,9 +5240,21 @@ val applySuggestion: (Int) -> Unit = { index ->
                         toolbarAllowed = true
                     }
                 }
+                var selectionSettled by remember { mutableStateOf(true) }
+                var lastSelChangeMs by remember { mutableStateOf(0L) }
+                LaunchedEffect(selectedRange) {
+                    val now = System.currentTimeMillis()
+                    if (!selectedRange.collapsed && now - lastSelChangeMs < 300) {
+                        selectionSettled = false
+                    }
+                    lastSelChangeMs = now
+                    delay(200)
+                    selectionSettled = true
+                }
                 androidx.compose.animation.AnimatedVisibility(
                     visible = selectionRowVisible &&
                         toolbarAllowed &&
+                        selectionSettled &&
                         quickFixLine == null &&
                         visibleSuggestions.isEmpty() &&
                         problemSheetLine.value == null,
@@ -4507,6 +5268,9 @@ val applySuggestion: (Int) -> Unit = { index ->
                 ) {
                     SelectionBar(
                         details = symbolDetails,
+                        widthDp = barWidthDp,
+                        cutEnabled = hasSelection,
+                        copyEnabled = hasSelection,
                         onCut = {
                             clipboard.setText(androidx.compose.ui.text.AnnotatedString(selectedText))
                             commit(
@@ -4537,10 +5301,6 @@ val applySuggestion: (Int) -> Unit = { index ->
                         onSelectAll = {
                             commit(fieldValue.copy(selection = TextRange(0, fieldValue.text.length)))
                         },
-                        onInfo = {
-                            val lines = selectedText.count { it == '\n' } + 1
-                            onToast("${selectedText.length} chars · $lines lines")
-                        },
                         onCopy = {
                             clipboard.setText(androidx.compose.ui.text.AnnotatedString(selectedText))
                             onToast("Copied ${selectedText.length} chars")
@@ -4554,17 +5314,6 @@ val applySuggestion: (Int) -> Unit = { index ->
                                 SourceEdits.toggleLineComment(acc, lineNo)
                             }
                             commit(TextFieldValue(next, fieldValue.selection))
-                        },
-                        onDuplicate = {
-                            val next = fieldValue.text.substring(0, selectedRange.max) +
-                                selectedText +
-                                fieldValue.text.substring(selectedRange.max)
-                            commit(
-                                TextFieldValue(
-                                    text = next,
-                                    selection = TextRange(selectedRange.min, selectedRange.max + selectedText.length),
-                                ),
-                            )
                         },
                     )
                 }
@@ -4598,20 +5347,28 @@ val applySuggestion: (Int) -> Unit = { index ->
             )
         }
 
-        // Spec 6.8's tool row, shown only while the keyboard is up. It still owns its 46 dp when
-        // shown, so the code area grows rather than slides.
+        // The keyboard key row, shown only while the keyboard is up. It still owns its height
+        // when shown, so the code area grows rather than slides. The 100 ms matches the
+        // hide budget: a closed keyboard leaves the bar, never a lingering row.
         val toolRowHeight by animateDpAsState(
-            targetValue = if (showToolRow) ToolRowHeight else 0.dp,
-            animationSpec = tween(160),
+            targetValue = if (showToolRow) EditorKeyRowHeight else 0.dp,
+            animationSpec = tween(100),
             label = "tool-row-height",
         )
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(toolRowHeight)
+                // A no-op while adjustResize is in effect (the window already ends above the
+                // keyboard), and the thing that keeps the row visible on windows where it
+                // does not: the row always sits exactly on the keyboard's top edge.
+                .imePadding()
                 .clipToBounds(),
         ) {
-            IdeToolRow(onAction = onToolAction)
+            EditorKeyRow(
+                onTab = { onToolAction(ToolAction.TAB) },
+                onKey = { glyph -> typeAtCaret(glyph) },
+            )
         }
     }
 }
@@ -4695,6 +5452,18 @@ private fun Modifier.edgeSwipeToOpenDrawer(
 internal fun zoomedFontSize(baseSp: Int, scale: Float): Int = (baseSp * scale).roundToInt()
 
 /**
+ * Which way a drag has committed to, from its travelled distance on each axis.
+ *
+ * A diagonal drag belongs to one axis, not both: the first axis past slop that also leads wins,
+ * and the loser never starts. Zero means undecided — neither axis has earned the gesture yet.
+ */
+internal fun panDirectionLocked(travelX: Float, travelY: Float, slopPx: Float): Int = when {
+    kotlin.math.abs(travelX) > slopPx && kotlin.math.abs(travelX) > kotlin.math.abs(travelY) -> 1
+    kotlin.math.abs(travelY) > slopPx && kotlin.math.abs(travelY) > kotlin.math.abs(travelX) -> -1
+    else -> 0
+}
+
+/**
  * A one-finger horizontal drag pans the code column instead of selecting text.
  *
  * Why this has to exist: the code is drawn by a `Text` with a transparent `BasicTextField` laid over
@@ -4703,17 +5472,105 @@ internal fun zoomedFontSize(baseSp: Int, scale: Float): Int = (baseSp * scale).r
  * line did nothing at all — the line simply ran off the right edge and stayed there. Vertical drag
  * and long-press still select; only the sideways pan is taken here.
  *
- * Three details are load bearing:
+ * Four details are load bearing:
  *
  * - It listens on [PointerEventPass.Initial]. Pointer events reach ancestors before children on
  *   that pass, so this sees the drag before the text field does and consuming there takes the pan
  *   cleanly, instead of losing the race to a child that would already have consumed it.
- * - It waits for horizontal slop before committing, so a vertical drag — which belongs to the
- *   surrounding `verticalScroll` — is left entirely alone.
+ * - It commits on an 8 dp slop with a dominant-axis lock, so a tap never pans and a vertical or
+ *   diagonal drag — which belongs to the surrounding `verticalScroll` — is left entirely alone.
  * - It abandons the gesture the moment a second pointer arrives, which is what keeps two-finger
  *   pinch-zoom working: that handler is an ancestor of this one and only acts on two pointers, so
  *   neither can starve the other.
+ * - Release with speed flings through the state's own fling behaviour and snaps to a character
+ *   when it settles; a slow release snaps straight away.
  */
+private fun Modifier.panOnHorizontalDrag(
+    state: androidx.compose.foundation.ScrollState,
+    flingBehavior: androidx.compose.foundation.gestures.FlingBehavior,
+    scope: kotlinx.coroutines.CoroutineScope,
+    slopPx: Float,
+    onPanActive: (Boolean) -> Unit = {},
+    onRelease: () -> Unit = {},
+): Modifier =
+    pointerInput(state, flingBehavior, slopPx) {
+        awaitEachGesture {
+            // One pointer only, and unconsumed: a gesture some other handler has already claimed
+            // (a second finger for zoom, the editor's own drawer pull) is none of our business.
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val pointerId = down.id
+            val tracker = androidx.compose.ui.input.pointer.util.VelocityTracker()
+            var travelX = 0f
+            var travelY = 0f
+            var locked = 0
+            var panning = false
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == pointerId }
+                // Released, lifted, or a second finger joined: hand the gesture back.
+                if (change == null || !change.pressed || event.changes.count { it.pressed } > 1) break
+                tracker.addPosition(change.uptimeMillis, change.position)
+                val delta = change.positionChange()
+                if (!panning) {
+                    // Only sideways travel commits, and only when it also leads: a tap, and a
+                    // drag that turns out to be vertical, never get here with anything consumed,
+                    // so the text field keeps both.
+                    travelX += delta.x
+                    travelY += delta.y
+                    locked = panDirectionLocked(travelX, travelY, slopPx)
+                    if (locked < 0) break
+                    if (locked > 0) {
+                        panning = true
+                        onPanActive(true)
+                    }
+                }
+                if (panning) {
+                    change.consume()
+                    state.dispatchRawDelta(-delta.x)
+                }
+            }
+            // The finger left while panning: speed flings, then the column snaps to a character.
+            if (panning) {
+                onPanActive(false)
+                val velocity = tracker.calculateVelocity().x
+                if (kotlin.math.abs(velocity) > HORIZONTAL_FLING_MIN_VELOCITY) {
+                    scope.launch {
+                        try {
+                            state.scroll(androidx.compose.foundation.MutatePriority.UserInput) {
+                                with(flingBehavior) { performFling(-velocity) }
+                            }
+                        } finally {
+                            onRelease()
+                        }
+                    }
+                } else {
+                    onRelease()
+                }
+            }
+        }
+    }
+
+/** Fling floor for a horizontal pan release, in px/s: below this the column snaps in place. */
+private const val HORIZONTAL_FLING_MIN_VELOCITY = 500f
+
+/**
+ * The end of Android's own text toolbar inside the editor: Copy, Paste, Cut and Select all
+ * from the system would sit directly above this editor's own selection bar, doubling every
+ * action. A toolbar that never shows and is never shown ends the ActionMode before it starts.
+ */
+private object NoSystemTextToolbar : TextToolbar {
+    override val status: TextToolbarStatus = TextToolbarStatus.Hidden
+    override fun showMenu(
+        rect: androidx.compose.ui.geometry.Rect,
+        onCopyRequested: (() -> Unit)?,
+        onPasteRequested: (() -> Unit)?,
+        onCutRequested: (() -> Unit)?,
+        onSelectAllRequested: (() -> Unit)?,
+    ) = Unit
+
+    override fun hide() = Unit
+}
+
 /**
  * Which horizontal offset a press settles on: the nearest whole character.
  *
@@ -4726,41 +5583,6 @@ internal fun snapScrollToCharacter(valuePx: Float, charWidthPx: Float): Int {
     if (charWidthPx <= 0f) return valuePx.roundToInt()
     return ((valuePx / charWidthPx).roundToInt() * charWidthPx).roundToInt()
 }
-
-private fun Modifier.panOnHorizontalDrag(
-    state: androidx.compose.foundation.ScrollState,
-    onRelease: () -> Unit = {},
-): Modifier =
-    pointerInput(state) {
-        awaitEachGesture {
-            // One pointer only, and unconsumed: a gesture some other handler has already claimed
-            // (a second finger for zoom, the editor's own drawer pull) is none of our business.
-            val down = awaitFirstDown(requireUnconsumed = false)
-            val pointerId = down.id
-            val slop = viewConfiguration.touchSlop
-            var travelled = 0f
-            var panning = false
-            while (true) {
-                val event = awaitPointerEvent(PointerEventPass.Initial)
-                val change = event.changes.firstOrNull { it.id == pointerId }
-                // Released, lifted, or a second finger joined: hand the gesture back.
-                if (change == null || !change.pressed || event.changes.count { it.pressed } > 1) break
-                val delta = change.positionChange()
-                if (!panning) {
-                    // Only sideways travel commits. A tap, and a drag that turns out to be vertical,
-                    // never get here with anything consumed, so the text field keeps both.
-                    travelled += delta.x
-                    if (kotlin.math.abs(travelled) > slop) panning = true
-                }
-                if (panning) {
-                    change.consume()
-                    state.dispatchRawDelta(-delta.x)
-                }
-            }
-            // The finger left while panning: the scroll settles here, so this is where it snaps.
-            if (panning) onRelease()
-        }
-    }
 
 /**
  * Pinching anywhere scales the editor's text. Two fingers only, and the event is read on the
@@ -4800,8 +5622,7 @@ private val CodeLineHeightRatio = CodeLineHeight.value / CodeFontSize.value
 /** How long typing has to stop before Auto save writes the buffer out. */
 private const val AUTOSAVE_DELAY_MS = 900L
 
-/** The floating bar a selection earns: wide enough for the two words plus the two glyphs. */
-private val SELECTION_BAR_WIDTH = 240.dp
+/** The floating bar a selection earns: height of the button row. */
 private val SELECTION_BAR_HEIGHT = 34.dp
 // The symbol-details line above the selection bar's buttons, when the selection is one word.
 private val SELECTION_BAR_DETAILS_HEIGHT = 20.dp
@@ -4810,48 +5631,55 @@ private const val MAX_OCCURRENCE_SPANS = 200
 // How much of a declaration the details line may quote before cutting it off.
 private const val SYMBOL_DETAILS_DECL_MAX = 48
 
+/** Fixed widths for the selection bar's buttons, in dp: each holds its full word at 12sp. */
+private const val SELECTION_CUT_WIDTH = 56
+private const val SELECTION_COPY_WIDTH = 64
+private const val SELECTION_PASTE_WIDTH = 68
+private const val SELECTION_SELECT_ALL_WIDTH = 96
+private const val SELECTION_COMMENT_WIDTH = 80
+private const val SELECTION_FORMAT_WIDTH = 72
+private const val SELECTION_MORE_WIDTH = 44
+
+/** Full-row width: every button plus the five 1 dp separators between them. */
+private val SELECTION_FULL_WIDTH_DP =
+    (SELECTION_CUT_WIDTH + SELECTION_COPY_WIDTH + SELECTION_PASTE_WIDTH +
+        SELECTION_SELECT_ALL_WIDTH + SELECTION_COMMENT_WIDTH + SELECTION_FORMAT_WIDTH + 5).dp
+
+/** Compact width: Cut, Copy, Paste, the overflow button and three separators. */
+private val SELECTION_COMPACT_WIDTH_DP =
+    (SELECTION_CUT_WIDTH + SELECTION_COPY_WIDTH + SELECTION_PASTE_WIDTH +
+        SELECTION_MORE_WIDTH + 3).dp
+
 /**
- * The four actions that reach for selected text: paste over it, stretch the selection to the whole
- * buffer, read what was selected, and the rest behind a menu. The bar is a fixed size so its
- * caller can clamp it into the viewport without measuring it, which is the same deal the
- * suggestion popup makes.
+ * The editor's own selection toolbar — the only one: Android's menu is switched off at the
+ * field. Cut, Copy, Paste, Select all, Comment, Format, each wide enough for its full word;
+ * past the screen minus 16 dp the last three move behind a ⋯ overflow menu rather than
+ * squeezing into initials.
  */
 @Composable
-/**
- * The bar that appears over selected text.
- *
- * Five actions in the order a reader reaches for them: Cut, Copy, Paste, Comment, Format. Cut and
- * Copy used to sit inside a `⋯` menu with Duplicate, which made the two actions every text editor
- * puts first the two hardest to reach — and there was no Cut at all, so the only way to remove
- * selected text was to copy it and hold backspace, which is a poor answer on a phone where the
- * backspace key is small.
- *
- * Format is last and in the accent colour because it is the one here that changes more than the
- * text: it is not undone by a second tap, and most selections do not want it. Select all, the
- * selection's own measurements and Duplicate stay in the overflow, where a deliberate reach finds
- * them.
- */
 private fun SelectionBar(
     onCut: () -> Unit,
     onCopy: () -> Unit,
     onPaste: () -> Unit,
+    onSelectAll: () -> Unit,
     onComment: () -> Unit,
     onFormat: () -> Unit,
-    onSelectAll: () -> Unit,
-    onInfo: () -> Unit,
-    onDuplicate: () -> Unit,
+    cutEnabled: Boolean = true,
+    copyEnabled: Boolean = true,
     pasteEnabled: Boolean = true,
     // The selected symbol's details — name, declaration, use count — shown as a header row
-    // when the selection is exactly one word. Null draws the button row alone, as before.
+    // when a long-pressed name declares something. Null draws the button row alone, as before.
     details: String? = null,
+    widthDp: androidx.compose.ui.unit.Dp = SELECTION_FULL_WIDTH_DP,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
     var menuOpen by remember { mutableStateOf(false) }
+    val compact = widthDp < SELECTION_FULL_WIDTH_DP
     Box(modifier) {
         Column(
             Modifier
-                .width(SELECTION_BAR_WIDTH)
+                .width(widthDp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(c.toolbarBg)
                 .border(1.dp, c.toolbarBorder, RoundedCornerShape(10.dp)),
@@ -4882,32 +5710,84 @@ private fun SelectionBar(
                 Modifier.height(SELECTION_BAR_HEIGHT),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-            SelectionBarLabel("Cut", Modifier.weight(1f), onCut)
-            SelectionBarSeparator()
-            SelectionBarLabel("Copy", Modifier.weight(1f), onCopy)
-            SelectionBarSeparator()
-            SelectionBarLabel("Paste", Modifier.weight(1f), onPaste, enabled = pasteEnabled)
-            SelectionBarSeparator()
-            SelectionBarLabel("Comment", Modifier.weight(1f), onComment)
-            SelectionBarSeparator()
-            SelectionBarLabel("Format", Modifier.weight(1f), onFormat, accent = true)
-            SelectionBarGlyph("⋯", "More actions") { menuOpen = true }
+                SelectionBarButton("Cut", SELECTION_CUT_WIDTH.dp, onCut, enabled = cutEnabled)
+                SelectionBarSeparator()
+                SelectionBarButton("Copy", SELECTION_COPY_WIDTH.dp, onCopy, enabled = copyEnabled)
+                SelectionBarSeparator()
+                SelectionBarButton(
+                    "Paste",
+                    SELECTION_PASTE_WIDTH.dp,
+                    onPaste,
+                    enabled = pasteEnabled,
+                )
+                if (!compact) {
+                    SelectionBarSeparator()
+                    SelectionBarButton("Select all", SELECTION_SELECT_ALL_WIDTH.dp, onSelectAll)
+                    SelectionBarSeparator()
+                    SelectionBarButton("Comment", SELECTION_COMMENT_WIDTH.dp, onComment)
+                    SelectionBarSeparator()
+                    SelectionBarButton(
+                        "Format",
+                        SELECTION_FORMAT_WIDTH.dp,
+                        onFormat,
+                        accent = true,
+                    )
+                } else {
+                    SelectionBarSeparator()
+                    SelectionBarGlyph("⋯", "More actions", SELECTION_MORE_WIDTH.dp) {
+                        menuOpen = true
+                    }
+                }
             }
         }
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(text = { Text("Copy", fontFamily = Sans) }, onClick = {
+            DropdownMenuItem(text = { Text("Select all", fontFamily = Sans) }, onClick = {
                 menuOpen = false
-                onCopy()
+                onSelectAll()
             })
             DropdownMenuItem(text = { Text("Comment", fontFamily = Sans) }, onClick = {
                 menuOpen = false
                 onComment()
             })
-            DropdownMenuItem(text = { Text("Duplicate", fontFamily = Sans) }, onClick = {
+            DropdownMenuItem(text = { Text("Format", fontFamily = Sans) }, onClick = {
                 menuOpen = false
-                onDuplicate()
+                onFormat()
             })
         }
+    }
+}
+
+/** One fixed-width button with its full word: 56 dp at the narrowest, never an initial. */
+@Composable
+private fun RowScope.SelectionBarButton(
+    label: String,
+    width: androidx.compose.ui.unit.Dp,
+    onClick: () -> Unit,
+    accent: Boolean = false,
+    enabled: Boolean = true,
+) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .fillMaxHeight()
+            .width(width)
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = (if (accent) c.toolbarAccent else c.text).let {
+                if (enabled) it else it.copy(alpha = 0.5f)
+            },
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            fontWeight = if (accent) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            // A backstop that never fires at the default text size: the widths above hold
+            // every word whole, and only a enlarged system font may outgrow them.
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -4923,41 +5803,17 @@ private fun RowScope.SelectionBarSeparator() {
 }
 
 @Composable
-private fun RowScope.SelectionBarLabel(
+private fun RowScope.SelectionBarGlyph(
+    glyph: String,
     label: String,
-    modifier: Modifier,
+    width: androidx.compose.ui.unit.Dp,
     onClick: () -> Unit,
-    accent: Boolean = false,
-    enabled: Boolean = true,
 ) {
     val c = LocalPageColors.current
     Box(
-        modifier
-            .fillMaxHeight()
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = (if (accent) c.toolbarAccent else c.text).let {
-                if (enabled) it else it.copy(alpha = 0.5f)
-            },
-            fontSize = 12.sp,
-            fontFamily = Sans,
-            fontWeight = if (accent) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 11.dp),
-        )
-    }
-}
-
-@Composable
-private fun RowScope.SelectionBarGlyph(glyph: String, label: String, onClick: () -> Unit) {
-    val c = LocalPageColors.current
-    Box(
         Modifier
-            .size(SELECTION_BAR_HEIGHT)
+            .fillMaxHeight()
+            .width(width)
             .clickable(onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
@@ -5254,11 +6110,15 @@ internal fun pluralProblems(count: Int, noun: String): String =
  * is gone and a badge on the bar would be a fourth thing to look at.
  */
 @Composable
-private fun IdeNav(active: String, onSelect: (String) -> Unit) {
+private fun IdeNav(
+    active: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val c = LocalPageColors.current
 
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .background(c.panel)
             // Spec 4.2: a 1 dp top border, no pill or indicator behind the active item.

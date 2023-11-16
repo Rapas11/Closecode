@@ -14,6 +14,51 @@ import org.junit.Test
  * stands down where there is none rather than failing.
  */
 class TerminalTest {
+    @Test
+    fun aStaleCompletionStartNeverSlicesPastTheLine() {
+        // The crash: a completion round computed at offset 3, then the line emptied, then Tab.
+        val applied = applyCompletion("", 0, 3, "src/")
+        assertEquals("src/", applied.text)
+        assertEquals(4, applied.selection.start)
+    }
+
+    @Test
+    fun completionReplacesTheWordAndParksTheCaretPastIt() {
+        val applied = applyCompletion("cd sr", 5, 3, "src/")
+        assertEquals("cd src/", applied.text)
+        assertEquals(7, applied.selection.start)
+    }
+
+    @Test
+    fun completionClampsACursorPastTheEnd() {
+        val applied = applyCompletion("ls", 99, 0, "ls -la")
+        assertEquals("ls -la", applied.text)
+    }
+
+    @Test
+    fun followHoldsWithin24dpAndLetsGoBeyond() {
+        // Last line ends exactly at the viewport end: zero away from the bottom.
+        assertEquals(0f, distanceToBottomPx(10, 9, 880, 880))
+        // A few px of overscroll still counts as the bottom.
+        assertEquals(0f, distanceToBottomPx(10, 9, 900, 880))
+        // The last line is not even composed: unbounded, follow lets go.
+        assertEquals(Float.MAX_VALUE, distanceToBottomPx(10, 6, 660, 880))
+        // An empty transcript is the bottom.
+        assertEquals(0f, distanceToBottomPx(0, -1, 0, 880))
+    }
+
+    @Test
+    fun outputKeepsTheLastFiveThousandLines() {
+        assertEquals(5_000, TERMINAL_MAX_LINES)
+        val lines = ArrayList<String>()
+        var dropped = 0
+        repeat(5_003) { dropped += lines.appendTerminalLine("l$it") }
+        assertEquals(5_000, lines.size)
+        assertEquals(3, dropped)
+        assertEquals("l3", lines.first())
+        assertEquals("l5002", lines.last())
+    }
+
 
     @Test
     fun aCommandIsWrittenWithTheMarkerThatCarriesItsStatus() {

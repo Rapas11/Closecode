@@ -591,7 +591,8 @@ internal fun BuildLogScreen(
     onBack: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    androidx.activity.compose.BackHandler(onBack = onBack)
+    // No BackHandler here: the IDE's single ordered chain owns Back (buildLogOpen branch),
+    // so a competing handler can never steal it out of order.
     Column(Modifier.fillMaxSize().background(c.bg)) {
         PanelBackBar("Build log", onBack)
         if (errors.isEmpty() && warnings.isEmpty()) {

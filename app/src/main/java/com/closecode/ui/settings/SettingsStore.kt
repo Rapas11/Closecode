@@ -18,6 +18,7 @@ enum class BoolSetting {
     BRACKET_GUIDES,
     WORD_WRAP,
     RAINBOW_BRACKETS,
+    FRAME_STATS,
 }
 
 /** Which choice-based field of [Settings] a settings row edits. */
@@ -67,6 +68,7 @@ data class Settings(
     val bracketGuides: Boolean = true,
     val wordWrap: Boolean = false,
     val rainbowBrackets: Boolean = false,
+    val frameStats: Boolean = false,
     val theme: String = "System",
     val fontSize: Int = 12,
     val tabSize: Int = 2,
@@ -85,6 +87,7 @@ data class Settings(
         BoolSetting.BRACKET_GUIDES -> bracketGuides
         BoolSetting.WORD_WRAP -> wordWrap
         BoolSetting.RAINBOW_BRACKETS -> rainbowBrackets
+        BoolSetting.FRAME_STATS -> frameStats
     }
 
     fun withFlag(key: BoolSetting, value: Boolean): Settings = when (key) {
@@ -99,6 +102,7 @@ data class Settings(
         BoolSetting.BRACKET_GUIDES -> copy(bracketGuides = value)
         BoolSetting.WORD_WRAP -> copy(wordWrap = value)
         BoolSetting.RAINBOW_BRACKETS -> copy(rainbowBrackets = value)
+        BoolSetting.FRAME_STATS -> copy(frameStats = value)
     }
 
     fun option(key: OptionSetting): String = when (key) {
@@ -161,6 +165,7 @@ class SettingsStore(private val kv: KeyValueStore) {
         bracketGuides = kv.getBoolean(KEY_BRACKET_GUIDES, Settings().bracketGuides),
         wordWrap = kv.getBoolean(KEY_WORD_WRAP, Settings().wordWrap),
         rainbowBrackets = kv.getBoolean(KEY_RAINBOW_BRACKETS, Settings().rainbowBrackets),
+        frameStats = kv.getBoolean(KEY_FRAME_STATS, Settings().frameStats),
         theme = kv.getString(KEY_THEME, Settings().theme)
             ?.takeIf { it in ThemeChoices }
             ?: Settings().theme,
@@ -192,6 +197,7 @@ class SettingsStore(private val kv: KeyValueStore) {
         kv.putBoolean(KEY_BRACKET_GUIDES, settings.bracketGuides)
         kv.putBoolean(KEY_WORD_WRAP, settings.wordWrap)
         kv.putBoolean(KEY_RAINBOW_BRACKETS, settings.rainbowBrackets)
+        kv.putBoolean(KEY_FRAME_STATS, settings.frameStats)
         kv.putString(KEY_THEME, settings.theme)
         kv.putInt(KEY_FONT_SIZE, settings.fontSize)
         kv.putInt(KEY_TAB_SIZE, settings.tabSize)
@@ -212,6 +218,7 @@ class SettingsStore(private val kv: KeyValueStore) {
         const val KEY_BRACKET_GUIDES = "bracket_guides"
         const val KEY_WORD_WRAP = "word_wrap"
         const val KEY_RAINBOW_BRACKETS = "rainbow_brackets"
+        const val KEY_FRAME_STATS = "frame_stats"
         const val KEY_THEME = "theme"
         const val KEY_FONT_SIZE = "font_size"
         const val KEY_TAB_SIZE = "tab_size"

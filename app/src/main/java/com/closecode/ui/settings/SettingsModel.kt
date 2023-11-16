@@ -199,6 +199,11 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                         BoolSetting.RAINBOW_BRACKETS,
                     ),
                     Row.Toggle("Bracket guides", "Draw a faint rule down each block's own indent level.", BoolSetting.BRACKET_GUIDES),
+                    Row.Toggle(
+                        "Frame stats",
+                        "Show milliseconds per frame over the editor while scrolling.",
+                        BoolSetting.FRAME_STATS,
+                    ),
                 ),
             ),
             Group(
