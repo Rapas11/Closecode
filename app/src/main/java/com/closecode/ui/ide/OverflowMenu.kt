@@ -1,0 +1,63 @@
+package com.closecode.ui.ide
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.closecode.ui.theme.LocalPageColors
+import com.closecode.ui.theme.Sans
+
+data class OverflowAction(val label: String, val glyph: String)
+
+@Composable
+fun OverflowMenu(
+    actions: List<OverflowAction>,
+    onPick: (OverflowAction) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clickable(
+                interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource(),
+                indication = null,
+                onClick = onDismiss,
+            )
+    ) {
+        Column(
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 66.dp, end = 8.dp)
+                .width(190.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(c.panel2)
+                .border(1.dp, c.ln, RoundedCornerShape(12.dp))
+        ) {
+            actions.forEach { action ->
+                Text(
+                    text = action.label,
+                    color = c.tx,
+                    fontSize = 13.sp,
+                    fontFamily = Sans,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPick(action) }
+                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                )
+            }
+        }
+    }
+}
