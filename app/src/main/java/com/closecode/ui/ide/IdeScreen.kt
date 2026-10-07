@@ -18,6 +18,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -93,6 +94,13 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.provider.OpenableColumns
+import androidx.core.content.FileProvider
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -119,6 +127,8 @@ import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.project.ProjectRecord
 import com.closecode.ui.project.ProjectRepository
+import com.closecode.ui.project.ProjectPathException
+import com.closecode.ui.project.ProjectSafety
 import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.model.projectTree
 import com.closecode.ui.model.recentFiles
@@ -144,6 +154,7 @@ fun IdeScreen(
     // The one place the settings are read from for this screen: saving and the editor both honour
     // them, and reading them once keeps a row changed on the settings screen in force immediately.
     val settings = LocalSettings.current
+    val context = LocalContext.current
     var tabs by remember { mutableStateOf(emptyList<ProjectFile>()) }
     var active by remember { mutableStateOf("") }
     var treeVersion by remember { mutableIntStateOf(0) }
@@ -173,8 +184,17 @@ fun IdeScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var findOpen by remember { mutableStateOf(false) }
     var moreOpen by remember { mutableStateOf(false) }
-    var namingFile by remember { mutableStateOf(false) }
-    var namingFolder by remember { mutableStateOf(false) }
+    // Every one-field tree operation lands here: creating, renaming, moving and copying all ask
+    // for a name first, so there is one place a name is asked for and one dialog that asks.
+    var prompt by remember { mutableStateOf<TreePrompt?>(null) }
+    // The row a delete is waiting to be confirmed on. Nothing goes on the tap that offered it:
+    // there is no undo in this editor, so the second tap is the one that counts.
+    var confirmDelete by remember { mutableStateOf<ProjectFile?>(null) }
+    // The folder a system picker should drop its contents into, and the pick itself. The picker's
+    // callback only pairs the two up; the read and the write happen in the effect below, which
+    // runs with the composition that is actually on screen.
+    var importFolder by remember { mutableStateOf<String?>(null) }
+    val pendingImport = remember { mutableStateOf<Pair<String, Uri>?>(null) }
     // The token at the moment a clone was asked for, rather than a live binding to the panel's
     // own copy: the picker only opens on a deliberate tap, so a token read once and then handed
     // over is exactly what it needs, and it survives the sheet outliving the drawer's state.
@@ -437,6 +457,192 @@ fun IdeScreen(
         }.onFailure { toast = it.message ?: "Could not create $leaf" }
     }
 
+    /**
+     * Where a renamed or moved entry leaves the editor. Tabs hold the path, buffers and dirty flags
+     * are keyed by the name, and the drawer highlights by path — all three have to follow the file,
+     * or the tab keeps drawing a path that no longer exists and the next save writes to the old
+     * place.
+     */
+    fun retargetPath(from: ProjectFile, to: ProjectFile) {
+        tabs = tabs.map { if (it.path == from.path) to else it }
+        if (from.name != to.name) {
+            liveBuffers.remove(from.name)?.let { liveBuffers[to.name] = it }
+            diskContents.remove(from.name)?.let { diskContents[to.name] = it }
+            dirtyTabs.remove(from.name)?.let { dirtyTabs[to.name] = it }
+            if (active == from.name) active = to.name
+        }
+        if (selectedPath == from.path) selectedPath = to.path
+    }
+
+    /**
+     * Whether some other file already goes by [name]. Buffers are keyed by name, so a rename that
+     * lands on one does not overwrite it — it makes two tabs draw the same text. Refused here,
+     * before anything on disk moves.
+     */
+    fun nameIsHeldByAnother(name: String, path: String): Boolean {
+        val holders = tabs.filter { it.name == name }
+        if (holders.any { it.path != path }) return true
+        return holders.isEmpty() && liveBuffers.containsKey(name)
+    }
+
+    fun renameEntry(target: ProjectFile, newName: String) {
+        if (nameIsHeldByAnother(newName, target.path)) {
+            toast = "A file called $newName is already open"
+            return
+        }
+        runCatching { repository.renamePath(slug, target.path, newName) }
+            .onSuccess { landed ->
+                val isFolder = target.kind == FileKind.Folder
+                retargetPath(target, repository.entryFor(slug, landed, isFolder))
+                refreshTree()
+                toast = "Renamed to $newName"
+            }
+            .onFailure { toast = it.message ?: "Could not rename ${target.name}" }
+    }
+
+    fun transferEntry(target: ProjectFile, destination: String, copy: Boolean) {
+        if (!copy && target.kind != FileKind.Folder) {
+            val leaf = destination.trim().removePrefix("/").substringAfterLast('/')
+            if (nameIsHeldByAnother(leaf, target.path)) {
+                toast = "A file called $leaf is already open"
+                return
+            }
+        }
+        runCatching {
+            if (copy) repository.copyPath(slug, target.path, destination)
+            else repository.movePath(slug, target.path, destination)
+        }.onSuccess { landed ->
+            if (!copy) {
+                val isFolder = target.kind == FileKind.Folder
+                retargetPath(target, repository.entryFor(slug, landed, isFolder))
+            }
+            refreshTree()
+            toast = (if (copy) "Copied to " else "Moved to ") + landed
+        }.onFailure {
+            toast = it.message ?: "Could not ${if (copy) "copy" else "move"} ${target.name}"
+        }
+    }
+
+    fun deleteEntry(target: ProjectFile) {
+        val prefix = "${target.path}/"
+        runCatching { repository.deletePath(slug, target.path) }
+            .onSuccess {
+                // A deleted file's tab, buffer and dirty flag go with it. Left behind, the strip
+                // keeps drawing a file that is no longer on disk and the next save recreates it.
+                fun inside(file: ProjectFile) = file.path == target.path || file.path.startsWith(prefix)
+                val gone = tabs.filter(::inside)
+                gone.forEach { file ->
+                    liveBuffers.remove(file.name)
+                    diskContents.remove(file.name)
+                    dirtyTabs.remove(file.name)
+                }
+                tabs = tabs.filterNot(::inside)
+                if (gone.any { it.name == active }) active = tabs.lastOrNull()?.name.orEmpty()
+                if (selectedPath?.let { it == target.path || it.startsWith(prefix) } == true) {
+                    selectedPath = tabs.firstOrNull { it.name == active }?.path
+                }
+                refreshTree()
+                toast = "Deleted ${target.name}"
+            }
+            .onFailure { toast = it.message ?: "Could not delete ${target.name}" }
+    }
+
+    /**
+     * "Reveal in file manager" hands the file to whatever app asks for it. Projects live in this
+     * app's private storage, which no file manager can open, so there is no path another app could
+     * be pointed at — a FileProvider URI is the honest version of the same promise, and it grants
+     * this one file and nothing around it. Folders are not offered one: a content URI for a
+     * directory has no receiver.
+     */
+    fun shareEntry(target: ProjectFile) {
+        runCatching {
+            val file = ProjectSafety.resolveInProject(repository.projectDir(slug), target.path)
+            if (!file.isFile) throw ProjectPathException("Not a file: ${target.path}")
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = context.contentResolver.getType(uri) ?: "*/*"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(send, "Share ${target.name}"))
+        }.onFailure { toast = it.message ?: "Could not share ${target.name}" }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val folder = importFolder
+        importFolder = null
+        if (uri != null && folder != null) pendingImport.value = folder to uri
+    }
+
+    // The picker's callback only pairs a folder with a URI. Reading it, deciding it is text and
+    // writing it into the project all happen here, where the composition on screen — and so the
+    // tree, the tabs and the toast — is the current one.
+    LaunchedEffect(pendingImport.value) {
+        val pending = pendingImport.value ?: return@LaunchedEffect
+        pendingImport.value = null
+        val (folder, uri) = pending
+        val name = documentName(context, uri)?.substringAfterLast('/') ?: "imported.txt"
+        val declared = documentSize(context, uri)
+        if (declared != null && declared > MAX_IMPORT_BYTES) {
+            toast = "$name is too large to import"
+            return@LaunchedEffect
+        }
+        val bytes = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        }.getOrNull()
+        if (bytes == null) {
+            toast = "Could not read $name"
+            return@LaunchedEffect
+        }
+        if (bytes.size > MAX_IMPORT_BYTES) {
+            toast = "$name is too large to import"
+            return@LaunchedEffect
+        }
+        // There is no undo here, and a binary decoded as UTF-8 is garbage the moment it is
+        // written, so a nul byte in the first page is the end of the conversation.
+        if (bytes.asSequence().take(MAX_IMPORT_PROBE).any { it == 0.toByte() }) {
+            toast = "$name is not a text file"
+            return@LaunchedEffect
+        }
+        val leaf = uniqueLeafIn(folder, name) { candidate -> diskTree.any { it.path == candidate } }
+        val relative = if (folder.isEmpty()) leaf else "$folder/$leaf"
+        runCatching { repository.createFile(slug, relative, bytes.toString(Charsets.UTF_8)) }
+            .onSuccess {
+                ancestorFoldersOf(relative).forEach { collapsedFolders = collapsedFolders - it }
+                refreshTree()
+                openFile(repository.entryFor(slug, relative, isFolder = false))
+                toast = "Imported $leaf"
+            }
+            .onFailure { toast = it.message ?: "Could not import $name" }
+    }
+
+    /** Every long-press action, in one place: the row is selected first, so creation lands in it. */
+    fun onTreeAction(action: TreeAction, file: ProjectFile) {
+        when (action) {
+            TreeAction.NEW_FILE -> {
+                selectedPath = file.path
+                prompt = TreePrompt.New(isFolder = false)
+            }
+
+            TreeAction.NEW_FOLDER -> {
+                selectedPath = file.path
+                prompt = TreePrompt.New(isFolder = true)
+            }
+
+            TreeAction.IMPORT -> {
+                selectedPath = file.path
+                importFolder = file.path
+                importLauncher.launch(ImportMimeTypes)
+            }
+
+            TreeAction.RENAME -> prompt = TreePrompt.Rename(file)
+            TreeAction.MOVE -> prompt = TreePrompt.Transfer(file, copy = false)
+            TreeAction.COPY -> prompt = TreePrompt.Transfer(file, copy = true)
+            TreeAction.SHARE -> shareEntry(file)
+            TreeAction.DELETE -> confirmDelete = file
+        }
+    }
+
     // Spec 6.9: the status bar counts the whole project. Debounced harder than the per-file pass
     // and capped by file count, because this re-runs on every keystroke in any file. The key is the
     // revision counter, not the maps: a Map key here meant deep-copying the whole text of every
@@ -513,12 +719,12 @@ fun IdeScreen(
     // there is nothing left to close. Composed after the exit handler above so it wins while armed.
     BackHandler(
         enabled = moreOpen || findOpen || searchOpen || menuOpen ||
-            namingFile || namingFolder || explorerOpen || addBlockOpen,
+            prompt != null || confirmDelete != null || explorerOpen || addBlockOpen,
     ) {
         when {
             addBlockOpen -> addBlockOpen = false
-            namingFile -> namingFile = false
-            namingFolder -> namingFolder = false
+            prompt != null -> prompt = null
+            confirmDelete != null -> confirmDelete = null
             moreOpen -> moreOpen = false
             findOpen -> {
                 findOpen = false
@@ -661,8 +867,9 @@ fun IdeScreen(
                                 tab = explorerTab,
                                 gitRevision = gitRevision,
                                 onTab = { explorerTab = it },
-                                onCreateFile = { namingFile = true },
-                                onCreateFolder = { namingFolder = true },
+                                onCreateFile = { prompt = TreePrompt.New(isFolder = false) },
+                                onCreateFolder = { prompt = TreePrompt.New(isFolder = true) },
+                                onAction = { action, file -> onTreeAction(action, file) },
                                 onSelect = { file ->
                                     // The row is the working point for the next creation whether it
                                     // is a folder or a file, so it is recorded either way; only a
@@ -954,27 +1161,57 @@ fun IdeScreen(
             )
         }
 
-        if (namingFile) {
-            IdeNameDialog(
-                title = "New file",
-                hint = "MainActivity.kt",
+        when (val current = prompt) {
+            null -> Unit
+            is TreePrompt.New -> IdeNameDialog(
+                title = if (current.isFolder) "New folder" else "New file",
+                hint = if (current.isFolder) "feature" else "MainActivity.kt",
                 onCreate = {
-                    namingFile = false
-                    createEntry(isFolder = false, rawName = it)
+                    prompt = null
+                    createEntry(isFolder = current.isFolder, rawName = it)
                 },
-                onDismiss = { namingFile = false },
+                onDismiss = { prompt = null },
+            )
+
+            is TreePrompt.Rename -> IdeNameDialog(
+                title = "Rename",
+                hint = current.target.name,
+                initial = current.target.name,
+                confirmLabel = "Rename",
+                onCreate = {
+                    prompt = null
+                    renameEntry(current.target, it)
+                },
+                onDismiss = { prompt = null },
+            )
+
+            is TreePrompt.Transfer -> IdeNameDialog(
+                title = if (current.copy) "Copy to" else "Move to",
+                hint = "app/src/main/java/Main.kt",
+                initial = current.target.path,
+                confirmLabel = if (current.copy) "Copy" else "Move",
+                onCreate = {
+                    prompt = null
+                    transferEntry(current.target, it, current.copy)
+                },
+                onDismiss = { prompt = null },
             )
         }
 
-        if (namingFolder) {
-            IdeNameDialog(
-                title = "New folder",
-                hint = "feature",
-                onCreate = {
-                    namingFolder = false
-                    createEntry(isFolder = true, rawName = it)
+        confirmDelete?.let { target ->
+            IdeConfirmDialog(
+                title = "Delete ${target.name}?",
+                message = if (target.kind == FileKind.Folder) {
+                    "Everything inside ${target.path} goes with it. This cannot be undone."
+                } else {
+                    "${target.path} is removed. This cannot be undone."
                 },
-                onDismiss = { namingFolder = false },
+                confirmLabel = "Delete",
+                onConfirm = {
+                    confirmDelete = null
+                    deleteEntry(target)
+                },
+                onDismiss = { confirmDelete = null },
             )
         }
 
@@ -1189,6 +1426,72 @@ internal fun ancestorFoldersOf(relative: String): List<String> =
         .drop(1)
 
 /**
+ * The one field a tree operation asks for before it happens. Creating starts blank, renaming
+ * starts on the leaf and moving starts on the whole path — the same dialog three ways, because
+ * they are three ways of typing a name.
+ */
+private sealed interface TreePrompt {
+    data class New(val isFolder: Boolean) : TreePrompt
+    data class Rename(val target: ProjectFile) : TreePrompt
+    data class Transfer(val target: ProjectFile, val copy: Boolean) : TreePrompt
+}
+
+/** What the import picker is offered. Narrow, because "is this text?" is only answerable after. */
+private val ImportMimeTypes = arrayOf(
+    "text/*",
+    "application/json",
+    "application/xml",
+    "application/javascript",
+    "application/octet-stream",
+)
+
+/** Matches the editor's own read ceiling: a file this app will not open is not one it imports. */
+private const val MAX_IMPORT_BYTES = 8 * 1024 * 1024
+
+/** How much of a pick is inspected before deciding it is not text. One page is enough. */
+private const val MAX_IMPORT_PROBE = 8 * 1024
+
+/**
+ * The name a picker gave the file, if it gave one. The display name is the only reliable source:
+ * `uri.lastPathSegment` is a document id on most providers, not something anybody would recognise.
+ */
+private fun documentName(context: Context, uri: Uri): String? = runCatching {
+    context.contentResolver
+        .query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+        ?.use { cursor ->
+            if (!cursor.moveToFirst()) {
+                null
+            } else {
+                cursor.getString(cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME))
+            }
+        }
+}.getOrNull()
+
+/** The size the provider claims, so an oversized pick is refused before it is read into memory. */
+private fun documentSize(context: Context, uri: Uri): Long? = runCatching {
+    context.contentResolver
+        .query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)
+        ?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
+        }
+}.getOrNull()
+
+/**
+ * A name that is not already used in [folder]. An import never overwrites: there is no undo in
+ * this editor, so landing on an existing file would destroy it without anything to bring it back.
+ */
+internal fun uniqueLeafIn(folder: String, wanted: String, taken: (String) -> Boolean): String {
+    fun at(leaf: String) = if (folder.isEmpty()) leaf else "$folder/$leaf"
+    if (!taken(at(wanted))) return wanted
+    val dot = wanted.lastIndexOf('.')
+    val base = if (dot > 0) wanted.substring(0, dot) else wanted
+    val ext = if (dot > 0) wanted.substring(dot) else ""
+    var attempt = 2
+    while (taken(at("$base$attempt$ext"))) attempt++
+    return "$base$attempt$ext"
+}
+
+/**
  * The tab strip's cap. The active tab and any tab with unsaved changes are never dropped, so the
  * cap can never throw away the file the user is in or the file they have not saved yet; when
  * something has to give it is the oldest tab that is neither, because a strip that keeps its
@@ -1345,6 +1648,9 @@ private fun IdeExplorer(
     onCreateFile: () -> Unit,
     onCreateFolder: () -> Unit,
     onSelect: (ProjectFile) -> Unit,
+    // The long-press menu. It is carried up because every one of its actions needs the repository,
+    // the open tabs or a dialog, and the drawer has none of those.
+    onAction: (TreeAction, ProjectFile) -> Unit,
     // Carried through to the GitHub tab, which owns the token: it reports the moment a clone
     // should start and the screen shows the picker, since only the screen has full-screen room
     // for it.
@@ -1486,6 +1792,8 @@ private fun IdeExplorer(
                         // the place a new file lands are the same gesture, so the screen that owns
                         // the collapsed set decides which one happened.
                         onClick = { onSelect(file) },
+                        actions = actionsForTree(file),
+                        onAction = { action -> onAction(action, file) },
                     )
                 }
             }
@@ -1597,6 +1905,45 @@ internal fun SectionLabel(text: String) {
     )
 }
 
+/**
+ * What the drawer's long-press menu can do to a row. The label carries the action rather than a
+ * position in a list, so a folder can offer "New file" and a file can offer "Reveal in file
+ * manager" without either one having to remember where it sits.
+ */
+internal enum class TreeAction(val label: String) {
+    NEW_FILE("New file"),
+    NEW_FOLDER("New folder"),
+    RENAME("Rename"),
+    MOVE("Move to…"),
+    COPY("Copy to…"),
+    IMPORT("Import file…"),
+    SHARE("Reveal in file manager"),
+    DELETE("Delete"),
+}
+
+/** The menu a row offers. A folder is where new things go; a file is the thing itself. */
+internal fun actionsForTree(file: ProjectFile): List<TreeAction> =
+    if (file.kind == FileKind.Folder) {
+        listOf(
+            TreeAction.NEW_FILE,
+            TreeAction.NEW_FOLDER,
+            TreeAction.RENAME,
+            TreeAction.MOVE,
+            TreeAction.COPY,
+            TreeAction.IMPORT,
+            TreeAction.DELETE,
+        )
+    } else {
+        listOf(
+            TreeAction.RENAME,
+            TreeAction.MOVE,
+            TreeAction.COPY,
+            TreeAction.SHARE,
+            TreeAction.DELETE,
+        )
+    }
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun TreeRow(
     label: String,
@@ -1606,36 +1953,64 @@ private fun TreeRow(
     glyphColor: Color,
     active: Boolean,
     onClick: () -> Unit,
+    actions: List<TreeAction> = emptyList(),
+    onAction: (TreeAction) -> Unit = {},
 ) {
     val c = LocalPageColors.current
+    var menuOpen by remember { mutableStateOf(false) }
 
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 1.dp)
-            .height(34.dp)
-            .clip(RoundedCornerShape(7.dp))
-            .background(if (active) c.selection else Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(start = 9.dp + 17.dp * depth),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = glyph,
-            color = glyphColor,
-            fontSize = 11.sp,
-            fontFamily = Mono,
-            modifier = Modifier.padding(end = 8.dp),
-        )
-        Text(
-            text = label,
-            color = if (active) c.tx else c.tx.copy(alpha = 0.86f),
-            fontSize = 13.sp,
-            fontFamily = Sans,
-            fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+    Box {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 1.dp)
+                .height(34.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(if (active) c.selection else Color.Transparent)
+                .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
+                .padding(start = 9.dp + 17.dp * depth),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = glyph,
+                color = glyphColor,
+                fontSize = 11.sp,
+                fontFamily = Mono,
+                modifier = Modifier.padding(end = 8.dp),
+            )
+            Text(
+                text = label,
+                color = if (active) c.tx else c.tx.copy(alpha = 0.86f),
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        if (actions.isNotEmpty()) {
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+            ) {
+                actions.forEach { action ->
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = action.label,
+                                fontFamily = Sans,
+                                color = if (action == TreeAction.DELETE) c.red else c.tx,
+                            )
+                        },
+                        onClick = {
+                            menuOpen = false
+                            onAction(action)
+                        },
+                    )
+                }
+            }
+        }
     }
 }
 

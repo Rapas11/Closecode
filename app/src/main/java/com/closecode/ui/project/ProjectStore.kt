@@ -90,6 +90,70 @@ class ProjectStore(context: Context) {
     fun entryFor(slug: String, relative: String, isFolder: Boolean): ProjectFile =
         projectEntry(relative, isFolder)
 
+    /**
+     * Renames the leaf of [relative], keeping it in its own folder. Returns the new path, because
+     * every caller — the tree, the tab strip, the open buffer — has to be told where it went.
+     */
+    fun renamePath(slug: String, relative: String, newName: String): String {
+        val name = newName.trim()
+        if (name.isEmpty() || name == "." || name == ".." || '/' in name) {
+            throw ProjectPathException("That is not a name.")
+        }
+        val parent = relative.substringBeforeLast('/', "")
+        return movePath(slug, relative, if (parent.isEmpty()) name else "$parent/$name")
+    }
+
+    /**
+     * Moves [relative] to [destination], a project-relative path, and returns where it landed.
+     * Rename and move are one call on the filesystem — a rename edits the last segment of a path
+     * and a move edits the rest of it — so they are one function here too.
+     */
+    fun movePath(slug: String, relative: String, destination: String): String {
+        val source = resolveExisting(slug, relative)
+        val target = checkedDestination(slug, relative, destination)
+        if (!source.renameTo(target.first)) throw ProjectPathException("Could not move $relative")
+        return target.second
+    }
+
+    /** Copies [relative] to [destination], a project-relative path, and returns where the copy is. */
+    fun copyPath(slug: String, relative: String, destination: String): String {
+        val source = resolveExisting(slug, relative)
+        val (target, landed) = checkedDestination(slug, relative, destination)
+        if (source.isDirectory) {
+            source.copyRecursively(target, overwrite = false)
+        } else {
+            source.copyTo(target, overwrite = false)
+        }
+        return landed
+    }
+
+    private fun resolveExisting(slug: String, relative: String): File {
+        val file = ProjectSafety.resolveInProject(projectDir(slug), relative)
+        ProjectSafety.ensureWritable(file)
+        if (!file.exists()) throw ProjectPathException("Not found: $relative")
+        return file
+    }
+
+    /**
+     * Resolves and vetoes a destination before anything is written. Every one of these is a way to
+     * lose data by accident: landing on top of a file that already exists, escaping the project, or
+     * copying a folder into a descendant of itself — which never terminates.
+     */
+    private fun checkedDestination(slug: String, relative: String, destination: String): Pair<File, String> {
+        val target = destination.trim().removePrefix("/")
+        if (target.isEmpty()) throw ProjectPathException("That is not a path.")
+        if (target == relative) throw ProjectPathException("That is the same place.")
+        val targetFile = ProjectSafety.resolveInProject(projectDir(slug), target)
+        ProjectSafety.ensureWritable(targetFile)
+        if (targetFile.exists()) throw ProjectPathException("Already exists: $target")
+        val source = ProjectSafety.resolveInProject(projectDir(slug), relative)
+        if (targetFile.canonicalPath.startsWith(source.canonicalPath + File.separator)) {
+            throw ProjectPathException("A folder cannot contain itself.")
+        }
+        targetFile.parentFile?.mkdirs()
+        return targetFile to target
+    }
+
     private fun walk(dir: File, into: MutableList<ProjectFile>, prefix: String = "") {
         val children = dir.listFiles()?.sortedWith(
             compareByDescending<File> { it.isDirectory }.thenBy { it.name.lowercase() }

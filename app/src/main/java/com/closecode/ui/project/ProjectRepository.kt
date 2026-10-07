@@ -157,6 +157,18 @@ class ProjectRepository(context: Context) {
 
     fun deletePath(slug: String, relative: String) = store.deletePath(slug, relative)
 
+    /** Renames the leaf of [relative]. Returns the new path so callers can follow the file. */
+    fun renamePath(slug: String, relative: String, newName: String): String =
+        store.renamePath(slug, relative, newName)
+
+    /** Moves [relative] to a project-relative [destination]. Returns where it landed. */
+    fun movePath(slug: String, relative: String, destination: String): String =
+        store.movePath(slug, relative, destination)
+
+    /** Copies [relative] to a project-relative [destination]. Returns where the copy is. */
+    fun copyPath(slug: String, relative: String, destination: String): String =
+        store.copyPath(slug, relative, destination)
+
     fun tree(slug: String): List<ProjectFile> = store.readTree(slug)
 
     /** The record for a path just created, without walking the tree to rediscover it. */

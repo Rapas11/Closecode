@@ -369,6 +369,10 @@ fun IdeAddBlockSheet(
 /**
  * A one-field prompt for naming a new file or folder. Kept as its own dialog rather than a sheet
  * because it is answered once and then gets out of the way.
+ *
+ * [initial] and [confirmLabel] are what let the same dialog rename and move: creating starts blank
+ * with "Create", renaming starts on the leaf with "Rename", and moving starts on the whole path
+ * with "Move". One field, one set of keys, one thing to get right.
  */
 @Composable
 fun IdeNameDialog(
@@ -376,9 +380,15 @@ fun IdeNameDialog(
     hint: String,
     onCreate: (String) -> Unit,
     onDismiss: () -> Unit,
+    initial: String = "",
+    confirmLabel: String = "Create",
 ) {
     val c = LocalPageColors.current
-    val value = remember { mutableStateOf("") }
+    // Keyed on the value it starts with: a dialog that swaps one target for another without
+    // leaving composition would otherwise keep the previous name in the field.
+    val value = remember(initial) { mutableStateOf(initial) }
+    val trimmed = value.value.trim()
+    val changed = trimmed.isNotEmpty() && trimmed != initial
 
     Box(
         Modifier
@@ -450,10 +460,80 @@ fun IdeNameDialog(
             ) {
                 SheetButton(label = "Cancel", fill = false, onClick = onDismiss)
                 SheetButton(
-                    label = "Create",
+                    label = confirmLabel,
                     fill = true,
-                    enabled = value.value.isNotBlank(),
-                    onClick = { onCreate(value.value.trim()) },
+                    enabled = changed,
+                    onClick = { onCreate(trimmed) },
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A yes-or-no question, asked before anything is destroyed. Delete and overwrite both take
+ * something the app cannot hand back — the trash is not a place this editor keeps — so neither is
+ * allowed to happen on the same tap that offered it.
+ */
+@Composable
+fun IdeConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = LocalPageColors.current
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(c.scrim)
+            .clickable(
+                interactionSource = MutableInteractionSource(),
+                indication = null,
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .padding(horizontal = 28.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(c.panel)
+                .border(1.dp, c.ln, RoundedCornerShape(14.dp))
+                .clickable(
+                    interactionSource = MutableInteractionSource(),
+                    indication = null,
+                    onClick = {},
+                )
+                .padding(18.dp),
+        ) {
+            Text(
+                text = title,
+                color = c.tx,
+                fontSize = 15.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            Text(
+                text = message,
+                color = c.mu,
+                fontSize = 13.sp,
+                lineHeight = 19.sp,
+                fontFamily = Sans,
+            )
+            Row(
+                Modifier.padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SheetButton(label = "Cancel", fill = false, onClick = onDismiss)
+                SheetButton(
+                    label = confirmLabel,
+                    fill = true,
+                    destructive = true,
+                    onClick = onConfirm,
                 )
             }
         }
@@ -465,15 +545,21 @@ private fun RowScope.SheetButton(
     label: String,
     fill: Boolean,
     enabled: Boolean = true,
+    destructive: Boolean = false,
     onClick: () -> Unit,
 ) {
     val c = LocalPageColors.current
+    val resting = when {
+        !enabled -> c.panel2
+        destructive -> c.red
+        else -> c.ac
+    }
     Box(
         Modifier
             .then(if (fill) Modifier.weight(1f, fill = true) else Modifier)
             .height(38.dp)
             .clip(RoundedCornerShape(9.dp))
-            .background(if (enabled) c.ac else c.panel2)
+            .background(resting)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
