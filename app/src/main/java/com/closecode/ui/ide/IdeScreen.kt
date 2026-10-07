@@ -118,6 +118,7 @@ import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.project.ProjectRecord
 import com.closecode.ui.project.ProjectRepository
+import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.model.projectTree
 import com.closecode.ui.model.recentFiles
 import com.closecode.ui.theme.LocalPageColors
@@ -139,6 +140,9 @@ fun IdeScreen(
     onToggleTheme: () -> Unit = {},
 ) {
     BackHandler { onExit() }
+    // The one place the settings are read from for this screen: saving and the editor both honour
+    // them, and reading them once keeps a row changed on the settings screen in force immediately.
+    val settings = LocalSettings.current
     var tabs by remember { mutableStateOf(emptyList<ProjectFile>()) }
     var active by remember { mutableStateOf("") }
     var treeVersion by remember { mutableIntStateOf(0) }
@@ -289,12 +293,29 @@ fun IdeScreen(
 
     // One place writes the active file, so the header button, the palette, Save-on-Preview and the
     // unsaved dot can never disagree about what "saved" means.
-    fun saveActiveFile(): Boolean {
+    fun saveActiveFile(notify: Boolean = true): Boolean {
         val path = activeFile?.path
-        val buffer = liveBuffers[active]
-        if (path == null || buffer == null) {
+        val raw = liveBuffers[active]
+        if (path == null || raw == null) {
             toast = "Nothing to save"
             return false
+        }
+        // Format on save rewrites the buffer before it reaches disk, and the editor is handed the
+        // result through `sourceRevision`. Skipping that would leave the file on disk and the text
+        // on screen as two different documents — worse than never formatting at all.
+        val buffer = if (settings.formatOnSave) {
+            val formatted = if (active.endsWith(".kt", true)) {
+                SourceEdits.formatKotlin(raw)
+            } else {
+                SourceEdits.normalizeTrailingWhitespace(raw)
+            }
+            if (formatted != raw) {
+                liveBuffers[active] = formatted
+                sourceRevision++
+            }
+            formatted
+        } else {
+            raw
         }
         // Deliberately still on the caller's thread: Save-on-Preview hands straight over to a
         // panel that reads the file back from disk, and a write in flight would serve the page it
@@ -305,10 +326,22 @@ fun IdeScreen(
                 noteContent(active)
                 previewRefresh++
                 gitRevision++
-                toast = "Saved $active"
+                if (notify) toast = "Saved $active"
             }
             .onFailure { toast = "Could not save $active" }
             .isSuccess
+    }
+
+    // Auto save: one write once typing stops rather than one per keystroke, because a save is a
+    // directory write. The guard re-reads the buffer after the pause so a save that already
+    // happened — or a tab switched away meanwhile — cannot write a second time, and it never
+    // announces itself: a toast every time you stop typing would be unusable.
+    LaunchedEffect(settings.autoSave, contentRevision, active) {
+        if (!settings.autoSave || active.isEmpty()) return@LaunchedEffect
+        val buffer = liveBuffers[active] ?: return@LaunchedEffect
+        if (buffer == diskContents[active]) return@LaunchedEffect
+        delay(AUTOSAVE_DELAY_MS)
+        if (liveBuffers[active] == buffer) saveActiveFile(notify = false)
     }
 
     // Every tree mutation ends here, so a file created from the drawer, a file created from the
@@ -1592,6 +1625,11 @@ private fun IdeEditorArea(
 ) {
     val c = LocalPageColors.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val settings = LocalSettings.current
+    // The gutter is 62 dp of line numbers; with the setting off the code moves all the way left
+    // instead of sitting behind a blank strip, and every overlay below reads this same value so
+    // nothing lands in a column the code is no longer drawn in.
+    val columnStart = if (settings.lineNumbers) CodeColumnStart else CodeLeftInset
 
     // No starter template. A file with nothing in it opens as nothing, and the grey hint drawn in
     // the code column says so: a template would be written straight back by the next save into a
@@ -1667,10 +1705,13 @@ private fun IdeEditorArea(
     // Pinch zoom only touches the code text size. Single-finger gestures are never consumed
     // here, so normal vertical and horizontal scrolling keeps working.
     var editorScale by remember { mutableFloatStateOf(1f) }
-    val codeFontSize = CodeFontSize * editorScale
-    // Spec section 3: 20 dp is fixed; zoom scales it rather than replacing it, so every layer
-    // positioned against this number keeps its relationship to the code.
-    val codeLineHeight = CodeLineHeight * editorScale
+    // The setting sets the base size and pinch zoom scales it on top, which is exactly the
+    // relationship the fixed constant had — so zoom keeps working unchanged, and at the default
+    // size this computes the same 13 sp the constant held.
+    val codeFontSize = settings.fontSize.sp * editorScale
+    // Spec section 3: the row tracks the font at its own 20/13 ratio, so a larger font gets a
+    // larger row instead of running two lines of code into each other.
+    val codeLineHeight = settings.fontSize.sp * CodeLineHeightRatio * editorScale
     // Spec section 3: the row is exactly 20 dp. A `sp` line height would grow with the system font
     // scale, and every overlay is positioned against this number, so the dp value is converted
     // through the density here and the scale cancels back out.
@@ -1727,8 +1768,13 @@ private fun IdeEditorArea(
 
     val currentAnalysis = analysis?.takeIf { it.source == code }
 
-    val problems = remember(currentAnalysis) {
-        ProblemsByLine.from(currentAnalysis?.diagnostics.orEmpty())
+    // Diagnostics off means "show me nothing", not "stop analysing": the analysis still runs,
+    // because Run and Build gate on its error count and turning the display off must not quietly
+    // make an unbuildable project look buildable. Only what is drawn changes.
+    val problems = remember(currentAnalysis, settings.diagnostics) {
+        ProblemsByLine.from(
+            if (settings.diagnostics) currentAnalysis?.diagnostics.orEmpty() else emptyList()
+        )
     }
 
     val caretLine = remember(code, cursor) { caretPosition(code, cursor).first }
@@ -1796,12 +1842,21 @@ private fun IdeEditorArea(
         }
     }
 
-    val visibleSuggestions = remember(kotlinItems, staticSuggestions, code, isKotlin) {
-        if (kotlinItems != null) {
-            kotlinItems.map { it.toSuggestion() }
-        } else {
-            val tail = code.takeLastWhile { it.isLetterOrDigit() }
-            if (tail.isEmpty()) emptyList() else staticSuggestions.filter { it.name.startsWith(tail) }
+    val visibleSuggestions = remember(
+        kotlinItems,
+        staticSuggestions,
+        code,
+        isKotlin,
+        settings.autocomplete,
+    ) {
+        when {
+            // Checked first so a reader cannot mistake "switched off" for "nothing matched".
+            !settings.autocomplete -> emptyList()
+            kotlinItems != null -> kotlinItems.map { it.toSuggestion() }
+            else -> {
+                val tail = code.takeLastWhile { it.isLetterOrDigit() }
+                if (tail.isEmpty()) emptyList() else staticSuggestions.filter { it.name.startsWith(tail) }
+            }
         }
     }
 
@@ -1887,12 +1942,14 @@ private fun IdeEditorArea(
     val topPaddingPx = with(autoDensity) { EditorTopPadding.toPx() }
     // The gutter is not part of the code column, so the popup's width and the tap area's minimum
     // width both measure the code area on its own.
-    val gutterWidthPx = with(autoDensity) { GutterWidth.toPx() }
+    val gutterWidthPx = with(autoDensity) {
+        (if (settings.lineNumbers) GutterWidth else 0.dp).toPx()
+    }
     val codeWidthPx = (viewportWidthPx - gutterWidthPx).coerceAtLeast(0f)
     // The pill layer sits at the code column's text, not at the editor's left edge, so the room it
     // has on screen starts past the gutter and the column's own inset. Measuring from the editor's
     // edge accepted a pill that ran off the right side of the screen.
-    val codeColumnOriginPx = with(autoDensity) { CodeColumnStart.toPx() }
+    val codeColumnOriginPx = with(autoDensity) { columnStart.toPx() }
     val pillViewportWidthPx = (viewportWidthPx - codeColumnOriginPx).coerceAtLeast(0f)
     LaunchedEffect(caretLine, viewportHeightPx, lineHeightPx) {
         val margin = with(autoDensity) { 24.dp.toPx() }
@@ -1976,7 +2033,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                 if (visibleSuggestions.isNotEmpty()) {
                     applySuggestion(0)
                 } else {
-                    typeAtCaret("  ")
+                    typeAtCaret(" ".repeat(settings.tabSize.coerceAtLeast(1)))
                 }
             }
 
@@ -1992,10 +2049,12 @@ val applySuggestion: (Int) -> Unit = { index ->
             ToolAction.COPY -> copySelectionOrLine()
 
             // The Problems tab was removed, so the triangle opens the problem sheet instead.
-            ToolAction.PROBLEMS -> if (problems.all.isNotEmpty()) {
-                openProblemSheet(problems.all.first().line)
-            } else {
-                onToast("No problems. Code is clean.")
+            ToolAction.PROBLEMS -> when {
+                // Say what is actually true rather than "code is clean", which would be a lie
+                // told about a file whose problems are simply not being drawn.
+                !settings.diagnostics -> onToast("Diagnostics are off in Settings")
+                problems.all.isNotEmpty() -> openProblemSheet(problems.all.first().line)
+                else -> onToast("No problems. Code is clean.")
             }
 
             else -> ToolRowInserts[action]?.let { typeAtCaret(it) }
@@ -2170,7 +2229,7 @@ contentAlignment = Alignment.Center,
                             // Spec 6.3: the code column starts one inset past the gutter divider,
                             // and every overlay inside it reads x from that same origin.
                             .padding(
-                                start = CodeColumnStart,
+                                start = columnStart,
                                 end = CodeLeftInset,
                             )
                             // Two-finger pinch scales the editor; we only consume when a second
@@ -2246,13 +2305,29 @@ contentAlignment = Alignment.Center,
                                 // Spec 6.3: Enter carries the indentation over. The IME's own key
                                 // handling is left alone, so Enter still works with the popup open.
                                 val caret = incoming.selection.start.coerceIn(0, incoming.text.length)
-                                val indented = autoIndentAfterEnter(fieldValue.text, incoming.text, caret)
+                                val indented = if (settings.autoIndent) {
+                                    autoIndentAfterEnter(fieldValue.text, incoming.text, caret)
+                                } else {
+                                    null
+                                }
+                                val adjusted = if (indented == null) {
+                                    incoming
+                                } else {
+                                    TextFieldValue(indented.first, TextRange(indented.second))
+                                }
+                                // Pairing runs after Enter has had its say and only ever on a single
+                                // typed character, so a paste or a multi-line edit is left alone.
+                                val closed = if (settings.autoCloseBrackets) {
+                                    autoClosePair(fieldValue.text, adjusted.text, adjusted.selection.start)
+                                } else {
+                                    null
+                                }
                                 commit(
-                                    if (indented == null) {
-                                        incoming
+                                    if (closed == null) {
+                                        adjusted
                                     } else {
-                                        TextFieldValue(indented.first, TextRange(indented.second))
-                                    },
+                                        TextFieldValue(closed.first, TextRange(closed.second))
+                                    }
                                 )
                             },
                             textStyle = androidx.compose.ui.text.TextStyle(
@@ -2391,27 +2466,29 @@ contentAlignment = Alignment.Center,
                 }
 
                 // Drawn last with an opaque background: code scrolled sideways passes underneath.
-                LineNumberLayer(
-                    lineCount = gutterRowCount(codeLines, caretLine),
-                    lineHeightPx = lineHeightPx,
-                    problems = problems,
-                    caretLine = caretLine,
-                    // Rows come from the layout that drew the glyphs, not from a second row model.
-                    layout = codeLayout,
-                    // Spec 6.3: the first import line gets the fold affordance.
-                    foldLine = firstImportLine,
-                    onFoldTap = { onToast("Code folding is not available yet") },
-                    // Only the rows that can be on screen are composed. The scroll is read inside
-                    // the layer, so scrolling it does not recompose the editor around it.
-                    scrollState = codeScroll,
-                    viewportHeightPx = viewportHeightPx,
-                    modifier = Modifier.align(Alignment.TopStart),
-                )
+                if (settings.lineNumbers) {
+                    LineNumberLayer(
+                        lineCount = gutterRowCount(codeLines, caretLine),
+                        lineHeightPx = lineHeightPx,
+                        problems = problems,
+                        caretLine = caretLine,
+                        // Rows come from the layout that drew the glyphs, not from a second row model.
+                        layout = codeLayout,
+                        // Spec 6.3: the first import line gets the fold affordance.
+                        foldLine = firstImportLine,
+                        onFoldTap = { onToast("Code folding is not available yet") },
+                        // Only the rows that can be on screen are composed. The scroll is read inside
+                        // the layer, so scrolling it does not recompose the editor around it.
+                        scrollState = codeScroll,
+                        viewportHeightPx = viewportHeightPx,
+                        modifier = Modifier.align(Alignment.TopStart),
+                    )
+                }
             }
 
             val menuDensity = androidx.compose.ui.platform.LocalDensity.current
             val menuGapPx = with(menuDensity) { 6.dp.toPx() }
-            val menuOffsetX = with(menuDensity) { CodeColumnStart.toPx() }
+            val menuOffsetX = with(menuDensity) { columnStart.toPx() }
             androidx.compose.animation.AnimatedVisibility(
                 visible = quickFixLine != null && quickFixActions.isNotEmpty(),
                 enter = fadeIn(tween(120)),
@@ -2502,7 +2579,7 @@ contentAlignment = Alignment.Center,
             )
             val popupLeft = popupLeftPx(
                 wordX = xForOffset(codeLayout, wordStartOffset(code, cursor.coerceIn(0, code.length))) ?: 0f,
-                columnStartPx = with(popupDensity) { CodeColumnStart.toPx() },
+                columnStartPx = with(popupDensity) { columnStart.toPx() },
                 hScrollPx = codeHScroll.value,
                 popupWidthPx = popupWidthPx,
                 codeWidthPx = codeWidthPx,
@@ -2554,7 +2631,7 @@ contentAlignment = Alignment.Center,
                 )
                 val selectionBarLeft = popupLeftPx(
                     wordX = xForOffset(codeLayout, selectedRange.min) ?: 0f,
-                    columnStartPx = with(popupDensity) { CodeColumnStart.toPx() },
+                    columnStartPx = with(popupDensity) { columnStart.toPx() },
                     hScrollPx = codeHScroll.value,
                     popupWidthPx = selectionBarWidthPx,
                     codeWidthPx = codeWidthPx,
@@ -2655,8 +2732,17 @@ contentAlignment = Alignment.Center,
 
 private val SCROLLBAR_THICKNESS = 6.dp
 
+/**
+ * The row height as a multiple of the font size, taken from the spec's own 13 sp / 20 dp pair.
+ * A setting changes the font size, so the row has to follow it rather than stay at 20.
+ */
+private val CodeLineHeightRatio = CodeLineHeight.value / CodeFontSize.value
+
 /** Silence in the editor before the tool row parks itself. */
 private const val TOOL_ROW_IDLE_MS = 4_000L
+
+/** How long typing has to stop before Auto save writes the buffer out. */
+private const val AUTOSAVE_DELAY_MS = 900L
 
 /** The floating bar a selection earns: wide enough for the two words plus the two glyphs. */
 private val SELECTION_BAR_WIDTH = 240.dp

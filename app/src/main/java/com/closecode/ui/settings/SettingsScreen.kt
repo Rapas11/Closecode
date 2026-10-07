@@ -1,5 +1,6 @@
 package com.closecode.ui.settings
 
+import android.content.Context
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -11,7 +12,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,11 +21,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,13 +38,19 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.closecode.rememberProjectRepository
+import com.closecode.ui.project.ProjectRepository
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private fun Modifier.bottomRule(color: Color) = drawBehind {
     drawLine(
@@ -60,15 +70,58 @@ private fun Modifier.leftRule(color: Color) = drawBehind {
     )
 }
 
+/**
+ * Reads the three facts the Storage and About rows report, and clears the cache when asked.
+ *
+ * Every line of it is I/O — a recursive directory walk is the expensive one — so it all sits on
+ * [Dispatchers.IO] and the screen renders `…` until an answer comes back.
+ */
+private class SettingsFacts(
+    private val context: Context,
+    private val repository: ProjectRepository,
+) {
+    suspend fun measure(): SettingsLive = withContext(Dispatchers.IO) {
+        SettingsLive(
+            projectRoot = runCatching { repository.projectsDir().absolutePath }.getOrDefault("—"),
+            projectsSize = humanSize(dirSize(repository.projectsDir())),
+            cachesSize = humanSize(dirSize(context.cacheDir) + dirSize(context.codeCacheDir)),
+            version = runCatching {
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName
+            }.getOrNull() ?: "1.0.0",
+        )
+    }
+
+    /** Only ever touches directories the platform owns; nothing under `filesDir` is touched. */
+    suspend fun clearCaches(): SettingsLive {
+        withContext(Dispatchers.IO) {
+            runCatching { context.cacheDir?.deleteRecursively() }
+            runCatching { context.codeCacheDir?.deleteRecursively() }
+        }
+        return measure()
+    }
+}
+
 @Composable
 fun SettingsScreen(
     activeId: String,
     onActiveChange: (String) -> Unit,
     onBack: () -> Unit,
+    settings: Settings,
+    onSettingsChange: (Settings) -> Unit,
 ) {
     val c = LocalPageColors.current
     val widthDp = LocalConfiguration.current.screenWidthDp
     val wide = widthDp >= 760
+
+    val context = LocalContext.current
+    val repository = rememberProjectRepository()
+    val facts = remember(context, repository) { SettingsFacts(context, repository) }
+    val scope = rememberCoroutineScope()
+    var live by remember { mutableStateOf(SettingsLive()) }
+    LaunchedEffect(facts) { live = facts.measure() }
+
+    val allSections = sections(live)
+    val current = allSections.firstOrNull { it.id == activeId } ?: allSections.first()
 
     Column(
         Modifier
@@ -87,15 +140,23 @@ fun SettingsScreen(
                     .padding(horizontal = 20.dp)
             ) {
                 SettingsNav(
-                    activeId = activeId,
+                    sections = allSections,
+                    activeId = current.id,
                     onActiveChange = onActiveChange,
                     wide = true,
                     modifier = Modifier.width(235.dp),
                 )
                 Spacer(Modifier.width(44.dp))
                 SectionContent(
-                    section = sectionById(activeId),
+                    section = current,
                     wide = true,
+                    settings = settings,
+                    onSettingsChange = onSettingsChange,
+                    onAction = { action ->
+                        if (action == SettingsAction.CLEAR_CACHES) {
+                            scope.launch { live = facts.clearCaches() }
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -107,15 +168,23 @@ fun SettingsScreen(
                     .padding(horizontal = 14.dp)
             ) {
                 SettingsNav(
-                    activeId = activeId,
+                    sections = allSections,
+                    activeId = current.id,
                     onActiveChange = onActiveChange,
                     wide = false,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(28.dp))
                 SectionContent(
-                    section = sectionById(activeId),
+                    section = current,
                     wide = false,
+                    settings = settings,
+                    onSettingsChange = onSettingsChange,
+                    onAction = { action ->
+                        if (action == SettingsAction.CLEAR_CACHES) {
+                            scope.launch { live = facts.clearCaches() }
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -176,6 +245,7 @@ private fun SettingsHeader(onBack: () -> Unit, wide: Boolean) {
 
 @Composable
 private fun SettingsNav(
+    sections: List<Section>,
     activeId: String,
     onActiveChange: (String) -> Unit,
     wide: Boolean,
@@ -194,7 +264,7 @@ private fun SettingsNav(
                 modifier = Modifier.padding(start = 12.dp, bottom = 12.dp),
             )
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Sections.forEach { section ->
+                sections.forEach { section ->
                     NavItem(
                         section = section,
                         active = section.id == activeId,
@@ -207,7 +277,7 @@ private fun SettingsNav(
     } else {
         Column(modifier.padding(top = 10.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Sections.chunked(2).forEach { pair ->
+                sections.chunked(2).forEach { pair ->
                     Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                         pair.forEach { section ->
                             NavItem(
@@ -267,6 +337,9 @@ private fun NavItem(
 private fun SectionContent(
     section: Section,
     wide: Boolean,
+    settings: Settings,
+    onSettingsChange: (Settings) -> Unit,
+    onAction: (SettingsAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -316,7 +389,14 @@ private fun SectionContent(
                 }
             }
             item(key = "g-$index") {
-                Card(rows = group.rows, wide = wide, narrow = narrow)
+                Card(
+                    rows = group.rows,
+                    wide = wide,
+                    narrow = narrow,
+                    settings = settings,
+                    onSettingsChange = onSettingsChange,
+                    onAction = onAction,
+                )
             }
             if (index != section.groups.lastIndex) {
                 item(key = "gs-$index") { Spacer(Modifier.height(34.dp)) }
@@ -326,7 +406,14 @@ private fun SectionContent(
 }
 
 @Composable
-private fun Card(rows: List<Row>, wide: Boolean, narrow: Boolean) {
+private fun Card(
+    rows: List<Row>,
+    wide: Boolean,
+    narrow: Boolean,
+    settings: Settings,
+    onSettingsChange: (Settings) -> Unit,
+    onAction: (SettingsAction) -> Unit,
+) {
     val c = LocalPageColors.current
     Column(
         Modifier
@@ -344,13 +431,27 @@ private fun Card(rows: List<Row>, wide: Boolean, narrow: Boolean) {
                         .background(c.ln)
                 )
             }
-            SettingRow(row, wide = wide, narrow = narrow)
+            SettingRow(
+                row = row,
+                wide = wide,
+                narrow = narrow,
+                settings = settings,
+                onSettingsChange = onSettingsChange,
+                onAction = onAction,
+            )
         }
     }
 }
 
 @Composable
-private fun SettingRow(row: Row, wide: Boolean, narrow: Boolean) {
+private fun SettingRow(
+    row: Row,
+    wide: Boolean,
+    narrow: Boolean,
+    settings: Settings,
+    onSettingsChange: (Settings) -> Unit,
+    onAction: (SettingsAction) -> Unit,
+) {
     val c = LocalPageColors.current
     val minHeight = if (narrow) 62.dp else 67.dp
     val pad = if (wide) 17.dp else 14.dp
@@ -362,51 +463,64 @@ private fun SettingRow(row: Row, wide: Boolean, narrow: Boolean) {
             .padding(horizontal = pad),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            Modifier.weight(1f),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            when (row) {
-                is Row.Account -> AccountInfo(row, wide)
-                else -> {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = row.name,
-                            color = c.tx,
-                            fontSize = 14.sp,
-                            fontFamily = Sans,
-                            fontWeight = FontWeight.Medium,
-                        )
-                        val description = row.description
-                        if (description != null && !narrow) {
-                            Text(
-                                text = description,
-                                color = c.mu,
-                                fontSize = 12.sp,
-                                lineHeight = 17.4.sp,
-                                fontFamily = Sans,
-                                modifier = Modifier
-                                    .padding(top = 4.dp)
-                                    .widthIn(max = if (wide) Dp.Unspecified else 220.dp),
-                            )
-                        }
-                    }
-                }
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = row.name,
+                color = c.tx,
+                fontSize = 14.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Medium,
+            )
+            val description = row.description
+            if (description != null && !narrow) {
+                Text(
+                    text = description,
+                    color = c.mu,
+                    fontSize = 12.sp,
+                    lineHeight = 17.4.sp,
+                    fontFamily = Sans,
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .widthIn(max = if (wide) Dp.Unspecified else 220.dp),
+                )
             }
         }
 
         Spacer(Modifier.width(20.dp))
-        SettingControl(row, wide)
+        SettingControl(
+            row = row,
+            wide = wide,
+            settings = settings,
+            onSettingsChange = onSettingsChange,
+            onAction = onAction,
+        )
     }
 }
 
 @Composable
-private fun SettingControl(row: Row, wide: Boolean) {
+private fun SettingControl(
+    row: Row,
+    wide: Boolean,
+    settings: Settings,
+    onSettingsChange: (Settings) -> Unit,
+    onAction: (SettingsAction) -> Unit,
+) {
     val c = LocalPageColors.current
     val valueSize = if (wide) 13.sp else 12.sp
 
     when (row) {
-        is Row.Toggle -> SwitchControl(default = row.default)
+        is Row.Toggle -> SwitchControl(
+            on = settings.flag(row.key),
+            onChange = { onSettingsChange(settings.withFlag(row.key, it)) },
+        )
+
+        is Row.Options -> OptionsControl(
+            choices = row.choices,
+            current = settings.option(row.key),
+            unit = row.unit,
+            onSelect = { onSettingsChange(settings.withOption(row.key, it)) },
+            valueSize = valueSize,
+        )
 
         is Row.Value -> Text(
             text = row.value,
@@ -414,55 +528,8 @@ private fun SettingControl(row: Row, wide: Boolean) {
             fontSize = valueSize,
             fontFamily = Sans,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
-
-        is Row.Nav -> NavControl(row.action, valueSize)
-
-        is Row.Status -> Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(7.dp)
-                    .background(if (row.ok) c.string else c.ac, RoundedCornerShape(4.dp))
-            )
-            Text(
-                text = row.value,
-                color = c.mu.copy(alpha = 0.9f),
-                fontSize = valueSize,
-                fontFamily = Sans,
-                modifier = Modifier.padding(start = 7.dp),
-            )
-        }
-
-        is Row.Options -> Row(
-            Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(c.panel2)
-                .border(1.dp, c.ln, RoundedCornerShape(8.dp))
-                .padding(start = 11.dp, end = 32.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = row.current,
-                color = c.tx,
-                fontSize = 13.sp,
-                fontFamily = Sans,
-            )
-        }
-
-        is Row.Accents -> Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-            AccentOptions.forEachIndexed { index, color ->
-                val selected = index == 0
-                Box(
-                    Modifier
-                        .size(22.dp)
-                        .clip(RoundedCornerShape(11.dp))
-                        .background(if (selected) c.tx else Color.Transparent)
-                        .padding(if (selected) 2.dp else 3.dp)
-                        .clip(RoundedCornerShape(if (selected) 9.dp else 8.dp))
-                        .background(color)
-                )
-            }
-        }
 
         is Row.Action -> Text(
             text = row.action,
@@ -470,54 +537,14 @@ private fun SettingControl(row: Row, wide: Boolean) {
             fontSize = valueSize,
             fontFamily = Sans,
             fontWeight = if (row.danger) FontWeight.Medium else FontWeight.Normal,
+            modifier = Modifier.clickable { onAction(row.id) },
         )
-
-        is Row.Account -> NavControl(row.action, valueSize)
     }
 }
 
 @Composable
-private fun AccountInfo(row: Row.Account, wide: Boolean) {
+private fun SwitchControl(on: Boolean, onChange: (Boolean) -> Unit) {
     val c = LocalPageColors.current
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(c.ac.copy(alpha = 0.12f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = row.initials,
-                color = c.ac,
-                fontSize = 13.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-        Column(Modifier.padding(start = if (wide) 13.dp else 11.dp)) {
-            Text(
-                text = row.name,
-                color = c.tx,
-                fontSize = 14.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = row.subtitle,
-                color = c.mu,
-                fontSize = 12.sp,
-                fontFamily = Sans,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-    }
-}
-
-@Composable
-private fun SwitchControl(default: Boolean) {
-    val c = LocalPageColors.current
-    var on by remember { mutableStateOf(default) }
     val track by animateColorAsState(
         targetValue = if (on) c.ac else c.panel3,
         animationSpec = tween(200),
@@ -529,7 +556,7 @@ private fun SwitchControl(default: Boolean) {
             .height(25.dp)
             .clip(RoundedCornerShape(20.dp))
             .background(track)
-            .clickable { on = !on }
+            .clickable { onChange(!on) }
             .padding(3.dp),
     ) {
         Box(
@@ -542,21 +569,62 @@ private fun SwitchControl(default: Boolean) {
 }
 
 @Composable
-private fun NavControl(action: String, valueSize: androidx.compose.ui.unit.TextUnit) {
+private fun OptionsControl(
+    choices: List<String>,
+    current: String,
+    unit: String,
+    onSelect: (String) -> Unit,
+    valueSize: androidx.compose.ui.unit.TextUnit,
+) {
     val c = LocalPageColors.current
-    Row(Modifier.clickable { }, verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            text = action,
-            color = c.mu,
-            fontSize = valueSize,
-            fontFamily = Sans,
-        )
-        Text(
-            text = "›",
-            color = c.mu.copy(alpha = 0.65f),
-            fontSize = 18.sp,
-            fontFamily = Sans,
-            modifier = Modifier.padding(start = 7.dp),
-        )
+    var open by remember { mutableStateOf(false) }
+
+    Box {
+        Row(
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(c.panel2)
+                .border(1.dp, c.ln, RoundedCornerShape(8.dp))
+                .clickable { open = true }
+                .padding(start = 11.dp, end = 9.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = current + unit,
+                color = c.tx,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                maxLines = 1,
+            )
+            Text(
+                text = "▾",
+                color = c.mu,
+                fontSize = 10.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(start = 6.dp),
+            )
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+        ) {
+            choices.forEach { choice ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = choice + unit,
+                            color = if (choice == current) c.ac else c.tx,
+                            fontSize = 13.sp,
+                            fontFamily = Sans,
+                            fontWeight = if (choice == current) FontWeight.SemiBold else FontWeight.Normal,
+                        )
+                    },
+                    onClick = {
+                        open = false
+                        onSelect(choice)
+                    },
+                )
+            }
+        }
     }
 }

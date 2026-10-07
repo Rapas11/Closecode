@@ -139,6 +139,9 @@ class ProjectRepository(context: Context) {
 
     fun projectDir(slug: String): java.io.File = store.projectDir(slug)
 
+    /** Where every project on this device lives. Shown, not edited, on the settings screen. */
+    fun projectsDir(): java.io.File = store.projectsDir()
+
     fun readFile(slug: String, relative: String): String = store.readText(slug, relative)
 
     /** Raw bytes, used by Preview to decode images. Must be called off the main thread. */
