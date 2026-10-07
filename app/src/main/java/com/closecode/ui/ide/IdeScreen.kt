@@ -88,11 +88,14 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -179,8 +182,8 @@ fun IdeScreen(
     val diskContents = remember(slug) { mutableStateMapOf<String, String>() }
     var activePanel by remember(slug) { mutableStateOf("Code") }
     var explorerOpen by remember { mutableStateOf(false) }
-    // Which half of the drawer is showing. GitHub opens first — it holds the account, clone and
-    // publish controls, none of which need this project to have a repository of its own.
+    // Which half of the drawer is showing. Source Control opens first — it holds the account,
+    // clone and publish controls, none of which need this project to have a repository of its own.
     var explorerTab by remember { mutableStateOf(ExplorerTabs.first()) }
     var searchOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -1540,7 +1543,6 @@ private fun IdePathBar(
 ) {
     val c = LocalPageColors.current
     val crumbs = breadcrumbOf(filePath)
-    val folders = crumbs.dropLast(1)
     Row(
         Modifier
             .fillMaxWidth()
@@ -1550,50 +1552,38 @@ private fun IdePathBar(
             .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // The folders carry the weight, so a deep package ellipsizes from the right while the file
-        // name keeps its intrinsic width and stays whole — the name is what the reader is after.
-        // With no folders there is nothing to shrink, so the file name takes the weight instead and
-        // keeps the buttons pinned to the right edge as it did when the bar showed a project name.
-        val folderCrumb = folders.joinToString(" › ")
-        if (folderCrumb.isNotEmpty()) {
-            Text(
-                text = folderCrumb,
-                color = c.mu,
-                fontSize = 12.sp,
-                fontFamily = Mono,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = " › ",
-                color = c.mu,
-                fontSize = 12.sp,
-                fontFamily = Mono,
-            )
-            Text(
-                text = crumbs.last(),
-                color = if (previewActive || blocksActive) c.ac else c.tx,
-                fontSize = 12.sp,
-                fontFamily = Mono,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        } else {
-            // No folders to shrink, so the file name takes the weight itself and keeps the buttons
-            // pinned to the right edge — the same thing the row did when it showed a project name.
-            Text(
-                text = crumbs.lastOrNull() ?: "No file",
-                color = if (previewActive || blocksActive) c.ac else c.tx,
-                fontSize = 12.sp,
-                fontFamily = Mono,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
+        // One text, one ellipsis. This used to be three sibling Texts with only the folder part
+        // weighted, which meant the separator and the file name were measured first and the folders
+        // got whatever was left — on a narrow phone that could be nothing, and the whole point of
+        // the bar is to say where the file is. As a single AnnotatedString the path truncates as a
+        // unit, and breadcrumbOf has already capped it at three crumbs, so it almost never has to.
+        val parts = crumbs.ifEmpty { listOf("No file") }
+        val path = buildAnnotatedString {
+            parts.forEachIndexed { index, crumb ->
+                if (index > 0) append(" › ")
+                val leaf = index == parts.lastIndex
+                withStyle(
+                    SpanStyle(
+                        color = when {
+                            !leaf -> c.mu
+                            previewActive || blocksActive -> c.ac
+                            else -> c.tx
+                        },
+                        fontWeight = if (leaf) FontWeight.Medium else FontWeight.Normal,
+                    ),
+                ) {
+                    append(crumb)
+                }
+            }
         }
+        Text(
+            text = path,
+            fontSize = 12.sp,
+            fontFamily = Mono,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
         // The three doors out of the code: stay on it, reshape it as blocks, or run it.
         PathBarButton(CcIcons.Code, "Code", selected = !previewActive && !blocksActive, onClick = onCode)
         if (blockable) {
@@ -1759,7 +1749,7 @@ private fun IdeExplorer(
             }
         }
 
-        // Both lists stay composed so the GitHub tab never loses a half-typed commit message
+        // Both lists stay composed so the Source Control tab never loses a half-typed commit message
         // or cancels a commit that is already running on disk.
         Box(
             Modifier
@@ -1821,7 +1811,7 @@ private fun IdeExplorer(
                 // On its own `size(0.dp)` really does collapse to nothing — while the panel stays
                 // composed, so a half-typed commit message and a commit already running on disk
                 // both survive the switch.
-                modifier = if (tab == "GitHub") {
+                modifier = if (tab == SourceControlTab) {
                     Modifier.fillMaxWidth().fillMaxHeight()
                 } else {
                     Modifier.size(0.dp)
@@ -3610,11 +3600,16 @@ internal val HeaderItems: List<HeaderItem> = listOf(
 )
 
 /**
- * The drawer's tabs, in the order they are shown. GitHub leads and is the one that opens: the
- * account, clone and publish controls all live behind it, and none of them need a repository.
- * Stated once so the strip's order and the default cannot drift apart.
+ * The drawer's first tab, named for what it holds rather than for the service half of it: this
+ * panel is local version control first — branches, changes, commits, stash — and GitHub is a
+ * section underneath that. The account, clone and publish controls all live here and none of them
+ * need a repository of its own, which is why it opens first.
  */
-internal val ExplorerTabs: List<String> = listOf("GitHub", "Files")
+internal const val SourceControlTab = "Source Control"
+
+/** The drawer's tabs, in the order they are shown. Stated once so the strip's order and the
+ *  default cannot drift apart. */
+internal val ExplorerTabs: List<String> = listOf(SourceControlTab, "Files")
 
 /** Spec 4.1: how many edits Undo can step back through before the oldest one is dropped. */
 private const val UNDO_HISTORY_LIMIT = 100

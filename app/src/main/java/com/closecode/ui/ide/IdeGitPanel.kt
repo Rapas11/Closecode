@@ -59,7 +59,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** What the GitHub tab is showing. Kept as one value so a reload can never show half a state. */
+/** What the Source Control tab is showing. Kept as one value so a reload can never show half a state. */
 private sealed interface GitUiState {
     object Loading : GitUiState
     object NoProject : GitUiState
@@ -69,7 +69,7 @@ private sealed interface GitUiState {
 }
 
 /**
- * The GitHub tab: local version control first, GitHub second.
+ * The Source Control tab: local version control first, GitHub second.
  *
  * Reads and writes only the repository inside [projectRoot] through [GitService]. Everything
  * blocking runs off the main thread, and every failure comes back as a sentence on screen
@@ -216,7 +216,7 @@ fun IdeGitPanel(
         modifier
             .fillMaxSize()
             // Opaque so the file tree sitting underneath this panel in the drawer never shows
-            // through while the GitHub tab is open.
+            // through while the Source Control tab is open.
             .background(c.panel)
             .verticalScroll(scroll)
             .padding(bottom = 20.dp),
@@ -887,7 +887,10 @@ private fun GitHubSection(
     onClone: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    SectionLabel("GITHUB")
+    // The section says what it is *and* whether it can do anything. "GITHUB" alone reads like a
+    // heading over a panel that is about to work; with no token it is a heading over a sign-in
+    // button, and saying so saves the tap that finds that out.
+    SectionLabel(if (token == null) "GITHUB · NOT CONNECTED" else "GITHUB")
 
     error?.let { ErrorLine(it) }
     note?.let {

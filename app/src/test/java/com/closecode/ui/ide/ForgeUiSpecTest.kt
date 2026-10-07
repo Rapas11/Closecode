@@ -48,11 +48,11 @@ class ForgeUiSpecTest {
     // -- explorer drawer ---------------------------------------------------------------
 
     @Test
-    fun githubLeadsTheDrawerAndIsTheTabThatOpens() {
+    fun sourceControlLeadsTheDrawerAndIsTheTabThatOpens() {
         // Declared once so the strip's order and the default cannot drift apart: the account,
-        // clone and publish controls all live behind GitHub, and none of them need a repository.
-        assertEquals(listOf("GitHub", "Files"), ExplorerTabs)
-        assertEquals("GitHub", ExplorerTabs.first())
+        // clone and publish controls all live behind it, and none of them need a repository.
+        assertEquals(listOf("Source Control", "Files"), ExplorerTabs)
+        assertEquals("Source Control", ExplorerTabs.first())
     }
 
     @Test
