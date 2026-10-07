@@ -88,6 +88,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
@@ -227,6 +228,10 @@ fun IdeScreen(
     // than watching a timer is what fixes the row disappearing four seconds into a thought while
     // the keyboard is still up.
     val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    // How far the code text is pinched away from the size the settings chose. The gesture is heard
+    // on the whole screen — a pinch over the top bar or the tool row zooms the editor too — so the
+    // state lives here rather than down in the editor that only reads it.
+    var editorScale by remember { mutableFloatStateOf(1f) }
     // Live editor buffers keyed by file name. The editor owns its TextFieldValue, so this mirror is
     // how the parent saves before Preview and counts diagnostics across the whole project.
     val liveBuffers = remember { mutableStateMapOf<String, String>() }
@@ -744,7 +749,16 @@ fun IdeScreen(
     }
 
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                // Pinching anywhere on the screen scales the code text. Attaching it here rather
+                // than to the code column means a pinch over the top bar, the path bar, the tool row
+                // or the bottom bar does the same thing — and a pinch over a sheet, a menu or the
+                // toast does nothing at all, because those are siblings of this Column rather than
+                // children of it.
+                .pinchToZoom { scale -> editorScale = (editorScale * scale).coerceIn(EditorScaleRange) },
+        ) {
 
             val activePath = activeFile?.path ?: active
             IdeTopBar(
@@ -930,6 +944,7 @@ fun IdeScreen(
                                 },
                                 onSuggestionsOpen = { suggestionsOpen = it },
                                 showToolRow = showToolRow(imeVisible, suggestionsOpen),
+                                editorScale = editorScale,
                             )
                         }
                     }
@@ -2027,6 +2042,9 @@ private fun IdeEditorArea(
     // Whether the tool row is on screen. It is the only way to reach tab, brace, quote and
     // comment on a soft keyboard, so it follows the keyboard rather than a timer.
     showToolRow: Boolean = true,
+    // How far the code text is pinched. The gesture lives on the screen above; this is just the
+    // number the text size is drawn from.
+    editorScale: Float = 1f,
     onBufferChange: (String) -> Unit = {},
     onToast: (String) -> Unit = {},
     // One cached lookup instead of two map reads and a whole-file compare per tab per frame.
@@ -2132,13 +2150,10 @@ private fun IdeEditorArea(
     // drifted out of step with the code and error line numbers pointed at the wrong line.
     val codeScroll = rememberScrollState()
     val codeHScroll = rememberScrollState()
-    // Pinch zoom only touches the code text size. Single-finger gestures are never consumed
-    // here, so normal vertical and horizontal scrolling keeps working.
-    var editorScale by remember { mutableFloatStateOf(1f) }
     // The setting sets the base size and pinch zoom scales it on top, which is exactly the
     // relationship the fixed constant had — so zoom keeps working unchanged, and at the default
-    // size this computes the same 13 sp the constant held.
-    val codeFontSize = settings.fontSize.sp * editorScale
+    // size with nobody pinching this computes the same 13 sp the constant held.
+    val codeFontSize = zoomedFontSize(settings.fontSize, editorScale).sp
     // Spec section 3: the row tracks the font at its own 20/13 ratio, so a larger font gets a
     // larger row instead of running two lines of code into each other.
     val codeLineHeight = settings.fontSize.sp * CodeLineHeightRatio * editorScale
@@ -2723,32 +2738,7 @@ contentAlignment = Alignment.Center,
                             .padding(
                                 start = columnStart,
                                 end = CodeLeftInset,
-                            )
-                            // Two-finger pinch scales the editor; we only consume when a second
-                            // finger lands, so single-finger drags still reach the scrollers.
-                            .pointerInput(Unit) {
-                                awaitEachGesture {
-                                    var distanceAtLastChange = 0f
-                                    var wasZooming = false
-                                    do {
-                                        val event = awaitPointerEvent()
-                                        val positions = event.changes.mapNotNull { it.position.takeIf { c -> it.pressed } }
-                                        if (positions.size >= 2) {
-                                            val distance = (positions[0] - positions[1]).getDistance()
-                                            if (wasZooming && distanceAtLastChange > 0f) {
-                                                val delta = distance / distanceAtLastChange
-                                                editorScale = (editorScale * delta).coerceIn(0.6f, 2.4f)
-                                            }
-                                            distanceAtLastChange = distance
-                                            wasZooming = true
-                                            event.changes.forEach { it.consume() }
-                                        } else {
-                                            distanceAtLastChange = 0f
-                                            wasZooming = false
-                                        }
-                                    } while (event.changes.any { it.pressed })
-                                }
-                            },
+                            ),
                     ) {
                         // One grey line where the file's first line would be, for a buffer with
                         // nothing in it — a new file, a file we cannot read, or the editor with no
@@ -3262,6 +3252,48 @@ contentAlignment = Alignment.Center,
 
 
 private val SCROLLBAR_THICKNESS = 6.dp
+
+/**
+ * How far a pinch may take the editor away from the size the settings chose: far enough to read a
+ * long line without scrolling sideways, not so far that a phone screen holds three characters.
+ */
+internal val EditorScaleRange = 0.6f..2.4f
+
+/**
+ * The font a pinch leaves the editor at — the size the settings picked, multiplied by however far
+ * the fingers have spread, in the whole points a font is actually drawn in. At the default size
+ * with nobody pinching it is the same 13 the fixed constant used to hold.
+ */
+internal fun zoomedFontSize(baseSp: Int, scale: Float): Int = (baseSp * scale).roundToInt()
+
+/**
+ * Pinching anywhere scales the editor's text. Two fingers only, and the event is read on the
+ * [PointerEventPass.Initial] pass so it is heard before the scrollers underneath it: consuming
+ * there is what stops a pinch from also dragging the code sideways and down while it zooms. A
+ * single finger is never consumed, so taps, drags and scrolling reach whatever is below.
+ */
+private fun Modifier.pinchToZoom(onZoom: (Float) -> Unit): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        var distanceAtLastChange = 0f
+        var wasZooming = false
+        do {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val positions = event.changes.filter { it.pressed }.map { it.position }
+            if (positions.size >= 2) {
+                val distance = (positions[0] - positions[1]).getDistance()
+                if (wasZooming && distanceAtLastChange > 0f) {
+                    onZoom(distance / distanceAtLastChange)
+                }
+                distanceAtLastChange = distance
+                wasZooming = true
+                event.changes.forEach { it.consume() }
+            } else {
+                distanceAtLastChange = 0f
+                wasZooming = false
+            }
+        } while (event.changes.any { it.pressed })
+    }
+}
 
 /**
  * The row height as a multiple of the font size, taken from the spec's own 13 sp / 20 dp pair.
