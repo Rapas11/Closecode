@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -125,19 +124,19 @@ private fun Pill(
     }
 }
 
-// Where the bracket's vertical line sits, measured back from the row's right edge. The GitHub pill
-// is the last thing above it, so this puts the bracket underneath the button itself rather than
-// hanging off its corner.
-private val BranchConnectorInset = 26.dp
-private val BranchConnectorWidth = 30.dp
+// The disclosure hangs below the GitHub button: a stem down out of the button, a trunk running
+// left, and one stub into each choice. The trunk sits at BranchTrunkY; the stubs are the space
+// left over before the pills start.
 private val BranchLabelHeight = 44.dp
+private val BranchGap = 14.dp
+private val BranchTrunkY = 16.dp
+private val BranchConnectorHeight = 26.dp
 
 /**
- * The two things the GitHub button opens, drawn as a bracket hanging off it: a spine rising into
- * the button, and one branch per choice reaching left to its label.
+ * The two things the GitHub button opens, drawn under it as a trunk with a branch per choice.
  *
- * The whole block arrives behind an animated expand, so the lines are revealed row by row as the
- * labels they connect to appear.
+ * The two pills sit side by side and each one owns its half of the trunk, so the line closes
+ * without either side having to know how wide the other is.
  */
 @Composable
 private fun GitHubDisclosure(
@@ -145,81 +144,77 @@ private fun GitHubDisclosure(
     onSignIn: () -> Unit,
     onClone: () -> Unit,
 ) {
-    val c = LocalPageColors.current
-    Column(
+    Row(
         Modifier.padding(top = 4.dp),
-        horizontalAlignment = Alignment.End,
+        horizontalArrangement = Arrangement.spacedBy(BranchGap),
+        verticalAlignment = Alignment.Top,
     ) {
-        Canvas(
-            Modifier
-                .padding(end = BranchConnectorInset)
-                .width(BranchConnectorWidth)
-                .height(14.dp),
-        ) {
-            val line = 1.dp.toPx()
-            val spineX = size.width - line / 2f
-            drawLine(
-                color = c.ln,
-                start = Offset(spineX, 0f),
-                end = Offset(spineX, size.height),
-                strokeWidth = line,
-            )
-        }
-        BranchRow(
+        Branch(
             label = "Sign in GitHub",
             note = if (signedIn) "connected" else null,
-            isLast = false,
+            stem = false,
+            trunkRunsLeft = false,
             onClick = onSignIn,
         )
-        BranchRow(
+        Branch(
             label = "Clone GitHub",
             note = null,
-            isLast = true,
+            stem = true,
+            trunkRunsLeft = true,
             onClick = onClone,
         )
     }
 }
 
 /**
- * One choice in [GitHubDisclosure]. Its connector is the last thing in the row and every row is
- * right-aligned, so the branches stack onto one spine no matter how wide the label is.
+ * One choice in [GitHubDisclosure]. Its box is exactly as wide as its pill, so the centre of the
+ * canvas is the centre of the pill — that is where the stem into the button and the stub into the
+ * label land.
+ *
+ * [stem] rises into the GitHub button above; only the branch directly under the button draws one.
+ * The trunk always runs away from its own side and overshoots the edge by half the gap, so two
+ * neighbouring branches meet in the middle of the gap.
  */
 @Composable
-private fun BranchRow(
+private fun Branch(
     label: String,
     note: String?,
-    isLast: Boolean,
+    stem: Boolean,
+    trunkRunsLeft: Boolean,
     onClick: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    Row(
-        Modifier.padding(top = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        BranchLabel(label = label, note = note, onClick = onClick)
-        Canvas(
-            Modifier
-                .padding(end = BranchConnectorInset)
-                .width(BranchConnectorWidth)
-                .height(BranchLabelHeight),
-        ) {
+    Box {
+        Column {
+            Spacer(Modifier.height(BranchConnectorHeight))
+            BranchLabel(label = label, note = note, onClick = onClick)
+        }
+        Canvas(Modifier.matchParentSize()) {
             val line = 1.dp.toPx()
-            val spineX = size.width - line / 2f
-            val mid = size.height / 2f
-            // The last branch ends at its own junction instead of trailing past the label.
-            val spineEnd = if (isLast) mid else size.height
+            val cx = size.width / 2f
+            val trunkY = BranchTrunkY.toPx()
+            val stubEnd = BranchConnectorHeight.toPx()
+            val reach = BranchGap.toPx() / 2f
             drawLine(
                 color = c.ln,
-                start = Offset(spineX, 0f),
-                end = Offset(spineX, spineEnd),
+                start = Offset(cx, trunkY),
+                end = Offset(if (trunkRunsLeft) -reach else size.width + reach, trunkY),
                 strokeWidth = line,
             )
             drawLine(
                 color = c.ln,
-                start = Offset(0f, mid),
-                end = Offset(spineX, mid),
+                start = Offset(cx, trunkY),
+                end = Offset(cx, stubEnd),
                 strokeWidth = line,
             )
+            if (stem) {
+                drawLine(
+                    color = c.ln,
+                    start = Offset(cx, 0f),
+                    end = Offset(cx, trunkY),
+                    strokeWidth = line,
+                )
+            }
         }
     }
 }

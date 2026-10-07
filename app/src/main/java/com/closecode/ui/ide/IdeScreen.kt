@@ -278,11 +278,16 @@ fun IdeScreen(
         gitRevision++
     }
 
+    /** Unsaved changes: the buffer in memory differs from the last thing read from disk. */
+    fun isDirtyTab(name: String): Boolean =
+        liveBuffers[name] != null && liveBuffers[name] != diskContents[name]
+
     /** Opens a file in a tab, reading it only when it has not been read before. */
     fun openFile(file: ProjectFile) {
         if (file.kind == FileKind.Folder) return
         active = file.name
         if (tabs.none { it.name == file.name }) tabs = tabs + file
+        tabs = retainTabs(tabs, active, ::isDirtyTab)
         if (diskContents[file.name] == null) {
             runCatching { repository.readFile(slug, file.path) }
                 .onSuccess { diskContents[file.name] = it }
@@ -408,7 +413,7 @@ fun IdeScreen(
             val activePath = activeFile?.path ?: active
             IdeTopBar(
                 projectName = projectName,
-                dirty = liveBuffers[active] != null && liveBuffers[active] != diskContents[active],
+                dirty = isDirtyTab(active),
                 canUndo = canUndo,
                 canRedo = canRedo,
                 onSave = { saveActiveFile() },
@@ -492,6 +497,7 @@ fun IdeScreen(
                             diskTree = diskTree,
                             projectRepository = repository,
                             refreshToken = previewRefresh,
+                            onRefresh = { previewRefresh++ },
                             projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                             modifier = Modifier.weight(1f),
                         )
@@ -665,6 +671,7 @@ fun IdeScreen(
                                 run = {
                                     active = file.name
                                     if (tabs.none { it.name == file.name }) tabs = tabs + file
+                                    tabs = retainTabs(tabs, active, ::isDirtyTab)
                                     diskContents.getOrPut(file.name) {
                                         runCatching { repository.readFile(slug, file.path) }.getOrDefault("")
                                     }
@@ -980,12 +987,13 @@ private fun Modifier.androidxSemantics(label: String): Modifier =
  * Kinds the preview panel can actually render: the Kotlin phone mock, the local web server, the
  * image decoder and the structured formatters. Gradle, properties and unrecognised text get no
  * button rather than a button that opens onto "no preview".
+ *
+ * CSS and JS are deliberately absent: the panel renders a whole web *project* from its entry HTML,
+ * never a stylesheet or a script on its own, so offering them only ever produced plain text.
  */
 internal val PreviewableKinds = setOf(
     FileKind.Kotlin,
     FileKind.Html,
-    FileKind.Css,
-    FileKind.Js,
     FileKind.Json,
     FileKind.Xml,
     FileKind.Csv,
@@ -1002,18 +1010,47 @@ internal fun isPreviewable(kind: FileKind?, name: String): Boolean {
 
 /**
  * The path bar's crumbs: the folders that hold the file, then the file itself. The whole path is
- * shown while it fits — that is what makes it a breadcrumb rather than a title — and only a path
- * long enough to be unreadable is shortened, from the left so the package end and the file name
- * survive.
+ * shown while it fits, and only a path long enough to be unreadable is shortened — from the left,
+ * so the package end and the file name survive. Three is the cap: past that the bar starts eating
+ * the buttons next to it.
  *
  * `app/build.gradle.kts` → `app › build.gradle.kts`
- * `app/src/main/java/com/example/myapp/Main.kt` → `… › java › com › example › myapp › Main.kt`
+ * `app/src/main/java/com/example/myapp/Main.kt` → `… › myapp › Main.kt`
  */
-internal fun breadcrumbOf(path: String, maxCrumbs: Int = 6): List<String> {
+internal fun breadcrumbOf(path: String, maxCrumbs: Int = 3): List<String> {
     val parts = path.split('/').filter { it.isNotBlank() }
     if (parts.isEmpty()) return emptyList()
     if (parts.size <= maxCrumbs) return parts
     return listOf("…") + parts.takeLast(maxCrumbs - 1)
+}
+
+/**
+ * The tab strip's cap. The active tab and any tab with unsaved changes are never dropped, so the
+ * cap can never throw away the file the user is in or the file they have not saved yet; when
+ * something has to give it is the oldest tab that is neither, because a strip that keeps its
+ * newest work is the one that matches what people expect from a tab bar.
+ *
+ * Original order is preserved — a strip that reshuffles itself as files open is harder to follow
+ * than one that only grows from the right.
+ */
+internal fun retainTabs(
+    tabs: List<ProjectFile>,
+    active: String,
+    isDirty: (String) -> Boolean,
+    limit: Int = 3,
+): List<ProjectFile> {
+    if (tabs.size <= limit) return tabs
+    val keep = tabs
+        .filter { it.name == active || isDirty(it.name) }
+        .map { it.name }
+        .toMutableSet()
+    if (keep.size < limit) {
+        for (tab in tabs.asReversed()) {
+            if (keep.size >= limit) break
+            keep += tab.name
+        }
+    }
+    return tabs.filter { it.name in keep }
 }
 
 /**
@@ -2207,9 +2244,21 @@ contentAlignment = Alignment.Center,
                                     .fillMaxWidth(),
                             )
                         }
-                        // Spec 6.6: shown only when the caret line has a problem and the autocomplete popup is closed.
-                        if (problems.on(caretLine).isNotEmpty() && visibleSuggestions.isEmpty()) {
-                            val bulbDensity = androidx.compose.ui.platform.LocalDensity.current
+                        // Shown whenever the caret line has a problem, including underneath the
+                        // autocomplete popup: the popup sits on the row below the caret and the bulb
+                        // on the row above it, so the two never fight. Opening the quick-fix card is
+                        // what hides it.
+                        val bulbDensity = androidx.compose.ui.platform.LocalDensity.current
+                        val bulbWidthPx = with(bulbDensity) { 38.dp.toPx() }
+                        // No layout yet means no honest place for the bulb; anchoring at zero would
+                        // park it over the start of the caret line.
+                        val bulbAnchor = caretX(codeLayout, cursor)
+                            ?.let { bulbAnchorX(it, bulbWidthPx, pillViewportWidthPx) }
+                        if (
+                            problems.on(caretLine).isNotEmpty() &&
+                            quickFixLine == null &&
+                            bulbAnchor != null
+                        ) {
                             val bulbHeightPx = with(bulbDensity) { 33.dp.toPx() }
                             // Spec 6.6: the bulb hangs off the line above, anchored on the caret
                             // line's real top from the layout.
@@ -2222,9 +2271,9 @@ contentAlignment = Alignment.Center,
                                     bulbHeightPx = bulbHeightPx,
                                     minTopPx = with(bulbDensity) { 2.dp.toPx() },
                                 ),
-                                // Spec 6.6: 3 dp from the left of the code column, which is where the
-                                // prototype hangs it, so it clears the gutter rule and the text.
-                                anchorX = with(bulbDensity) { 3.dp.toPx() },
+                                // The bulb follows the caret instead of sitting on a fixed inset, so
+                                // it stays next to the token it is offering to fix.
+                                anchorX = bulbAnchor,
                                 lineHeightPx = lineHeightPx,
                                 onTap = { openQuickFix(caretLine) },
                             )

@@ -23,7 +23,6 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
@@ -481,7 +480,11 @@ fun InlineProblemLayer(
     val minMessage = with(density) { PillMinMessageWidth.toPx() }
     val visibleRight = hScrollPx + viewportWidthPx
 
-    Box(modifier.clipToBounds()) {
+    // No clip here on purpose. The pills sit on their own rows via Modifier.offset, which does not
+    // contribute to measurement, so the box only ever measured itself as tall as the widest pill —
+    // and clipped every pill below the first one away. The scrollers around this layer already
+    // clip it to the viewport.
+    Box(modifier) {
         rows.forEach { (line, list) ->
             // Spec 6.5: when a line has several problems, show the most severe one and a count.
             val primary = list.minByOrNull { if (it.severity == Severity.ERROR) 0 else 1 } ?: return@forEach
@@ -489,9 +492,13 @@ fun InlineProblemLayer(
             val tone = if (isWarning) c.warnPillTx else c.errorPillTx
             val fill = if (isWarning) c.warnPillBg else c.errorPillBg
 
+            // The layout has not rendered this line yet, so there is no honest place to put the
+            // pill. Anchoring at 0 instead would draw it over the first characters of the line.
+            val lineEnd = anchorX(line) ?: return@forEach
+
             // Spec 6.5: past the end of the line's text, wrapped back to the edge when the line is
             // long enough that the pill would otherwise stop fitting.
-            val x = pillAnchorX(anchorX(line) ?: 0f, gapPx, visibleRight, chrome + minMessage)
+            val x = pillAnchorX(lineEnd, gapPx, visibleRight, chrome + minMessage)
             val textRoom = (visibleRight - x - chrome).coerceAtLeast(minMessage)
             // Spec 6.5: top = line top minus 1 dp.
             val top = (yOfLine(line) ?: pillTopPx(line, lineHeightPx)) -
@@ -798,6 +805,29 @@ fun bulbTopPx(
     minTopPx: Float,
 ): Float =
     (caretLineTopPx - lineHeightPx / 2f - bulbHeightPx).coerceAtLeast(minTopPx)
+
+/**
+ * Horizontal position of the quick-fix bulb, in the code column's own pixels.
+ *
+ * The bulb hangs off the caret rather than a fixed inset, so it travels with the text the way the
+ * reference screenshot shows. [caretXPx] is the caret's horizontal position straight from the
+ * renderer; the result is clamped so the bulb never sits partly past the right edge of what the
+ * user can see.
+ */
+fun bulbAnchorX(caretXPx: Float, bulbWidthPx: Float, viewportWidthPx: Float): Float =
+    caretXPx.coerceIn(0f, (viewportWidthPx - bulbWidthPx).coerceAtLeast(0f))
+
+/**
+ * Horizontal position of [caret] in the rendered text, or null while there is no layout yet.
+ *
+ * Read from the same [TextLayoutResult] the glyphs come from, so the bulb lands on the character
+ * the caret is actually sitting in rather than an estimate from a monospace advance.
+ */
+fun caretX(layout: TextLayoutResult?, caret: Int): Float? {
+    if (layout == null) return null
+    val offset = caret.coerceIn(0, layout.layoutInput.text.length)
+    return runCatching { layout.getHorizontalPosition(offset, true) }.getOrNull()
+}
 
 /**
  * Spec 6.7 autocomplete popup placement, in viewport pixels.

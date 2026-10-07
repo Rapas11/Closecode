@@ -7,6 +7,7 @@ import android.webkit.WebViewClient
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,13 +19,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -43,6 +47,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.style.TextOverflow
@@ -541,35 +547,38 @@ fun IdePreviewPanel(
     diskTree: List<ProjectFile>,
     projectRepository: ProjectRepository,
     refreshToken: Int = 0,
+    onRefresh: () -> Unit = {},
     projectRoot: java.io.File? = null,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
+    val context = LocalContext.current
     val extension = remember(fileName) { extensionOf(fileName) }
     val isImage = extension in ImageExtensions
     val webEntry = remember(diskTree, projectPath) { webPreviewEntry(diskTree, projectPath) }
+    // Hoisted out of WebPreview so the toolbar can hand the live page to the device's browser.
+    var webUrl by remember(webEntry) { mutableStateOf<String?>(null) }
+    val startingWeb = webEntry != null && projectRoot != null && webUrl == null
 
     Column(
         modifier
             .fillMaxSize().background(c.bg)) {
-        // Preview header
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(c.panel)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = fileName.ifBlank { "No file selected" },
-                color = c.tx,
-                fontSize = 14.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        PreviewToolbar(
+            label = fileName.ifBlank { "No file selected" },
+            canOpenInBrowser = webUrl != null,
+            onRefresh = onRefresh,
+            onOpenInBrowser = {
+                webUrl?.let { url ->
+                    runCatching {
+                        context.startActivity(
+                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)),
+                        )
+                    }
+                }
+            },
+        )
+        // The local server takes a moment to come up. Say so with a bar rather than a blank frame.
+        if (startingWeb) PreviewLoadingBar()
 
         if (fileName.isBlank()) {
             PreviewMessage("Open a file to preview it.")
@@ -584,6 +593,7 @@ fun IdePreviewPanel(
                     projectRoot = projectRoot,
                     entryPath = webEntry,
                     refreshToken = refreshToken,
+                    onUrl = { webUrl = it },
                 )
             }
             return@IdePreviewPanel
@@ -594,6 +604,7 @@ fun IdePreviewPanel(
                 fileName = fileName,
                 projectPath = projectPath,
                 loader = loader,
+                refreshToken = refreshToken,
             )
             return@IdePreviewPanel
         }
@@ -604,7 +615,8 @@ fun IdePreviewPanel(
             projectPath = projectPath,
             loader = loader,
             binaryLoader = binaryLoader,
-            isImage = isImage
+            isImage = isImage,
+            refreshToken = refreshToken,
         )
     }
 }
@@ -615,6 +627,7 @@ private fun ColumnScope.WebPreview(
     projectRoot: java.io.File,
     entryPath: String,
     refreshToken: Int,
+    onUrl: (String) -> Unit,
 ) {
     var previewUrl by remember(projectRoot, entryPath) { mutableStateOf<String?>(null) }
     var loadedToken by remember(projectRoot, entryPath) { mutableStateOf<Int?>(null) }
@@ -639,9 +652,10 @@ private fun ColumnScope.WebPreview(
 
     val url = previewUrl
     if (url == null) {
-        PreviewMessage("Starting preview…")
+        // The toolbar already owns the loading state, so there is nothing left to draw here.
         return
     }
+    LaunchedEffect(url) { onUrl(url) }
     AndroidView(
         factory = { context ->
             WebView(context).apply {
@@ -675,8 +689,9 @@ private fun ColumnScope.KotlinPhoneMock(
     fileName: String,
     projectPath: String,
     loader: (String) -> String?,
+    refreshToken: Int = 0,
 ) {
-    val source by produceState<String?>(initialValue = null, fileName, projectPath) {
+    val source by produceState<String?>(initialValue = null, fileName, projectPath, refreshToken) {
         value = withContext(Dispatchers.IO) { loader(projectPath) }
     }
     val content = remember(source, fileName) {
@@ -768,20 +783,21 @@ private fun StaticPreview(
     loader: (String) -> String?,
     binaryLoader: (String) -> ByteArray?,
     isImage: Boolean,
+    refreshToken: Int = 0,
 ) {
     val c = LocalPageColors.current
     val extension = remember(fileName) { extensionOf(fileName) }
     val isImage = extension in ImageExtensions
 
     // Off the main thread: reading is IO, and JSON/XML formatting is CPU bound.
-    val text by produceState<String?>(initialValue = null, fileName, projectPath) {
+    val text by produceState<String?>(initialValue = null, fileName, projectPath, refreshToken) {
         value = if (isImage) {
             null
         } else {
             withContext(Dispatchers.IO) { loader(projectPath) }
         }
     }
-    val image by produceState<PreviewImage?>(initialValue = null, fileName, projectPath) {
+    val image by produceState<PreviewImage?>(initialValue = null, fileName, projectPath, refreshToken) {
         value = if (!isImage) {
             null
         } else {
@@ -845,6 +861,77 @@ private fun StaticPreview(
             else -> PrettyPreview(text!!, isJson = false, plain = true)
         }
     }
+}
+
+/**
+ * The preview's own chrome: which file it is showing, a re-read, and — when the preview is a live
+ * page — a way out to the device's browser. The path bar already carries the full path, so this
+ * carries the leaf name only, small enough that it reads as chrome rather than a second title.
+ */
+@Composable
+private fun PreviewToolbar(
+    label: String,
+    canOpenInBrowser: Boolean,
+    onRefresh: () -> Unit,
+    onOpenInBrowser: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(c.panel)
+            .border(1.dp, c.ln, RoundedCornerShape(0.dp))
+            .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            color = c.mu,
+            fontSize = 12.sp,
+            fontFamily = Mono,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        PreviewAction(CcIcons.Refresh, "Refresh preview", onClick = onRefresh)
+        if (canOpenInBrowser) {
+            PreviewAction(CcIcons.External, "Open in browser", onClick = onOpenInBrowser)
+        }
+    }
+}
+
+@Composable
+private fun PreviewAction(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        CcIcon(icon, c.mu, 17.dp)
+    }
+}
+
+/**
+ * Shown while the local preview server comes up. A bar rather than a message: the wait is short
+ * and happens every time the panel opens, so it should read as progress, not as text to dismiss.
+ */
+@Composable
+private fun PreviewLoadingBar() {
+    val c = LocalPageColors.current
+    LinearProgressIndicator(
+        modifier = Modifier.fillMaxWidth().height(2.dp),
+        color = c.ac,
+        trackColor = c.ln,
+    )
 }
 
 @Composable

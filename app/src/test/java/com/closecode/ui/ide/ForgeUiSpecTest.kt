@@ -1,6 +1,7 @@
 package com.closecode.ui.ide
 
 import com.closecode.ui.model.FileKind
+import com.closecode.ui.model.ProjectFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -50,8 +51,6 @@ class ForgeUiSpecTest {
     fun previewIsOfferedForEveryKindThePreviewPanelCanRender() {
         assertTrue(isPreviewable(FileKind.Kotlin, "MainActivity.kt"))
         assertTrue(isPreviewable(FileKind.Html, "index.html"))
-        assertTrue(isPreviewable(FileKind.Css, "app.css"))
-        assertTrue(isPreviewable(FileKind.Js, "app.js"))
         assertTrue(isPreviewable(FileKind.Json, "data.json"))
         assertTrue(isPreviewable(FileKind.Xml, "AndroidManifest.xml"))
         assertTrue(isPreviewable(FileKind.Csv, "rows.csv"))
@@ -68,6 +67,10 @@ class ForgeUiSpecTest {
             FileKind.Properties to "gradle.properties",
             FileKind.Unknown to "LICENSE",
             FileKind.Folder to "src",
+            // The panel renders a whole web project from its entry HTML, never a loose stylesheet
+            // or script — offering them only ever produced plain text.
+            FileKind.Css to "app.css",
+            FileKind.Js to "app.js",
         ).forEach { (kind, name) ->
             assertFalse("preview must not be offered for $name", isPreviewable(kind, name))
         }
@@ -449,14 +452,14 @@ class ForgeUiSpecTest {
     // -- path bar ---------------------------------------------------------------------------
 
     @Test
-    fun aShallowPathIsShownInFullBecauseThatIsThePointOfABreadcrumb() {
+    fun aPathThatFitsTheBarIsShownInFullBecauseThatIsThePointOfABreadcrumb() {
         assertEquals(
             listOf("app", "build.gradle.kts"),
             breadcrumbOf("app/build.gradle.kts"),
         )
         assertEquals(
-            listOf("app", "src", "main", "AndroidManifest.xml"),
-            breadcrumbOf("app/src/main/AndroidManifest.xml"),
+            listOf("src", "main", "AndroidManifest.xml"),
+            breadcrumbOf("src/main/AndroidManifest.xml"),
         )
     }
 
@@ -471,7 +474,7 @@ class ForgeUiSpecTest {
         assertEquals("MainActivity.kt", crumbs.last())
         assertEquals("myapp", crumbs[crumbs.size - 2])
         assertEquals("…", crumbs.first())
-        assertTrue(crumbs.size <= 6)
+        assertTrue(crumbs.size <= 3)
         // Shortening never invents or drops the file itself.
         assertTrue(crumbs.contains("MainActivity.kt"))
     }
@@ -490,5 +493,47 @@ class ForgeUiSpecTest {
         assertEquals(4, crumbs.size)
         assertEquals("File.kt", crumbs.last())
         assertEquals("…", crumbs.first())
+    }
+}
+
+class RetainTabsTest {
+
+    private fun tab(name: String) =
+        ProjectFile(name = name, kind = FileKind.Kotlin, language = "Kotlin", depth = 0)
+
+    private val nothingDirty: (String) -> Boolean = { false }
+
+    @Test
+    fun aStripUnderTheCapIsLeftAlone() {
+        val tabs = listOf(tab("a"), tab("b"))
+        assertEquals(tabs, retainTabs(tabs, active = "a", isDirty = nothingDirty))
+    }
+
+    @Test
+    fun openingAFourthFileDropsTheOldestOneThatIsNeitherActiveNorDirty() {
+        val tabs = listOf(tab("a"), tab("b"), tab("c"), tab("d"))
+        val kept = retainTabs(tabs, active = "d", isDirty = nothingDirty)
+        assertEquals(listOf("b", "c", "d"), kept.map { it.name })
+    }
+
+    @Test
+    fun theActiveTabIsNeverDroppedEvenWhenItIsTheOldest() {
+        val tabs = listOf(tab("a"), tab("b"), tab("c"), tab("d"))
+        val kept = retainTabs(tabs, active = "a", isDirty = nothingDirty)
+        assertEquals(listOf("a", "c", "d"), kept.map { it.name })
+    }
+
+    @Test
+    fun unsavedWorkIsNeverDropped() {
+        val tabs = listOf(tab("a"), tab("b"), tab("c"), tab("d"))
+        val kept = retainTabs(tabs, active = "d", isDirty = { it == "a" })
+        assertEquals(listOf("a", "c", "d"), kept.map { it.name })
+    }
+
+    @Test
+    fun aStripOfUnsavedTabsKeepsThemAllRatherThanLosingWork() {
+        val tabs = listOf(tab("a"), tab("b"), tab("c"), tab("d"))
+        val kept = retainTabs(tabs, active = "d", isDirty = { true })
+        assertEquals(4, kept.size)
     }
 }

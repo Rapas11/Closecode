@@ -73,6 +73,16 @@ object CcIcons {
         "folder-plus",
         "M3 6a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM12 10v6M9 13h6",
     )
+
+    // Preview toolbar: re-read the file, and take a live page out to the device's browser.
+    val Refresh = icon(
+        "refresh",
+        "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15",
+    )
+    val External = icon(
+        "external",
+        "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3",
+    )
 }
 
 @Composable

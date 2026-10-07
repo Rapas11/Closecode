@@ -547,3 +547,32 @@ class QuickFixActionTest {
         )
     }
 }
+
+class BulbAnchorTest {
+
+    @Test
+    fun theBulbSitsOnTheCaret() {
+        assertEquals(120f, bulbAnchorX(caretXPx = 120f, bulbWidthPx = 38f, viewportWidthPx = 400f), 0.01f)
+    }
+
+    @Test
+    fun theBulbIsNeverPulledPastTheRightEdge() {
+        // The bug this pins: a fixed 3 dp inset always drew the bulb at the gutter, so it never
+        // travelled with the caret and sat on top of the code at the far left of the column.
+        assertEquals(
+            362f,
+            bulbAnchorX(caretXPx = 5_000f, bulbWidthPx = 38f, viewportWidthPx = 400f),
+            0.01f,
+        )
+    }
+
+    @Test
+    fun aCaretAtColumnOneStaysAtTheLeftEdge() {
+        assertEquals(0f, bulbAnchorX(caretXPx = -4f, bulbWidthPx = 38f, viewportWidthPx = 400f), 0.01f)
+    }
+
+    @Test
+    fun aViewportNarrowerThanTheBulbDoesNotGoNegative() {
+        assertEquals(0f, bulbAnchorX(caretXPx = 10f, bulbWidthPx = 38f, viewportWidthPx = 12f), 0.01f)
+    }
+}
