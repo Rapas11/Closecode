@@ -30,9 +30,10 @@ class ForgeUiSpecTest {
 
     @Test
     fun noLongLivedPanelIsStillOnTheBottomBar() {
-        // The editor stays on screen; Preview moved to the path bar and Logcat and Build moved to
-        // More, so none of them can occupy a bottom-bar item.
-        listOf("Code", "Preview", "Logcat", "Build", "Problems").forEach { item ->
+        // The editor stays on screen; Preview moved to the path bar, Logcat and Build moved to
+        // More, and Terminal took the header's search slot, so none of them can occupy a
+        // bottom-bar item.
+        listOf("Code", "Preview", "Logcat", "Build", "Problems", "Terminal").forEach { item ->
             assertTrue(
                 "$item must not be a bottom bar item",
                 item !in com.closecode.ui.ide.model.IdeNavItems,
@@ -438,7 +439,7 @@ class ForgeUiSpecTest {
                 HeaderItem.SAVE,
                 HeaderItem.UNDO,
                 HeaderItem.REDO,
-                HeaderItem.SEARCH,
+                HeaderItem.TERMINAL,
                 HeaderItem.RUN,
                 HeaderItem.OVERFLOW,
             ),
@@ -456,8 +457,17 @@ class ForgeUiSpecTest {
     }
 
     @Test
-    fun searchIsStillReachableFromTheHeader() {
-        assertTrue(HeaderItem.SEARCH in HeaderItems)
+    fun theTerminalOwnsTheSlotTheSearchButtonUsedToHold() {
+        assertTrue(HeaderItem.TERMINAL in HeaderItems)
+        assertTrue("Terminal" in ToolPanels)
+    }
+
+    @Test
+    fun searchIsStillReachableWithoutTheHeaderButton() {
+        // The header button became the terminal, so search has to be somewhere else: the bottom
+        // nav carries it, and the overflow's "Search and commands" opens the palette.
+        assertTrue("Search" in com.closecode.ui.ide.model.IdeNavItems)
+        assertTrue("Search and commands" in OverflowLabels)
     }
 
     @Test

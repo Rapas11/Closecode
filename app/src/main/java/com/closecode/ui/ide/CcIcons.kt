@@ -64,8 +64,13 @@ object CcIcons {
     val Bulb = icon("bulb", "M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z")
     val Close = icon("close", "M6 6l12 12M18 6L6 18")
 
-    // Not in the prototype: the search button stays in this app's header, so it needs a magnifier.
+    // Not in the prototype: the search sheets and the command palette still need a magnifier, even
+    // though the button that used to open them from the header is gone.
     val Search = icon("search", "M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM16 16l4 4")
+
+    // The terminal, in the slot the magnifier used to hold: a `>_` inside a window, because a
+    // `>_` on its own reads as text rather than as a button.
+    val Terminal = icon("terminal", "M4 5h16v14H4zM8 9.5l2.5 2.5-2.5 2.5M13 14.5h3")
 
     // Path bar: back to the code, into the block editor, and Preview for anything renderable.
     val Code = icon("code", "M9 7l-5 5 5 5M15 7l5 5-5 5")

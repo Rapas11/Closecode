@@ -86,7 +86,7 @@ val BuildTasks = listOf(
  * navigation was the only escape from a screen the top bar's build button had just opened.
  */
 @Composable
-private fun PanelBackBar(title: String, onBack: () -> Unit) {
+internal fun PanelBackBar(title: String, onBack: () -> Unit) {
     val c = LocalPageColors.current
     Row(
         Modifier

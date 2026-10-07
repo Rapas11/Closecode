@@ -304,12 +304,12 @@ fun IdeScreen(
     // line the reader is looking at, not at the end of the buffer.
     var editorCaret by remember { mutableIntStateOf(0) }
     var addBlockOpen by remember { mutableStateOf(false) }
-    // Logcat and Build cover the editor, so back has to know what was underneath them rather
-    // than always dropping the reader on Code and losing a Preview they had open.
+    // Logcat, Build and Terminal cover the editor, so back has to know what was underneath them
+    // rather than always dropping the reader on Code and losing a Preview they had open.
     var panelBeforeTool by remember { mutableStateOf("Code") }
 
     LaunchedEffect(activePanel) {
-        if (activePanel != "Logcat" && activePanel != "Build") panelBeforeTool = activePanel
+        if (activePanel !in ToolPanels) panelBeforeTool = activePanel
     }
 
     // Spec 4.1: the header's Undo and Redo drive the editor's own history. Requests are counters
@@ -797,10 +797,7 @@ fun IdeScreen(
                 onSave = { saveActiveFile() },
                 onUndo = { undoRequest++ },
                 onRedo = { redoRequest++ },
-                onSearch = {
-                    searchOpen = !searchOpen
-                    if (!searchOpen) query = ""
-                },
+                onTerminal = { activePanel = "Terminal" },
                 onRun = {
                     // Spec 7: running is blocked while the project has compile errors, and jumps
                     // to the problem sheet instead.
@@ -814,7 +811,7 @@ fun IdeScreen(
                 },
                 onMore = { menuOpen = true },
                 menuActive = menuOpen,
-                searchActive = searchOpen,
+                terminalActive = activePanel == "Terminal",
             )
 
             when (activePanel) {
@@ -837,6 +834,11 @@ fun IdeScreen(
                             building = true
                         }
                     },
+                    onBack = { activePanel = panelBeforeTool },
+                    modifier = Modifier.weight(1f),
+                )
+                "Terminal" -> IdeTerminal(
+                    projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                     onBack = { activePanel = panelBeforeTool },
                     modifier = Modifier.weight(1f),
                 )
@@ -1284,11 +1286,11 @@ private fun IdeTopBar(
     onSave: () -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
-    onSearch: () -> Unit,
+    onTerminal: () -> Unit,
     onRun: () -> Unit,
     onMore: () -> Unit,
     menuActive: Boolean,
-    searchActive: Boolean,
+    terminalActive: Boolean,
 ) {
     val c = LocalPageColors.current
 
@@ -1356,11 +1358,11 @@ private fun IdeTopBar(
             onClick = onRedo,
         )
         HeaderIconButton(
-            icon = CcIcons.Search,
-            label = "Search and commands",
-            tint = if (searchActive) c.tx else c.mu,
-            background = if (searchActive) c.panel2 else Color.Transparent,
-            onClick = onSearch,
+            icon = CcIcons.Terminal,
+            label = "Terminal",
+            tint = if (terminalActive) c.tx else c.mu,
+            background = if (terminalActive) c.panel2 else Color.Transparent,
+            onClick = onTerminal,
         )
         // Run is the one filled button in the header: the accent fill and the solid play glyph
         // carry it, so it needs no words and takes the same 34 x 34 slot as its neighbours.
@@ -3756,7 +3758,7 @@ enum class HeaderItem {
     SAVE,
     UNDO,
     REDO,
-    SEARCH,
+    TERMINAL,
     RUN,
     OVERFLOW,
 }
@@ -3767,10 +3769,17 @@ internal val HeaderItems: List<HeaderItem> = listOf(
     HeaderItem.SAVE,
     HeaderItem.UNDO,
     HeaderItem.REDO,
-    HeaderItem.SEARCH,
+    HeaderItem.TERMINAL,
     HeaderItem.RUN,
     HeaderItem.OVERFLOW,
 )
+
+/**
+ * The panels that cover the editor rather than sitting beside it. Back has to know what was
+ * underneath them rather than always dropping the reader on Code and losing a Preview they had
+ * open, so these are the panels that do not become the answer to that question.
+ */
+internal val ToolPanels = setOf("Logcat", "Build", "Terminal")
 
 /**
  * The drawer's first tab, named for what it holds rather than for the service half of it: this
