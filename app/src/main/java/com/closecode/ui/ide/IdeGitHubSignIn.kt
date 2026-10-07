@@ -72,11 +72,49 @@ internal fun describeFailure(error: Throwable, fallback: String): String {
  * GitHub hands out a short code, the user types it at github.com/login/device on whatever
  * device is near them, and this screen polls until they approve. No browser callback, no
  * client secret, and no token ever leaves this process except to GitHub itself.
+ *
+ * This is the card over a scrim, for when signing in is the whole task. The clone screen embeds
+ * the same body where the repository list would otherwise be — see [GitHubSignInBody].
  */
 @Composable
 fun GitHubSignIn(
     onSignedIn: (String) -> Unit,
     onDismiss: () -> Unit,
+) {
+    val c = LocalPageColors.current
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(c.scrim)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        GitHubSignInBody(
+            onSignedIn = onSignedIn,
+            onCancel = onDismiss,
+            modifier = Modifier.padding(horizontal = 28.dp),
+        )
+    }
+}
+
+/**
+ * The device-flow card on its own: the code, what it is waiting for, and the way out.
+ *
+ * [onCancel] is nullable because the card has two homes. Over a scrim it needs a Cancel; embedded
+ * in the clone screen it does not — the screen behind it is the way out, and a Cancel there would
+ * say the wrong thing. The failure's "Try again" always survives: a user who has a code on
+ * another device and a dead connection needs it in both places.
+ */
+@Composable
+internal fun GitHubSignInBody(
+    onSignedIn: (String) -> Unit,
+    onCancel: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
     val client = remember { GitHubClient() }
@@ -127,87 +165,78 @@ fun GitHubSignIn(
         }
     }
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(c.scrim)
+    Column(
+        modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.panel)
+            .border(1.dp, c.ln, RoundedCornerShape(16.dp))
+            // Enabled no-op so the tap lands here instead of falling through to the scrim.
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
-                onClick = onDismiss,
-            ),
-        contentAlignment = Alignment.Center,
+                onClick = {},
+            )
+            .padding(horizontal = 24.dp, vertical = 26.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Column(
+        Text(
+            text = "Sign in to GitHub",
+            color = c.tx,
+            fontSize = 16.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "Open github.com/login/device on any device and enter this code.",
+            color = c.mu,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            lineHeight = 17.sp,
+            textAlign = TextAlign.Center,
+        )
+
+        Box(
             Modifier
-                .padding(horizontal = 28.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(16.dp))
-                // Enabled no-op so the tap lands here instead of falling through to the scrim.
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = {},
-                )
-                .padding(horizontal = 24.dp, vertical = 26.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(c.bg)
+                .border(1.dp, c.ln, RoundedCornerShape(12.dp))
+                .padding(vertical = 18.dp),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = "Sign in to GitHub",
-                color = c.tx,
-                fontSize = 16.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
+                text = code?.userCode ?: "····-····",
+                color = if (failure == null) c.ac else c.mu,
+                fontSize = 26.sp,
+                fontFamily = Mono,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 3.sp,
             )
-            Text(
-                text = "Open github.com/login/device on any device and enter this code.",
-                color = c.mu,
-                fontSize = 12.sp,
-                fontFamily = Sans,
-                lineHeight = 17.sp,
-                textAlign = TextAlign.Center,
-            )
+        }
 
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(c.bg)
-                    .border(1.dp, c.ln, RoundedCornerShape(12.dp))
-                    .padding(vertical = 18.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = code?.userCode ?: "····-····",
-                    color = if (failure == null) c.ac else c.mu,
-                    fontSize = 26.sp,
-                    fontFamily = Mono,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 3.sp,
-                )
-            }
+        Text(
+            text = failure ?: note,
+            color = if (failure == null) c.mu else c.red,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            lineHeight = 17.sp,
+            textAlign = TextAlign.Center,
+        )
 
-            Text(
-                text = failure ?: note,
-                color = if (failure == null) c.mu else c.red,
-                fontSize = 12.sp,
-                fontFamily = Sans,
-                lineHeight = 17.sp,
-                textAlign = TextAlign.Center,
-            )
-
+        if (onCancel != null || failure != null) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                SignInAction(
-                    label = "Cancel",
-                    primary = false,
-                    modifier = Modifier.weight(1f),
-                    onClick = onDismiss,
-                )
+                onCancel?.let { leave ->
+                    SignInAction(
+                        label = "Cancel",
+                        primary = false,
+                        modifier = Modifier.weight(1f),
+                        onClick = leave,
+                    )
+                }
                 if (failure != null) {
                     SignInAction(
                         label = "Try again",
@@ -222,13 +251,13 @@ fun GitHubSignIn(
                     )
                 }
             }
-            Spacer(Modifier.height(0.dp))
         }
+        Spacer(Modifier.height(0.dp))
     }
 }
 
 @Composable
-private fun SignInAction(
+internal fun SignInAction(
     label: String,
     primary: Boolean,
     modifier: Modifier = Modifier,

@@ -379,8 +379,6 @@ fun HeroScreen(
     var githubOpen by remember { mutableStateOf(false) }
     var signInOpen by remember { mutableStateOf(false) }
     var cloneOpen by remember { mutableStateOf(false) }
-    // Cloning needs a token the user may not have yet: sign in first, then open the list.
-    var cloneAfterSignIn by remember { mutableStateOf(false) }
 
     LaunchedEffect(githubToken) {
         val token = githubToken
@@ -483,14 +481,7 @@ fun HeroScreen(
                                     signInOpen = true
                                 }
                             },
-                            onClone = {
-                                if (githubToken != null) {
-                                    cloneOpen = true
-                                } else {
-                                    cloneAfterSignIn = true
-                                    signInOpen = true
-                                }
-                            },
+                            onClone = { cloneOpen = true },
                         )
                     }
                 }
@@ -572,24 +563,19 @@ fun HeroScreen(
                 tokenStore.write(token)
                 githubToken = token
                 signInOpen = false
-                if (cloneAfterSignIn) {
-                    cloneAfterSignIn = false
-                    cloneOpen = true
-                } else {
-                    toast = "Signed in to GitHub."
-                }
+                toast = "Signed in to GitHub."
             },
-            onDismiss = {
-                signInOpen = false
-                cloneAfterSignIn = false
-            },
+            onDismiss = { signInOpen = false },
         )
     }
 
-    val activeToken = githubToken
-    if (cloneOpen && activeToken != null) {
-        GitHubCloneSheet(
-            token = activeToken,
+    if (cloneOpen) {
+        GitHubCloneScreen(
+            token = githubToken,
+            onToken = { fresh ->
+                tokenStore.write(fresh)
+                githubToken = fresh
+            },
             onDismiss = { cloneOpen = false },
             onCloned = { record ->
                 cloneOpen = false

@@ -122,7 +122,8 @@ import com.closecode.lang.KotlinFileAnalysis
 import com.closecode.lang.KotlinAnalyzer
 import com.closecode.lang.Severity
 import com.closecode.lang.SourceEdits
-import com.closecode.ui.GitHubCloneSheet
+import com.closecode.ui.GitHubCloneScreen
+import com.closecode.ui.github.TokenStore
 import com.closecode.ui.ide.model.IdeNavItems
 import com.closecode.ui.ide.model.kindColor
 import com.closecode.ui.ide.model.kindGlyph
@@ -200,10 +201,14 @@ fun IdeScreen(
     // runs with the composition that is actually on screen.
     var importFolder by remember { mutableStateOf<String?>(null) }
     val pendingImport = remember { mutableStateOf<Pair<String, Uri>?>(null) }
-    // The token at the moment a clone was asked for, rather than a live binding to the panel's
-    // own copy: the picker only opens on a deliberate tap, so a token read once and then handed
-    // over is exactly what it needs, and it survives the sheet outliving the drawer's state.
-    var cloneSheetToken by remember { mutableStateOf<String?>(null) }
+    // Whether the clone route is on screen. It takes no token here: it reads the store itself and
+    // writes it back when it re-authenticates, so the hand-off is just "open it" and there is no
+    // second copy of the token to fall out of date.
+    var cloneOpen by remember { mutableStateOf(false) }
+    // Written by that route when it re-authenticates. The drawer caches the token for as long as
+    // it is composed, and this is how it is told to read it again rather than go on with the copy
+    // it took when it was opened.
+    var githubTokenEpoch by remember { mutableStateOf(0) }
     var editorFocused by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var findQuery by remember { mutableStateOf("") }
@@ -891,7 +896,8 @@ fun IdeScreen(
                                         explorerOpen = false
                                     }
                                 },
-                                onCloneRequest = { cloneSheetToken = it },
+                                onCloneRequest = { cloneOpen = true },
+                                githubTokenEpoch = githubTokenEpoch,
                                 projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                             )
 
@@ -1220,15 +1226,19 @@ fun IdeScreen(
             )
         }
 
-        // Hosted here rather than inside the drawer: the sheet draws a full-screen scrim, and the
-        // drawer collapses to 0.dp on the Files tab — where it would be invisible but still modal.
-        val activeCloneToken = cloneSheetToken
-        if (activeCloneToken != null) {
-            GitHubCloneSheet(
-                token = activeCloneToken,
-                onDismiss = { cloneSheetToken = null },
+        // Hosted here rather than inside the drawer: it covers the screen, and the drawer
+        // collapses to 0.dp on the Files tab — where it would be invisible but still modal.
+        if (cloneOpen) {
+            val tokenStore = remember { TokenStore(context) }
+            GitHubCloneScreen(
+                token = remember(githubTokenEpoch) { tokenStore.read() },
+                onToken = { fresh ->
+                    tokenStore.write(fresh)
+                    githubTokenEpoch++
+                },
+                onDismiss = { cloneOpen = false },
                 onCloned = { record ->
-                    cloneSheetToken = null
+                    cloneOpen = false
                     onProjectCloned(record)
                 },
             )
@@ -1643,10 +1653,12 @@ private fun IdeExplorer(
     // The long-press menu. It is carried up because every one of its actions needs the repository,
     // the open tabs or a dialog, and the drawer has none of those.
     onAction: (TreeAction, ProjectFile) -> Unit,
-    // Carried through to the GitHub tab, which owns the token: it reports the moment a clone
-    // should start and the screen shows the picker, since only the screen has full-screen room
-    // for it.
-    onCloneRequest: (String) -> Unit,
+    // Carried through to the GitHub tab: it only says *when* a clone should start. The route that
+    // runs one is full-screen, so it lives at screen level, and only the screen has room for it.
+    onCloneRequest: () -> Unit,
+    // How many times the stored GitHub token has been replaced. Passed on so the panel re-reads it
+    // instead of going on with the copy it took when it was composed.
+    githubTokenEpoch: Int,
     projectRoot: File?,
 ) {
     val c = LocalPageColors.current
@@ -1804,6 +1816,7 @@ private fun IdeExplorer(
                 projectRoot = projectRoot,
                 revision = gitRevision,
                 onCloneRequest = onCloneRequest,
+                tokenEpoch = githubTokenEpoch,
                 // One modifier or the other, never both. Appending `size(0.dp)` after
                 // `width(...).fillMaxHeight()` could not work: those hand the child an incoming
                 // minimum of full width by full height, `size` is enforce-incoming, so the zero was

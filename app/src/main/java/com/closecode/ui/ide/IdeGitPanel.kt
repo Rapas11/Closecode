@@ -84,9 +84,14 @@ fun IdeGitPanel(
     // showing files that have since been edited, reverted or removed.
     revision: Int = 0,
     // A clone builds a brand new project and leaves this one. This panel decides *when* one
-    // happens and passes the token up; the sheet that runs it lives at screen level, and the
-    // caller owns where the finished record lands.
-    onCloneRequest: (String) -> Unit = {},
+    // happens and reports it; the route that runs it lives at screen level, and the caller owns
+    // where the finished record lands. No token crosses this boundary: the route reads the store
+    // itself, so a sign-in that happens over there is not this panel's to know about.
+    onCloneRequest: () -> Unit = {},
+    // Bumped whenever the stored token is written from outside this panel — the clone route signs
+    // in too. Re-keying the read on it is what stops this panel pushing with a token that has
+    // since been replaced, which would look exactly like the failure it replaced.
+    tokenEpoch: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -105,7 +110,7 @@ fun IdeGitPanel(
     val context = LocalContext.current
     val tokenStore = remember(context) { TokenStore(context) }
     val gitHubClient = remember { GitHubClient() }
-    var githubToken by remember { mutableStateOf(tokenStore.read()) }
+    var githubToken by remember(tokenEpoch) { mutableStateOf(tokenStore.read()) }
     var account by remember { mutableStateOf<GitHubUser?>(null) }
     // Everything below describes one project. Keyed by it so an error, a note or a linked
     // remote from the last project cannot travel into this one and look like its own.
@@ -114,22 +119,7 @@ fun IdeGitPanel(
     var githubError by remember(projectRoot) { mutableStateOf<String?>(null) }
     var githubNote by remember(projectRoot) { mutableStateOf<String?>(null) }
     var signInOpen by remember { mutableStateOf(false) }
-    // Carries "I meant to clone" across the device-flow round trip, which is the same hand-off
-    // the hero screen performs: sign in first, then open the picker that the tap asked for.
-    var cloneAfterSignIn by remember { mutableStateOf(false) }
 
-    // The sheet a clone opens draws a full-screen scrim, which this panel cannot host — it
-    // collapses to 0.dp on the Files tab. So this side only decides *when*, and hands the token
-    // to whoever can show the picker.
-    fun requestClone() {
-        val token = githubToken
-        if (token == null) {
-            cloneAfterSignIn = true
-            signInOpen = true
-        } else {
-            onCloneRequest(token)
-        }
-    }
     var showRepos by remember(projectRoot) { mutableStateOf(false) }
     var repos by remember(projectRoot) { mutableStateOf<List<GitHubRepo>>(emptyList()) }
     // Read straight from `refs/stash` rather than carried on GitSnapshot, so restoring a stash
@@ -380,7 +370,7 @@ fun IdeGitPanel(
                 }
             },
             onSignIn = { signInOpen = true },
-            onClone = { requestClone() },
+            onClone = { onCloneRequest() },
             onSignOut = {
                 tokenStore.clear()
                 githubToken = null
@@ -455,15 +445,8 @@ fun IdeGitPanel(
                 tokenStore.write(token)
                 githubToken = token
                 signInOpen = false
-                if (cloneAfterSignIn) {
-                    cloneAfterSignIn = false
-                    requestClone()
-                }
             },
-            onDismiss = {
-                signInOpen = false
-                cloneAfterSignIn = false
-            },
+            onDismiss = { signInOpen = false },
         )
     }
 }
