@@ -2214,10 +2214,6 @@ private fun IdeEditorArea(
         codeLines.indexOfFirst { it.trimStart().startsWith("import ") } + 1
     }
 
-    // Colorizing the whole file on every keystroke made typing lag on large files. Remembering by
-    // text means cursor moves and layout updates reuse the same colored text.
-    val highlighted = remember(code, c) { highlightCode(code, c) }
-
     val currentAnalysis = analysis?.takeIf { it.source == code }
 
     // Diagnostics off means "show me nothing", not "stop analysing": the analysis still runs,
@@ -2245,6 +2241,36 @@ private fun IdeEditorArea(
     }
     val lineHeightPx = remember(codeLayout, code) {
         measuredLineHeightPx(codeLayout, code) ?: fallbackLineHeightPx
+    }
+
+    // Only the rows that can be on screen are laid out and colourized. A two thousand line file was
+    // paying for two thousand lines of measurement and two thousand lines of tokenizing on every
+    // keystroke, of which about forty were ever visible.
+    //
+    // The scroll is read through derivedStateOf so a fling costs this scope one recomposition per
+    // row crossed rather than one per pixel, and the window is what tells every overlay where the
+    // slice sits — see [CodeWindow].
+    val codeRange by remember(codeScroll, lineHeightPx, viewportHeightPx, codeLines) {
+        androidx.compose.runtime.derivedStateOf {
+            codeWindowRange(
+                lineCount = codeLines.size,
+                scrollTopPx = codeScroll.value.toFloat(),
+                viewportHeightPx = viewportHeightPx,
+                lineHeightPx = lineHeightPx,
+            )
+        }
+    }
+    val codeWindow = remember(codeRange.first, lineHeightPx, code) {
+        CodeWindow(
+            firstLine = codeRange.first,
+            startOffset = offsetOfLineColumn(code, codeRange.first + 1, 1),
+            topPx = windowTopPx(codeRange.first, lineHeightPx),
+        )
+    }
+    // highlightCode works one line at a time with nothing carried between them, so colourizing the
+    // slice gives exactly the rows the whole file would have produced.
+    val highlighted = remember(codeRange, code, c) {
+        highlightCode(sliceOfLines(codeLines, codeRange), c)
     }
     var quickFixLine by remember { mutableStateOf<Int?>(null) }
     var quickFixIndex by remember { mutableStateOf(0) }
@@ -2403,12 +2429,17 @@ private fun IdeEditorArea(
     // edge accepted a pill that ran off the right side of the screen.
     val codeColumnOriginPx = with(autoDensity) { columnStart.toPx() }
     val pillViewportWidthPx = (viewportWidthPx - codeColumnOriginPx).coerceAtLeast(0f)
+    // The whole scrollable height, measured once and shared: the caret's scroll maths and the code
+    // column's own height have to agree, because they are the two ends of the same scroller. Both
+    // are built from the row model rather than from what the renderer measured, so the number the
+    // scroller clamps against cannot move when a slice is laid out.
+    val contentHeightPx =
+        topPaddingPx + codeLines.size * lineHeightPx + with(autoDensity) { 40.dp.toPx() }
     LaunchedEffect(caretLine, viewportHeightPx, lineHeightPx) {
         val margin = with(autoDensity) { 24.dp.toPx() }
         val rowTop = rowTopPx(caretLine, lineHeightPx, topPaddingPx)
         val rowBottom = rowTop + lineHeightPx
-        val contentHeight = topPaddingPx + codeLines.size * lineHeightPx + with(autoDensity) { 40.dp.toPx() }
-        val maxScroll = (contentHeight - viewportHeightPx).coerceAtLeast(0f)
+        val maxScroll = (contentHeightPx - viewportHeightPx).coerceAtLeast(0f)
         val target = when {
             rowTop - margin < codeScroll.value -> (rowTop - margin).coerceAtLeast(0f)
             rowBottom + margin > codeScroll.value + viewportHeightPx ->
@@ -2429,7 +2460,7 @@ private fun IdeEditorArea(
     // makes are applied straight away, because an animation restarted on every keystroke never
     // settles and the text ends up swimming.
     LaunchedEffect(cursor, codeWidthPx, viewportWidthPx) {
-        val caretContent = caretX(codeLayout, cursor) ?: return@LaunchedEffect
+        val caretContent = caretX(codeLayout, cursor, codeWindow) ?: return@LaunchedEffect
         val margin = with(autoDensity) { CaretHScrollMargin.toPx() }
         val now = codeHScroll.value.toFloat()
         val wanted = targetHScroll(caretContent, now, codeWidthPx, margin)
@@ -2695,12 +2726,20 @@ contentAlignment = Alignment.Center,
                     .padding(top = EditorTopPadding, bottom = 40.dp),
             ) {
                 Row(Modifier.horizontalScroll(codeHScroll)) {
+                    // The renderer only lays out the slice that can be on screen now, so the text is
+                    // no longer what makes this column tall — the row model is. Pinning it here is
+                    // what keeps the column, the gutter and the scroller agreeing on where the file
+                    // ends, and it is the same number the caret's scroll maths clamps against.
+                    val codeColumnHeight = with(autoDensity) {
+                        (codeLines.size * lineHeightPx).toDp()
+                    }
                     Box(
                         Modifier
                             // The code area is at least as wide as the visible column, so a tap on
                             // the empty space to the right of a short line still reaches the text
                             // field and focuses the editor.
                             .widthIn(min = with(androidx.compose.ui.platform.LocalDensity.current) { codeWidthPx.toDp() })
+                            .height(codeColumnHeight)
                             // Spec 6.3: the code column starts one inset past the gutter divider,
                             // and every overlay inside it reads x from that same origin.
                             .padding(
@@ -2768,6 +2807,12 @@ contentAlignment = Alignment.Center,
                             ),
                             fontFamily = Mono,
                             softWrap = false,
+                            // The slice is drawn at the absolute row it starts on, so every line in
+                            // it lands on the same y it had when the whole file was one Text — and
+                            // the transparent field, the gutter and the overlays all still agree.
+                            modifier = Modifier.offset {
+                                IntOffset(0, codeWindow.topPx.roundToInt())
+                            },
                             // The layout comes from *this* Text, the one whose glyphs the user
                             // actually sees. Taking it from the transparent BasicTextField below
                             // gave a different line advance, which is what made the gutter rows,
@@ -2869,13 +2914,14 @@ contentAlignment = Alignment.Center,
                         // text, measured off the rendered layout rather than guessed: two
                         // characters' worth. Both draw on the same side of a line, so they share
                         // one number and can never drift apart.
-                        val twoCharGapPx = 2f * (charWidthPx(codeLayout, code) ?: 0f)
+                        val twoCharGapPx = 2f * (charWidthPx(codeLayout) ?: 0f)
                         if (problems.byLine.isNotEmpty()) {
                             // Wavy lines under the exact bad characters. Drawn before the labels
                             // so the labels stay readable on top of them.
                             SquiggleLayer(
                                 problems = problems,
                                 layout = codeLayout,
+                                window = codeWindow,
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
                                     .fillMaxSize(),
@@ -2891,8 +2937,8 @@ contentAlignment = Alignment.Center,
                                 // measured off the rendered layout. The line's own newline has no
                                 // width, so the anchor is its right edge, never the character.
                                 gapPx = twoCharGapPx,
-                                anchorX = { line -> endOfLineX(codeLayout, code, line) },
-                                yOfLine = { line -> lineTopPx(codeLayout, code, line) },
+                                anchorX = { line -> endOfLineX(codeLayout, code, line, codeWindow) },
+                                yOfLine = { line -> lineTopPx(codeLayout, code, line, codeWindow) },
                                 // Spec 7: a pill is one of the four ways into the Problems sheet.
                                 onTap = { diagnostic ->
                                     commit(
@@ -2920,10 +2966,10 @@ contentAlignment = Alignment.Center,
                         // cover every character to the right of the cursor, exactly where the user
                         // is reading. The edge it has to stay inside of is the one the sideways
                         // scroll has carried it out to, not the column's own width.
-                        val bulbAnchor = caretX(codeLayout, cursor)?.let { caretAt ->
+                        val bulbAnchor = caretX(codeLayout, cursor, codeWindow)?.let { caretAt ->
                             bulbAnchorX(
                                 caretXPx = caretAt,
-                                lineEndXPx = endOfLineX(codeLayout, code, caretLine) ?: caretAt,
+                                lineEndXPx = endOfLineX(codeLayout, code, caretLine, codeWindow) ?: caretAt,
                                 gapPx = twoCharGapPx,
                                 bulbWidthPx = bulbWidthPx,
                                 visibleRightPx = codeHScroll.value + pillViewportWidthPx,
@@ -2937,7 +2983,7 @@ contentAlignment = Alignment.Center,
                             val bulbHeightPx = with(bulbDensity) { 33.dp.toPx() }
                             // Spec 6.6: the bulb hangs off the line above, anchored on the caret
                             // line's real top from the layout.
-                            val caretTopContent = lineTopPx(codeLayout, code, caretLine)
+                            val caretTopContent = lineTopPx(codeLayout, code, caretLine, codeWindow)
                                 ?: pillTopPx(caretLine, lineHeightPx)
                             LineBulb(
                                 top = bulbTopPx(
@@ -2965,6 +3011,9 @@ contentAlignment = Alignment.Center,
                         caretLine = caretLine,
                         // Rows come from the layout that drew the glyphs, not from a second row model.
                         layout = codeLayout,
+                        // ...and from the slice that layout describes, so a number stays on its own
+                        // row even though the text is no longer one Text for the whole file.
+                        window = codeWindow,
                         // Spec 6.3: the first import line gets the fold affordance.
                         foldLine = firstImportLine,
                         onFoldTap = { onToast("Code folding is not available yet") },
@@ -2990,7 +3039,7 @@ contentAlignment = Alignment.Center,
                         val line = quickFixLine ?: 1
                         // The card lives in the viewport, the layout in the scrolled content, so the
                         // scroll offset has to come off before the card can sit on its line.
-                        val contentTop = lineTopPx(codeLayout, code, line)
+                        val contentTop = lineTopPx(codeLayout, code, line, codeWindow)
                             ?: pillTopPx(line, lineHeightPx)
                         val top = topPaddingPx + contentTop - codeScroll.value
                         androidx.compose.ui.unit.IntOffset(
@@ -3052,7 +3101,7 @@ contentAlignment = Alignment.Center,
                 insetPx = popupEdgePx,
             ).coerceAtLeast(with(popupDensity) { 120.dp.toPx() })
             val shownSuggestions = visibleSuggestions.take(MAX_VISIBLE_SUGGESTIONS)
-            val caretTopContent = lineTopPx(codeLayout, code, caretLine)
+            val caretTopContent = lineTopPx(codeLayout, code, caretLine, codeWindow)
                 ?: pillTopPx(caretLine, lineHeightPx)
             val caretTopViewport = topPaddingPx + caretTopContent - codeScroll.value
             // Spec 6.7: the popup hides when the caret line scrolls out of view, so it never floats
@@ -3076,7 +3125,11 @@ contentAlignment = Alignment.Center,
             val popupTop = popupAt?.first ?: 0f
             val popupRows = popupAt?.second ?: 1
             val popupLeft = popupLeftPx(
-                wordX = xForOffset(codeLayout, wordStartOffset(code, cursor.coerceIn(0, code.length))) ?: 0f,
+                wordX = xForOffset(
+                    codeLayout,
+                    wordStartOffset(code, cursor.coerceIn(0, code.length)),
+                    codeWindow,
+                ) ?: 0f,
                 columnStartPx = with(popupDensity) { columnStart.toPx() },
                 hScrollPx = codeHScroll.value,
                 popupWidthPx = popupWidthPx,
@@ -3117,7 +3170,8 @@ contentAlignment = Alignment.Center,
             if (hasSelection) {
                 val selectedLine = caretPosition(code, selectedRange.min).first
                 val selectedTopContent =
-                    lineTopPx(codeLayout, code, selectedLine) ?: pillTopPx(selectedLine, lineHeightPx)
+                    lineTopPx(codeLayout, code, selectedLine, codeWindow)
+                        ?: pillTopPx(selectedLine, lineHeightPx)
                 val selectedTopViewport = topPaddingPx + selectedTopContent - codeScroll.value
                 val selectionBarHeightPx =
                     with(popupDensity) { SELECTION_BAR_HEIGHT.toPx() }
@@ -3132,7 +3186,7 @@ contentAlignment = Alignment.Center,
                     edgePx = popupEdgePx,
                 )
                 val selectionBarLeft = popupLeftPx(
-                    wordX = xForOffset(codeLayout, selectedRange.min) ?: 0f,
+                    wordX = xForOffset(codeLayout, selectedRange.min, codeWindow) ?: 0f,
                     columnStartPx = with(popupDensity) { columnStart.toPx() },
                     hScrollPx = codeHScroll.value,
                     popupWidthPx = selectionBarWidthPx,
@@ -3564,7 +3618,8 @@ private const val MAX_ANALYZED_CHARS = 200_000
 
 /** Files larger than this are skipped by find-in-project; their content would swamp the sheet. */
 private const val MAX_SEARCH_FILE_CHARS = 200_000
-private const val ANALYSIS_DEBOUNCE_MS = 120L
+/** How long a burst of keystrokes is left alone before the per-file pass runs. */
+private const val ANALYSIS_DEBOUNCE_MS = 200L
 
 /** Project-wide totals run over every Kotlin file, so they wait longer and stop at a file cap. */
 private const val PROJECT_ANALYSIS_DEBOUNCE_MS = 400L

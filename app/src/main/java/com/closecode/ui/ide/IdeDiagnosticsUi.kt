@@ -248,18 +248,37 @@ fun enterEdit(text: String, selectionStart: Int, selectionEnd: Int): Pair<String
 
 /**
  * Top edge of zero-based [index] as the renderer actually placed it, falling back to the row model
- * when the layout is not ready or has fewer lines than the gutter is asked to draw.
+ * when the layout is not ready, does not contain that row, or the row is outside [window].
+ *
+ * The fallback stays in absolute document pixels, which is what makes this work for both windows at
+ * once: the gutter asks for rows the code's slice may not contain, and gets the row model for them,
+ * while a row the slice *does* contain comes back from the renderer and is shifted down by
+ * [CodeWindow.topPx] into the same coordinate space.
  */
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
-fun lineTopFromLayout(layout: TextLayoutResult?, index: Int, lineHeightPx: Float): Float {
-    if (layout != null && index < layout.lineCount) {
-        runCatching { layout.getLineTop(index) }.getOrNull()?.let { return it }
+fun lineTopFromLayout(
+    layout: TextLayoutResult?,
+    index: Int,
+    lineHeightPx: Float,
+    window: CodeWindow = CodeWindow.Full,
+): Float {
+    val sliceIndex = index - window.firstLine
+    if (layout != null && sliceIndex in 0 until layout.lineCount) {
+        runCatching { layout.getLineTop(sliceIndex) }.getOrNull()?.let { return window.topPx + it }
     }
     return index.coerceAtLeast(0) * lineHeightPx
 }
 
 /** Rows of slack above and below the viewport, so a fast fling never lands on an unmeasured gap. */
 private const val GutterWindowOverhang = 2
+
+/**
+ * The same slack for the code text, one row deeper.
+ *
+ * The gutter can afford a momentary gap because it only draws numbers; the text layer is what the
+ * user is reading, so it gets the extra row.
+ */
+private const val CodeWindowOverhang = 3
 
 /**
  * The slice of zero-based line indices the gutter should actually compose for a scroll position.
@@ -277,14 +296,117 @@ internal fun gutterWindow(
     scrollTopPx: Float,
     viewportHeightPx: Float,
     lineHeightPx: Float,
+): IntRange = windowRange(
+    lineCount = lineCount,
+    scrollTopPx = scrollTopPx,
+    viewportHeightPx = viewportHeightPx,
+    lineHeightPx = lineHeightPx,
+    overhang = GutterWindowOverhang,
+)
+
+/**
+ * Where the slice of the file that is actually drawn sits inside the whole file.
+ *
+ * The code no longer lays out every line: it renders only the rows that can be on screen, so the
+ * renderer's own [TextLayoutResult] describes *that* slice and not the document. Every helper that
+ * reads the layout therefore has to know which line the layout's row 0 came from, which character
+ * its character 0 came from, and where in the scrolled content that row's top falls.
+ *
+ * [Full] is the identity — row 0 is line 1, character 0 is offset 0, the top is zero — and it is
+ * the default on every helper below, so a caller (or a test) that holds a layout of the whole file
+ * keeps exactly the behaviour it had before the windowing existed.
+ */
+data class CodeWindow(
+    /** Zero-based index of the document line that became layout row 0. */
+    val firstLine: Int = 0,
+    /** Absolute character offset of the document that became layout character 0. */
+    val startOffset: Int = 0,
+    /** Content-space y of layout row 0's top edge, i.e. how far the slice was pushed down. */
+    val topPx: Float = 0f,
+) {
+    companion object {
+        val Full = CodeWindow()
+    }
+}
+
+/**
+ * Which layout row draws 1-based [line], or a negative number when [line] is above the window.
+ *
+ * The caller decides what a negative answer means: [lineTopPx] returns null so its caller falls
+ * back to the row model, which is right for an overlay that is about to draw nothing anyway.
+ */
+internal fun sliceIndexForLine(line: Int, firstLine: Int): Int = (line - 1) - firstLine
+
+/** Character index inside the rendered slice that corresponds to absolute [offset]. */
+internal fun mapOffsetToSlice(offset: Int, startOffset: Int, sliceLength: Int): Int =
+    (offset - startOffset).coerceIn(0, sliceLength)
+
+/** Content-space top of the slice, in the same pixels the overlays measure everything else in. */
+internal fun windowTopPx(firstLine: Int, lineHeightPx: Float): Float =
+    firstLine.coerceAtLeast(0) * lineHeightPx
+
+/**
+ * The slice of zero-based line indices the *code text* should lay out for a scroll position.
+ *
+ * Same shape as [gutterWindow], with a row more of slack either side: the gutter can afford a
+ * momentary gap because it only draws numbers, but the text layer is the thing the user reads, so a
+ * fling that lands on an unmeasured gap would show blank code.
+ *
+ * An unmeasured viewport returns every row — the safe answer, and only ever the first frame, which
+ * is exactly when nothing has been measured to window against yet.
+ */
+internal fun codeWindowRange(
+    lineCount: Int,
+    scrollTopPx: Float,
+    viewportHeightPx: Float,
+    lineHeightPx: Float,
+): IntRange = windowRange(
+    lineCount = lineCount,
+    scrollTopPx = scrollTopPx,
+    viewportHeightPx = viewportHeightPx,
+    lineHeightPx = lineHeightPx,
+    overhang = CodeWindowOverhang,
+)
+
+/** One composable's worth of slack above and below the viewport, shared by both window callers. */
+internal fun windowRange(
+    lineCount: Int,
+    scrollTopPx: Float,
+    viewportHeightPx: Float,
+    lineHeightPx: Float,
+    overhang: Int,
 ): IntRange {
     if (lineCount <= 0) return IntRange.EMPTY
     if (viewportHeightPx <= 0f || lineHeightPx <= 0f) return 0 until lineCount
     val visibleRows = (viewportHeightPx / lineHeightPx).toInt() + 1
-    val first = (scrollTopPx / lineHeightPx).toInt() - GutterWindowOverhang
+    val first = (scrollTopPx / lineHeightPx).toInt() - overhang
     val from = first.coerceIn(0, lineCount - 1)
-    val to = (from + visibleRows + GutterWindowOverhang * 2).coerceAtMost(lineCount - 1)
+    val to = (from + visibleRows + overhang * 2).coerceAtMost(lineCount - 1)
     return from..to
+}
+
+/**
+ * The document text [range] covers, so colourizing the slice is the same work as colourizing those
+ * rows of the whole file.
+ *
+ * The rows are joined with the newline `String.lines()` took out of them, so a slice and the same
+ * rows of the buffer are the same characters — which is what lets a windowed editor be coloured
+ * with the one highlighter it already has. Out of range answers an empty string rather than
+ * throwing: an empty slice draws nothing, which is the honest answer for a window that matches
+ * nothing.
+ */
+internal fun sliceOfLines(lines: List<String>, range: IntRange): String {
+    if (lines.isEmpty() || range.isEmpty()) return ""
+    val from = range.first
+    if (from < 0 || from > lines.lastIndex) return ""
+    val to = range.last.coerceAtMost(lines.lastIndex)
+    if (to < from) return ""
+    return buildString {
+        for (i in from..to) {
+            if (i > from) append('\n')
+            append(lines[i])
+        }
+    }
 }
 
 /**
@@ -323,6 +445,10 @@ fun LineNumberLayer(
     scrollState: ScrollState? = null,
     // The other half of the window calculation: how many rows fit under the gutter at once.
     viewportHeightPx: Float = 0f,
+    // The code only renders a slice of the document now, so a row the slice does not contain has no
+    // measured top to read. The gutter is told the same window and falls back to the row model for
+    // those, which is why it never drifts away from the code it labels.
+    window: CodeWindow = CodeWindow.Full,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -352,19 +478,19 @@ fun LineNumberLayer(
                 )
             },
     ) {
-        val window = if (scrollState == null) {
+        val rows = if (scrollState == null) {
             0 until lineCount
         } else {
             gutterWindow(lineCount, scrollState.value.toFloat(), viewportHeightPx, lineHeightPx)
         }
-        for (index in window) {
+        for (index in rows) {
             val line = index + 1
             val errored = line in problems.linesWithErrors
             val warned = !errored && line in problems.linesWithWarnings
             val onCaret = line == caretLine
             // The renderer's own line top when it has one, and the row model otherwise. Both are
             // content-space, so the number lines up with its glyphs at any scroll position.
-            val rowTop = lineTopFromLayout(layout, index, lineHeightPx)
+            val rowTop = lineTopFromLayout(layout, index, lineHeightPx, window)
 
             Box(
                 Modifier
@@ -633,11 +759,22 @@ private fun StackGlyph(tone: Color) {
     CcIcon(CcIcons.Stack, tone, 11.dp)
 }
 
-/** Horizontal x of [offset] within the rendered text, in the same coordinate space as the code. */
+/**
+ * Horizontal x of [offset] within the rendered text, in the same coordinate space as the code.
+ *
+ * [offset] is an absolute document offset, so when the renderer only holds [window]'s slice it is
+ * mapped onto the slice first. Anything outside the slice clamps to the slice's own edge: the
+ * overlays decide whether to draw at all from the line's top, which does answer null, so an x for a
+ * character just off screen is never the thing that puts a label in the wrong place.
+ */
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
-fun xForOffset(layout: TextLayoutResult?, offset: Int): Float? {
+fun xForOffset(
+    layout: TextLayoutResult?,
+    offset: Int,
+    window: CodeWindow = CodeWindow.Full,
+): Float? {
     if (layout == null) return null
-    val safe = offset.coerceIn(0, layout.layoutInput.text.length)
+    val safe = mapOffsetToSlice(offset, window.startOffset, layout.layoutInput.text.length)
     return runCatching { layout.getBoundingBox(safe).left }.getOrNull()
 }
 
@@ -654,14 +791,25 @@ fun xForOffset(layout: TextLayoutResult?, offset: Int): Float? {
  * all landed somewhere else than the code they belonged to.
  */
 
-/** Top edge of the 1-based [line], as the renderer drew it. */
-fun lineTopPx(layout: TextLayoutResult?, source: String, line: Int): Float? {
+/**
+ * Top edge of the 1-based [line], as the renderer drew it, in absolute content pixels.
+ *
+ * Null when the line is outside the rendered slice — the caller falls back to the row model, which
+ * is right for the overlays because the only lines they ever draw are the ones on screen, and those
+ * are always inside the window.
+ */
+fun lineTopPx(
+    layout: TextLayoutResult?,
+    source: String,
+    line: Int,
+    window: CodeWindow = CodeWindow.Full,
+): Float? {
     if (layout == null || line < 1) return null
     // Past the end of the text there is no row to measure; the caller falls back to the row model.
     if (line > source.count { it == '\n' } + 1) return null
-    val index = line - 1
-    if (index >= layout.lineCount) return null
-    return runCatching { layout.getLineTop(index) }.getOrNull()
+    val index = sliceIndexForLine(line, window.firstLine)
+    if (index < 0 || index >= layout.lineCount) return null
+    return runCatching { window.topPx + layout.getLineTop(index) }.getOrNull()
 }
 
 /**
@@ -687,13 +835,21 @@ fun endOfLineAnchorOffset(source: String, line: Int): Int {
  * over the code instead of after it.
  */
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
-fun endOfLineX(layout: TextLayoutResult?, source: String, line: Int): Float? {
+fun endOfLineX(
+    layout: TextLayoutResult?,
+    source: String,
+    line: Int,
+    window: CodeWindow = CodeWindow.Full,
+): Float? {
     if (layout == null || line < 1) return null
-    val index = line - 1
-    if (index >= layout.lineCount) return null
+    val index = sliceIndexForLine(line, window.firstLine)
+    if (index < 0 || index >= layout.lineCount) return null
     runCatching { layout.getLineRight(index) }.getOrNull()?.let { return it }
-    val anchor = endOfLineAnchorOffset(source, line)
-        .coerceAtMost(layout.layoutInput.text.length)
+    val anchor = mapOffsetToSlice(
+        endOfLineAnchorOffset(source, line),
+        window.startOffset,
+        layout.layoutInput.text.length,
+    )
     return runCatching { layout.getBoundingBox(anchor).left }.getOrNull()
 }
 
@@ -706,17 +862,24 @@ fun wordStartOffset(source: String, caret: Int): Int {
     return start
 }
 
-/** Width of one advance in the rendered text, used to convert "two characters" into pixels. */
+/**
+ * Width of one advance in the rendered text, used to convert "two characters" into pixels.
+ *
+ * The probe walks the string the renderer actually laid out rather than the document, because the
+ * renderer may only hold [window]'s slice: scanning the document would look for two glyphs near
+ * offset zero and then ask a layout that starts somewhere else entirely for their boxes.
+ */
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
-fun charWidthPx(layout: TextLayoutResult?, source: String): Float? {
+fun charWidthPx(layout: TextLayoutResult?): Float? {
     if (layout == null) return null
-    val textLength = layout.layoutInput.text.length
+    val drawn = layout.layoutInput.text.text
+    val textLength = drawn.length
     // Two consecutive characters that both draw something. Anything else measures the wrong thing:
     // a newline sits on the next row, and the character after the last one has no box at all.
     var probe = -1
     for (i in 0 until textLength - 1) {
-        if (source.getOrNull(i)?.drawsGlyph() != true) continue
-        if (source.getOrNull(i + 1)?.drawsGlyph() != true) continue
+        if (!drawn[i].drawsGlyph()) continue
+        if (!drawn[i + 1].drawsGlyph()) continue
         probe = i
         break
     }
@@ -745,6 +908,7 @@ fun charWidthPx(layout: TextLayoutResult?, source: String): Float? {
 fun SquiggleLayer(
     problems: ProblemsByLine,
     layout: androidx.compose.ui.text.TextLayoutResult?,
+    window: CodeWindow = CodeWindow.Full,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -759,7 +923,7 @@ fun SquiggleLayer(
     androidx.compose.foundation.Canvas(modifier) {
         for (diagnostic in problems.all) {
             val tone = if (diagnostic.severity == Severity.WARNING) c.warnUnderline else c.errorUnderline
-            val range = squiggleRange(layout, diagnostic, minWidthPx) ?: continue
+            val range = squiggleRange(layout, diagnostic, minWidthPx, window) ?: continue
             val left = range.first
             val right = range.second
             if (right <= left) continue
@@ -796,16 +960,25 @@ fun squiggleRange(
     layout: androidx.compose.ui.text.TextLayoutResult?,
     diagnostic: Diagnostic,
     minWidthPx: Float,
+    window: CodeWindow = CodeWindow.Full,
 ): Triple<Float, Float, Float>? {
     if (layout == null) return null
     val textLength = layout.layoutInput.text.length
-    val from = diagnostic.offset.coerceIn(0, textLength)
-    val to = (diagnostic.offset + diagnostic.length).coerceIn(from, textLength)
+    // The renderer only holds the slice, so a problem outside it has no box to draw under — which
+    // is the right answer, because an underline only means anything on a line the user can see.
+    if (diagnostic.offset < window.startOffset ||
+        diagnostic.offset > window.startOffset + textLength
+    ) {
+        return null
+    }
+    val from = mapOffsetToSlice(diagnostic.offset, window.startOffset, textLength)
+    val to = mapOffsetToSlice(diagnostic.offset + diagnostic.length, window.startOffset, textLength)
+        .coerceAtLeast(from)
     val startBox = runCatching { layout.getBoundingBox(from) }.getOrNull() ?: return null
     val endBox = runCatching { layout.getBoundingBox(to) }.getOrNull() ?: return null
     val left = startBox.left
     val right = maxOf(endBox.right, left + minWidthPx)
-    return Triple(left, right, startBox.top)
+    return Triple(left, right, window.topPx + startBox.top)
 }
 
 @Composable
@@ -922,9 +1095,13 @@ fun bulbAnchorX(
  * Read from the same [TextLayoutResult] the glyphs come from, so the bulb lands on the character
  * the caret is actually sitting in rather than an estimate from a monospace advance.
  */
-fun caretX(layout: TextLayoutResult?, caret: Int): Float? {
+fun caretX(
+    layout: TextLayoutResult?,
+    caret: Int,
+    window: CodeWindow = CodeWindow.Full,
+): Float? {
     if (layout == null) return null
-    val offset = caret.coerceIn(0, layout.layoutInput.text.length)
+    val offset = mapOffsetToSlice(caret, window.startOffset, layout.layoutInput.text.length)
     return runCatching { layout.getHorizontalPosition(offset, true) }.getOrNull()
 }
 
