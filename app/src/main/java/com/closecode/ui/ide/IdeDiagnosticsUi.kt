@@ -454,11 +454,15 @@ fun pillTopPx(line: Int, lineHeightPx: Float): Float =
 /**
  * Width a problem pill needs for everything except its message: padding, the severity icon, the
  * code label and the stack badge. Nothing but the message is allowed to shrink.
+ *
+ * This is a floor, not a measurement — it is added back to the room left for the message so the
+ * pill can never grow past the right edge. It was 124 dp when the icon was 15 dp and the gaps
+ * were 7; tightening all of those gave 30 dp back to the message on a phone.
  */
-val PillChromeWidth = 124.dp
+val PillChromeWidth = 96.dp
 
 /** Smallest message a pill will show before it starts ellipsising. */
-val PillMinMessageWidth = 24.dp
+val PillMinMessageWidth = 20.dp
 
 /**
  * Left edge of a problem pill: a little past the end of its line, and never past the point where it
@@ -554,14 +558,14 @@ fun InlineProblemLayer(
                     // characters of its own line, with no room of its own.
                     .offset { pillOffsetOf(x, top) }
                     .height(22.dp)
-                    .clip(RoundedCornerShape(11.dp))
+                    .clip(RoundedCornerShape(8.5.dp))
                     .background(fill)
                     // Spec 7: tapping a pill opens the Problems sheet at that problem. The pill sits
                     // past the end of the line's text, so it only ever takes taps aimed at itself.
                     .clickable { onTap(primary) }
-                    .padding(start = 7.dp, end = 10.dp),
+                    .padding(start = 5.dp, end = 7.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
             ) {
                 SeverityGlyph(severity = primary.severity)
                 Text(
@@ -575,11 +579,12 @@ fun InlineProblemLayer(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.widthIn(max = with(density) { textRoom.toDp() }),
                 )
-                // Spec 6.5: the code is mono 11 sp at 75 percent opacity.
+                // Spec 6.5: the code is mono at 75 percent opacity, small enough that a line with
+                // several problems still leaves room for the message it is labelling.
                 Text(
                     text = primary.code,
                     color = tone.copy(alpha = 0.75f),
-                    fontSize = 11.sp,
+                    fontSize = 9.5.sp,
                     fontFamily = Mono,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
@@ -610,16 +615,16 @@ fun InlineProblemLayer(
 }
 
 /**
- * Spec 6.5 severity icon: 15 dp, a circle with a cross for an error and a triangle with a bang
- * for a warning. Drawn rather than typed, so it matches the spec shape instead of depending on
- * which glyphs the bundled fonts happen to carry.
+ * Spec 6.5 severity icon: a circle with a cross for an error and a triangle with a bang for a
+ * warning. Drawn rather than typed, so it matches the spec shape instead of depending on which
+ * glyphs the bundled fonts happen to carry.
  */
 @Composable
 private fun SeverityGlyph(severity: Severity) {
     val c = LocalPageColors.current
     val tone = if (severity == Severity.WARNING) c.warnPillTx else c.errorPillTx
     // The prototype's own 24 x 24 glyph, so the pill's icon matches the reference shape.
-    CcIcon(if (severity == Severity.WARNING) CcIcons.Warning else CcIcons.ErrorCircle, tone, 15.dp)
+    CcIcon(if (severity == Severity.WARNING) CcIcons.Warning else CcIcons.ErrorCircle, tone, 12.dp)
 }
 
 /** Spec 6.5 "stack" glyph for the multi-problem badge, in the pill's own tone. */
@@ -949,6 +954,58 @@ fun popupTopPx(
         above >= 0f -> above
         // Neither side fits: keep the popup on screen and let the caller scroll the caret into view.
         else -> below.coerceIn(0f, (viewportHeightPx - popupHeightPx).coerceAtLeast(0f))
+    }
+}
+
+/**
+ * Spec 6.7: where the suggestion popup goes and how much of it the space allows, as
+ * `top to rows`.
+ *
+ * [popupTopPx] answers this for a panel of a *fixed* height and, when neither side has room, keeps
+ * it on screen by clamping — which lands it on top of the line being typed. The suggestion popup
+ * is not fixed: it is a list of rows, so instead of moving it onto the caret line it gives up
+ * rows. The caret line is never covered, whatever the viewport, because the row count is chosen to
+ * clear it rather than the other way round.
+ *
+ * The side with the room wins: as many rows as fit under the caret line if the whole popup fits
+ * there — which is the case the design describes as sitting "on the row below" — otherwise whichever
+ * side can show more, so a caret near the bottom flips above with its full list rather than sitting
+ * on one row below it. Nothing fits either side only when the viewport is shorter than a single
+ * row, and then the honest answer is no popup at all: [Pair]'s null.
+ *
+ * [rowHeightPx] is one row, [borderPx] the frame drawn around them, [edgePx] the air the popup
+ * keeps from the viewport's own edge and [maxRows] the most it would ever show.
+ */
+fun popupPlacement(
+    caretTopPx: Float,
+    lineHeightPx: Float,
+    gapPx: Float,
+    rowHeightPx: Float,
+    borderPx: Float,
+    viewportHeightPx: Float,
+    edgePx: Float,
+    maxRows: Int,
+): Pair<Float, Int>? {
+    if (maxRows < 1 || rowHeightPx <= 0f || viewportHeightPx <= 0f) return null
+
+    // Whole rows that fit in [room] without the frame poking out of it.
+    fun fit(room: Float): Int =
+        (((room - borderPx) / rowHeightPx).toInt()).coerceIn(0, maxRows)
+
+    val belowTop = caretTopPx + lineHeightPx + gapPx
+    val aboveBottom = caretTopPx - gapPx
+    val below = fit(viewportHeightPx - edgePx - belowTop)
+    val above = fit(aboveBottom - edgePx)
+    fun aboveTop(rows: Int) = aboveBottom - (rows * rowHeightPx + borderPx)
+
+    return when {
+        // The usual case: the whole list fits underneath and the caret line stays readable.
+        below >= maxRows -> belowTop to below
+        // Underneath cannot take the whole list, so whichever side can show more wins.
+        above > below && above > 0 -> aboveTop(above) to above
+        below > 0 -> belowTop to below
+        above > 0 -> aboveTop(above) to above
+        else -> null
     }
 }
 

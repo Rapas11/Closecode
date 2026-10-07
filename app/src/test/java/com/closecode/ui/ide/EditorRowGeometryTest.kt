@@ -192,7 +192,9 @@ class EditorRowGeometryTest {
     }
 
     @Test
-    fun thePopupNeverOverlapsTheCaretLineWhereverTheCaretIs() {
+    fun theFixedHeightPanelClearsTheLineWhileThereIsRoomEitherSide() {
+        // popupTopPx now places only the selection bar — a panel of a fixed height that cannot give
+        // up rows. The suggestion popup moved to popupPlacement, which is swept below.
         val lineHeight = 20f
         val gap = 6f
         val popupHeight = 5 * 53f + 3f
@@ -202,7 +204,7 @@ class EditorRowGeometryTest {
             val top = popupTopPx(caretTop, lineHeight, gap, popupHeight, viewport, gap)
             val clearsTheCaretRow = top + popupHeight <= caretTop || top >= caretTop + lineHeight
             assertTrue(
-                "caret row at $caretTop was covered: popup spans $top..${top + popupHeight}",
+                "caret row at $caretTop was covered: panel spans $top..${top + popupHeight}",
                 clearsTheCaretRow,
             )
             caretTop += 7f
@@ -210,12 +212,122 @@ class EditorRowGeometryTest {
     }
 
     @Test
-    fun thePopupStaysInsideTheViewportWhenNeitherSideFits() {
-        // A caret line in the middle with a popup that fits the viewport but clears neither the top
-        // nor the bottom: it is clamped into the viewport rather than hanging off an edge.
-        val top = popupTopPx(caretTopPx = 100f, lineHeightPx = 20f, gapPx = 6f, popupHeightPx = 260f, viewportHeightPx = 300f, edgePx = 6f)
-        assertTrue("clamped inside", top >= 0f)
-        assertTrue("clamped inside", top + 260f <= 300f)
+    fun thePopupGivesUpRowsRatherThanCoverTheCaretLine() {
+        // The bug this pins: a viewport short enough that neither side could take the whole list
+        // used to be answered by clamping the full-height popup into the viewport, which landed it
+        // on top of the line being typed. The row count gives way instead.
+        val place = popupPlacement(
+            caretTopPx = 100f,
+            lineHeightPx = 20f,
+            gapPx = 6f,
+            rowHeightPx = 53f,
+            borderPx = 3f,
+            viewportHeightPx = 300f,
+            edgePx = 6f,
+            maxRows = 5,
+        )
+        requireNotNull(place) { "a short viewport still has room for a row" }
+        val (top, rows) = place
+        val height = rows * 53f + 3f
+        assertEquals(3, rows)
+        assertEquals(126f, top, 0.001f)
+        assertTrue("clamped inside the viewport", top >= 0f && top + height <= 300f)
+        assertTrue(
+            "the caret line is not covered: popup spans $top..${top + height}",
+            top + height <= 100f || top >= 120f,
+        )
+    }
+
+    @Test
+    fun thePopupSitsUnderneathWhenTheWholeListFitsThere() {
+        val place = popupPlacement(
+            caretTopPx = 400f,
+            lineHeightPx = 20f,
+            gapPx = 6f,
+            rowHeightPx = 53f,
+            borderPx = 3f,
+            viewportHeightPx = 800f,
+            edgePx = 6f,
+            maxRows = 5,
+        )
+        requireNotNull(place)
+        val (top, rows) = place
+        assertEquals(5, rows)
+        assertEquals(426f, top, 0.001f)
+        assertTrue("the caret line is not covered", top >= 420f)
+    }
+
+    @Test
+    fun thePopupFlipsAboveWhenUnderneathCannotTakeTheWholeList() {
+        // A caret near the bottom: underneath has a row or two, but above has the whole list, and
+        // one row below the caret is worse than the full list above it.
+        val place = popupPlacement(
+            caretTopPx = 700f,
+            lineHeightPx = 20f,
+            gapPx = 6f,
+            rowHeightPx = 53f,
+            borderPx = 3f,
+            viewportHeightPx = 800f,
+            edgePx = 6f,
+            maxRows = 5,
+        )
+        requireNotNull(place)
+        val (top, rows) = place
+        assertEquals(5, rows)
+        assertEquals(426f, top, 0.001f)
+        assertTrue("the caret line is not covered", top + rows * 53f + 3f <= 700f)
+    }
+
+    @Test
+    fun aViewportShorterThanASingleRowGetsNoPopup() {
+        // Nothing fits either side, and a popup that cannot keep the caret line clear has no
+        // business being on screen at all.
+        assertNull(
+            popupPlacement(
+                caretTopPx = 10f,
+                lineHeightPx = 20f,
+                gapPx = 6f,
+                rowHeightPx = 53f,
+                borderPx = 3f,
+                viewportHeightPx = 40f,
+                edgePx = 6f,
+                maxRows = 5,
+            ),
+        )
+    }
+
+    @Test
+    fun thePopupNeverOverlapsTheCaretLineWhereverTheCaretIs() {
+        val rowHeight = 53f
+        val border = 3f
+        val gap = 6f
+        val lineHeight = 20f
+        val viewport = 800f
+        var caretTop = 0f
+        while (caretTop <= viewport) {
+            val place = popupPlacement(
+                caretTopPx = caretTop,
+                lineHeightPx = lineHeight,
+                gapPx = gap,
+                rowHeightPx = rowHeight,
+                borderPx = border,
+                viewportHeightPx = viewport,
+                edgePx = gap,
+                maxRows = 5,
+            )
+            if (place != null) {
+                val (top, rows) = place
+                val height = rows * rowHeight + border
+                assertTrue("off the top at $caretTop", top >= 0f)
+                assertTrue("off the bottom at $caretTop", top + height <= viewport)
+                val clearsTheCaretRow = top + height <= caretTop || top >= caretTop + lineHeight
+                assertTrue(
+                    "caret row at $caretTop was covered: popup spans $top..${top + height}",
+                    clearsTheCaretRow,
+                )
+            }
+            caretTop += 7f
+        }
     }
 
     @Test

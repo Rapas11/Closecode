@@ -3040,7 +3040,7 @@ contentAlignment = Alignment.Center,
             val popupDensity = androidx.compose.ui.platform.LocalDensity.current
             val popupGapPx = with(popupDensity) { POPUP_GAP.toPx() }
             val popupRowHeightPx = with(popupDensity) { POPUP_ROW_HEIGHT.toPx() }
-            val popupRows = visibleSuggestions.take(MAX_VISIBLE_SUGGESTIONS).size.coerceAtLeast(1)
+            val popupBorderPx = with(popupDensity) { 3.dp.toPx() }
             val popupEdgePx = with(popupDensity) { POPUP_EDGE_INSET.toPx() }
             val popupWidthPx = popupWidthPx(
                 maxWidthPx = with(popupDensity) { POPUP_MAX_WIDTH.toPx() },
@@ -3048,8 +3048,7 @@ contentAlignment = Alignment.Center,
                 gutterWidthPx = gutterWidthPx,
                 insetPx = popupEdgePx,
             ).coerceAtLeast(with(popupDensity) { 120.dp.toPx() })
-            // The border is 1.5 dp on each side, so a row count alone understates the real height.
-            val popupHeightPx = popupRowHeightPx * popupRows + with(popupDensity) { 3.dp.toPx() }
+            val shownSuggestions = visibleSuggestions.take(MAX_VISIBLE_SUGGESTIONS)
             val caretTopContent = lineTopPx(codeLayout, code, caretLine)
                 ?: pillTopPx(caretLine, lineHeightPx)
             val caretTopViewport = topPaddingPx + caretTopContent - codeScroll.value
@@ -3057,14 +3056,22 @@ contentAlignment = Alignment.Center,
             // over unrelated code, and comes back when the line is on screen again.
             val caretRowVisible = caretTopViewport + lineHeightPx > 0f &&
                 caretTopViewport < viewportHeightPx
-            val popupTop = popupTopPx(
+            // Where it goes *and* how much of it the space allows, answered together: when the room
+            // under the caret line cannot take the whole list, the row count gives way rather than
+            // the line the user is typing on. Null means not even one row fits either side, and a
+            // popup that cannot keep the caret line clear has no business being on screen.
+            val popupAt = popupPlacement(
                 caretTopPx = caretTopViewport,
                 lineHeightPx = lineHeightPx,
                 gapPx = popupGapPx,
-                popupHeightPx = popupHeightPx,
+                rowHeightPx = popupRowHeightPx,
+                borderPx = popupBorderPx,
                 viewportHeightPx = viewportHeightPx,
-                edgePx = popupGapPx,
+                edgePx = popupEdgePx,
+                maxRows = shownSuggestions.size.coerceAtLeast(1),
             )
+            val popupTop = popupAt?.first ?: 0f
+            val popupRows = popupAt?.second ?: 1
             val popupLeft = popupLeftPx(
                 wordX = xForOffset(codeLayout, wordStartOffset(code, cursor.coerceIn(0, code.length))) ?: 0f,
                 columnStartPx = with(popupDensity) { columnStart.toPx() },
@@ -3074,7 +3081,10 @@ contentAlignment = Alignment.Center,
                 insetPx = popupEdgePx,
             )
             androidx.compose.animation.AnimatedVisibility(
-                visible = quickFixLine == null && visibleSuggestions.isNotEmpty() && caretRowVisible,
+                visible = quickFixLine == null &&
+                    shownSuggestions.isNotEmpty() &&
+                    caretRowVisible &&
+                    popupAt != null,
                 enter = fadeIn(tween(120)),
                 exit = fadeOut(tween(120)),
                 modifier = Modifier
@@ -3084,8 +3094,9 @@ contentAlignment = Alignment.Center,
                     },
             ) {
                 SuggestionPopup(
-                    suggestions = visibleSuggestions.take(MAX_VISIBLE_SUGGESTIONS),
-                    selected = selectedSug.coerceIn(0, visibleSuggestions.lastIndex.coerceAtLeast(0)),
+                    suggestions = shownSuggestions,
+                    rows = popupRows,
+                    selected = selectedSug.coerceIn(0, shownSuggestions.lastIndex.coerceAtLeast(0)),
                     onSelect = { selectedSug = it },
                     onAccept = applySuggestion,
                     // Spec 6.7: min(430 dp, editor width - 16 dp).
@@ -3381,22 +3392,35 @@ private fun BoxScope.EditorScrollbar(
 @Composable
 private fun SuggestionPopup(
     suggestions: List<com.closecode.ui.ide.model.Suggestion>,
+    rows: Int,
     selected: Int,
     onSelect: (Int) -> Unit,
     onAccept: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
+    val listState = rememberLazyListState()
+    val shown = rows.coerceIn(1, suggestions.size.coerceAtLeast(1))
 
-    Column(
-        modifier
+    // The caller has already worked out how much room there is, so the list is exactly that tall
+    // and the rest scrolls. Shrinking the popup to fit used to mean dropping suggestions on the
+    // floor; this way one that falls off the bottom is a keypress away rather than gone.
+    LaunchedEffect(selected, shown) {
+        if (selected in suggestions.indices) listState.animateScrollToItem(selected)
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = modifier
             // Spec 6.7: width min(430, editor width - 16), radius 16, 1.5 dp border. The caller
-            // supplies the clamped width, so this only guarantees the corner radius.
+            // supplies the clamped width, so this only guarantees the corner radius and the height
+            // the room allowed.
+            .height(POPUP_ROW_HEIGHT * shown)
             .clip(RoundedCornerShape(16.dp))
             .background(c.panel)
-            .border(1.5.dp, c.ln, RoundedCornerShape(16.dp))
+            .border(1.5.dp, c.ln, RoundedCornerShape(16.dp)),
     ) {
-        suggestions.forEachIndexed { index, item ->
+        itemsIndexed(suggestions) { index, item ->
             val isSel = index == selected
             val secondary = item.subtitle?.takeIf { it.isNotBlank() } ?: item.detail
             Column(
