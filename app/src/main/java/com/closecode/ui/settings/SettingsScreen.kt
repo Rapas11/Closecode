@@ -539,6 +539,13 @@ private fun SettingRow(
     }
 }
 
+/**
+ * The word that sits beside a switch. A switch is a shape rather than a sentence: which way the
+ * knob points does not read as "on" at a glance, and reads worse to a screen reader, so the row
+ * says the state out loud as well as drawing it.
+ */
+internal fun toggleStateLabel(on: Boolean): String = if (on) "On" else "Off"
+
 @Composable
 private fun SettingControl(
     row: Row,
@@ -555,11 +562,12 @@ private fun SettingControl(
             val key = row.key
             if (key == null) {
                 var on by remember(row.name) { mutableStateOf(row.default) }
-                SwitchControl(on = on, onChange = { on = it })
+                ToggleControl(on = on, onChange = { on = it }, valueSize = valueSize)
             } else {
-                SwitchControl(
+                ToggleControl(
                     on = settings.flag(key),
                     onChange = { onSettingsChange(settings.withFlag(key, it)) },
+                    valueSize = valueSize,
                 )
             }
         }
@@ -672,6 +680,33 @@ private fun SettingControl(
     }
 }
 
+/**
+ * A switch with its state spelled out beside it. The word sits on the left, the way the other
+ * values on a settings row sit on the right of their label, so the row reads label → state →
+ * control from end to end.
+ */
+@Composable
+private fun ToggleControl(
+    on: Boolean,
+    onChange: (Boolean) -> Unit,
+    valueSize: androidx.compose.ui.unit.TextUnit,
+) {
+    val c = LocalPageColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Text(
+            text = toggleStateLabel(on),
+            color = c.tx,
+            fontSize = valueSize,
+            fontFamily = Sans,
+            maxLines = 1,
+        )
+        SwitchControl(on = on, onChange = onChange)
+    }
+}
+
 @Composable
 private fun SwitchControl(on: Boolean, onChange: (Boolean) -> Unit) {
     val c = LocalPageColors.current
@@ -722,6 +757,14 @@ private fun AccentSwatches(selected: Color, onSelect: (Color) -> Unit) {
     }
 }
 
+/**
+ * One option's label, ticked when it is the choice in force. The tick is the cue that survives
+ * without colour: weight and accent already mark the chosen row, and a tick says the same thing to
+ * anyone who cannot tell those apart.
+ */
+internal fun optionLabel(choice: String, selected: Boolean, unit: String): String =
+    (if (selected) "✓ " else "") + choice + unit
+
 @Composable
 private fun OptionsControl(
     choices: List<String>,
@@ -744,7 +787,7 @@ private fun OptionsControl(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = current + unit,
+                text = optionLabel(current, selected = true, unit = unit),
                 color = c.tx,
                 fontSize = 13.sp,
                 fontFamily = Sans,
@@ -766,7 +809,7 @@ private fun OptionsControl(
                 DropdownMenuItem(
                     text = {
                         Text(
-                            text = choice + unit,
+                            text = optionLabel(choice, selected = choice == current, unit = unit),
                             color = if (choice == current) c.ac else c.tx,
                             fontSize = 13.sp,
                             fontFamily = Sans,
