@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.input.key.Key
@@ -106,6 +107,7 @@ import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -163,6 +165,7 @@ fun IdeScreen(
     // them, and reading them once keeps a row changed on the settings screen in force immediately.
     val settings = LocalSettings.current
     val context = LocalContext.current
+    val c = LocalPageColors.current
     var tabs by remember { mutableStateOf(emptyList<ProjectFile>()) }
     var active by remember { mutableStateOf("") }
     var treeVersion by remember { mutableIntStateOf(0) }
@@ -185,6 +188,18 @@ fun IdeScreen(
     val diskContents = remember(slug) { mutableStateMapOf<String, String>() }
     var activePanel by remember(slug) { mutableStateOf("Code") }
     var explorerOpen by remember { mutableStateOf(false) }
+    // The drawer's width, kept here rather than inside the drawer so the scrim that closes it
+    // starts exactly where the drawer ends. Two numbers computed apart drift the moment either one
+    // animates, and a scrim that overlaps the drawer would swallow the file list. The drawer takes
+    // most of the width so files are readable, while the tab strip's chevron and the first
+    // characters of code stay visible behind it.
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val drawerFullWidth = if (screenWidthDp >= 760) 320.dp else (screenWidthDp * 0.72f).dp
+    val drawerWidth by animateDpAsState(
+        targetValue = if (explorerOpen) drawerFullWidth else 0.dp,
+        animationSpec = tween(200),
+        label = "explorer-width",
+    )
     // Which half of the drawer is showing. Source Control opens first — it holds the account,
     // clone and publish controls, none of which need this project to have a repository of its own.
     var explorerTab by remember { mutableStateOf(ExplorerTabs.first()) }
@@ -232,6 +247,11 @@ fun IdeScreen(
     // on the whole screen — a pinch over the top bar or the tool row zooms the editor too — so the
     // state lives here rather than down in the editor that only reads it.
     var editorScale by remember { mutableFloatStateOf(1f) }
+    // How far in from the left edge a pull open may start, and how far that pull has to travel.
+    // The system's own slop is used for the second so the gesture feels like every other panel on
+    // the phone; the band is fixed, because it is a region of the screen rather than a tolerance.
+    val drawerEdgePx = with(LocalDensity.current) { DrawerEdgeBand.toPx() }
+    val drawerSlopPx = LocalViewConfiguration.current.touchSlop
     // Live editor buffers keyed by file name. The editor owns its TextFieldValue, so this mirror is
     // how the parent saves before Preview and counts diagnostics across the whole project.
     val liveBuffers = remember { mutableStateMapOf<String, String>() }
@@ -757,7 +777,15 @@ fun IdeScreen(
                 // or the bottom bar does the same thing — and a pinch over a sheet, a menu or the
                 // toast does nothing at all, because those are siblings of this Column rather than
                 // children of it.
-                .pinchToZoom { scale -> editorScale = (editorScale * scale).coerceIn(EditorScaleRange) },
+                .pinchToZoom { scale -> editorScale = (editorScale * scale).coerceIn(EditorScaleRange) }
+                // Pulling right from the left edge opens the drawer. Armed only while it is shut,
+                // so the same drag over an open drawer is left to the scrim below it.
+                .edgeSwipeToOpenDrawer(
+                    enabled = !explorerOpen,
+                    edgePx = drawerEdgePx,
+                    slopPx = drawerSlopPx,
+                    onOpen = { explorerOpen = true },
+                ),
         ) {
 
             val activePath = activeFile?.path ?: active
@@ -870,82 +898,99 @@ fun IdeScreen(
                             modifier = Modifier.weight(1f),
                         )
 
-                        else -> Row(Modifier.weight(1f)) {
-                            IdeExplorer(
-                                expanded = explorerOpen,
-                                projectName = projectName,
-                                slug = slug,
-                                tree = diskTree,
-                                activePath = activeFile?.path,
-                                revealPath = selectedPath,
-                                collapsed = collapsedFolders,
-                                query = explorerFilter,
-                                tab = explorerTab,
-                                gitRevision = gitRevision,
-                                onTab = { explorerTab = it },
-                                onCreateFile = { prompt = TreePrompt.New(isFolder = false) },
-                                onCreateFolder = { prompt = TreePrompt.New(isFolder = true) },
-                                onAction = { action, file -> onTreeAction(action, file) },
-                                onSelect = { file ->
-                                    // The row is the working point for the next creation whether it
-                                    // is a folder or a file, so it is recorded either way; only a
-                                    // file also becomes the file being read.
-                                    selectedPath = file.path
-                                    if (file.kind == FileKind.Folder) {
-                                        collapsedFolders = toggleCollapsed(collapsedFolders, file.path)
-                                    } else {
-                                        openFile(file)
-                                        explorerOpen = false
-                                    }
-                                },
-                                onCloneRequest = { cloneOpen = true },
-                                githubTokenEpoch = githubTokenEpoch,
-                                projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
-                            )
+                        else -> Box(Modifier.weight(1f)) {
+                            Row(Modifier.matchParentSize()) {
+                                IdeExplorer(
+                                    expanded = explorerOpen,
+                                    fullWidth = drawerFullWidth,
+                                    width = drawerWidth,
+                                    projectName = projectName,
+                                    slug = slug,
+                                    tree = diskTree,
+                                    activePath = activeFile?.path,
+                                    revealPath = selectedPath,
+                                    collapsed = collapsedFolders,
+                                    query = explorerFilter,
+                                    tab = explorerTab,
+                                    gitRevision = gitRevision,
+                                    onTab = { explorerTab = it },
+                                    onCreateFile = { prompt = TreePrompt.New(isFolder = false) },
+                                    onCreateFolder = { prompt = TreePrompt.New(isFolder = true) },
+                                    onAction = { action, file -> onTreeAction(action, file) },
+                                    onSelect = { file ->
+                                        // The row is the working point for the next creation whether it
+                                        // is a folder or a file, so it is recorded either way; only a
+                                        // file also becomes the file being read.
+                                        selectedPath = file.path
+                                        if (file.kind == FileKind.Folder) {
+                                            collapsedFolders = toggleCollapsed(collapsedFolders, file.path)
+                                        } else {
+                                            openFile(file)
+                                            explorerOpen = false
+                                        }
+                                    },
+                                    onCloneRequest = { cloneOpen = true },
+                                    githubTokenEpoch = githubTokenEpoch,
+                                    projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                                )
 
-                            IdeEditorArea(
-                                explorerOpen = explorerOpen,
-                                onToggleExplorer = { explorerOpen = !explorerOpen },
-                                modifier = Modifier.weight(1f),
-                                tabs = tabs,
-                                active = active,
-                                language = language,
-                                contentFor = { name -> liveBuffers[name] ?: diskContents[name] ?: "" },
-                                onSelectTab = { name ->
-                                    active = name
-                                    selectedPath = tabs.firstOrNull { it.name == name }?.path
-                                },
-                                onCloseTab = { name ->
-                                    tabs = tabs.filterNot { it.name == name }
-                                    if (active == name) {
-                                        active = tabs.lastOrNull()?.name.orEmpty()
-                                        selectedPath = tabs.lastOrNull()?.path
-                                    }
-                                },
-                                onBufferChange = { text ->
-                                    liveBuffers[active] = text
-                                    noteContent(active)
-                                },
-                                onToast = { text -> toast = text },
-                                dirtyOf = ::isDirtyTab,
-                                problemSheetLine = problemSheet,
-                                activeKind = activeFile?.kind,
-                                formatRequest = formatRequest,
-                                undoRequest = undoRequest,
-                                redoRequest = redoRequest,
-                                sourceRevision = sourceRevision,
-                                caretRequest = caretRequest,
-                                onCaretChange = { editorCaret = it },
-                                projectSymbols = projectNames,
-                                onSaveRequest = { saveActiveFile() },
-                                onHistoryState = { undo, redo ->
-                                    canUndo = undo
-                                    canRedo = redo
-                                },
-                                onSuggestionsOpen = { suggestionsOpen = it },
-                                showToolRow = showToolRow(imeVisible, suggestionsOpen),
-                                editorScale = editorScale,
-                            )
+                                IdeEditorArea(
+                                    explorerOpen = explorerOpen,
+                                    onToggleExplorer = { explorerOpen = !explorerOpen },
+                                    modifier = Modifier.weight(1f),
+                                    tabs = tabs,
+                                    active = active,
+                                    language = language,
+                                    contentFor = { name -> liveBuffers[name] ?: diskContents[name] ?: "" },
+                                    onSelectTab = { name ->
+                                        active = name
+                                        selectedPath = tabs.firstOrNull { it.name == name }?.path
+                                    },
+                                    onCloseTab = { name ->
+                                        tabs = tabs.filterNot { it.name == name }
+                                        if (active == name) {
+                                            active = tabs.lastOrNull()?.name.orEmpty()
+                                            selectedPath = tabs.lastOrNull()?.path
+                                        }
+                                    },
+                                    onBufferChange = { text ->
+                                        liveBuffers[active] = text
+                                        noteContent(active)
+                                    },
+                                    onToast = { text -> toast = text },
+                                    dirtyOf = ::isDirtyTab,
+                                    problemSheetLine = problemSheet,
+                                    activeKind = activeFile?.kind,
+                                    formatRequest = formatRequest,
+                                    undoRequest = undoRequest,
+                                    redoRequest = redoRequest,
+                                    sourceRevision = sourceRevision,
+                                    caretRequest = caretRequest,
+                                    onCaretChange = { editorCaret = it },
+                                    projectSymbols = projectNames,
+                                    onSaveRequest = { saveActiveFile() },
+                                    onHistoryState = { undo, redo ->
+                                        canUndo = undo
+                                        canRedo = redo
+                                    },
+                                    onSuggestionsOpen = { suggestionsOpen = it },
+                                    showToolRow = showToolRow(imeVisible, suggestionsOpen),
+                                    editorScale = editorScale,
+                                )
+                            }
+
+                            // The drawer's own shadow. It starts where the drawer ends, so the
+                            // file list underneath stays tappable, and a tap anywhere else closes
+                            // the drawer — the gesture that opened it has no mirror on the way back.
+                            if (explorerOpen) {
+                                Box(
+                                    Modifier
+                                        .matchParentSize()
+                                        .padding(start = drawerWidth)
+                                        .background(c.scrim)
+                                        .clickable { explorerOpen = false },
+                                )
+                            }
                         }
                     }
                 }
@@ -1627,6 +1672,10 @@ private fun PathBarButton(
 @Composable
 private fun IdeExplorer(
     expanded: Boolean,
+    // The width the drawer is open at, and the width it is drawn at this frame. Both are computed
+    // up on the screen so the scrim that closes it can start exactly where the drawer ends.
+    fullWidth: Dp,
+    width: Dp,
     projectName: String,
     slug: String,
     tree: List<ProjectFile>,
@@ -1658,17 +1707,6 @@ private fun IdeExplorer(
     projectRoot: File?,
 ) {
     val c = LocalPageColors.current
-
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val wide = screenWidthDp >= 760
-    // The drawer takes most of the width so files are readable, while the tab strip's chevron and
-    // the first characters of code stay visible behind it.
-    val fullWidth = if (wide) 320.dp else (screenWidthDp * 0.72f).dp
-    val width by animateDpAsState(
-        targetValue = if (expanded) fullWidth else 0.dp,
-        animationSpec = tween(200),
-        label = "explorer-width",
-    )
 
     val listState = rememberLazyListState()
 
@@ -3258,6 +3296,52 @@ private val SCROLLBAR_THICKNESS = 6.dp
  * long line without scrolling sideways, not so far that a phone screen holds three characters.
  */
 internal val EditorScaleRange = 0.6f..2.4f
+
+/** How far in from the left edge a pull open may start. A region of the screen, not a tolerance. */
+internal val DrawerEdgeBand = 28.dp
+
+/**
+ * True when a drag started inside the left-edge band and travelled far enough right to be a pull
+ * open. Both halves matter: a drag that starts clear of the edge is the editor's own scroll, and a
+ * nudge that never leaves the band is a mis-tap on the side of the phone.
+ */
+internal fun shouldOpenFromSwipe(startXPx: Float, edgePx: Float, dxPx: Float, slopPx: Float): Boolean =
+    startXPx <= edgePx && dxPx >= slopPx
+
+/**
+ * Pulling right from the left edge opens the drawer, the way a phone's own panels do.
+ *
+ * Armed only while [enabled], so the same drag over an open drawer is left to the scrim that
+ * closes it. Nothing is consumed until the pull is recognised — a tap near the edge is still just
+ * a tap — and a second finger is the pinch's business, not the drawer's, so a two-finger gesture
+ * resets the start point rather than opening anything.
+ */
+private fun Modifier.edgeSwipeToOpenDrawer(
+    enabled: Boolean,
+    edgePx: Float,
+    slopPx: Float,
+    onOpen: () -> Unit,
+): Modifier = pointerInput(enabled) {
+    if (!enabled) return@pointerInput
+    awaitEachGesture {
+        var startX = Float.NaN
+        var opened = false
+        do {
+            val event = awaitPointerEvent(PointerEventPass.Initial)
+            val change = event.changes.filter { it.pressed }.singleOrNull()
+            if (change == null) {
+                startX = Float.NaN
+                continue
+            }
+            if (startX.isNaN()) startX = change.position.x
+            if (!opened && shouldOpenFromSwipe(startX, edgePx, change.position.x - startX, slopPx)) {
+                opened = true
+                onOpen()
+                event.changes.forEach { it.consume() }
+            }
+        } while (event.changes.any { it.pressed })
+    }
+}
 
 /**
  * The font a pinch leaves the editor at — the size the settings picked, multiplied by however far
