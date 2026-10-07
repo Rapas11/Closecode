@@ -982,7 +982,7 @@ private fun IdeTopBar(
             }
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         // Spec 4.1 logo tile: 28 x 28, radius 8, light fill with a 1 dp border and a dark `</>`.
         Box(
@@ -1038,27 +1038,18 @@ private fun IdeTopBar(
             background = if (searchActive) c.panel2 else Color.Transparent,
             onClick = onSearch,
         )
-        // Spec 4.1 Run button: height 34, 10 dp horizontal padding, radius 9,
-        // accent fill, white "Run" (weight 600) + filled play icon 18dp, gap 6.
-        Row(
+        // Run is the one filled button in the header: the accent fill and the solid play glyph
+        // carry it, so it needs no words and takes the same 34 x 34 slot as its neighbours.
+        Box(
             Modifier
-                .height(34.dp)
+                .size(34.dp)
                 .clip(RoundedCornerShape(9.dp))
                 .background(c.ac)
                 .clickable(onClick = onRun)
-                .padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                .androidxSemantics("Run"),
+            contentAlignment = Alignment.Center,
         ) {
             CcIcon(CcIcons.Play, c.af, 18.dp)
-            Text(
-                text = "Run",
-                color = c.af,
-                fontSize = 13.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
         }
         HeaderIconButton(
             icon = CcIcons.More,
