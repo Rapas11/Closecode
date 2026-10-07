@@ -18,8 +18,30 @@ private val KeywordTokens = setOf(
     "finally", "throw", "with", "in", "is", "as", "typeof", "yield",
 )
 
-fun highlightCode(text: String, c: PageColors): AnnotatedString =
-    buildAnnotatedString {
+/**
+ * Colourizes [text] for the editor.
+ *
+ * This runs on the main thread, once per keystroke, so its allocations are the ones that matter:
+ * the seven styles below used to be built *per token*, and every token used to be copied out of its
+ * line before being appended. A two thousand line file was making tens of thousands of throwaway
+ * objects on the typing path. The styles are now built once per call, and tokens are appended
+ * straight from the line by range, so what is left is the one copy the string actually needs.
+ *
+ * It stays synchronous on purpose. Producing it off the main thread would mean painting the
+ * uncoloured buffer for a frame on every keystroke — a colour flash while typing is worse than the
+ * cost of not flashing — and the result must always match the text on screen, because the
+ * [AnnotatedString] carries its own text.
+ */
+fun highlightCode(text: String, c: PageColors): AnnotatedString {
+    val commentStyle = SpanStyle(color = c.comment, fontStyle = FontStyle.Italic)
+    val stringStyle = SpanStyle(color = c.string)
+    val annotationStyle = SpanStyle(color = c.annotation)
+    val keywordStyle = SpanStyle(color = c.keyword, fontWeight = FontWeight.Medium)
+    val functionStyle = SpanStyle(color = c.fn)
+    val typeStyle = SpanStyle(color = c.type)
+    val numberStyle = SpanStyle(color = c.number)
+
+    return buildAnnotatedString {
         text.lines().forEachIndexed { index, raw ->
             if (index > 0) append('\n')
             var i = 0
@@ -32,8 +54,8 @@ fun highlightCode(text: String, c: PageColors): AnnotatedString =
                             val close = raw.indexOf("*/", i + 2)
                             if (close < 0) n else close + 2
                         }
-                        withStyle(SpanStyle(color = c.comment, fontStyle = FontStyle.Italic)) {
-                            append(raw.substring(i, end))
+                        withStyle(commentStyle) {
+                            append(raw, i, end)
                         }
                         i = end
                     }
@@ -45,8 +67,8 @@ fun highlightCode(text: String, c: PageColors): AnnotatedString =
                             j++
                         }
                         val end = if (j < n) j + 1 else n
-                        withStyle(SpanStyle(color = c.string)) {
-                            append(raw.substring(i, end))
+                        withStyle(stringStyle) {
+                            append(raw, i, end)
                         }
                         i = end
                     }
@@ -57,8 +79,8 @@ fun highlightCode(text: String, c: PageColors): AnnotatedString =
                         } else {
                             n
                         }
-                        withStyle(SpanStyle(color = c.comment, fontStyle = FontStyle.Italic)) {
-                            append(raw.substring(i, end))
+                        withStyle(commentStyle) {
+                            append(raw, i, end)
                         }
                         i = end
                     }
@@ -66,8 +88,8 @@ fun highlightCode(text: String, c: PageColors): AnnotatedString =
                     ch == '@' -> {
                         var j = i + 1
                         while (j < n && (raw[j].isLetterOrDigit() || raw[j] == '_' || raw[j] == '.')) j++
-                        withStyle(SpanStyle(color = c.annotation)) {
-                            append(raw.substring(i, j))
+                        withStyle(annotationStyle) {
+                            append(raw, i, j)
                         }
                         i = j
                     }
@@ -75,18 +97,17 @@ fun highlightCode(text: String, c: PageColors): AnnotatedString =
                     ch.isLetter() || ch == '_' -> {
                         var j = i
                         while (j < n && (raw[j].isLetterOrDigit() || raw[j] == '_')) j++
+                        // The one token still copied: it is the key of the keyword lookup and the
+                        // thing the capitalisation test looks at, so it is needed either way.
                         val word = raw.substring(i, j)
                         val after = raw.getOrNull(j)
-                        if (word in KeywordTokens) {
-                            withStyle(SpanStyle(color = c.keyword, fontWeight = FontWeight.Medium)) {
-                                append(word)
+                        when {
+                            word in KeywordTokens -> withStyle(keywordStyle) { append(raw, i, j) }
+                            after == '(' -> withStyle(functionStyle) { append(raw, i, j) }
+                            word.firstOrNull()?.isUpperCase() == true -> withStyle(typeStyle) {
+                                append(raw, i, j)
                             }
-                        } else if (after == '(') {
-                            withStyle(SpanStyle(color = c.fn)) { append(word) }
-                        } else if (word.firstOrNull()?.isUpperCase() == true) {
-                            withStyle(SpanStyle(color = c.type)) { append(word) }
-                        } else {
-                            append(word)
+                            else -> append(raw, i, j)
                         }
                         i = j
                     }
@@ -94,8 +115,8 @@ fun highlightCode(text: String, c: PageColors): AnnotatedString =
                     ch.isDigit() -> {
                         var j = i
                         while (j < n && (raw[j].isDigit() || raw[j] == '.')) j++
-                        withStyle(SpanStyle(color = c.number)) {
-                            append(raw.substring(i, j))
+                        withStyle(numberStyle) {
+                            append(raw, i, j)
                         }
                         i = j
                     }
@@ -108,3 +129,4 @@ fun highlightCode(text: String, c: PageColors): AnnotatedString =
             }
         }
     }
+}

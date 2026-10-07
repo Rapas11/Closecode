@@ -59,6 +59,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -96,6 +97,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.closecode.lang.AndroidApiAssets
 import com.closecode.lang.CompletionItem
@@ -171,6 +173,28 @@ fun IdeScreen(
     // Live editor buffers keyed by file name. The editor owns its TextFieldValue, so this mirror is
     // how the parent saves before Preview and counts diagnostics across the whole project.
     val liveBuffers = remember { mutableStateMapOf<String, String>() }
+    // Cold disk reads used to run inline on the tap that asked for them, which stalled the very
+    // frame that opened a file. Every one of them now goes through this scope instead.
+    val fileScope = rememberCoroutineScope()
+    // Bumped by every write to a buffer or to its saved copy. One Int stands in for two maps whose
+    // entries hold the whole text of every open file, so the project-wide pass below restarts when
+    // content really changes instead of copying both maps on every single frame.
+    var contentRevision by remember(slug) { mutableIntStateOf(0) }
+    // Answering "is this tab dirty?" is a whole-file string compare, and the top bar asks on every
+    // keystroke while the tab strip asks once per visible tab. `noteContent` keeps the answer next
+    // to the write that could have changed it, so the question becomes a map lookup.
+    val dirtyTabs = remember(slug) { mutableStateMapOf<String, Boolean>() }
+
+    /**
+     * Every write to a buffer or to its saved copy goes through here. The counter is what the
+     * project-wide analysis keys on instead of copying both content maps on every frame; the
+     * cached answer is what the top bar and the tab strip read instead of re-comparing whole files
+     * on every keystroke. Write first, then call — that ordering is what keeps the cache honest.
+     */
+    fun noteContent(name: String) {
+        contentRevision++
+        dirtyTabs[name] = liveBuffers[name] != null && liveBuffers[name] != diskContents[name]
+    }
     // Spec 6.2 and 6.8 both need to open problems from outside the editor, so the sheet's target
     // line lives here rather than inside IdeEditorArea.
     val problemSheet = remember { mutableStateOf<Int?>(null) }
@@ -245,7 +269,10 @@ fun IdeScreen(
                     ?.let { file.name to it }
             }
         }
-        loaded.forEach { (name, text) -> diskContents[name] = text }
+        loaded.forEach { (name, text) ->
+            diskContents[name] = text
+            noteContent(name)
+        }
     }
 
     val activeFile = tabs.firstOrNull { it.name == active }
@@ -260,9 +287,13 @@ fun IdeScreen(
             toast = "Nothing to save"
             return false
         }
+        // Deliberately still on the caller's thread: Save-on-Preview hands straight over to a
+        // panel that reads the file back from disk, and a write in flight would serve the page it
+        // had before the save. A save is a tap, not a keystroke, so it is not on the typing path.
         return runCatching { repository.writeFile(slug, path, buffer) }
             .onSuccess {
                 diskContents[active] = buffer
+                noteContent(active)
                 previewRefresh++
                 gitRevision++
                 toast = "Saved $active"
@@ -278,9 +309,16 @@ fun IdeScreen(
         gitRevision++
     }
 
-    /** Unsaved changes: the buffer in memory differs from the last thing read from disk. */
+    /**
+     * Unsaved changes: the buffer in memory differs from the last thing read from disk. The answer
+     * is kept beside the write that could have changed it — see [noteContent] — so a miss is the
+     * only thing that pays for the comparison, and a miss still falls through to the honest one.
+     */
     fun isDirtyTab(name: String): Boolean =
-        liveBuffers[name] != null && liveBuffers[name] != diskContents[name]
+        dirtyTabs[name]
+            ?: (liveBuffers[name] != null && liveBuffers[name] != diskContents[name]).also {
+                dirtyTabs[name] = it
+            }
 
     /** Opens a file in a tab, reading it only when it has not been read before. */
     fun openFile(file: ProjectFile) {
@@ -289,8 +327,24 @@ fun IdeScreen(
         if (tabs.none { it.name == file.name }) tabs = tabs + file
         tabs = retainTabs(tabs, active, ::isDirtyTab)
         if (diskContents[file.name] == null) {
-            runCatching { repository.readFile(slug, file.path) }
-                .onSuccess { diskContents[file.name] = it }
+            // Off the main thread: this runs from a tap on a drawer row, and a cold read of a big
+            // file used to be the frame that opened it. The tab shows nothing until it lands rather
+            // than freezing — and a freshly opened buffer is never dirty, so no dot flashes.
+            val name = file.name
+            val path = file.path
+            fileScope.launch {
+                val text = withContext(Dispatchers.IO) {
+                    runCatching { repository.readFile(slug, path) }.getOrNull()
+                }
+                if (text != null && diskContents[name] == null) {
+                    diskContents[name] = text
+                    noteContent(name)
+                    // The editor seeds from an empty buffer while this read is in flight, so tell
+                    // it to seed again now that there is something to seed with. A tab the reader
+                    // has already typed into is left alone: that buffer is theirs, not ours.
+                    if (active == name && liveBuffers[name] == null) sourceRevision++
+                }
+            }
         }
     }
 
@@ -305,15 +359,24 @@ fun IdeScreen(
         }.onSuccess {
             refreshTree()
             if (!isFolder) {
-                repository.tree(slug).firstOrNull { it.path == relative }?.let { openFile(it) }
+                // The walk that finds the new file is a recursive directory read, so it joins the
+                // rest of the disk work off the main thread.
+                fileScope.launch {
+                    val created = withContext(Dispatchers.IO) {
+                        repository.tree(slug).firstOrNull { it.path == relative }
+                    }
+                    if (created != null) openFile(created)
+                }
             }
             toast = "Created $leaf"
         }.onFailure { toast = it.message ?: "Could not create $leaf" }
     }
 
     // Spec 6.9: the status bar counts the whole project. Debounced harder than the per-file pass
-    // and capped by file count, because this re-runs on every keystroke in any file.
-    LaunchedEffect(slug, diskContents.toMap(), liveBuffers.toMap()) {
+    // and capped by file count, because this re-runs on every keystroke in any file. The key is the
+    // revision counter, not the maps: a Map key here meant deep-copying the whole text of every
+    // open file on every frame just to find out that nothing had changed.
+    LaunchedEffect(slug, contentRevision) {
         // Only Kotlin is analysed, so only Kotlin can be counted. Silently including Java and XML
         // here would show a total that never changes; silently excluding them would look like those
         // files are clean. The status bar says "not checked" for them instead.
@@ -512,6 +575,7 @@ fun IdeScreen(
                                 // notice mid-edit. A reorder does not care where the caret was, so
                                 // the caret falls back to the end of the code.
                                 liveBuffers[active] = next
+                                noteContent(active)
                                 caretRequest = -1
                                 sourceRevision++
                             },
@@ -555,11 +619,11 @@ fun IdeScreen(
                                 onFocusChange = { editorFocused = it },
                                 onBufferChange = { text ->
                                     liveBuffers[active] = text
+                                    noteContent(active)
                                     editorActivity++
                                 },
                                 onToast = { text -> toast = text },
-                                bufferOf = { name -> liveBuffers[name] },
-                                savedOf = { name -> diskContents[name] },
+                                dirtyOf = ::isDirtyTab,
                                 problemSheetLine = problemSheet,
                                 activeKind = activeFile?.kind,
                                 formatRequest = formatRequest,
@@ -669,12 +733,10 @@ fun IdeScreen(
                                 label = "Open ${file.name}",
                                 shortcut = null,
                                 run = {
-                                    active = file.name
-                                    if (tabs.none { it.name == file.name }) tabs = tabs + file
-                                    tabs = retainTabs(tabs, active, ::isDirtyTab)
-                                    diskContents.getOrPut(file.name) {
-                                        runCatching { repository.readFile(slug, file.path) }.getOrDefault("")
-                                    }
+                                    // The same path a drawer tap takes, so the palette's read is
+                                    // off the main thread too instead of blocking the tap that
+                                    // opened the file.
+                                    openFile(file)
                                     activePanel = "Code"
                                     searchOpen = false
                                 },
@@ -781,6 +843,7 @@ fun IdeScreen(
                     val source = liveBuffers[active] ?: diskContents[active].orEmpty()
                     val (next, at) = insertBlockAt(source, editorCaret, template)
                     liveBuffers[active] = next
+                    noteContent(active)
                     caretRequest = at
                     sourceRevision++
                     addBlockOpen = false
@@ -1473,8 +1536,8 @@ private fun IdeEditorArea(
     showToolRow: Boolean = true,
     onBufferChange: (String) -> Unit = {},
     onToast: (String) -> Unit = {},
-    bufferOf: (String) -> String? = { null },
-    savedOf: (String) -> String? = { null },
+    // One cached lookup instead of two map reads and a whole-file compare per tab per frame.
+    dirtyOf: (String) -> Boolean = { false },
     // Hoisted so the path bar can open the sheet too, not just taps inside the editor.
     problemSheetLine: MutableState<Int?> = remember { mutableStateOf(null) },
     activeKind: FileKind? = null,
@@ -1998,9 +2061,7 @@ contentAlignment = Alignment.Center,
                 itemsIndexed(tabs, key = { _, t -> "tab-${t.name}" }) { _, tab ->
                     val isActive = tab.name == active
                     // Spec 6.1: the unsaved dot shows only while the buffer differs from last saved.
-                    val buffer = bufferOf(tab.name)
-                    val saved = savedOf(tab.name)
-                    val dirty = buffer != null && saved != null && buffer != saved
+                    val dirty = dirtyOf(tab.name)
                     Row(
                         Modifier
                             .height(TAB_HEIGHT)
@@ -2292,6 +2353,10 @@ contentAlignment = Alignment.Center,
                     // Spec 6.3: the first import line gets the fold affordance.
                     foldLine = firstImportLine,
                     onFoldTap = { onToast("Code folding is not available yet") },
+                    // Only the rows that can be on screen are composed. The scroll is read inside
+                    // the layer, so scrolling it does not recompose the editor around it.
+                    scrollState = codeScroll,
+                    viewportHeightPx = viewportHeightPx,
                     modifier = Modifier.align(Alignment.TopStart),
                 )
             }

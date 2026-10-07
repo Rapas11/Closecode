@@ -576,3 +576,73 @@ class BulbAnchorTest {
         assertEquals(0f, bulbAnchorX(caretXPx = 10f, bulbWidthPx = 38f, viewportWidthPx = 12f), 0.01f)
     }
 }
+class GutterWindowTest {
+
+    private val lineHeight = 22f
+    private val viewport = 880f
+
+    @Test
+    fun anEditorThatHasNotBeenMeasuredYetShowsEveryRow() {
+        // The safe answer for the first frame only: guessing a window before there is a viewport
+        // would leave the gutter blank until the next scroll.
+        assertEquals(0 until 2000, gutterWindow(2000, scrollTopPx = 0f, viewportHeightPx = 0f, lineHeightPx = lineHeight))
+    }
+
+    @Test
+    fun aTwoThousandLineFileComposesAFewDozenRowsNotTwoThousand() {
+        // The whole point: the gutter used to build one composable per line in the file.
+        val window = gutterWindow(2000, scrollTopPx = 0f, viewportHeightPx = viewport, lineHeightPx = lineHeight)
+        assertTrue("expected a bounded window, got ${window.count()} rows", window.count() <= 60)
+    }
+
+    @Test
+    fun theWindowDoesNotGrowWithTheFile() {
+        val small = gutterWindow(200, 0f, viewport, lineHeight)
+        val huge = gutterWindow(200_000, 0f, viewport, lineHeight)
+        assertEquals(small.count(), huge.count())
+    }
+
+    @Test
+    fun scrollingDownMovesTheWindowWithIt() {
+        val window = gutterWindow(2000, scrollTopPx = 2_200f, viewportHeightPx = viewport, lineHeightPx = lineHeight)
+        assertEquals(98, window.first)
+        assertEquals(143, window.last)
+    }
+
+    @Test
+    fun theWindowStopsAtTheLastLineInsteadOfRunningPastIt() {
+        assertEquals(0 until 10, gutterWindow(10, 0f, viewport, lineHeight))
+        assertEquals(1_999..1_999, gutterWindow(2000, 1_000_000f, viewport, lineHeight))
+    }
+
+    @Test
+    fun anEmptyFileHasNothingToShow() {
+        assertEquals(IntRange.EMPTY, gutterWindow(0, 0f, viewport, lineHeight))
+    }
+
+    @Test
+    fun rowsAreAlwaysKeptAboveAndBelowTheViewport() {
+        // A fling lands on the next frame's window, and if that window began exactly at the first
+        // visible row there would be one frame of gutter with a hole in it.
+        val window = gutterWindow(2000, scrollTopPx = 2_200f, viewportHeightPx = viewport, lineHeightPx = lineHeight)
+        assertEquals(98, window.first)
+        assertTrue("no slack above the first visible row", window.first < 100)
+        assertTrue("no slack below the last visible row", window.last > 140)
+    }
+
+    @Test
+    fun everyLineThatIsOnScreenIsAlwaysInsideTheWindow() {
+        val lineCount = 2000
+        var scrollTop = 0f
+        val end = lineCount * lineHeight
+        while (scrollTop < end) {
+            val firstOnScreen = (scrollTop / lineHeight).toInt()
+            val lastOnScreen =
+                ((scrollTop + viewport) / lineHeight).toInt().coerceAtMost(lineCount - 1)
+            val window = gutterWindow(lineCount, scrollTop, viewport, lineHeight)
+            assertTrue("window $window misses line $firstOnScreen at $scrollTop", firstOnScreen in window)
+            assertTrue("window $window misses line $lastOnScreen at $scrollTop", lastOnScreen in window)
+            scrollTop += 37f
+        }
+    }
+}

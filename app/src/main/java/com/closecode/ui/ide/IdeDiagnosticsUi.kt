@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.dp
@@ -257,6 +258,35 @@ fun lineTopFromLayout(layout: TextLayoutResult?, index: Int, lineHeightPx: Float
     return index.coerceAtLeast(0) * lineHeightPx
 }
 
+/** Rows of slack above and below the viewport, so a fast fling never lands on an unmeasured gap. */
+private const val GutterWindowOverhang = 2
+
+/**
+ * The slice of zero-based line indices the gutter should actually compose for a scroll position.
+ *
+ * The gutter lives inside the same scroll container as the code, so it used to build one row per
+ * line in the file — two thousand rows for a two thousand line file, on every recomposition of the
+ * editor, of which about forty were ever on screen. This returns only the rows that can be visible,
+ * plus [GutterWindowOverhang] above and below.
+ *
+ * A viewport that has not been measured yet returns every row: the safe answer, and only ever the
+ * first frame. Same for a non-positive line height, which would otherwise divide into nonsense.
+ */
+internal fun gutterWindow(
+    lineCount: Int,
+    scrollTopPx: Float,
+    viewportHeightPx: Float,
+    lineHeightPx: Float,
+): IntRange {
+    if (lineCount <= 0) return IntRange.EMPTY
+    if (viewportHeightPx <= 0f || lineHeightPx <= 0f) return 0 until lineCount
+    val visibleRows = (viewportHeightPx / lineHeightPx).toInt() + 1
+    val first = (scrollTopPx / lineHeightPx).toInt() - GutterWindowOverhang
+    val from = first.coerceIn(0, lineCount - 1)
+    val to = (from + visibleRows + GutterWindowOverhang * 2).coerceAtMost(lineCount - 1)
+    return from..to
+}
+
 /**
  * Status dot and line number for every row, drawn in the same box as the code so the two share one
  * coordinate space and one vertical scroll. The row height comes from [lineHeightPx], which is
@@ -271,6 +301,10 @@ fun lineTopFromLayout(layout: TextLayoutResult?, index: Int, lineHeightPx: Float
  * the gutter drifted down past the end of the code. In a Box every child starts at one shared origin,
  * so `offset` alone decides the position and the row top is absolute — the same value the pills and
  * the bulb use.
+ *
+ * Only the rows that can be on screen are composed; see [gutterWindow]. The container still spans
+ * the whole file, because an opaque gutter that stopped halfway down would let the code show
+ * through below it.
  */
 @Composable
 fun LineNumberLayer(
@@ -284,6 +318,11 @@ fun LineNumberLayer(
     // Spec 6.3: the first import line carries a small "▸" affordance at the right of its row.
     foldLine: Int = 0,
     onFoldTap: () -> Unit = {},
+    // Read here rather than at the call site on purpose: a scroll then recomposes only this layer,
+    // not the whole editor around it. Null means the caller does not scroll, so compose every row.
+    scrollState: ScrollState? = null,
+    // The other half of the window calculation: how many rows fit under the gutter at once.
+    viewportHeightPx: Float = 0f,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -313,7 +352,12 @@ fun LineNumberLayer(
                 )
             },
     ) {
-        repeat(lineCount) { index ->
+        val window = if (scrollState == null) {
+            0 until lineCount
+        } else {
+            gutterWindow(lineCount, scrollState.value.toFloat(), viewportHeightPx, lineHeightPx)
+        }
+        for (index in window) {
             val line = index + 1
             val errored = line in problems.linesWithErrors
             val warned = !errored && line in problems.linesWithWarnings
