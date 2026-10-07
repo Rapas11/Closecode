@@ -108,6 +108,7 @@ import com.closecode.lang.KotlinFileAnalysis
 import com.closecode.lang.KotlinAnalyzer
 import com.closecode.lang.Severity
 import com.closecode.lang.SourceEdits
+import com.closecode.ui.GitHubCloneSheet
 import com.closecode.ui.ide.model.IdeNavItems
 import com.closecode.ui.ide.model.kindColor
 import com.closecode.ui.ide.model.kindGlyph
@@ -115,6 +116,7 @@ import com.closecode.ui.ide.model.suggestionsFor
 import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.model.SelectedTemplate
+import com.closecode.ui.project.ProjectRecord
 import com.closecode.ui.project.ProjectRepository
 import com.closecode.ui.model.projectTree
 import com.closecode.ui.model.recentFiles
@@ -131,6 +133,9 @@ fun IdeScreen(
     repository: ProjectRepository,
     onOpenSettings: () -> Unit,
     onExit: () -> Unit,
+    // A clone performed inside the IDE finishes with a record for a *different* project. The
+    // caller decides where that lands; this screen never navigates itself.
+    onProjectCloned: (ProjectRecord) -> Unit = {},
     onToggleTheme: () -> Unit = {},
 ) {
     BackHandler { onExit() }
@@ -148,15 +153,19 @@ fun IdeScreen(
     val diskContents = remember(slug) { mutableStateMapOf<String, String>() }
     var activePanel by remember(slug) { mutableStateOf("Code") }
     var explorerOpen by remember { mutableStateOf(false) }
-    // Which half of the drawer is showing. GitHub arrives with Step 7; the switch is in place now
-    // so the drawer's chrome does not move when it does.
-    var explorerTab by remember { mutableStateOf("Files") }
+    // Which half of the drawer is showing. GitHub opens first — it holds the account, clone and
+    // publish controls, none of which need this project to have a repository of its own.
+    var explorerTab by remember { mutableStateOf(ExplorerTabs.first()) }
     var searchOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var findOpen by remember { mutableStateOf(false) }
     var moreOpen by remember { mutableStateOf(false) }
     var namingFile by remember { mutableStateOf(false) }
     var namingFolder by remember { mutableStateOf(false) }
+    // The token at the moment a clone was asked for, rather than a live binding to the panel's
+    // own copy: the picker only opens on a deliberate tap, so a token read once and then handed
+    // over is exactly what it needs, and it survives the sheet outliving the drawer's state.
+    var cloneSheetToken by remember { mutableStateOf<String?>(null) }
     var editorFocused by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var findQuery by remember { mutableStateOf("") }
@@ -600,6 +609,7 @@ fun IdeScreen(
                                     openFile(file)
                                     explorerOpen = false
                                 },
+                                onCloneRequest = { cloneSheetToken = it },
                                 projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                             )
 
@@ -889,6 +899,20 @@ fun IdeScreen(
                     createEntry(isFolder = true, rawName = it)
                 },
                 onDismiss = { namingFolder = false },
+            )
+        }
+
+        // Hosted here rather than inside the drawer: the sheet draws a full-screen scrim, and the
+        // drawer collapses to 0.dp on the Files tab — where it would be invisible but still modal.
+        val activeCloneToken = cloneSheetToken
+        if (activeCloneToken != null) {
+            GitHubCloneSheet(
+                token = activeCloneToken,
+                onDismiss = { cloneSheetToken = null },
+                onCloned = { record ->
+                    cloneSheetToken = null
+                    onProjectCloned(record)
+                },
             )
         }
     }
@@ -1236,6 +1260,10 @@ private fun IdeExplorer(
     onCreateFile: () -> Unit,
     onCreateFolder: () -> Unit,
     onSelect: (ProjectFile) -> Unit,
+    // Carried through to the GitHub tab, which owns the token: it reports the moment a clone
+    // should start and the screen shows the picker, since only the screen has full-screen room
+    // for it.
+    onCloneRequest: (String) -> Unit,
     projectRoot: File?,
 ) {
     val c = LocalPageColors.current
@@ -1319,8 +1347,9 @@ private fun IdeExplorer(
                 .height(36.dp)
                 .border(1.dp, c.ln, RoundedCornerShape(0.dp)),
         ) {
-            ExplorerTab("Files", tab == "Files") { onTab("Files") }
-            ExplorerTab("GitHub", tab == "GitHub") { onTab("GitHub") }
+            ExplorerTabs.forEach { name ->
+                ExplorerTab(name, tab == name) { onTab(name) }
+            }
         }
 
         // Both lists stay composed so the GitHub tab never loses a half-typed commit message
@@ -1373,6 +1402,7 @@ private fun IdeExplorer(
                 projectName = projectName,
                 projectRoot = projectRoot,
                 revision = gitRevision,
+                onCloneRequest = onCloneRequest,
                 // One modifier or the other, never both. Appending `size(0.dp)` after
                 // `width(...).fillMaxHeight()` could not work: those hand the child an incoming
                 // minimum of full width by full height, `size` is enforce-incoming, so the zero was
@@ -1563,24 +1593,22 @@ private fun IdeEditorArea(
     val c = LocalPageColors.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
-    val fallbackText = remember(language) {
-        snippetFor(language, c).joinToString("\n") { it.text }
-    }
+    // No starter template. A file with nothing in it opens as nothing, and the grey hint drawn in
+    // the code column says so: a template would be written straight back by the next save into a
+    // file the user never edited. The editor used to seed one and let `LaunchedEffect(active)`
+    // below throw it away a frame later, which is why an empty file flickered a Kotlin header.
     val fromDisk = remember(active, contentFor) { contentFor(active) }
-    val initialText = remember(fromDisk, fallbackText) {
-        fromDisk.ifEmpty { fallbackText }
-    }
     var fieldValue by remember(active, language, sourceRevision) {
         mutableStateOf(
             TextFieldValue(
-                text = initialText,
+                text = fromDisk,
                 // Opens on the last line that has code, not on the empty line a trailing newline
                 // leaves behind, so the first thing typed lands on the line the user can see —
                 // unless a caller asked for a specific spot, which only a block insert does.
                 selection = if (caretRequest >= 0) {
-                    TextRange(caretRequest.coerceIn(0, initialText.length))
+                    TextRange(caretRequest.coerceIn(0, fromDisk.length))
                 } else {
-                    TextRange(caretOffsetAtEndOfCode(initialText))
+                    TextRange(caretOffsetAtEndOfCode(fromDisk))
                 },
             ),
         )
@@ -2171,6 +2199,26 @@ contentAlignment = Alignment.Center,
                                 }
                             },
                     ) {
+                        // One grey line where the file's first line would be, for a buffer with
+                        // nothing in it — a new file, a file we cannot read, or the editor with no
+                        // tab open at all. It is drawn, never typed: the buffer stays empty, so a
+                        // save that nobody touched writes nothing back.
+                        if (fieldValue.text.isEmpty()) {
+                            Text(
+                                text = "Empty file",
+                                color = c.mu,
+                                fontSize = codeFontSize,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    lineHeight = codeLineHeightTextUnit,
+                                    lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
+                                        alignment = androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center,
+                                        trim = androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
+                                    ),
+                                ),
+                                fontFamily = Mono,
+                                softWrap = false,
+                            )
+                        }
                         Text(
                             text = highlighted,
                             color = c.tx,
@@ -2962,6 +3010,13 @@ internal val HeaderItems: List<HeaderItem> = listOf(
     HeaderItem.RUN,
     HeaderItem.OVERFLOW,
 )
+
+/**
+ * The drawer's tabs, in the order they are shown. GitHub leads and is the one that opens: the
+ * account, clone and publish controls all live behind it, and none of them need a repository.
+ * Stated once so the strip's order and the default cannot drift apart.
+ */
+internal val ExplorerTabs: List<String> = listOf("GitHub", "Files")
 
 /** Spec 4.1: how many edits Undo can step back through before the oldest one is dropped. */
 private const val UNDO_HISTORY_LIMIT = 100

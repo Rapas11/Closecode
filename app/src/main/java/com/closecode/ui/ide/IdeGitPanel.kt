@@ -83,6 +83,10 @@ fun IdeGitPanel(
     // the working tree, so a snapshot taken when the project opened would otherwise go on
     // showing files that have since been edited, reverted or removed.
     revision: Int = 0,
+    // A clone builds a brand new project and leaves this one. This panel decides *when* one
+    // happens and passes the token up; the sheet that runs it lives at screen level, and the
+    // caller owns where the finished record lands.
+    onCloneRequest: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -110,6 +114,22 @@ fun IdeGitPanel(
     var githubError by remember(projectRoot) { mutableStateOf<String?>(null) }
     var githubNote by remember(projectRoot) { mutableStateOf<String?>(null) }
     var signInOpen by remember { mutableStateOf(false) }
+    // Carries "I meant to clone" across the device-flow round trip, which is the same hand-off
+    // the hero screen performs: sign in first, then open the picker that the tap asked for.
+    var cloneAfterSignIn by remember { mutableStateOf(false) }
+
+    // The sheet a clone opens draws a full-screen scrim, which this panel cannot host — it
+    // collapses to 0.dp on the Files tab. So this side only decides *when*, and hands the token
+    // to whoever can show the picker.
+    fun requestClone() {
+        val token = githubToken
+        if (token == null) {
+            cloneAfterSignIn = true
+            signInOpen = true
+        } else {
+            onCloneRequest(token)
+        }
+    }
     var showRepos by remember(projectRoot) { mutableStateOf(false) }
     var repos by remember(projectRoot) { mutableStateOf<List<GitHubRepo>>(emptyList()) }
     // Read straight from `refs/stash` rather than carried on GitSnapshot, so restoring a stash
@@ -330,86 +350,91 @@ fun IdeGitPanel(
                     SectionLabel("HISTORY")
                     current.history.forEach { entry -> HistoryRow(entry) }
                 }
-
-                GitHubSection(
-                    projectName = projectName,
-                    token = githubToken,
-                    account = account,
-                    remoteUrl = remoteUrl,
-                    hasCommits = current.snap.hasCommits,
-                    busy = githubBusy,
-                    error = githubError,
-                    note = githubNote,
-                    showRepos = showRepos,
-                    repos = repos,
-                    onToggleRepos = {
-                        showRepos = !showRepos
-                        if (showRepos && repos.isEmpty()) {
-                            val token = githubToken
-                            if (token != null) {
-                                githubAct {
-                                    gitHubClient.repositories(token).onSuccess { repos = it }
-                                }
-                            }
-                        }
-                    },
-                    onSignIn = { signInOpen = true },
-                    onSignOut = {
-                        tokenStore.clear()
-                        githubToken = null
-                        account = null
-                        repos = emptyList()
-                        showRepos = false
-                        githubNote = null
-                        githubError = null
-                    },
-                    onPublish = {
-                        val token = githubToken
-                        val root = projectRoot
-                        if (token != null && root != null) {
-                            githubAct {
-                                val created = gitHubClient
-                                    .createRepository(token, projectName, isPrivate = true)
-                                    .getOrElse { failure ->
-                                        // 422 is GitHub saying the name is taken on this account —
-                                        // usually the same Publish pressed twice. Link what is
-                                        // already there instead of failing the second time.
-                                        val taken = (failure as? GitHubException)?.code == 422
-                                        if (!taken) throw failure
-                                        gitHubClient.repositories(token).getOrThrow()
-                                            .firstOrNull {
-                                                it.fullName.substringAfter('/') == projectName
-                                            } ?: throw failure
-                                    }
-                                GitHubRemote(root).link(created.cloneUrl).getOrThrow()
-                                GitHubRemote(root).push(token)
-                            }
-                        }
-                    },
-                    onPush = {
-                        val token = githubToken
-                        val root = projectRoot
-                        if (token != null && root != null) {
-                            githubAct { GitHubRemote(root).push(token) }
-                        }
-                    },
-                    onPull = {
-                        val token = githubToken
-                        val root = projectRoot
-                        if (token != null && root != null) {
-                            githubAct { GitHubRemote(root).pull(token) }
-                        }
-                    },
-                    onLink = { repo ->
-                        val root = projectRoot
-                        if (root != null) {
-                            showRepos = false
-                            githubAct { GitHubRemote(root).link(repo.cloneUrl).map { "Linked ${repo.fullName}." } }
-                        }
-                    },
-                )
             }
         }
+
+        // Outside the switch on purpose. Signing in, cloning and publishing are what most people
+        // open this tab for, and none of them need a repository to exist yet — which is exactly
+        // the state someone is in when they want to clone a different one.
+        val hasCommits = (state as? GitUiState.Loaded)?.snap?.hasCommits == true
+        GitHubSection(
+            projectName = projectName,
+            token = githubToken,
+            account = account,
+            remoteUrl = remoteUrl,
+            hasCommits = hasCommits,
+            busy = githubBusy,
+            error = githubError,
+            note = githubNote,
+            showRepos = showRepos,
+            repos = repos,
+            onToggleRepos = {
+                showRepos = !showRepos
+                if (showRepos && repos.isEmpty()) {
+                    val token = githubToken
+                    if (token != null) {
+                        githubAct {
+                            gitHubClient.repositories(token).onSuccess { repos = it }
+                        }
+                    }
+                }
+            },
+            onSignIn = { signInOpen = true },
+            onClone = { requestClone() },
+            onSignOut = {
+                tokenStore.clear()
+                githubToken = null
+                account = null
+                repos = emptyList()
+                showRepos = false
+                githubNote = null
+                githubError = null
+            },
+            onPublish = {
+                val token = githubToken
+                val root = projectRoot
+                if (token != null && root != null) {
+                    githubAct {
+                        val created = gitHubClient
+                            .createRepository(token, projectName, isPrivate = true)
+                            .getOrElse { failure ->
+                                // 422 is GitHub saying the name is taken on this account —
+                                // usually the same Publish pressed twice. Link what is
+                                // already there instead of failing the second time.
+                                val taken = (failure as? GitHubException)?.code == 422
+                                if (!taken) throw failure
+                                gitHubClient.repositories(token).getOrThrow()
+                                    .firstOrNull {
+                                        it.fullName.substringAfter('/') == projectName
+                                    } ?: throw failure
+                            }
+                        GitHubRemote(root).link(created.cloneUrl).getOrThrow()
+                        GitHubRemote(root).push(token)
+                    }
+                }
+            },
+            onPush = {
+                val token = githubToken
+                val root = projectRoot
+                if (token != null && root != null) {
+                    githubAct { GitHubRemote(root).push(token) }
+                }
+            },
+            onPull = {
+                val token = githubToken
+                val root = projectRoot
+                if (token != null && root != null) {
+                    githubAct { GitHubRemote(root).pull(token) }
+                }
+            },
+            onLink = { repo ->
+                val root = projectRoot
+                if (root != null) {
+                    showRepos = false
+                    githubAct { GitHubRemote(root).link(repo.cloneUrl).map { "Linked ${repo.fullName}." } }
+                }
+            },
+        )
     }
 
     if (namingBranch && state is GitUiState.Loaded) {
@@ -430,8 +455,15 @@ fun IdeGitPanel(
                 tokenStore.write(token)
                 githubToken = token
                 signInOpen = false
+                if (cloneAfterSignIn) {
+                    cloneAfterSignIn = false
+                    requestClone()
+                }
             },
-            onDismiss = { signInOpen = false },
+            onDismiss = {
+                signInOpen = false
+                cloneAfterSignIn = false
+            },
         )
     }
 }
@@ -852,6 +884,7 @@ private fun GitHubSection(
     onPush: () -> Unit,
     onPull: () -> Unit,
     onLink: (GitHubRepo) -> Unit,
+    onClone: () -> Unit,
 ) {
     val c = LocalPageColors.current
     SectionLabel("GITHUB")
@@ -882,6 +915,16 @@ private fun GitHubSection(
                 lineHeight = 17.sp,
             )
             PanelButton(label = if (busy) "Working…" else "Sign in with GitHub", enabled = !busy, onClick = onSignIn)
+            // A clone never needs *this* project's repository — it makes its own — so it sits
+            // beside sign-in rather than inside the signed-in-only controls below.
+            Text(
+                text = "Clone a repository",
+                color = c.ac,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.clickable(enabled = !busy, onClick = onClone),
+            )
         }
         return
     }
@@ -983,6 +1026,14 @@ private fun GitHubSection(
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.clickable(onClick = onToggleRepos),
+        )
+        Text(
+            text = "Clone a repository",
+            color = c.ac,
+            fontSize = 11.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.clickable(enabled = !busy, onClick = onClone),
         )
     }
 

@@ -8,6 +8,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -75,21 +76,31 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    else -> IdeScreen(
-                        projectName = project.name,
+                    // Keyed on the project, not on composable identity. Cloning from inside the
+                    // IDE swaps `project` while this branch stays composed, and every per-project
+                    // holder — tabs, open buffers, the tree walk, the GitHub snapshot — would
+                    // otherwise carry the old project's contents into the new one.
+                    else -> key(project.slug) {
+                        IdeScreen(
+                            projectName = project.name,
 
-                        templateName = project.templateName,
-                        slug = project.slug,
-                        repository = repository,
-                        onOpenSettings = {
-                            section = "general"
-                            settingsOpen = true
-                        },
-                        onExit = { encoded = "" },
-                        onToggleTheme = {
-                            themeOverride = !(themeOverride ?: systemDark)
-                        },
-                    )
+                            templateName = project.templateName,
+                            slug = project.slug,
+                            repository = repository,
+                            onOpenSettings = {
+                                section = "general"
+                                settingsOpen = true
+                            },
+                            onExit = { encoded = "" },
+                            // A clone already owns its directory and its record, so it carries its
+                            // own slug rather than deriving one from the name — and it lands here,
+                            // in the IDE, without going back through the hero screen.
+                            onProjectCloned = { record -> encoded = encodeRecord(record) },
+                            onToggleTheme = {
+                                themeOverride = !(themeOverride ?: systemDark)
+                            },
+                        )
+                    }
                 }
             }
         }

@@ -45,6 +45,22 @@ class ForgeUiSpecTest {
         assertEquals("Search", com.closecode.ui.ide.model.IdeNavItems.first())
     }
 
+    // -- explorer drawer ---------------------------------------------------------------
+
+    @Test
+    fun githubLeadsTheDrawerAndIsTheTabThatOpens() {
+        // Declared once so the strip's order and the default cannot drift apart: the account,
+        // clone and publish controls all live behind GitHub, and none of them need a repository.
+        assertEquals(listOf("GitHub", "Files"), ExplorerTabs)
+        assertEquals("GitHub", ExplorerTabs.first())
+    }
+
+    @Test
+    fun theDrawerOffersExactlyTwoDistinctTabs() {
+        assertEquals(2, ExplorerTabs.size)
+        assertEquals(2, ExplorerTabs.distinct().size)
+    }
+
     // -- path bar -----------------------------------------------------------------------
 
     @Test

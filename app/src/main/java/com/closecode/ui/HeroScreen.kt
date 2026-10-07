@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 
@@ -48,6 +49,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.em
@@ -55,6 +57,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.ui.background.PageBackground
 import com.closecode.ui.components.CodeCard
+import com.closecode.ui.github.GitHubClient
+import com.closecode.ui.github.GitHubUser
 import com.closecode.ui.github.TokenStore
 import com.closecode.ui.ide.GitHubSignIn
 import com.closecode.ui.model.ProjectConfig
@@ -66,6 +70,8 @@ import com.closecode.ui.components.PlusGlyph
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private val Facts = listOf("Open source", "On-device builds", "Private by default")
 
@@ -136,34 +142,85 @@ private val BranchConnectorHeight = 26.dp
  * The two things the GitHub button opens, drawn under it as a trunk with a branch per choice.
  *
  * The two pills sit side by side and each one owns its half of the trunk, so the line closes
- * without either side having to know how wide the other is.
+ * without either side having to know how wide the other is. The account line sits underneath
+ * both, where it cannot disturb that geometry — the stem has to reach the button above it.
  */
 @Composable
 private fun GitHubDisclosure(
     signedIn: Boolean,
+    account: GitHubUser?,
     onSignIn: () -> Unit,
     onClone: () -> Unit,
 ) {
-    Row(
+    Column(
         Modifier.padding(top = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(BranchGap),
-        verticalAlignment = Alignment.Top,
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Branch(
-            label = "Sign in GitHub",
-            note = if (signedIn) "connected" else null,
-            stem = false,
-            trunkRunsLeft = false,
-            onClick = onSignIn,
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(BranchGap),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Branch(
+                label = "Sign in GitHub",
+                note = null,
+                stem = false,
+                trunkRunsLeft = false,
+                onClick = onSignIn,
+            )
+            Branch(
+                label = "Clone GitHub",
+                note = null,
+                stem = true,
+                trunkRunsLeft = true,
+                onClick = onClone,
+            )
+        }
+        if (signedIn) AccountRow(account)
+    }
+}
+
+/**
+ * Who the device is actually signed in as. The pills say GitHub is connected; this says who it is
+ * connected *as*, which is the thing worth checking before a clone writes into your projects.
+ *
+ * The account arrives from the network after sign-in, so "Connected" is a real state and not a
+ * placeholder that ever claims a name it has not been told.
+ */
+@Composable
+private fun AccountRow(account: GitHubUser?) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier.padding(top = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        Box(
+            Modifier
+                .size(7.dp)
+                .clip(CircleShape)
+                .background(c.success),
         )
-        Branch(
-            label = "Clone GitHub",
-            note = null,
-            stem = true,
-            trunkRunsLeft = true,
-            onClick = onClone,
+        Text(
+            text = accountLabel(account),
+            color = c.mu,
+            fontSize = 12.5.sp,
+            fontFamily = Sans,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+/**
+ * Who the device is signed in as.
+ *
+ * "Connected" is a real answer and not a placeholder: it is what can honestly be said while the
+ * account is still being fetched, and it never borrows a name that has not been told to us.
+ */
+internal fun accountLabel(account: GitHubUser?): String = when {
+    account == null -> "Connected"
+    account.name.isNullOrBlank() -> "@${account.login}"
+    else -> "${account.name} · @${account.login}"
 }
 
 /**
@@ -315,11 +372,24 @@ fun HeroScreen(
     val context = LocalContext.current
     val tokenStore = remember(context) { TokenStore(context) }
     var githubToken by remember { mutableStateOf(tokenStore.read()) }
+    // The token only says that *some* account is connected. This is which one, and it is fetched
+    // rather than derived — off the main thread, because it is a network call made on screen load.
+    val gitHubClient = remember { GitHubClient() }
+    var githubAccount by remember { mutableStateOf<GitHubUser?>(null) }
     var githubOpen by remember { mutableStateOf(false) }
     var signInOpen by remember { mutableStateOf(false) }
     var cloneOpen by remember { mutableStateOf(false) }
     // Cloning needs a token the user may not have yet: sign in first, then open the list.
     var cloneAfterSignIn by remember { mutableStateOf(false) }
+
+    LaunchedEffect(githubToken) {
+        val token = githubToken
+        githubAccount = if (token == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) { gitHubClient.currentUser(token).getOrNull() }
+        }
+    }
 
     LaunchedEffect(toast) {
         if (toast != null) {
@@ -405,6 +475,7 @@ fun HeroScreen(
                     ) {
                         GitHubDisclosure(
                             signedIn = githubToken != null,
+                            account = githubAccount,
                             onSignIn = {
                                 if (githubToken != null) {
                                     toast = "Signed in to GitHub."
