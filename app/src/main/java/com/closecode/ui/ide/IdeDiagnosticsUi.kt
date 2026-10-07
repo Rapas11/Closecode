@@ -813,6 +813,21 @@ fun lineTopPx(
 }
 
 /**
+ * The 1-based line an absolute document offset falls on.
+ *
+ * Counted from the start of the file rather than read from the layout, because a bracket pair is
+ * found across the whole buffer while only a window of it is ever rendered.
+ */
+internal fun lineOfOffset(source: String, offset: Int): Int {
+    val safe = offset.coerceIn(0, source.length)
+    var line = 1
+    for (i in 0 until safe) {
+        if (source[i] == '\n') line++
+    }
+    return line
+}
+
+/**
  * Offset of the last character a label on [line] should sit after.
  *
  * The line's own newline is never the answer when the line has text, because the renderer draws it
@@ -979,6 +994,48 @@ fun squiggleRange(
     val left = startBox.left
     val right = maxOf(endBox.right, left + minWidthPx)
     return Triple(left, right, window.topPx + startBox.top)
+}
+
+/**
+ * One vertical rule per `{ … }` that spans more than a single line: from the row the brace opens on
+ * down to the row its pair closes on.
+ *
+ * A brace pair that stays on one line is not a block, and a rule down its own row would be a speck,
+ * so those are skipped. The x comes from the brace's own bounding box and the two ends from the
+ * renderer's line metrics, so the rule sits under the brace it belongs to at any font size, any
+ * pinch zoom and any window of the file the screen is showing — and a pair whose ends fall outside
+ * the rendered slice answers null from [lineTopPx] and is not drawn, which is the whole clipping
+ * rule for free.
+ */
+@Composable
+fun BracketGuideLayer(
+    pairs: List<IntRange>,
+    source: String,
+    layout: TextLayoutResult?,
+    lineHeightPx: Float,
+    window: CodeWindow = CodeWindow.Full,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalPageColors.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val strokePx = with(density) { 1.dp.toPx() }
+
+    androidx.compose.foundation.Canvas(modifier) {
+        for (pair in pairs) {
+            val openLine = lineOfOffset(source, pair.first)
+            val closeLine = lineOfOffset(source, pair.last)
+            if (closeLine <= openLine) continue
+            val top = lineTopPx(layout, source, openLine, window) ?: continue
+            val bottom = lineTopPx(layout, source, closeLine, window) ?: continue
+            val x = xForOffset(layout, pair.first, window) ?: continue
+            drawLine(
+                color = c.ln,
+                start = androidx.compose.ui.geometry.Offset(x, top),
+                end = androidx.compose.ui.geometry.Offset(x, bottom + lineHeightPx),
+                strokeWidth = strokePx,
+            )
+        }
+    }
 }
 
 @Composable

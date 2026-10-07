@@ -130,3 +130,88 @@ fun highlightCode(text: String, c: PageColors): AnnotatedString {
         }
     }
 }
+
+/**
+ * The `{ … }` pairs in a whole source file, as absolute offset ranges, sorted by where each pair
+ * opens.
+ *
+ * A scan rather than a parse. Braces inside a line comment, a block comment, a string or a
+ * character literal are not braces, so those are stepped over instead of counted — the guide for a
+ * block must not be thrown off by a `"{"` in a log message. A brace left over at the end of the
+ * file — a half-typed block, or a file that does not compile — contributes no pair at all, because
+ * a rule drawn to nowhere is worse than no rule.
+ */
+internal fun bracePairs(source: String): List<IntRange> {
+    val opens = mutableListOf<Int>()
+    val pairs = mutableListOf<IntRange>()
+    var i = 0
+    while (i < source.length) {
+        when (source[i]) {
+            '/' -> when {
+                source.getOrNull(i + 1) == '/' -> {
+                    val end = source.indexOf('\n', i)
+                    i = if (end < 0) source.length else end
+                }
+                source.getOrNull(i + 1) == '*' -> i = endOfBlockComment(source, i)
+                else -> i++
+            }
+            '"' -> i = endOfString(source, i)
+            '\'' -> i = endOfCharLiteral(source, i)
+            '{' -> {
+                opens += i
+                i++
+            }
+            '}' -> {
+                val start = opens.removeLastOrNull()
+                if (start != null) pairs += start..i
+                i++
+            }
+            else -> i++
+        }
+    }
+    return pairs.sortedBy { it.first }
+}
+
+/** Index just past the block comment opening at [start], or the end of the file if it never closes. */
+private fun endOfBlockComment(source: String, start: Int): Int {
+    var i = start + 2
+    var depth = 1
+    while (i < source.length && depth > 0) {
+        when {
+            source.startsWith("/*", i) -> {
+                depth++
+                i += 2
+            }
+            source.startsWith("*/", i) -> {
+                depth--
+                i += 2
+            }
+            else -> i++
+        }
+    }
+    return i
+}
+
+/** Index just past the string starting at [start]. A raw `"""` string is one token, not three. */
+private fun endOfString(source: String, start: Int): Int {
+    if (source.startsWith("\"\"\"", start)) {
+        val end = source.indexOf("\"\"\"", start + 3)
+        return if (end < 0) source.length else end + 3
+    }
+    var i = start + 1
+    while (i < source.length && source[i] != '"') {
+        if (source[i] == '\\') i++
+        i++
+    }
+    return if (i < source.length) i + 1 else source.length
+}
+
+/** Index just past the character literal starting at [start], honouring a backslash escape. */
+private fun endOfCharLiteral(source: String, start: Int): Int {
+    var i = start + 1
+    while (i < source.length && source[i] != '\'') {
+        if (source[i] == '\\') i++
+        i++
+    }
+    return if (i < source.length) i + 1 else source.length
+}

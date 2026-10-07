@@ -15,6 +15,7 @@ enum class BoolSetting {
     FORMAT_ON_SAVE,
     AUTOCOMPLETE,
     DIAGNOSTICS,
+    BRACKET_GUIDES,
 }
 
 /** Which choice-based field of [Settings] a settings row edits. */
@@ -46,6 +47,7 @@ data class Settings(
     val formatOnSave: Boolean = false,
     val autocomplete: Boolean = true,
     val diagnostics: Boolean = true,
+    val bracketGuides: Boolean = true,
     val theme: String = "System",
     val fontSize: Int = 13,
     val tabSize: Int = 2,
@@ -59,6 +61,7 @@ data class Settings(
         BoolSetting.FORMAT_ON_SAVE -> formatOnSave
         BoolSetting.AUTOCOMPLETE -> autocomplete
         BoolSetting.DIAGNOSTICS -> diagnostics
+        BoolSetting.BRACKET_GUIDES -> bracketGuides
     }
 
     fun withFlag(key: BoolSetting, value: Boolean): Settings = when (key) {
@@ -70,6 +73,7 @@ data class Settings(
         BoolSetting.FORMAT_ON_SAVE -> copy(formatOnSave = value)
         BoolSetting.AUTOCOMPLETE -> copy(autocomplete = value)
         BoolSetting.DIAGNOSTICS -> copy(diagnostics = value)
+        BoolSetting.BRACKET_GUIDES -> copy(bracketGuides = value)
     }
 
     fun option(key: OptionSetting): String = when (key) {
@@ -116,6 +120,7 @@ class SettingsStore(private val kv: KeyValueStore) {
         formatOnSave = kv.getBoolean(KEY_FORMAT_ON_SAVE, Settings().formatOnSave),
         autocomplete = kv.getBoolean(KEY_AUTOCOMPLETE, Settings().autocomplete),
         diagnostics = kv.getBoolean(KEY_DIAGNOSTICS, Settings().diagnostics),
+        bracketGuides = kv.getBoolean(KEY_BRACKET_GUIDES, Settings().bracketGuides),
         theme = kv.getString(KEY_THEME, Settings().theme)
             ?.takeIf { it in ThemeChoices }
             ?: Settings().theme,
@@ -139,6 +144,7 @@ class SettingsStore(private val kv: KeyValueStore) {
         kv.putBoolean(KEY_FORMAT_ON_SAVE, settings.formatOnSave)
         kv.putBoolean(KEY_AUTOCOMPLETE, settings.autocomplete)
         kv.putBoolean(KEY_DIAGNOSTICS, settings.diagnostics)
+        kv.putBoolean(KEY_BRACKET_GUIDES, settings.bracketGuides)
         kv.putString(KEY_THEME, settings.theme)
         kv.putInt(KEY_FONT_SIZE, settings.fontSize)
         kv.putInt(KEY_TAB_SIZE, settings.tabSize)
@@ -154,6 +160,7 @@ class SettingsStore(private val kv: KeyValueStore) {
         const val KEY_FORMAT_ON_SAVE = "format_on_save"
         const val KEY_AUTOCOMPLETE = "autocomplete"
         const val KEY_DIAGNOSTICS = "diagnostics"
+        const val KEY_BRACKET_GUIDES = "bracket_guides"
         const val KEY_THEME = "theme"
         const val KEY_FONT_SIZE = "font_size"
         const val KEY_TAB_SIZE = "tab_size"

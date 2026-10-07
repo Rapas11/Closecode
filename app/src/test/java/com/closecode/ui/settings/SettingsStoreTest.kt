@@ -26,6 +26,7 @@ class SettingsStoreTest {
         assertFalse(settings.formatOnSave)
         assertTrue(settings.autocomplete)
         assertTrue(settings.diagnostics)
+        assertTrue(settings.bracketGuides)
         assertEquals("System", settings.theme)
         assertEquals(13, settings.fontSize)
         assertEquals(2, settings.tabSize)
@@ -187,7 +188,8 @@ class SettingsStoreTest {
         assertEquals(BoolSetting.FORMAT_ON_SAVE, toggles["Format on save"])
         assertEquals(BoolSetting.AUTOCOMPLETE, toggles["Autocomplete"])
         assertEquals(BoolSetting.DIAGNOSTICS, toggles["Diagnostics"])
-        assertEquals(8, toggles.values.filterNotNull().size)
+        assertEquals(BoolSetting.BRACKET_GUIDES, toggles["Bracket guides"])
+        assertEquals(9, toggles.values.filterNotNull().size)
 
         val options = sections(SettingsLive())
             .flatMap { section -> section.groups.flatMap { it.rows } }

@@ -2303,6 +2303,12 @@ private fun IdeEditorArea(
     val highlighted = remember(codeRange, code, c) {
         highlightCode(sliceOfLines(codeLines, codeRange), c)
     }
+    // Pairs are found in the whole buffer rather than the window, because a block can open above
+    // the slice the renderer is holding; the layer decides for each pair whether either end is on
+    // screen. The setting is read here so switching it off stops the scan, not just the drawing.
+    val braceGuides = remember(code, settings.bracketGuides) {
+        if (settings.bracketGuides) bracePairs(code) else emptyList()
+    }
     var quickFixLine by remember { mutableStateOf<Int?>(null) }
     var quickFixIndex by remember { mutableStateOf(0) }
 
@@ -2778,6 +2784,17 @@ contentAlignment = Alignment.Center,
                                 end = CodeLeftInset,
                             ),
                     ) {
+                        // Drawn first, so every rule sits under the glyphs rather than across
+                        // them. Both ends come from the renderer, so a guide and the brace it
+                        // describes cannot drift apart when the font, the zoom or the window moves.
+                        BracketGuideLayer(
+                            pairs = braceGuides,
+                            source = code,
+                            layout = codeLayout,
+                            lineHeightPx = lineHeightPx,
+                            window = codeWindow,
+                            modifier = Modifier.matchParentSize(),
+                        )
                         // One grey line where the file's first line would be, for a buffer with
                         // nothing in it — a new file, a file we cannot read, or the editor with no
                         // tab open at all. It is drawn, never typed: the buffer stays empty, so a

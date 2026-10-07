@@ -33,7 +33,7 @@ class SettingsControlsTest {
 
     @Test
     fun everyToggleStillHasSomewhereToSayItsState() {
-        // Ten of the eighteen toggles have no key yet, so they hold their own default and answer
+        // Nine of the eighteen toggles have no key yet, so they hold their own default and answer
         // to nothing in the store. They still draw a switch, and a switch still says On or Off —
         // the label does not depend on the row having been wired up.
         val toggles = sections(SettingsLive())
@@ -41,7 +41,7 @@ class SettingsControlsTest {
             .filterIsInstance<Row.Toggle>()
 
         assertEquals(18, toggles.size)
-        assertEquals(10, toggles.count { it.key == null })
+        assertEquals(9, toggles.count { it.key == null })
         assertEquals("On", toggleStateLabel(true))
         assertEquals("Off", toggleStateLabel(false))
     }
