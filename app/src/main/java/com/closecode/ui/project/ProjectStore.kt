@@ -76,11 +76,21 @@ class ProjectStore(context: Context) {
         val root = projectDir(slug)
         if (!root.isDirectory) return emptyList()
         val out = mutableListOf<ProjectFile>()
-        walk(root, depth = 0, into = out)
+        walk(root, into = out)
         return out
     }
 
-    private fun walk(dir: File, depth: Int, into: MutableList<ProjectFile>, prefix: String = "") {
+    /**
+     * The record for a path that was just created. Creating a file used to be followed by a second
+     * full [readTree] purely to find it again — that walk raced the refresh every mutation already
+     * triggers, so the row it was looking for arrived at an unpredictable moment and the file
+     * opened or did not. The path is all the walk was being asked for, and it is what
+     * [projectEntry] derives everything from.
+     */
+    fun entryFor(slug: String, relative: String, isFolder: Boolean): ProjectFile =
+        projectEntry(relative, isFolder)
+
+    private fun walk(dir: File, into: MutableList<ProjectFile>, prefix: String = "") {
         val children = dir.listFiles()?.sortedWith(
             compareByDescending<File> { it.isDirectory }.thenBy { it.name.lowercase() }
         ) ?: return
@@ -88,29 +98,8 @@ class ProjectStore(context: Context) {
         for (child in children) {
             if (isHiddenEntry(child.name)) continue
             val relative = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
-            if (child.isDirectory) {
-                into.add(
-                    ProjectFile(
-                        name = child.name,
-                        kind = FileKind.Folder,
-                        language = "",
-                        depth = depth,
-                        expandable = true,
-                        path = relative,
-                    )
-                )
-                walk(child, depth + 1, into, relative)
-            } else {
-                into.add(
-                    ProjectFile(
-                        name = child.name,
-                        kind = kindOf(child.name),
-                        language = languageOf(child.name),
-                        depth = depth,
-                        path = relative,
-                    )
-                )
-            }
+            into.add(projectEntry(relative, child.isDirectory))
+            if (child.isDirectory) walk(child, into, relative)
         }
     }
 
@@ -122,35 +111,6 @@ class ProjectStore(context: Context) {
     private fun isHiddenEntry(name: String): Boolean =
         ProjectSafety.isHiddenName(name) || name == ".git"
 
-    private fun kindOf(name: String): FileKind = when {
-        name.endsWith(".kt") || name.endsWith(".kts") -> FileKind.Kotlin
-        name.endsWith(".xml") -> FileKind.Xml
-        name.endsWith(".html") -> FileKind.Html
-        name.endsWith(".css") -> FileKind.Css
-        name.endsWith(".js") -> FileKind.Js
-        name.endsWith(".json") -> FileKind.Json
-        name.endsWith(".csv") -> FileKind.Csv
-        name.endsWith(".md") -> FileKind.Markdown
-        name.endsWith(".gradle") -> FileKind.Gradle
-        // Anything without a recognised extension gets no badge. Treating it as Gradle made
-        // files like .gitkeep render with a red "G".
-        else -> FileKind.Unknown
-    }
-
-    private fun languageOf(name: String): String = when {
-        name.endsWith(".kt") -> "Kotlin"
-        name.endsWith(".kts") -> "Gradle Kotlin"
-        name.endsWith(".xml") -> "XML"
-        name.endsWith(".html") -> "HTML"
-        name.endsWith(".css") -> "CSS"
-        name.endsWith(".js") -> "JavaScript"
-        name.endsWith(".json") -> "JSON"
-        name.endsWith(".csv") -> "CSV"
-        name.endsWith(".md") -> "Markdown"
-        name.endsWith(".properties") -> "Properties"
-        else -> "Text"
-    }
-
     fun deleteProject(slug: String): Boolean {
         val dir = projectDir(slug)
         if (!dir.isDirectory) return false
@@ -160,4 +120,51 @@ class ProjectStore(context: Context) {
     companion object {
         const val METADATA = ".closecode.json"
     }
+}
+
+/**
+ * The record the drawer shows for [relative]. One builder serves both the walk and a path that was
+ * just created, so a file the user has never seen before gets exactly the row a full tree walk
+ * would have given it: the leaf, the kind, the language, the depth and whether it expands, all
+ * read off the path itself.
+ */
+internal fun projectEntry(relative: String, isFolder: Boolean): ProjectFile {
+    val leaf = relative.substringAfterLast('/')
+    return ProjectFile(
+        name = leaf,
+        kind = if (isFolder) FileKind.Folder else kindOf(leaf),
+        language = if (isFolder) "" else languageOf(leaf),
+        depth = relative.count { it == '/' },
+        expandable = isFolder,
+        path = relative,
+    )
+}
+
+internal fun kindOf(name: String): FileKind = when {
+    name.endsWith(".kt") || name.endsWith(".kts") -> FileKind.Kotlin
+    name.endsWith(".xml") -> FileKind.Xml
+    name.endsWith(".html") -> FileKind.Html
+    name.endsWith(".css") -> FileKind.Css
+    name.endsWith(".js") -> FileKind.Js
+    name.endsWith(".json") -> FileKind.Json
+    name.endsWith(".csv") -> FileKind.Csv
+    name.endsWith(".md") -> FileKind.Markdown
+    name.endsWith(".gradle") -> FileKind.Gradle
+    // Anything without a recognised extension gets no badge. Treating it as Gradle made
+    // files like .gitkeep render with a red "G".
+    else -> FileKind.Unknown
+}
+
+internal fun languageOf(name: String): String = when {
+    name.endsWith(".kt") -> "Kotlin"
+    name.endsWith(".kts") -> "Gradle Kotlin"
+    name.endsWith(".xml") -> "XML"
+    name.endsWith(".html") -> "HTML"
+    name.endsWith(".css") -> "CSS"
+    name.endsWith(".js") -> "JavaScript"
+    name.endsWith(".json") -> "JSON"
+    name.endsWith(".csv") -> "CSV"
+    name.endsWith(".md") -> "Markdown"
+    name.endsWith(".properties") -> "Properties"
+    else -> "Text"
 }

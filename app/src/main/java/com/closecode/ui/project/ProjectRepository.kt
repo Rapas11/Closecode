@@ -159,6 +159,10 @@ class ProjectRepository(context: Context) {
 
     fun tree(slug: String): List<ProjectFile> = store.readTree(slug)
 
+    /** The record for a path just created, without walking the tree to rediscover it. */
+    fun entryFor(slug: String, relative: String, isFolder: Boolean): ProjectFile =
+        store.entryFor(slug, relative, isFolder)
+
     private fun templateNameFor(selection: SelectedTemplate): String =
         com.closecode.ui.model.Templates[selection.tab]
             .orEmpty()

@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -154,6 +155,14 @@ fun IdeScreen(
     // and running it inside `remember` blocked composition on the disk. It is filled in below by an
     // effect that does the walk on Dispatchers.IO, so the first frame simply shows an empty drawer.
     var diskTree by remember(slug) { mutableStateOf(emptyList<ProjectFile>()) }
+    // The row the drawer is pointed at: a folder, or the file being read. Keyed by path, because
+    // the highlight, the parent a new file lands in and "which one is open" are three questions
+    // about the same row, and two files called MainActivity.kt are not the same row.
+    var selectedPath by remember(slug) { mutableStateOf<String?>(null) }
+    // Folders the reader has closed, by path. It used to live inside the drawer, but creating a
+    // file has to open every folder between the root and the new row or the row arrives invisible
+    // and the creation looks like nothing happened.
+    var collapsedFolders by remember(slug) { mutableStateOf(setOf<String>()) }
     val diskContents = remember(slug) { mutableStateMapOf<String, String>() }
     var activePanel by remember(slug) { mutableStateOf("Code") }
     var explorerOpen by remember { mutableStateOf(false) }
@@ -276,6 +285,7 @@ fun IdeScreen(
         val sources = files.filter { it.kind != FileKind.Folder }.take(3)
         tabs = sources
         active = sources.firstOrNull()?.name.orEmpty()
+        selectedPath = sources.firstOrNull()?.path
         val loaded = withContext(Dispatchers.IO) {
             sources.mapNotNull { file ->
                 runCatching { repository.readFile(slug, file.path) }.getOrNull()
@@ -366,6 +376,7 @@ fun IdeScreen(
     fun openFile(file: ProjectFile) {
         if (file.kind == FileKind.Folder) return
         active = file.name
+        selectedPath = file.path
         if (tabs.none { it.name == file.name }) tabs = tabs + file
         tabs = retainTabs(tabs, active, ::isDirtyTab)
         if (diskContents[file.name] == null) {
@@ -391,7 +402,15 @@ fun IdeScreen(
     }
 
     fun createEntry(isFolder: Boolean, rawName: String) {
-        val parent = activeFile?.path?.substringBeforeLast('/', "") ?: ""
+        // The parent is the row the drawer is pointed at rather than the file that happens to be
+        // open: a file created from a folder lands in that folder, one created with nothing
+        // selected lands at the root, and neither depends on which tab was last switched to.
+        val selected = diskTree.firstOrNull { it.path == selectedPath }
+        val parent = when {
+            selected == null -> ""
+            selected.kind == FileKind.Folder -> selected.path
+            else -> selected.path.substringBeforeLast('/', "")
+        }
         val leaf = rawName.trim().removePrefix("/")
         if (leaf.isEmpty()) return
         val relative = if (parent.isEmpty()) leaf else "$parent/$leaf"
@@ -399,16 +418,20 @@ fun IdeScreen(
             if (isFolder) repository.createFolder(slug, relative)
             else repository.createFile(slug, relative, "")
         }.onSuccess {
+            // Open every folder between the root and the new entry. The drawer hides a subtree the
+            // moment its folder is collapsed, so without this the row is computed and never drawn
+            // — which is what "the file did not appear" always was.
+            ancestorFoldersOf(relative).forEach { folder ->
+                collapsedFolders = collapsedFolders - folder
+            }
+            // Built rather than rediscovered: the record lands in the same frame as the write, and
+            // there is no second tree walk left to race the refresh below.
+            val created = repository.entryFor(slug, relative, isFolder)
             refreshTree()
-            if (!isFolder) {
-                // The walk that finds the new file is a recursive directory read, so it joins the
-                // rest of the disk work off the main thread.
-                fileScope.launch {
-                    val created = withContext(Dispatchers.IO) {
-                        repository.tree(slug).firstOrNull { it.path == relative }
-                    }
-                    if (created != null) openFile(created)
-                }
+            if (isFolder) {
+                selectedPath = created.path
+            } else {
+                openFile(created)
             }
             toast = "Created $leaf"
         }.onFailure { toast = it.message ?: "Could not create $leaf" }
@@ -631,7 +654,9 @@ fun IdeScreen(
                                 projectName = projectName,
                                 slug = slug,
                                 tree = diskTree,
-                                activeFile = active,
+                                activePath = activeFile?.path,
+                                revealPath = selectedPath,
+                                collapsed = collapsedFolders,
                                 query = explorerFilter,
                                 tab = explorerTab,
                                 gitRevision = gitRevision,
@@ -639,8 +664,20 @@ fun IdeScreen(
                                 onCreateFile = { namingFile = true },
                                 onCreateFolder = { namingFolder = true },
                                 onSelect = { file ->
-                                    openFile(file)
-                                    explorerOpen = false
+                                    // The row is the working point for the next creation whether it
+                                    // is a folder or a file, so it is recorded either way; only a
+                                    // file also becomes the file being read.
+                                    selectedPath = file.path
+                                    if (file.kind == FileKind.Folder) {
+                                        collapsedFolders = if (file.path in collapsedFolders) {
+                                            collapsedFolders + file.path
+                                        } else {
+                                            collapsedFolders - file.path
+                                        }
+                                    } else {
+                                        openFile(file)
+                                        explorerOpen = false
+                                    }
                                 },
                                 onCloneRequest = { cloneSheetToken = it },
                                 projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
@@ -654,10 +691,16 @@ fun IdeScreen(
                                 active = active,
                                 language = language,
                                 contentFor = { name -> liveBuffers[name] ?: diskContents[name] ?: "" },
-                                onSelectTab = { active = it },
+                                onSelectTab = { name ->
+                                    active = name
+                                    selectedPath = tabs.firstOrNull { it.name == name }?.path
+                                },
                                 onCloseTab = { name ->
                                     tabs = tabs.filterNot { it.name == name }
-                                    if (active == name) active = tabs.lastOrNull()?.name.orEmpty()
+                                    if (active == name) {
+                                        active = tabs.lastOrNull()?.name.orEmpty()
+                                        selectedPath = tabs.lastOrNull()?.path
+                                    }
                                 },
                                 onFocusChange = { editorFocused = it },
                                 onBufferChange = { text ->
@@ -1136,6 +1179,16 @@ internal fun breadcrumbOf(path: String, maxCrumbs: Int = 3): List<String> {
 }
 
 /**
+ * Every folder that holds [relative], outermost first: `a/b/c.kt` gives `a` and `a/b`, and a file
+ * at the root gives nothing. The drawer keys its collapsed set by path, so these are exactly the
+ * entries that have to come out of it for a row to be drawn where it belongs.
+ */
+internal fun ancestorFoldersOf(relative: String): List<String> =
+    relative.split("/").dropLast(1)
+        .runningFold("") { outer, part -> if (outer.isEmpty()) part else "$outer/$part" }
+        .drop(1)
+
+/**
  * The tab strip's cap. The active tab and any tab with unsaved changes are never dropped, so the
  * cap can never throw away the file the user is in or the file they have not saved yet; when
  * something has to give it is the oldest tab that is neither, because a strip that keeps its
@@ -1276,7 +1329,15 @@ private fun IdeExplorer(
     projectName: String,
     slug: String,
     tree: List<ProjectFile>,
-    activeFile: String,
+    // Highlighted row: the file being read, looked up by path. Two files that share a name are
+    // not the same row, so the name alone can never say which one is on screen.
+    activePath: String?,
+    // Row to scroll into view when it is not already showing. Separate from the highlight because
+    // a folder that was just created needs to be revealed without stealing the open file.
+    revealPath: String?,
+    // Closed folders, by path. The drawer only reads it — opening one happens on the way to a new
+    // entry, from the screen that knows what was just created.
+    collapsed: Set<String>,
     query: String,
     tab: String,
     gitRevision: Int,
@@ -1303,9 +1364,7 @@ private fun IdeExplorer(
         label = "explorer-width",
     )
 
-    // Keyed by path, not by name: two folders that both happen to be called "util" used to open
-    // and close together.
-    var collapsed by remember(slug) { mutableStateOf(setOf<String>()) }
+    val listState = rememberLazyListState()
 
     val q = query.trim().lowercase()
     val matched = if (q.isEmpty()) tree else tree.filter { it.path.lowercase().contains(q) }
@@ -1325,6 +1384,22 @@ private fun IdeExplorer(
             if (file.kind == FileKind.Folder && file.path in collapsed) hiddenBelow += file.depth
         }
         out
+    }
+
+    // Bring the row that was just created or just opened into view. It only fires when the row is
+    // off screen, so tapping a file that is already showing never jumps the list, and it waits for
+    // the row count to change because a new entry lands in the tree one frame after the tap that
+    // asked for it. Without this the file opens in a tab and stays invisible in the drawer, which
+    // reads as "nothing happened".
+    val headerRows = TreeListHeaderItems
+    LaunchedEffect(revealPath, rows.size) {
+        val path = revealPath ?: return@LaunchedEffect
+        val index = rows.indexOfFirst { it.path == path }
+        if (index < 0) return@LaunchedEffect
+        val position = index + headerRows
+        if (listState.layoutInfo.visibleItemsInfo.none { it.index == position }) {
+            listState.scrollToItem(position)
+        }
     }
 
     Column(
@@ -1384,7 +1459,7 @@ private fun IdeExplorer(
                 .width(if (expanded) fullWidth else 0.dp)
                 .fillMaxHeight(),
         ) {
-            LazyColumn(Modifier.fillMaxSize()) {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 item(key = "root") {
                     TreeRow(
                         label = projectName,
@@ -1406,18 +1481,11 @@ private fun IdeExplorer(
                         bold = false,
                         glyph = kindGlyph(file.kind),
                         glyphColor = kindColor(file.kind, c),
-                        active = file.name == activeFile,
-                        onClick = {
-                            if (file.kind == FileKind.Folder) {
-                                collapsed = if (file.path in collapsed) {
-                                    collapsed - file.path
-                                } else {
-                                    collapsed + file.path
-                                }
-                            } else {
-                                onSelect(file)
-                            }
-                        },
+                        active = file.path == activePath,
+                        // Both kinds of row report the tap: opening a folder and selecting it as
+                        // the place a new file lands are the same gesture, so the screen that owns
+                        // the collapsed set decides which one happened.
+                        onClick = { onSelect(file) },
                     )
                 }
             }
@@ -3097,6 +3165,13 @@ internal val ExplorerTabs: List<String> = listOf("GitHub", "Files")
 
 /** Spec 4.1: how many edits Undo can step back through before the oldest one is dropped. */
 private const val UNDO_HISTORY_LIMIT = 100
+
+/**
+ * The rows the drawer's list puts above every file: the project root and the PROJECT label. A
+ * tree index has to be offset by them before it means anything to LazyColumn, and the number lives
+ * here so the offset and the two `item` blocks above cannot drift apart.
+ */
+internal const val TreeListHeaderItems = 2
 
 /**
  * Height of the file tab strip. It has to be stated rather than wrapped around the tabs, because
