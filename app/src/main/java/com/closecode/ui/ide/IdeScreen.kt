@@ -25,11 +25,13 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
@@ -69,7 +71,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -209,7 +210,6 @@ fun IdeScreen(
     // it is composed, and this is how it is told to read it again rather than go on with the copy
     // it took when it was opened.
     var githubTokenEpoch by remember { mutableStateOf(0) }
-    var editorFocused by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var findQuery by remember { mutableStateOf("") }
     var explorerFilter by remember { mutableStateOf("") }
@@ -222,6 +222,11 @@ fun IdeScreen(
     // True while the suggestion popup is up. It is the tool row's other reason to hide: the popup
     // covers the row, and a row under a popup only steals taps.
     var suggestionsOpen by remember { mutableStateOf(false) }
+    // The soft keyboard is what the tool row exists for — tab, brace, quote and comment are not on
+    // a phone keyboard — so its presence decides whether the row is there. Reading the inset rather
+    // than watching a timer is what fixes the row disappearing four seconds into a thought while
+    // the keyboard is still up.
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     // Live editor buffers keyed by file name. The editor owns its TextFieldValue, so this mirror is
     // how the parent saves before Preview and counts diagnostics across the whole project.
     val liveBuffers = remember { mutableStateMapOf<String, String>() }
@@ -280,19 +285,6 @@ fun IdeScreen(
 
     LaunchedEffect(activePanel) {
         if (activePanel != "Logcat" && activePanel != "Build") panelBeforeTool = activePanel
-    }
-
-    // Spec 6.8 parks the tool row after a pause in the editor. It is the only way to reach tab,
-    // brace, quote and comment on a soft keyboard, so it is never taken away — only parked, and
-    // the next keystroke or caret move brings it straight back.
-    var toolRowIdle by remember { mutableStateOf(false) }
-    var editorActivity by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(editorActivity, editorFocused, suggestionsOpen) {
-        if (!editorFocused || suggestionsOpen) return@LaunchedEffect
-        toolRowIdle = false
-        delay(TOOL_ROW_IDLE_MS)
-        toolRowIdle = true
     }
 
     // Spec 4.1: the header's Undo and Redo drive the editor's own history. Requests are counters
@@ -916,11 +908,9 @@ fun IdeScreen(
                                         selectedPath = tabs.lastOrNull()?.path
                                     }
                                 },
-                                onFocusChange = { editorFocused = it },
                                 onBufferChange = { text ->
                                     liveBuffers[active] = text
                                     noteContent(active)
-                                    editorActivity++
                                 },
                                 onToast = { text -> toast = text },
                                 dirtyOf = ::isDirtyTab,
@@ -931,10 +921,7 @@ fun IdeScreen(
                                 redoRequest = redoRequest,
                                 sourceRevision = sourceRevision,
                                 caretRequest = caretRequest,
-                                onCaretChange = {
-                                    editorCaret = it
-                                    editorActivity++
-                                },
+                                onCaretChange = { editorCaret = it },
                                 projectSymbols = projectNames,
                                 onSaveRequest = { saveActiveFile() },
                                 onHistoryState = { undo, redo ->
@@ -942,7 +929,7 @@ fun IdeScreen(
                                     canRedo = redo
                                 },
                                 onSuggestionsOpen = { suggestionsOpen = it },
-                                showToolRow = editorFocused && !suggestionsOpen && !toolRowIdle,
+                                showToolRow = showToolRow(imeVisible, suggestionsOpen),
                             )
                         }
                     }
@@ -2051,11 +2038,8 @@ private fun IdeEditorArea(
     onSelectTab: (String) -> Unit,
     onCloseTab: (String) -> Unit,
     onSuggestionsOpen: (Boolean) -> Unit = {},
-    // Reports whether the code has the focus, which is the only signal that decides whether the
-    // tool row earns its 40 dp.
-    onFocusChange: (Boolean) -> Unit = {},
-    // The tool row hides while it would be idle. It is the only way to reach tab, brace, quote and
-    // comment on a soft keyboard, so it is never removed, only parked until the caret is live.
+    // Whether the tool row is on screen. It is the only way to reach tab, brace, quote and
+    // comment on a soft keyboard, so it follows the keyboard rather than a timer.
     showToolRow: Boolean = true,
     onBufferChange: (String) -> Unit = {},
     onToast: (String) -> Unit = {},
@@ -2877,9 +2861,6 @@ contentAlignment = Alignment.Center,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
                             modifier = Modifier
                                 .fillMaxSize()
-                                // The tool row only earns its 46 dp while this field has the
-                                // focus, which is exactly when it is useful.
-                                .onFocusChanged { onFocusChange(it.isFocused) }
                                 // Spec 4.1: the palette advertises Ctrl S, and the reference binds
                                 // the hardware keys for save, undo and redo. Enter is owned here
                                 // too, ahead of the IME, so one press can never produce two rows.
@@ -3275,8 +3256,8 @@ contentAlignment = Alignment.Center,
             EditorScrollbar(codeScroll, viewportHeightPx, horizontal = false)
         }
 
-        // Spec 6.8's tool row, parked while the editor is idle. It still owns its 46 dp when shown,
-        // so the code area grows rather than slides.
+        // Spec 6.8's tool row, shown only while the keyboard is up. It still owns its 46 dp when
+        // shown, so the code area grows rather than slides.
         val toolRowHeight by animateDpAsState(
             targetValue = if (showToolRow) ToolRowHeight else 0.dp,
             animationSpec = tween(160),
@@ -3301,9 +3282,6 @@ private val SCROLLBAR_THICKNESS = 6.dp
  * A setting changes the font size, so the row has to follow it rather than stay at 20.
  */
 private val CodeLineHeightRatio = CodeLineHeight.value / CodeFontSize.value
-
-/** Silence in the editor before the tool row parks itself. */
-private const val TOOL_ROW_IDLE_MS = 4_000L
 
 /** How long typing has to stop before Auto save writes the buffer out. */
 private const val AUTOSAVE_DELAY_MS = 900L

@@ -48,8 +48,22 @@ enum class ToolAction {
  * Buttons are min 46 wide with 10 dp side padding. Labels are 15 sp mono; the four icons are 20 dp
  * with 2 dp strokes.
  */
-/** Row height. Exported so the editor can reserve exactly this much while the row is parked. */
+/** Row height. Exported so the editor can reserve exactly this much while the row is hidden. */
 val ToolRowHeight = 46.dp
+
+/**
+ * Whether the tool row belongs on screen right now.
+ *
+ * The row exists because a phone keyboard has no Tab, brace, quote, semicolon or comment key, so it
+ * follows the keyboard: keyboard up means the row is there, and the suggestion popup is the one
+ * thing that outranks it — a row under a popup only steals taps.
+ *
+ * It used to park itself four seconds after the last keystroke, which took those keys away in the
+ * middle of a thought while the keyboard was still up, and made the row look broken rather than
+ * deliberate.
+ */
+internal fun showToolRow(imeVisible: Boolean, suggestionsOpen: Boolean): Boolean =
+    imeVisible && !suggestionsOpen
 
 @Composable
 fun IdeToolRow(

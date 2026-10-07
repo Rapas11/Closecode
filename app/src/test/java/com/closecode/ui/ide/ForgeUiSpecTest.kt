@@ -168,6 +168,21 @@ class ForgeUiSpecTest {
         }
     }
 
+    @Test
+    fun theToolRowIsThereWheneverTheKeyboardIs() {
+        // The row used to park itself four seconds after the last keystroke, which took tab, brace
+        // and comment away in the middle of a thought while the keyboard was still up.
+        assertTrue(showToolRow(imeVisible = true, suggestionsOpen = false))
+        assertFalse(showToolRow(imeVisible = false, suggestionsOpen = false))
+    }
+
+    @Test
+    fun theSuggestionPopupOutranksTheToolRow() {
+        // A row under a popup only steals taps, so it stands down either way.
+        assertFalse(showToolRow(imeVisible = true, suggestionsOpen = true))
+        assertFalse(showToolRow(imeVisible = false, suggestionsOpen = true))
+    }
+
     // -- Spec 7 log cap ----------------------------------------------------------------
 
     @Test
