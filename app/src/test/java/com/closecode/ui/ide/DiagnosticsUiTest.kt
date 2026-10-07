@@ -551,29 +551,161 @@ class QuickFixActionTest {
 class BulbAnchorTest {
 
     @Test
-    fun theBulbSitsOnTheCaret() {
-        assertEquals(120f, bulbAnchorX(caretXPx = 120f, bulbWidthPx = 38f, viewportWidthPx = 400f), 0.01f)
+    fun theBulbSitsPastTheEndOfTheLineAndNotOnTheCaret() {
+        // The bug this pins: anchored at the caret, the bulb covered every character to the right
+        // of the cursor, which is exactly where the user was reading.
+        assertEquals(
+            128f,
+            bulbAnchorX(
+                caretXPx = 40f,
+                lineEndXPx = 120f,
+                gapPx = 8f,
+                bulbWidthPx = 38f,
+                visibleRightPx = 400f,
+            ),
+            0.01f,
+        )
+    }
+
+    @Test
+    fun theCaretWinsWhenItIsAlreadyPastTheEndOfTheLine() {
+        assertEquals(
+            208f,
+            bulbAnchorX(
+                caretXPx = 200f,
+                lineEndXPx = 40f,
+                gapPx = 8f,
+                bulbWidthPx = 38f,
+                visibleRightPx = 400f,
+            ),
+            0.01f,
+        )
     }
 
     @Test
     fun theBulbIsNeverPulledPastTheRightEdge() {
-        // The bug this pins: a fixed 3 dp inset always drew the bulb at the gutter, so it never
-        // travelled with the caret and sat on top of the code at the far left of the column.
         assertEquals(
             362f,
-            bulbAnchorX(caretXPx = 5_000f, bulbWidthPx = 38f, viewportWidthPx = 400f),
+            bulbAnchorX(
+                caretXPx = 5_000f,
+                lineEndXPx = 5_000f,
+                gapPx = 0f,
+                bulbWidthPx = 38f,
+                visibleRightPx = 400f,
+            ),
             0.01f,
         )
     }
 
     @Test
     fun aCaretAtColumnOneStaysAtTheLeftEdge() {
-        assertEquals(0f, bulbAnchorX(caretXPx = -4f, bulbWidthPx = 38f, viewportWidthPx = 400f), 0.01f)
+        assertEquals(
+            0f,
+            bulbAnchorX(
+                caretXPx = -4f,
+                lineEndXPx = -4f,
+                gapPx = 0f,
+                bulbWidthPx = 38f,
+                visibleRightPx = 400f,
+            ),
+            0.01f,
+        )
     }
 
     @Test
     fun aViewportNarrowerThanTheBulbDoesNotGoNegative() {
-        assertEquals(0f, bulbAnchorX(caretXPx = 10f, bulbWidthPx = 38f, viewportWidthPx = 12f), 0.01f)
+        assertEquals(
+            0f,
+            bulbAnchorX(
+                caretXPx = 10f,
+                lineEndXPx = 10f,
+                gapPx = 0f,
+                bulbWidthPx = 38f,
+                visibleRightPx = 12f,
+            ),
+            0.01f,
+        )
+    }
+
+    @Test
+    fun theRightEdgeIsWhereTheSidewaysScrollHasCarriedItTo() {
+        // The bug this pins: measured from zero, the clamp put the bulb at 362 — off the left of
+        // the window — the moment the column had been scrolled 300 px to the right.
+        assertEquals(
+            662f,
+            bulbAnchorX(
+                caretXPx = 680f,
+                lineEndXPx = 690f,
+                gapPx = 0f,
+                bulbWidthPx = 38f,
+                visibleRightPx = 300f + 400f,
+            ),
+            0.01f,
+        )
+    }
+}
+
+class CaretSideScrollTest {
+
+    private val margin = 64f
+    private val viewport = 400f
+
+    @Test
+    fun aCaretInsideTheBandDoesNotMoveTheView() {
+        // Typing in the middle of a line that is already on screen costs nothing.
+        assertEquals(
+            100f,
+            targetHScroll(caretXPx = 380f, currentPx = 100f, viewportWidthPx = viewport, marginPx = margin),
+            0.01f,
+        )
+        assertEquals(
+            100f,
+            targetHScroll(caretXPx = 165f, currentPx = 100f, viewportWidthPx = viewport, marginPx = margin),
+            0.01f,
+        )
+    }
+
+    @Test
+    fun aCaretThatHasWalkedIntoTheLeftMarginPullsTheViewBack() {
+        assertEquals(
+            66f,
+            targetHScroll(caretXPx = 130f, currentPx = 100f, viewportWidthPx = viewport, marginPx = margin),
+            0.01f,
+        )
+    }
+
+    @Test
+    fun aCaretThatHasWalkedIntoTheRightMarginPullsTheViewBack() {
+        assertEquals(
+            114f,
+            targetHScroll(caretXPx = 450f, currentPx = 100f, viewportWidthPx = viewport, marginPx = margin),
+            0.01f,
+        )
+    }
+
+    @Test
+    fun thereIsNothingLeftOfTheFirstCharacter() {
+        assertEquals(
+            0f,
+            targetHScroll(caretXPx = 30f, currentPx = 0f, viewportWidthPx = viewport, marginPx = margin),
+            0.01f,
+        )
+        assertEquals(
+            0f,
+            targetHScroll(caretXPx = -10f, currentPx = 0f, viewportWidthPx = viewport, marginPx = margin),
+            0.01f,
+        )
+    }
+
+    @Test
+    fun aCaretPastTheContentIsLeftForTheScrollerToClamp() {
+        // The content's real width belongs to the renderer, so this answers honestly and lets the
+        // scroller coerce to its own maximum rather than guessing a number only it knows.
+        assertEquals(
+            4_664f,
+            targetHScroll(caretXPx = 5_000f, currentPx = 0f, viewportWidthPx = viewport, marginPx = margin),
+            0.01f,
+        )
     }
 }
 class GutterWindowTest {

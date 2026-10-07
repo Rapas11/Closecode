@@ -104,6 +104,8 @@ import androidx.core.content.FileProvider
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -2413,6 +2415,29 @@ private fun IdeEditorArea(
         codeScroll.animateScrollTo(target.toInt().coerceAtLeast(0))
     }
 
+    // The same job sideways. Compose will not scroll a BasicTextField horizontally either, so the
+    // caret can walk off the right of a long line while the user is still typing on it.
+    //
+    // The margin is what keeps this from being a nuisance: inside the band the answer is "stay",
+    // so typing in the middle of a line that is already on screen costs nothing, and only a caret
+    // that has reached one of the two edges moves the view — just far enough to put the margin
+    // back between the caret and the edge. A big jump, which is what a tap at the far end of a long
+    // line produces, is animated so the eye can follow where it went; the small corrections typing
+    // makes are applied straight away, because an animation restarted on every keystroke never
+    // settles and the text ends up swimming.
+    LaunchedEffect(cursor, codeWidthPx, viewportWidthPx) {
+        val caretContent = caretX(codeLayout, cursor) ?: return@LaunchedEffect
+        val margin = with(autoDensity) { CaretHScrollMargin.toPx() }
+        val now = codeHScroll.value.toFloat()
+        val wanted = targetHScroll(caretContent, now, codeWidthPx, margin)
+        if (wanted == now) return@LaunchedEffect
+        if (abs(wanted - now) > codeWidthPx / 2f) {
+            codeHScroll.animateScrollTo(wanted.roundToInt())
+        } else {
+            codeHScroll.scrollTo(wanted.roundToInt())
+        }
+    }
+
 val applySuggestion: (Int) -> Unit = { index ->
         val live = fieldValue
         val liveText = live.text
@@ -2837,6 +2862,11 @@ contentAlignment = Alignment.Center,
                                     }
                                 },
                         )
+                        // The air a problem pill and the quick-fix bulb leave after a line's own
+                        // text, measured off the rendered layout rather than guessed: two
+                        // characters' worth. Both draw on the same side of a line, so they share
+                        // one number and can never drift apart.
+                        val twoCharGapPx = 2f * (charWidthPx(codeLayout, code) ?: 0f)
                         if (problems.byLine.isNotEmpty()) {
                             // Wavy lines under the exact bad characters. Drawn before the labels
                             // so the labels stay readable on top of them.
@@ -2857,7 +2887,7 @@ contentAlignment = Alignment.Center,
                                 // Spec 6.5: two characters past the end of the line's text, both
                                 // measured off the rendered layout. The line's own newline has no
                                 // width, so the anchor is its right edge, never the character.
-                                gapPx = 2f * (charWidthPx(codeLayout, code) ?: 0f),
+                                gapPx = twoCharGapPx,
                                 anchorX = { line -> endOfLineX(codeLayout, code, line) },
                                 yOfLine = { line -> lineTopPx(codeLayout, code, line) },
                                 // Spec 7: a pill is one of the four ways into the Problems sheet.
@@ -2882,9 +2912,20 @@ contentAlignment = Alignment.Center,
                         val bulbDensity = androidx.compose.ui.platform.LocalDensity.current
                         val bulbWidthPx = with(bulbDensity) { 38.dp.toPx() }
                         // No layout yet means no honest place for the bulb; anchoring at zero would
-                        // park it over the start of the caret line.
-                        val bulbAnchor = caretX(codeLayout, cursor)
-                            ?.let { bulbAnchorX(it, bulbWidthPx, pillViewportWidthPx) }
+                        // park it over the start of the caret line. Otherwise it hangs past the end
+                        // of the caret line's own text — never on the caret itself, which would
+                        // cover every character to the right of the cursor, exactly where the user
+                        // is reading. The edge it has to stay inside of is the one the sideways
+                        // scroll has carried it out to, not the column's own width.
+                        val bulbAnchor = caretX(codeLayout, cursor)?.let { caretAt ->
+                            bulbAnchorX(
+                                caretXPx = caretAt,
+                                lineEndXPx = endOfLineX(codeLayout, code, caretLine) ?: caretAt,
+                                gapPx = twoCharGapPx,
+                                bulbWidthPx = bulbWidthPx,
+                                visibleRightPx = codeHScroll.value + pillViewportWidthPx,
+                            )
+                        }
                         if (
                             problems.on(caretLine).isNotEmpty() &&
                             quickFixLine == null &&

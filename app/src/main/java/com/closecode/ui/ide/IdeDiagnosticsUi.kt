@@ -851,15 +851,65 @@ fun bulbTopPx(
     (caretLineTopPx - lineHeightPx / 2f - bulbHeightPx).coerceAtLeast(minTopPx)
 
 /**
- * Horizontal position of the quick-fix bulb, in the code column's own pixels.
+ * How much of the code column has to stay clear on either side of the caret before the view moves
+ * sideways to bring it back.
  *
- * The bulb hangs off the caret rather than a fixed inset, so it travels with the text the way the
- * reference screenshot shows. [caretXPx] is the caret's horizontal position straight from the
- * renderer; the result is clamped so the bulb never sits partly past the right edge of what the
- * user can see.
+ * Wide enough that typing in the middle of a line that is already on screen never nudges the view,
+ * narrow enough that the caret cannot walk off the edge while the user is still typing there.
  */
-fun bulbAnchorX(caretXPx: Float, bulbWidthPx: Float, viewportWidthPx: Float): Float =
-    caretXPx.coerceIn(0f, (viewportWidthPx - bulbWidthPx).coerceAtLeast(0f))
+val CaretHScrollMargin = 64.dp
+
+/**
+ * Where the code column should be scrolled sideways so the caret sits inside its margin.
+ *
+ * [caretXPx] is the caret's position in the scrollable content, [currentPx] is what the column is
+ * scrolled to right now, and [viewportWidthPx] is how much of it is on screen. Inside the band the
+ * answer is "stay where you are", so a caret moving within the visible middle of a line costs
+ * nothing; only a caret that has walked into one of the two margins moves the view, and it moves
+ * just far enough to put the margin back between the caret and the edge.
+ *
+ * The low end clamps to zero because there is nothing left of the first character. The high end is
+ * deliberately left unclamped: the scroller owns the content's real width and coerces to its own
+ * maximum, and guessing that width here would mean handing this function a number only the
+ * renderer knows.
+ */
+fun targetHScroll(
+    caretXPx: Float,
+    currentPx: Float,
+    viewportWidthPx: Float,
+    marginPx: Float,
+): Float {
+    val left = currentPx + marginPx
+    val right = currentPx + viewportWidthPx - marginPx
+    return when {
+        caretXPx < left -> (caretXPx - marginPx).coerceAtLeast(0f)
+        caretXPx > right -> caretXPx - viewportWidthPx + marginPx
+        else -> currentPx
+    }
+}
+
+/**
+ * Horizontal position of the quick-fix bulb, in the code column's own content pixels.
+ *
+ * The bulb hangs past the *text* rather than on the caret: anchored at the caret it covered every
+ * character to the right of the cursor, which is exactly where the user is reading. So it takes
+ * whichever is further right — the end of the caret line's own text or the caret itself — plus the
+ * same air the problem pills leave, and is then pulled back so its own box stays on screen.
+ *
+ * [visibleRightPx] must be the right edge the user can actually see, which is the sideways scroll
+ * plus the viewport, not the viewport alone: measured from zero it clamped the bulb to a position
+ * that was off the left of the window as soon as the column had been scrolled right.
+ */
+fun bulbAnchorX(
+    caretXPx: Float,
+    lineEndXPx: Float,
+    gapPx: Float,
+    bulbWidthPx: Float,
+    visibleRightPx: Float,
+): Float {
+    val raw = maxOf(lineEndXPx, caretXPx) + gapPx.coerceAtLeast(0f)
+    return raw.coerceIn(0f, (visibleRightPx - bulbWidthPx).coerceAtLeast(0f))
+}
 
 /**
  * Horizontal position of [caret] in the rendered text, or null while there is no layout yet.
