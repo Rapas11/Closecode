@@ -39,7 +39,15 @@ object CcIcons {
     val Save = icon("save", "M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6")
     val Undo = icon("undo", "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3")
     val Redo = icon("redo", "M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3")
-    val Play = icon("play", "M7 4l13 8-13 8z", filled = true)
+    // Run: an outline, not a solid wedge. The accent fill behind it is already the strongest
+    // thing on the bar, and a filled triangle at 18 dp just turned into a blob. The corners are
+    // radiused on the path itself — a round line join can only soften a vertex by the stroke's
+    // own width, which at 2 dp is nowhere near the curve this needs.
+    val Play = icon(
+        "play",
+        "M5.5 8.83A2.5 2.5 0 0 1 9.25 6.67L14.75 9.84A2.5 2.5 0 0 1 14.75 14.17" +
+            "L9.25 17.34A2.5 2.5 0 0 1 5.5 15.17Z",
+    )
     val More = icon(
         "more",
         "M10.5 5a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0zM10.5 12a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0-3 0z" +
@@ -72,6 +80,20 @@ object CcIcons {
     val FolderPlus = icon(
         "folder-plus",
         "M3 6a1 1 0 0 1 1-1h5l2 2h8a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1zM12 10v6M9 13h6",
+    )
+
+    // The drawer's two row glyphs. Every file is the same document and every folder the same open
+    // folder: a badge per extension answered a question nobody was asking — which file, not which
+    // language — and the row's colour already says the language.
+    val Document = icon(
+        "document",
+        "M14 3v4a1 1 0 0 0 1 1h4M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2" +
+            "M9 9h1M8 13h6M8 17h6",
+    )
+    val FolderOpen = icon(
+        "folder-open",
+        "M5 19l2.757-7.351a1 1 0 0 1 .938-.649h12.294a1 1 0 0 1 .986 1.164l-.996 5.211" +
+            "a2 2 0 0 1-1.98 1.625H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4l3 3h7a2 2 0 0 1 2 2v2",
     )
 
     // Preview toolbar: re-read the file, and take a live page out to the device's browser.

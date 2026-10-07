@@ -1771,8 +1771,8 @@ private fun IdeExplorer(
                         label = projectName,
                         depth = 0,
                         bold = true,
-                        glyph = "▾",
-                        glyphColor = c.ac,
+                        icon = CcIcons.FolderOpen,
+                        iconTint = c.ac,
                         active = false,
                         onClick = {},
                     )
@@ -1781,12 +1781,21 @@ private fun IdeExplorer(
                 item(key = "sec-project") { SectionLabel("PROJECT") }
 
                 itemsIndexed(rows, key = { _, f -> "tree-${f.path}" }) { _, file ->
+                    val open = file.kind == FileKind.Folder
                     TreeRow(
                         label = file.name,
                         depth = file.depth + 1,
                         bold = false,
-                        glyph = kindGlyph(file.kind),
-                        glyphColor = kindColor(file.kind, c),
+                        icon = if (open) CcIcons.FolderOpen else CcIcons.Document,
+                        iconTint = kindColor(file.kind, c),
+                        // The chevron points where the row is: right when there is something
+                        // behind it that is not being shown, down when it is being shown.
+                        chevron = when {
+                            !open -> null
+                            file.path in collapsed -> CcIcons.Chevron
+                            else -> CcIcons.Down
+                        },
+                        chevronTint = c.mu,
                         active = file.path == activePath,
                         // Both kinds of row report the tap: opening a folder and selecting it as
                         // the place a new file lands are the same gesture, so the screen that owns
@@ -1949,8 +1958,12 @@ private fun TreeRow(
     label: String,
     depth: Int,
     bold: Boolean,
-    glyph: String,
-    glyphColor: Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    iconTint: Color,
+    // A folder says whether it is open; a file has nothing to say, and the slot it would have
+    // used stays empty so its label still lines up under the label of the folder above it.
+    chevron: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    chevronTint: Color = Color.Unspecified,
     active: Boolean,
     onClick: () -> Unit,
     actions: List<TreeAction> = emptyList(),
@@ -1971,13 +1984,13 @@ private fun TreeRow(
                 .padding(start = 9.dp + 17.dp * depth),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = glyph,
-                color = glyphColor,
-                fontSize = 11.sp,
-                fontFamily = Mono,
-                modifier = Modifier.padding(end = 8.dp),
-            )
+            Box(
+                Modifier.width(15.dp).height(15.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (chevron != null) CcIcon(chevron, chevronTint, 14.dp)
+            }
+            CcIcon(icon, iconTint, 15.dp, Modifier.padding(start = 2.dp, end = 7.dp))
             Text(
                 text = label,
                 color = if (active) c.tx else c.tx.copy(alpha = 0.86f),
