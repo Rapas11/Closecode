@@ -154,7 +154,6 @@ fun IdeLogcatPanel(
                 FilterChip(level.label, filter == level) { onFilterChange(level) }
             }
         }
-        SimulatedBanner("Simulated log — this app has no access to the device logcat.")
 
         Box(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             if (visible.isEmpty()) {
@@ -259,7 +258,6 @@ fun IdeBuildPanel(
                 )
             }
         }
-        SimulatedBanner("Simulated build — the app does not run Gradle.")
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             BuildTasks.forEachIndexed { index, task ->
@@ -319,40 +317,6 @@ fun IdeBuildPanel(
 }
 
 private enum class TaskState { PENDING, RUNNING, DONE, FAILED }
-
-/** The persistent "simulated" label the spec requires on Build and Logcat. */
-@Composable
-private fun SimulatedBanner(text: String) {
-    val c = LocalPageColors.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Box(
-            Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(c.warnPillBg)
-                .padding(horizontal = 6.dp, vertical = 2.dp),
-        ) {
-            Text(
-                text = "SIMULATED",
-                color = c.warnPillTx,
-                fontSize = 11.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-        Text(
-            text = text,
-            color = c.mu,
-            fontSize = 11.sp,
-            fontFamily = Sans,
-        )
-    }
-}
 
 @Composable
 private fun FilterChip(label: String, active: Boolean, onClick: () -> Unit) {

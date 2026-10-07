@@ -231,8 +231,8 @@ fun IdeScreen(
     var explorerFilter by remember { mutableStateOf("") }
     var toast by remember { mutableStateOf<String?>(null) }
     var building by remember { mutableStateOf(false) }
-    // Simulated build and logcat streams. Both panels label themselves as simulated, because
-    // there is no Gradle process and no device logcat inside an Android app.
+    // The build and logcat streams. Neither reaches the panel as real data yet: the build replays
+    // a fixed task list and the log carries nothing the app itself produced.
     val logLines = remember { mutableStateListOf<LogLine>() }
     var buildTaskIndex by remember { mutableIntStateOf(0) }
     // True while the suggestion popup is up. It is the tool row's other reason to hide: the popup
