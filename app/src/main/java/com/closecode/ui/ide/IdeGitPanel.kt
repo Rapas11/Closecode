@@ -137,9 +137,10 @@ fun IdeGitPanel(
             if (!service.isVersioned()) {
                 GitUiState.NoRepository
             } else {
-                // Older projects were initialized before the app wrote a .gitignore, so their
-                // first status lists generated files the user never touched. Create it once.
-                service.ensureGitignore()
+                // Older projects were initialized before the app kept its rules out of the
+                // working tree, so their first status lists generated files the user never
+                // touched. Add them to the local exclude file, once.
+                service.ensureLocalExcludes()
                 val snap = service.snapshot()
                 if (snap.isFailure) {
                     GitUiState.Failed(snap.exceptionOrNull()?.message ?: "Could not read the repository.")

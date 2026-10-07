@@ -265,30 +265,81 @@ class GitServiceTest {
     }
 
     @Test
-    fun ensureGitignoreFillsTheGapWithoutTouchingAFileTheUserWrote() {
+    fun theExcludeFileTakesTheAppsRulesWithoutCreatingAGitignore() {
         val git = GitService(tmp.root)
         git.init().getOrThrow()
 
-        // init() only makes a repository; the .gitignore arrives from the panel before it reads
-        // status, so a test that inspects the working tree still sees only what it wrote.
-        assertTrue(git.ensureGitignore())
-        val written = File(tmp.root, GitService.GITIGNORE)
-        assertTrue(written.exists())
+        // init() only makes a repository; the rules arrive from the panel before it reads status,
+        // so a test that inspects the working tree still sees only what it wrote.
+        assertTrue(git.ensureLocalExcludes())
+        val written = File(tmp.root, GitService.EXCLUDES)
+        assertTrue(written.isFile)
         assertTrue(
             "app state must be ignored",
             written.readText().contains(".closecode.json"),
         )
 
-        // Already there: the user's own file must never be overwritten.
-        written.writeText("# mine\n")
-        assertFalse(git.ensureGitignore())
-        assertEquals("# mine\n", written.readText())
+        // The project's own .gitignore is the user's file: this never creates one.
+        assertFalse(File(tmp.root, ".gitignore").exists())
     }
 
     @Test
-    fun ensureGitignoreDoesNothingOutsideARepository() {
-        assertFalse(GitService(tmp.root).ensureGitignore())
-        assertFalse(File(tmp.root, GitService.GITIGNORE).exists())
+    fun theExcludeFileIsWrittenOnceAndThenLeftAlone() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+
+        assertTrue(git.ensureLocalExcludes())
+        val written = File(tmp.root, GitService.EXCLUDES)
+        val first = written.readText()
+
+        assertFalse(git.ensureLocalExcludes())
+        assertEquals(first, written.readText())
+    }
+
+    @Test
+    fun anExistingGitignoreIsNeverTouched() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+
+        val mine = File(tmp.root, ".gitignore")
+        mine.writeText("# mine\n")
+        git.ensureLocalExcludes()
+
+        assertEquals("# mine\n", mine.readText())
+    }
+
+    @Test
+    fun ensureLocalExcludesDoesNothingOutsideARepository() {
+        assertFalse(GitService(tmp.root).ensureLocalExcludes())
+        assertFalse(File(tmp.root, GitService.EXCLUDES).exists())
+    }
+
+    @Test
+    fun generatedFilesNeverArriveAsAChangeNobodyMade() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        git.ensureLocalExcludes()
+
+        write(".closecode.json", "{}\n")
+        write("local.properties", "sdk.dir=/opt/android\n")
+        write("build/outputs/app.apk", "bytes\n")
+        write("main.kt", "fun main() {}\n")
+
+        val snap = git.snapshot().getOrThrow()
+        assertEquals(listOf("main.kt"), untrackedPaths(snap))
+    }
+
+    @Test
+    fun theExcludeBlockIsAddedOnceAndKeepsWhatTheUserWrote() {
+        val first = GitService.mergeExcludes("")
+        assertTrue(first.contains(".closecode.json"))
+        assertEquals(first, GitService.mergeExcludes(first))
+
+        val mine = "# mine\nignore-me/\n"
+        val merged = GitService.mergeExcludes(mine)
+        assertTrue("the user's own lines stay first", merged.startsWith("# mine\nignore-me/\n"))
+        assertTrue(merged.contains(GitService.EXCLUDE_MARKER))
+        assertEquals(merged, GitService.mergeExcludes(merged))
     }
 
     @Test

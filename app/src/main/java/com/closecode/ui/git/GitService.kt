@@ -85,18 +85,24 @@ class GitService(private val root: File) {
     }
 
     /**
-     * Creates the app's `.gitignore` when the repository has none. Never overwrites a file the
-     * user wrote, and does nothing to a project that is not under version control.
+     * Writes the app's ignore rules into the repository's local exclude file, once.
      *
-     * This is the one owner of that file — the GitHub panel calls it before every status read —
-     * because without it a repository lists `.closecode.json` (rewritten each time the project is
-     * opened) and every generated build file as a change the user never made.
+     * `.git/info/exclude` does what a `.gitignore` does without ever being tracked: the rules hold
+     * for this repository on this machine and cannot reach a commit, a push or anyone else's
+     * clone. So the project's own `.gitignore` stays the user's file — this never creates one and
+     * never touches one that is already there.
+     *
+     * True when a rule was actually added, false when the file already carries them or the
+     * directory is not a repository.
      */
-    fun ensureGitignore(): Boolean = runCatching {
+    fun ensureLocalExcludes(): Boolean = runCatching {
         if (!isVersioned()) return@runCatching false
-        val target = File(root, GITIGNORE)
-        if (target.exists()) return@runCatching false
-        target.writeText(DEFAULT_GITIGNORE)
+        val target = File(root, EXCLUDES)
+        val existing = if (target.isFile) target.readText() else ""
+        val merged = mergeExcludes(existing)
+        if (merged == existing) return@runCatching false
+        target.parentFile?.mkdirs()
+        target.writeText(merged)
         true
     }.getOrDefault(false)
 
@@ -260,11 +266,20 @@ class GitService(private val root: File) {
         const val DETACHED = "detached"
         const val DEFAULT_USER = "Closecode"
         const val DEFAULT_EMAIL = "closecode@localhost"
-        const val GITIGNORE = ".gitignore"
 
-        /** What a repository Closecode initializes gets, so generated files never look like edits. */
-        internal val DEFAULT_GITIGNORE = """
-            # Closecode's own project state. It changes every time the project is opened.
+        /** The repository's local exclude file, relative to the project directory. */
+        internal const val EXCLUDES = ".git/info/exclude"
+
+        /** The line the app's block of rules starts with, so it is recognisable on a second run. */
+        internal const val EXCLUDE_MARKER = "# Closecode local excludes"
+
+        /**
+         * What a repository Closecode touches gets in its local exclude file, so generated files
+         * never look like edits. Local only: none of it can reach a commit or anyone else's clone.
+         */
+        internal val DEFAULT_EXCLUDES = """
+            # Closecode local excludes
+            # The app's own project state. It changes every time the project is opened.
             .closecode.json
 
             # Machine-local settings and build output.
@@ -279,6 +294,20 @@ class GitService(private val root: File) {
             *.apk
             *.aab
         """.trimIndent()
+
+        /**
+         * Appends the app's rules to whatever a repository's local exclude file already holds.
+         *
+         * The block sits behind [EXCLUDE_MARKER], so a second run finds it and hands the file
+         * straight back: nothing the user added before or after it is rewritten, and the rules
+         * never land twice. An empty file gets the block on its own; a file with content in it
+         * gets a blank line and then the block, so the two stay readable side by side.
+         */
+        internal fun mergeExcludes(existing: String): String {
+            if (EXCLUDE_MARKER in existing) return existing
+            val head = if (existing.isEmpty()) "" else existing.trimEnd('\n') + "\n\n"
+            return head + DEFAULT_EXCLUDES
+        }
 
         /**
          * JGit's `Status` splits the index and the working tree into two disjoint halves:
