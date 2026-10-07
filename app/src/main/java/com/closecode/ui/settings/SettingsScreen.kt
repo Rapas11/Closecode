@@ -463,26 +463,68 @@ private fun SettingRow(
             .padding(horizontal = pad),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = row.name,
-                color = c.tx,
-                fontSize = 14.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Medium,
-            )
-            val description = row.description
-            if (description != null && !narrow) {
-                Text(
-                    text = description,
-                    color = c.mu,
-                    fontSize = 12.sp,
-                    lineHeight = 17.4.sp,
-                    fontFamily = Sans,
-                    modifier = Modifier
-                        .padding(top = 4.dp)
-                        .widthIn(max = if (wide) Dp.Unspecified else 220.dp),
-                )
+        when (row) {
+            is Row.Account -> {
+                Box(
+                    Modifier
+                        .size(if (narrow) 30.dp else 34.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(c.ac.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = row.initials,
+                        color = c.ac,
+                        fontSize = if (narrow) 11.sp else 12.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = row.name,
+                        color = c.tx,
+                        fontSize = 14.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    if (!narrow) {
+                        Text(
+                            text = row.subtitle,
+                            color = c.mu,
+                            fontSize = 12.sp,
+                            lineHeight = 17.4.sp,
+                            fontFamily = Sans,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
+            }
+
+            else -> {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = row.name,
+                        color = c.tx,
+                        fontSize = 14.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    val description = row.description
+                    if (description != null && !narrow) {
+                        Text(
+                            text = description,
+                            color = c.mu,
+                            fontSize = 12.sp,
+                            lineHeight = 17.4.sp,
+                            fontFamily = Sans,
+                            modifier = Modifier
+                                .padding(top = 4.dp)
+                                .widthIn(max = if (wide) Dp.Unspecified else 220.dp),
+                        )
+                    }
+                }
             }
         }
 
@@ -509,18 +551,40 @@ private fun SettingControl(
     val valueSize = if (wide) 13.sp else 12.sp
 
     when (row) {
-        is Row.Toggle -> SwitchControl(
-            on = settings.flag(row.key),
-            onChange = { onSettingsChange(settings.withFlag(row.key, it)) },
-        )
+        is Row.Toggle -> {
+            val key = row.key
+            if (key == null) {
+                var on by remember(row.name) { mutableStateOf(row.default) }
+                SwitchControl(on = on, onChange = { on = it })
+            } else {
+                SwitchControl(
+                    on = settings.flag(key),
+                    onChange = { onSettingsChange(settings.withFlag(key, it)) },
+                )
+            }
+        }
 
-        is Row.Options -> OptionsControl(
-            choices = row.choices,
-            current = settings.option(row.key),
-            unit = row.unit,
-            onSelect = { onSettingsChange(settings.withOption(row.key, it)) },
-            valueSize = valueSize,
-        )
+        is Row.Options -> {
+            val key = row.key
+            if (key == null) {
+                var current by remember(row.name) { mutableStateOf(row.current) }
+                OptionsControl(
+                    choices = row.choices,
+                    current = current,
+                    unit = row.unit,
+                    onSelect = { current = it },
+                    valueSize = valueSize,
+                )
+            } else {
+                OptionsControl(
+                    choices = row.choices,
+                    current = settings.option(key),
+                    unit = row.unit,
+                    onSelect = { onSettingsChange(settings.withOption(key, it)) },
+                    valueSize = valueSize,
+                )
+            }
+        }
 
         is Row.Value -> Text(
             text = row.value,
@@ -530,6 +594,72 @@ private fun SettingControl(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+
+        is Row.Nav -> Row(
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = row.action,
+                color = c.mu,
+                fontSize = valueSize,
+                fontFamily = Sans,
+            )
+            Text(
+                text = "›",
+                color = c.mu,
+                fontSize = valueSize,
+                fontFamily = Sans,
+                modifier = Modifier.padding(start = 5.dp),
+            )
+        }
+
+        is Row.Status -> Row(
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(7.dp)
+                    .background(
+                        if (row.ok) c.ac else c.red,
+                        RoundedCornerShape(4.dp),
+                    ),
+            )
+            Text(
+                text = row.value,
+                color = c.mu,
+                fontSize = valueSize,
+                fontFamily = Sans,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = 8.dp),
+            )
+        }
+
+        is Row.Account -> Row(
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = row.action,
+                color = c.ac,
+                fontSize = valueSize,
+                fontFamily = Sans,
+            )
+            Text(
+                text = "›",
+                color = c.mu,
+                fontSize = valueSize,
+                fontFamily = Sans,
+                modifier = Modifier.padding(start = 5.dp),
+            )
+        }
+
+        is Row.Accents -> {
+            var picked by remember { mutableStateOf(AccentOptions.first()) }
+            AccentSwatches(
+                selected = picked,
+                onSelect = { picked = it },
+            )
+        }
 
         is Row.Action -> Text(
             text = row.action,
@@ -565,6 +695,30 @@ private fun SwitchControl(on: Boolean, onChange: (Boolean) -> Unit) {
                 .align(if (on) Alignment.CenterEnd else Alignment.CenterStart)
                 .background(if (on) Color.White else c.tx, RoundedCornerShape(10.dp))
         )
+    }
+}
+
+@Composable
+private fun AccentSwatches(selected: Color, onSelect: (Color) -> Unit) {
+    val c = LocalPageColors.current
+    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+        AccentOptions.forEach { option ->
+            val chosen = option == selected
+            Box(
+                Modifier
+                    .size(if (chosen) 22.dp else 20.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(option)
+                    .then(
+                        if (chosen) {
+                            Modifier.border(2.dp, c.tx, RoundedCornerShape(50))
+                        } else {
+                            Modifier
+                        },
+                    )
+                    .clickable { onSelect(option) },
+            )
+        }
     }
 }
 

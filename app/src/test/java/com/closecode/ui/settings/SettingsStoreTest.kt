@@ -131,9 +131,74 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun theScreenIsFiveSectionsAndSixteenRows() {
-        assertEquals(5, sections(SettingsLive()).size)
-        assertEquals(16, rowCount())
+    fun theScreenIsElevenSectionsAndFiftyTwoRows() {
+        assertEquals(11, sections(SettingsLive()).size)
+        assertEquals(52, rowCount())
+    }
+
+    @Test
+    fun everyRowInTheScreenRendersAsOneOfTheKnownShapes() {
+        val shapes = sections(SettingsLive())
+            .flatMap { section -> section.groups.flatMap { it.rows } }
+            .map { it::class }
+
+        assertTrue(shapes.isNotEmpty())
+        shapes.forEach { shape ->
+            assertTrue(
+                "unhandled row shape $shape",
+                shape in setOf(
+                    Row.Toggle::class,
+                    Row.Options::class,
+                    Row.Value::class,
+                    Row.Nav::class,
+                    Row.Status::class,
+                    Row.Account::class,
+                    Row.Accents::class,
+                    Row.Action::class,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun anUnwiredRowCarriesItsOwnDefaultAndNoKey() {
+        val wordWrap = sections(SettingsLive())
+            .flatMap { section -> section.groups.flatMap { it.rows } }
+            .filterIsInstance<Row.Toggle>()
+            .first { it.name == "Word wrap" }
+
+        assertEquals(null, wordWrap.key)
+        assertFalse(wordWrap.default)
+    }
+
+    @Test
+    fun theWiredRowsAreTheOnesThatUsedToBeWired() {
+        val toggles = sections(SettingsLive())
+            .flatMap { section -> section.groups.flatMap { it.rows } }
+            .filterIsInstance<Row.Toggle>()
+            .mapNotNull { it.name to it.key }
+            .toMap()
+
+        assertEquals(BoolSetting.OPEN_LAST_PROJECT, toggles["Open last project"])
+        assertEquals(BoolSetting.AUTO_SAVE, toggles["Auto save"])
+        assertEquals(BoolSetting.LINE_NUMBERS, toggles["Line numbers"])
+        assertEquals(BoolSetting.AUTO_INDENT, toggles["Auto indent"])
+        assertEquals(BoolSetting.AUTO_CLOSE_BRACKETS, toggles["Auto close brackets"])
+        assertEquals(BoolSetting.FORMAT_ON_SAVE, toggles["Format on save"])
+        assertEquals(BoolSetting.AUTOCOMPLETE, toggles["Autocomplete"])
+        assertEquals(BoolSetting.DIAGNOSTICS, toggles["Diagnostics"])
+        assertEquals(8, toggles.values.filterNotNull().size)
+
+        val options = sections(SettingsLive())
+            .flatMap { section -> section.groups.flatMap { it.rows } }
+            .filterIsInstance<Row.Options>()
+            .mapNotNull { it.name to it.key }
+            .toMap()
+
+        assertEquals(OptionSetting.THEME, options["Theme"])
+        assertEquals(OptionSetting.FONT_SIZE, options["Font size"])
+        assertEquals(OptionSetting.TAB_SIZE, options["Tab size"])
+        assertEquals(3, options.size)
     }
 
     @Test

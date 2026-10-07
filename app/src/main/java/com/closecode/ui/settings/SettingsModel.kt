@@ -1,32 +1,43 @@
 package com.closecode.ui.settings
 
 import androidx.compose.runtime.Immutable
+import androidx.compose.ui.graphics.Color
 
 /**
  * One row of the settings screen.
  *
- * Every variant is either a control bound to a field of [Settings] — so it reads and writes a real
- * preference — or a plain read-out of something the app measures. There is no row here that merely
- * looks like a setting.
+ * A row is one of three things: a control bound to a field of [Settings] — so it reads and writes a
+ * real preference — a plain read-out of something the app measures, or a control the app does not
+ * honour *yet*. The third kind is deliberate: it is on screen so it can be wired up later, and it
+ * behaves exactly as it always did rather than being hidden until someone gets to it. Only the rows
+ * carrying a [BoolSetting] / [OptionSetting] key change anything.
  */
 sealed interface Row {
     val name: String
     val description: String?
 
-    /** An on/off control bound to [key]. The screen resolves the current value from [Settings]. */
+    /**
+     * An on/off control. With [key] it resolves through [Settings]; without one it holds its own
+     * [default] for the session, which is what an unwired row looked like before it was cut.
+     */
     data class Toggle(
         override val name: String,
         override val description: String? = null,
-        val key: BoolSetting,
+        val key: BoolSetting? = null,
+        val default: Boolean = false,
     ) : Row
 
-    /** A fixed list of choices bound to [key]; [unit] is appended to the stored value on screen. */
+    /**
+     * A fixed list of choices. With [key] the current value comes from [Settings]; without one the
+     * control shows [current] and stays where it is until a key is given.
+     */
     data class Options(
         override val name: String,
         override val description: String? = null,
-        val key: OptionSetting,
-        val choices: List<String>,
+        val key: OptionSetting? = null,
+        val choices: List<String> = emptyList(),
         val unit: String = "",
+        val current: String = "",
     ) : Row
 
     /** A measured fact — a path, a size, a version — with nothing to edit. */
@@ -35,6 +46,36 @@ sealed interface Row {
         override val description: String? = null,
         val value: String,
     ) : Row
+
+    /** A destination the row leads somewhere else to reach. */
+    data class Nav(
+        override val name: String,
+        override val description: String? = null,
+        val action: String,
+    ) : Row
+
+    /** A fact with a health signal beside it: green when it is fine, red when it is not. */
+    data class Status(
+        override val name: String,
+        override val description: String? = null,
+        val value: String,
+        val ok: Boolean = true,
+    ) : Row
+
+    /** The signed-in account, shown as an avatar, a name and a way to manage it. */
+    data class Account(
+        val initials: String,
+        override val name: String,
+        val subtitle: String,
+        val action: String,
+    ) : Row {
+        override val description: String? = null
+    }
+
+    /** The accent colour swatches. */
+    data class Accents(override val name: String) : Row {
+        override val description: String? = null
+    }
 
     /** Something the screen can do rather than show. */
     data class Action(
@@ -64,6 +105,14 @@ data class Section(
     val groups: List<Group>,
 )
 
+/** The accent swatches offered by [Row.Accents]. */
+val AccentOptions = listOf(
+    Color(0xFFF97316),
+    Color(0xFF3B82F6),
+    Color(0xFF10B981),
+    Color(0xFF8B5CF6),
+)
+
 /**
  * What the app measures for the settings screen, off the main thread.
  *
@@ -78,10 +127,11 @@ data class SettingsLive(
 )
 
 /**
- * The settings screen: sixteen rows across five sections, all of them live.
+ * The settings screen: every row, across every section, built as a function of [live].
  *
- * Built as a function of [live] rather than a constant, because three of the rows report something
- * the app measured for this session.
+ * A function rather than a constant because three of the rows report something the app measured for
+ * this session. Section order is the order they are listed in — general, editor, intelligence,
+ * build, terminal, git, ai, appearance, storage, security, about.
  */
 fun sections(live: SettingsLive): List<Section> = listOf(
     Section(
@@ -109,13 +159,11 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                         "Write the file a moment after you stop typing.",
                         BoolSetting.AUTO_SAVE,
                     ),
-                    Row.Options(
-                        "Theme",
-                        "Follow the system, or pick one.",
-                        OptionSetting.THEME,
-                        ThemeChoices,
-                    ),
                 ),
+            ),
+            Group(
+                "Account",
+                listOf(Row.Account("RC", "Closecode Account", "Signed in", "Manage")),
             ),
         ),
     ),
@@ -143,6 +191,14 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                         TabSizeChoices,
                     ),
                     Row.Toggle("Line numbers", "Show the number gutter.", BoolSetting.LINE_NUMBERS),
+                    Row.Toggle("Word wrap", "Wrap long lines instead of scrolling sideways.", default = false),
+                    Row.Toggle("Code folding", "Collapse a block behind its first line.", default = true),
+                    Row.Toggle("Bracket guides", "Draw a line from an open bracket to its pair.", default = true),
+                ),
+            ),
+            Group(
+                "Behavior",
+                listOf(
                     Row.Toggle(
                         "Auto indent",
                         "Carry the indentation of the line above onto a new one.",
@@ -167,7 +223,7 @@ fun sections(live: SettingsLive): List<Section> = listOf(
         label = "Code Intelligence",
         icon = "✦",
         title = "Code Intelligence",
-        blurb = "Configure autocomplete and diagnostics.",
+        blurb = "Configure autocomplete, diagnostics and coding assistance.",
         groups = listOf(
             Group(
                 "Code Intelligence",
@@ -177,11 +233,128 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                         "Show code completion suggestions as you type.",
                         BoolSetting.AUTOCOMPLETE,
                     ),
+                    Row.Toggle("Auto import", "Add the import a symbol needs.", default = true),
+                    Row.Toggle("Parameter hints", "Show the arguments a call takes.", default = true),
+                    Row.Toggle("Quick fixes", "Offer a fix under a problem as you type.", default = true),
                     Row.Toggle(
                         "Diagnostics",
                         "Flag problems in the gutter and offer quick fixes.",
                         BoolSetting.DIAGNOSTICS,
                     ),
+                ),
+            ),
+        ),
+    ),
+    Section(
+        id = "build",
+        label = "Build & Toolchain",
+        icon = "▣",
+        title = "Build & Toolchain",
+        blurb = "Manage the tools Closecode uses to build Android projects.",
+        groups = listOf(
+            Group(
+                "Toolchain",
+                listOf(
+                    Row.Status("JDK", "Java runtime used for Android builds.", "Java 17"),
+                    Row.Status("Android SDK", null, "SDK 35"),
+                    Row.Status("Build Tools", null, "35.0.0"),
+                    Row.Value("Gradle", null, "Managed"),
+                ),
+            ),
+            Group(
+                "Build Behavior",
+                listOf(
+                    Row.Toggle("Build cache", "Reuse task output instead of redoing it.", default = true),
+                    Row.Nav("SDK Manager", "Manage installed Android SDK packages.", "Open"),
+                ),
+            ),
+        ),
+    ),
+    Section(
+        id = "terminal",
+        label = "Terminal",
+        icon = ">_",
+        title = "Terminal",
+        blurb = "Configure the integrated terminal.",
+        groups = listOf(
+            Group(
+                "Terminal",
+                listOf(
+                    Row.Value("Default shell", null, "System"),
+                    Row.Value("Font size", null, "13 px"),
+                    Row.Toggle("Command history", "Keep the commands you have run.", default = true),
+                ),
+            ),
+        ),
+    ),
+    Section(
+        id = "git",
+        label = "Git & GitHub",
+        icon = "⑂",
+        title = "Git & GitHub",
+        blurb = "Manage Git identity and GitHub connections.",
+        groups = listOf(
+            Group(
+                "Git Identity",
+                listOf(
+                    Row.Value("Name", null, "Not configured"),
+                    Row.Value("Email", null, "Not configured"),
+                    Row.Value("Default branch", null, "main"),
+                ),
+            ),
+            Group(
+                "GitHub",
+                listOf(Row.Nav("GitHub account", "Sign in to clone, pull and push.", "Connect")),
+            ),
+        ),
+    ),
+    Section(
+        id = "ai",
+        label = "AI",
+        icon = "✧",
+        title = "AI",
+        blurb = "Configure the AI assistant and agent permissions.",
+        groups = listOf(
+            Group(
+                "AI Assistant",
+                listOf(
+                    Row.Value("Provider", null, "Not configured"),
+                    Row.Value("Model", null, "Default"),
+                ),
+            ),
+            Group(
+                "Agent Permissions",
+                listOf(
+                    Row.Value(
+                        "File access",
+                        "Allow AI to read and modify project files.",
+                        "Ask",
+                    ),
+                    Row.Value("Terminal access", null, "Ask"),
+                    Row.Value("Build access", null, "Allow"),
+                    Row.Value("Git access", null, "Ask"),
+                ),
+            ),
+        ),
+    ),
+    Section(
+        id = "appearance",
+        label = "Appearance",
+        icon = "◐",
+        title = "Appearance",
+        blurb = "Customize the look and feel of Closecode.",
+        groups = listOf(
+            Group(
+                "Theme",
+                listOf(
+                    Row.Options(
+                        "Theme",
+                        "Follow the system, or pick one.",
+                        OptionSetting.THEME,
+                        ThemeChoices,
+                    ),
+                    Row.Accents("Accent color"),
+                    Row.Toggle("Animations", "Let panels and controls move.", default = true),
                 ),
             ),
         ),
@@ -198,6 +371,9 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                 listOf(
                     Row.Value("Projects", "Everything Closecode has on this device.", live.projectsSize),
                     Row.Value("Cache", "Temporary files. Deleting them is always safe.", live.cachesSize),
+                    Row.Value("Android SDK", null, "2.2 GB"),
+                    Row.Value("Gradle cache", null, "640 MB"),
+                    Row.Value("Build cache", null, "420 MB"),
                 ),
             ),
             Group(
@@ -215,6 +391,27 @@ fun sections(live: SettingsLive): List<Section> = listOf(
         ),
     ),
     Section(
+        id = "security",
+        label = "Security",
+        icon = "◇",
+        title = "Security",
+        blurb = "Manage credentials, signing keys and app security.",
+        groups = listOf(
+            Group(
+                "Security",
+                listOf(
+                    Row.Toggle(
+                        "Biometric lock",
+                        "Require biometric authentication when opening Closecode.",
+                        default = false,
+                    ),
+                    Row.Nav("Credentials", "Stored tokens and passwords.", "Manage"),
+                    Row.Nav("Signing keys", "Keystore files used to sign a build.", "Manage"),
+                ),
+            ),
+        ),
+    ),
+    Section(
         id = "about",
         label = "About",
         icon = "ⓘ",
@@ -225,6 +422,8 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                 "Closecode",
                 listOf(
                     Row.Value("Version", "This build of Closecode.", live.version),
+                    Row.Nav("Open source licenses", null, "View"),
+                    Row.Nav("Privacy", null, "View"),
                 ),
             ),
         ),
@@ -236,7 +435,10 @@ fun sectionById(id: String): Section = sections(SettingsLive()).firstOrNull { it
 
 /**
  * Every key a settings row edits, for the test that keeps the two lists honest: a field nobody can
- * reach from the screen is a setting that will never be changed, and a row with no key is a lie.
+ * reach from the screen is a setting that will never be changed.
+ *
+ * Only the rows that carry a key count. The unwired rows have none by design — they are on screen
+ * waiting to be wired, not claiming to work today.
  */
 fun usedBoolSettings(): Set<BoolSetting> = sections(SettingsLive())
     .flatMap { section -> section.groups.flatMap { it.rows } }
