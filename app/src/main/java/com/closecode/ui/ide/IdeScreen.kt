@@ -886,11 +886,7 @@ fun IdeScreen(
                                     // file also becomes the file being read.
                                     selectedPath = file.path
                                     if (file.kind == FileKind.Folder) {
-                                        collapsedFolders = if (file.path in collapsedFolders) {
-                                            collapsedFolders + file.path
-                                        } else {
-                                            collapsedFolders - file.path
-                                        }
+                                        collapsedFolders = toggleCollapsed(collapsedFolders, file.path)
                                     } else {
                                         openFile(file)
                                         explorerOpen = false
@@ -1439,6 +1435,18 @@ internal fun ancestorFoldersOf(relative: String): List<String> =
     relative.split("/").dropLast(1)
         .runningFold("") { outer, part -> if (outer.isEmpty()) part else "$outer/$part" }
         .drop(1)
+
+/**
+ * The drawer's collapsed set with [path] flipped: an open folder becomes closed and a closed one
+ * becomes open.
+ *
+ * This lives here rather than as two branches at the call site because both branches used to add
+ * and remove on the wrong side — `in collapsed` meant add, not in it meant remove — so the set was
+ * never changed by tapping at all. Only creating a file, which takes ancestors *out* of the set,
+ * ever opened a folder, which is why it looked like folders opened only when you made a file.
+ */
+internal fun toggleCollapsed(collapsed: Set<String>, path: String): Set<String> =
+    if (path in collapsed) collapsed - path else collapsed + path
 
 /**
  * The one field a tree operation asks for before it happens. Creating starts blank, renaming
