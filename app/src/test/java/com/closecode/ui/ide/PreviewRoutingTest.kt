@@ -69,4 +69,49 @@ class PreviewRoutingTest {
         val content = extractComposePreview(source, "Screen.kt")
         assertEquals("Real", content.title)
     }
+
+    @Test
+    fun aWebProjectPreviewsEvenWhenNoFileIsOpen() {
+        assertEquals(
+            PreviewRoute.Web,
+            previewRoute(webEntry = "index.html", projectRootPresent = true, fileName = "", fileKind = null),
+        )
+    }
+
+    @Test
+    fun aWebEntryThatCannotBeServedSaysSoRatherThanAskingForAFile() {
+        assertEquals(
+            PreviewRoute.WebUnavailable,
+            previewRoute(webEntry = "index.html", projectRootPresent = false, fileName = "", fileKind = null),
+        )
+    }
+
+    @Test
+    fun noPageAndNoOpenFileAsksForAFile() {
+        assertEquals(
+            PreviewRoute.NoFile,
+            previewRoute(webEntry = null, projectRootPresent = true, fileName = "  ", fileKind = null),
+        )
+    }
+
+    @Test
+    fun aKotlinFileGetsThePhoneMock() {
+        assertEquals(
+            PreviewRoute.KotlinMock,
+            previewRoute(webEntry = null, projectRootPresent = true, fileName = "MainActivity.kt", fileKind = FileKind.Kotlin),
+        )
+        // The extension alone is enough: a file kind can be missing and the mock still applies.
+        assertEquals(
+            PreviewRoute.KotlinMock,
+            previewRoute(webEntry = null, projectRootPresent = true, fileName = "Theme.kt", fileKind = null),
+        )
+    }
+
+    @Test
+    fun anythingThatIsNotAPageOrAKotlinFileGetsTheStaticPreview() {
+        assertEquals(
+            PreviewRoute.Static,
+            previewRoute(webEntry = null, projectRootPresent = true, fileName = "data.json", fileKind = FileKind.Json),
+        )
+    }
 }

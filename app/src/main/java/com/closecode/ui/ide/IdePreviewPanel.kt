@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -110,6 +111,49 @@ internal fun webPreviewEntry(diskTree: List<ProjectFile>, activePath: String): S
     val active = byPath[activePath]
     if (active?.kind == FileKind.Html) return active.path
     return diskTree.firstOrNull { it.kind == FileKind.Html }?.path
+}
+
+/** Which preview the panel draws. */
+internal enum class PreviewRoute {
+    /** A live page served from the project directory. */
+    Web,
+
+    /** A live page the panel cannot serve: the project's own entry exists but its root does not. */
+    WebUnavailable,
+
+    /** Nothing to show, because no tab is open and this project has no page of its own. */
+    NoFile,
+
+    /** The spec's static phone mock, for a Kotlin file. */
+    KotlinMock,
+
+    /** The ordinary file preview: image, JSON, XML, CSV, plain text. */
+    Static,
+}
+
+/**
+ * The order the panel tries things in, decided in one place so the order itself can be pinned.
+ *
+ * The web entry comes first on purpose. A project's own `index.html` is a preview whether or not
+ * anyone has a file open, and telling someone to open a file so they can see a page that already
+ * exists is a gate guarding nothing — the first thing on screen for a web project is the page.
+ * Everything after it does need a file, because each of those previews *is* one.
+ */
+internal fun previewRoute(
+    webEntry: String?,
+    projectRootPresent: Boolean,
+    fileName: String,
+    fileKind: FileKind?,
+): PreviewRoute = when {
+    webEntry != null ->
+        if (projectRootPresent) PreviewRoute.Web else PreviewRoute.WebUnavailable
+
+    fileName.isBlank() -> PreviewRoute.NoFile
+
+    fileKind == FileKind.Kotlin || fileName.endsWith(".kt", ignoreCase = true) ->
+        PreviewRoute.KotlinMock
+
+    else -> PreviewRoute.Static
 }
 
 internal data class ComposePreviewContent(
@@ -564,7 +608,7 @@ fun IdePreviewPanel(
         modifier
             .fillMaxSize().background(c.bg)) {
         PreviewToolbar(
-            label = fileName.ifBlank { "No file selected" },
+            loading = startingWeb,
             canOpenInBrowser = webUrl != null,
             onRefresh = onRefresh,
             onOpenInBrowser = {
@@ -577,47 +621,50 @@ fun IdePreviewPanel(
                 }
             },
         )
-        // The local server takes a moment to come up. Say so with a bar rather than a blank frame.
-        if (startingWeb) PreviewLoadingBar()
 
-        if (fileName.isBlank()) {
-            PreviewMessage("Open a file to preview it.")
-            return@IdePreviewPanel
-        }
+        val route = previewRoute(
+            webEntry = webEntry,
+            projectRootPresent = projectRoot != null,
+            fileName = fileName,
+            fileKind = fileKind,
+        )
+        when (route) {
+            PreviewRoute.WebUnavailable -> PreviewMessage("Preview is unavailable for this project.")
 
-        if (webEntry != null) {
-            if (projectRoot == null) {
-                PreviewMessage("Preview is unavailable for this project.")
-            } else {
-                WebPreview(
-                    projectRoot = projectRoot,
-                    entryPath = webEntry,
-                    refreshToken = refreshToken,
-                    onUrl = { webUrl = it },
-                )
+            PreviewRoute.Web -> {
+                // previewRoute only says Web when both are there; the pair is split so the branch
+                // does not have to convince the compiler of that a second time.
+                val root = projectRoot
+                val entry = webEntry
+                if (root != null && entry != null) {
+                    WebPreview(
+                        projectRoot = root,
+                        entryPath = entry,
+                        refreshToken = refreshToken,
+                        onUrl = { webUrl = it },
+                    )
+                }
             }
-            return@IdePreviewPanel
-        }
 
-        if (fileKind == FileKind.Kotlin || fileName.endsWith(".kt", ignoreCase = true)) {
-            KotlinPhoneMock(
+            PreviewRoute.NoFile -> PreviewMessage("Open a file to preview it.")
+
+            PreviewRoute.KotlinMock -> KotlinPhoneMock(
                 fileName = fileName,
                 projectPath = projectPath,
                 loader = loader,
                 refreshToken = refreshToken,
             )
-            return@IdePreviewPanel
-        }
 
-        StaticPreview(
-            fileName = fileName,
-            fileKind = fileKind,
-            projectPath = projectPath,
-            loader = loader,
-            binaryLoader = binaryLoader,
-            isImage = isImage,
-            refreshToken = refreshToken,
-        )
+            PreviewRoute.Static -> StaticPreview(
+                fileName = fileName,
+                fileKind = fileKind,
+                projectPath = projectPath,
+                loader = loader,
+                binaryLoader = binaryLoader,
+                isImage = isImage,
+                refreshToken = refreshToken,
+            )
+        }
     }
 }
 
@@ -864,40 +911,42 @@ private fun StaticPreview(
 }
 
 /**
- * The preview's own chrome: which file it is showing, a re-read, and — when the preview is a live
- * page — a way out to the device's browser. The path bar already carries the full path, so this
- * carries the leaf name only, small enough that it reads as chrome rather than a second title.
+ * The preview's own chrome, and the whole of it: a re-read and — when the preview is a live page —
+ * a way out to the device's browser, both at the top right.
+ *
+ * No filename here. The path bar and the tab strip already say which file this is, and repeating it
+ * spent a third of the strip's width on something nobody had to be told twice; what is left is a
+ * slim header whose left side is simply empty.
  */
 @Composable
 private fun PreviewToolbar(
-    label: String,
+    loading: Boolean,
     canOpenInBrowser: Boolean,
     onRefresh: () -> Unit,
     onOpenInBrowser: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
             .background(c.panel)
-            .border(1.dp, c.ln, RoundedCornerShape(0.dp))
-            .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .border(1.dp, c.ln, RoundedCornerShape(0.dp)),
     ) {
-        Text(
-            text = label,
-            color = c.mu,
-            fontSize = 12.sp,
-            fontFamily = Mono,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        PreviewAction(CcIcons.Refresh, "Refresh preview", onClick = onRefresh)
-        if (canOpenInBrowser) {
-            PreviewAction(CcIcons.External, "Open in browser", onClick = onOpenInBrowser)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 6.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Spacer(Modifier.weight(1f))
+            PreviewAction(CcIcons.Refresh, "Refresh preview", onClick = onRefresh)
+            if (canOpenInBrowser) {
+                PreviewAction(CcIcons.External, "Open in browser", onClick = onOpenInBrowser)
+            }
         }
+        // The wait belongs to the header rather than to a second strip beneath it: one slim bar at
+        // the top of the preview, not two stacked ones eating the viewport.
+        if (loading) PreviewLoadingBar()
     }
 }
 
@@ -923,6 +972,9 @@ private fun PreviewAction(
 /**
  * Shown while the local preview server comes up. A bar rather than a message: the wait is short
  * and happens every time the panel opens, so it should read as progress, not as text to dismiss.
+ *
+ * It hangs off the bottom of the header rather than sitting as a strip of its own, so the wait
+ * costs the viewport nothing and there is still only one thing at the top of the preview.
  */
 @Composable
 private fun PreviewLoadingBar() {
