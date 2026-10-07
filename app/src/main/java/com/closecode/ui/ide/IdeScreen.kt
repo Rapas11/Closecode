@@ -9,14 +9,21 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -24,44 +31,85 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.closecode.ui.ide.model.IdePanels
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
+import com.closecode.lang.AndroidApiAssets
+import com.closecode.lang.CompletionItem
+import com.closecode.lang.CompletionKind
+import com.closecode.lang.Diagnostic
+import com.closecode.lang.DiagnosticCodes
+import com.closecode.lang.KotlinFileAnalysis
+import com.closecode.lang.KotlinAnalyzer
+import com.closecode.lang.Severity
+import com.closecode.lang.SourceEdits
+import com.closecode.ui.ide.model.IdeNavItems
 import com.closecode.ui.ide.model.kindColor
 import com.closecode.ui.ide.model.kindGlyph
 import com.closecode.ui.ide.model.suggestionsFor
-import com.closecode.ui.editor.CompilerProbeScreen
 import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.model.SelectedTemplate
@@ -71,42 +119,205 @@ import com.closecode.ui.model.recentFiles
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
+import java.io.File
 
 @Composable
 fun IdeScreen(
     projectName: String,
-    templateName: String,
+    templateName: String, // kept for the project record; the header shows the project name
     slug: String,
     repository: ProjectRepository,
     onOpenSettings: () -> Unit,
     onExit: () -> Unit,
+    onToggleTheme: () -> Unit = {},
 ) {
     BackHandler { onExit() }
     var tabs by remember { mutableStateOf(emptyList<ProjectFile>()) }
     var active by remember { mutableStateOf("") }
-    val diskTree = remember(slug) { repository.tree(slug) }
-    val diskContents = remember { mutableStateMapOf<String, String>() }
-    var activePanel by remember { mutableStateOf("Search") }
+    var treeVersion by remember { mutableIntStateOf(0) }
+    // State, not a `remember { repository.tree(slug) }`: a tree walk is a recursive directory read,
+    // and running it inside `remember` blocked composition on the disk. It is filled in below by an
+    // effect that does the walk on Dispatchers.IO, so the first frame simply shows an empty drawer.
+    var diskTree by remember(slug) { mutableStateOf(emptyList<ProjectFile>()) }
+    val diskContents = remember(slug) { mutableStateMapOf<String, String>() }
+    var activePanel by remember(slug) { mutableStateOf("Code") }
     var explorerOpen by remember { mutableStateOf(false) }
+    // Which half of the drawer is showing. GitHub arrives with Step 7; the switch is in place now
+    // so the drawer's chrome does not move when it does.
+    var explorerTab by remember { mutableStateOf("Files") }
     var searchOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
-    var probeOpen by remember { mutableStateOf(false) }
+    var findOpen by remember { mutableStateOf(false) }
+    var moreOpen by remember { mutableStateOf(false) }
+    var namingFile by remember { mutableStateOf(false) }
+    var namingFolder by remember { mutableStateOf(false) }
+    var editorFocused by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
+    var findQuery by remember { mutableStateOf("") }
+    var explorerFilter by remember { mutableStateOf("") }
     var toast by remember { mutableStateOf<String?>(null) }
     var building by remember { mutableStateOf(false) }
+    // Simulated build and logcat streams. Both panels label themselves as simulated, because
+    // there is no Gradle process and no device logcat inside an Android app.
+    val logLines = remember { mutableStateListOf<LogLine>() }
+    var buildTaskIndex by remember { mutableIntStateOf(0) }
+    // True while the suggestion popup is up. It is the tool row's other reason to hide: the popup
+    // covers the row, and a row under a popup only steals taps.
+    var suggestionsOpen by remember { mutableStateOf(false) }
+    // Live editor buffers keyed by file name. The editor owns its TextFieldValue, so this mirror is
+    // how the parent saves before Preview and counts diagnostics across the whole project.
+    val liveBuffers = remember { mutableStateMapOf<String, String>() }
+    // Spec 6.2 and 6.8 both need to open problems from outside the editor, so the sheet's target
+    // line lives here rather than inside IdeEditorArea.
+    val problemSheet = remember { mutableStateOf<Int?>(null) }
+    // Spec 6.9: the status bar totals cover the project, not just the open file.
+    var projectErrors by remember { mutableStateOf(0) }
+    var projectWarnings by remember { mutableStateOf(0) }
+    // Every name declared anywhere in the project. The editor's own per-file pass needs it so a
+    // composable defined in Theme.kt is not reported as missing in MainActivity.kt.
+    var projectNames by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // Format requests are a counter because the editor owns the text field. The editor formats
+    // the live buffer when this changes; the parent only asks for a format.
+    var formatRequest by remember { mutableStateOf(0) }
+    // Web preview reloads when this changes. It is bumped only after a file has actually been
+    // written, so switching panels or typing does not restart the page by itself.
+    var previewRefresh by remember { mutableStateOf(0) }
+    // Bumped when something other than typing rewrites the open buffer — today only the block
+    // editor does. The editor owns its TextFieldValue, so this is the signal telling it to re-seed
+    // from the buffer instead of silently keeping text the outline no longer matches.
+    var sourceRevision by remember { mutableIntStateOf(0) }
+    // Where the next external rewrite should leave the caret. Only the add-a-block sheet sets a real
+    // offset — it knows exactly which line it just wrote — and everything else resets it to -1 so
+    // the editor falls back to the end of the file's code rather than to a stale position.
+    var caretRequest by remember { mutableIntStateOf(-1) }
+    // The caret the editor is currently on, reported on every move. The block sheet inserts at the
+    // line the reader is looking at, not at the end of the buffer.
+    var editorCaret by remember { mutableIntStateOf(0) }
+    var addBlockOpen by remember { mutableStateOf(false) }
+    // Spec 4.1: the header's Undo and Redo drive the editor's own history. Requests are counters
+    // because only the editor owns the text field; the availability flags travel back up so the
+    // icons can dim when there is nothing left to step to.
+    var undoRequest by remember { mutableStateOf(0) }
+    var redoRequest by remember { mutableStateOf(0) }
+    var canUndo by remember { mutableStateOf(false) }
+    var canRedo by remember { mutableStateOf(false) }
 
-    LaunchedEffect(diskTree) {
-        val first = diskTree.firstOrNull { it.kind != FileKind.Folder }
-        tabs = diskTree.filter { it.kind != FileKind.Folder }.take(3)
-        active = first?.name.orEmpty()
-        first?.let { file ->
+    // First paint only, keyed on the project rather than on the tree: a tree refresh after a new
+    // file is created must not shove the editor back onto the project's first file. Every opened
+    // tab is read here, not just the active one, so selecting a neighbour shows its own source
+    // instead of the placeholder snippet. The walk and the reads run off the main thread; the state
+    // they feed is written back on it, because `withContext` returns here.
+    LaunchedEffect(slug, treeVersion) {
+        val files = withContext(Dispatchers.IO) { repository.tree(slug) }
+        diskTree = files
+        if (treeVersion != 0) return@LaunchedEffect
+        val sources = files.filter { it.kind != FileKind.Folder }.take(3)
+        tabs = sources
+        active = sources.firstOrNull()?.name.orEmpty()
+        val loaded = withContext(Dispatchers.IO) {
+            sources.mapNotNull { file ->
+                runCatching { repository.readFile(slug, file.path) }.getOrNull()
+                    ?.let { file.name to it }
+            }
+        }
+        loaded.forEach { (name, text) -> diskContents[name] = text }
+    }
+
+    val activeFile = tabs.firstOrNull { it.name == active }
+    val language = activeFile?.language ?: "Kotlin"
+
+    // One place writes the active file, so the header button, the palette, Save-on-Preview and the
+    // unsaved dot can never disagree about what "saved" means.
+    fun saveActiveFile(): Boolean {
+        val path = activeFile?.path
+        val buffer = liveBuffers[active]
+        if (path == null || buffer == null) {
+            toast = "Nothing to save"
+            return false
+        }
+        return runCatching { repository.writeFile(slug, path, buffer) }
+            .onSuccess {
+                diskContents[active] = buffer
+                previewRefresh++
+                toast = "Saved $active"
+            }
+            .onFailure { toast = "Could not save $active" }
+            .isSuccess
+    }
+
+    // Every tree mutation ends here, so a file created from the drawer, a file created from the
+    // command palette and a file deleted from the shell all repaint the drawer the same way.
+    fun refreshTree() {
+        treeVersion++
+    }
+
+    /** Opens a file in a tab, reading it only when it has not been read before. */
+    fun openFile(file: ProjectFile) {
+        if (file.kind == FileKind.Folder) return
+        active = file.name
+        if (tabs.none { it.name == file.name }) tabs = tabs + file
+        if (diskContents[file.name] == null) {
             runCatching { repository.readFile(slug, file.path) }
                 .onSuccess { diskContents[file.name] = it }
         }
     }
 
-    val activeFile = tabs.firstOrNull { it.name == active }
-    val language = activeFile?.language ?: "Kotlin"
+    fun createEntry(isFolder: Boolean, rawName: String) {
+        val parent = activeFile?.path?.substringBeforeLast('/', "") ?: ""
+        val leaf = rawName.trim().removePrefix("/")
+        if (leaf.isEmpty()) return
+        val relative = if (parent.isEmpty()) leaf else "$parent/$leaf"
+        runCatching {
+            if (isFolder) repository.createFolder(slug, relative)
+            else repository.createFile(slug, relative, "")
+        }.onSuccess {
+            refreshTree()
+            if (!isFolder) {
+                repository.tree(slug).firstOrNull { it.path == relative }?.let { openFile(it) }
+            }
+            toast = "Created $leaf"
+        }.onFailure { toast = it.message ?: "Could not create $leaf" }
+    }
+
+    // Spec 6.9: the status bar counts the whole project. Debounced harder than the per-file pass
+    // and capped by file count, because this re-runs on every keystroke in any file.
+    LaunchedEffect(slug, diskContents.toMap(), liveBuffers.toMap()) {
+        // Only Kotlin is analysed, so only Kotlin can be counted. Silently including Java and XML
+        // here would show a total that never changes; silently excluding them would look like those
+        // files are clean. The status bar says "not checked" for them instead.
+        val sources = diskTree
+            .filter { it.kind == FileKind.Kotlin }
+            .take(PROJECT_ANALYSIS_MAX_FILES)
+            .map { it.name to (liveBuffers[it.name] ?: diskContents[it.name].orEmpty()) }
+        if (sources.isEmpty()) {
+            projectErrors = 0
+            projectWarnings = 0
+            return@LaunchedEffect
+        }
+        delay(PROJECT_ANALYSIS_DEBOUNCE_MS)
+        val index = AndroidApiAssets.cached()
+        val totals = withContext(Dispatchers.Default) {
+            // Names declared anywhere in the project, so a type or function coming from another
+            // file is not reported as missing in this one.
+            val declared = KotlinAnalyzer.projectSymbols(sources.map { it.second })
+            var errors = 0
+            var warnings = 0
+            for ((_, text) in sources) {
+                if (text.isBlank() || text.length > MAX_ANALYZED_CHARS) continue
+                runCatching { KotlinAnalyzer.analyze(text, index, declared) }.getOrNull()?.diagnostics
+                    ?.forEach { d ->
+                        when (d.severity) {
+                            Severity.ERROR -> errors++
+                            Severity.WARNING -> warnings++
+                        }
+                    }
+            }
+            Triple(errors, warnings, declared)
+        }
+        projectErrors = totals.first
+        projectWarnings = totals.second
+        projectNames = totals.third
+    }
 
     LaunchedEffect(toast) {
         if (toast != null) {
@@ -115,91 +326,238 @@ fun IdeScreen(
         }
     }
 
+    // Walks the real Gradle task names from the spec, one per beat, then reports the outcome.
+    // The timings are invented; the task names and the error count are not.
     LaunchedEffect(building) {
-        if (building) {
-            kotlinx.coroutines.delay(1200)
-            building = false
+        if (!building) return@LaunchedEffect
+        logLines.appendCapped(LogLine(LogLevel.INFO, "Build", "Build started"))
+        for (task in BuildTasks) {
+            kotlinx.coroutines.delay(220)
+            buildTaskIndex = BuildTasks.indexOf(task) + 1
+            logLines.appendCapped(LogLine(LogLevel.DEBUG, "Gradle", "> Task :app:$task"))
+        }
+        buildTaskIndex = BuildTasks.size
+        building = false
+        if (projectErrors > 0) {
+            logLines.appendCapped(
+                LogLine(LogLevel.ERROR, "Build", "BUILD FAILED · $projectErrors compile errors"),
+            )
+            toast = "Build failed · $projectErrors errors"
+        } else {
+            logLines.appendCapped(LogLine(LogLevel.INFO, "Build", "BUILD SUCCESSFUL"))
             toast = "Build successful · 0 errors"
         }
     }
 
-    if (probeOpen) {
-        CompilerProbeScreen(onBack = { probeOpen = false })
-        return
+    // The Android back button closes what is open, newest first, and only leaves the project when
+    // there is nothing left to close. Composed after the exit handler above so it wins while armed.
+    BackHandler(
+        enabled = moreOpen || findOpen || searchOpen || menuOpen ||
+            namingFile || namingFolder || explorerOpen,
+    ) {
+        when {
+            namingFile -> namingFile = false
+            namingFolder -> namingFolder = false
+            moreOpen -> moreOpen = false
+            findOpen -> {
+                findOpen = false
+                findQuery = ""
+            }
+
+            searchOpen -> {
+                searchOpen = false
+                query = ""
+            }
+
+            menuOpen -> menuOpen = false
+            explorerOpen -> explorerOpen = false
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
 
+            val activePath = activeFile?.path ?: active
             IdeTopBar(
                 projectName = projectName,
-                subtitle = templateName,
+                dirty = liveBuffers[active] != null && liveBuffers[active] != diskContents[active],
+                canUndo = canUndo,
+                canRedo = canRedo,
+                onSave = { saveActiveFile() },
+                onUndo = { undoRequest++ },
+                onRedo = { redoRequest++ },
                 onSearch = {
                     searchOpen = !searchOpen
                     if (!searchOpen) query = ""
                 },
-                onGit = { toast = "Source Control · main · clean" },
-                onRun = { building = true },
+                onRun = {
+                    // Spec 7: running is blocked while the project has compile errors, and jumps
+                    // to the problem sheet instead.
+                    if (projectErrors > 0) {
+                        toast = "Fix $projectErrors errors before running"
+                        problemSheet.value = problemSheet.value ?: 1
+                        activePanel = "Code"
+                    } else {
+                        building = true
+                    }
+                },
                 onMore = { menuOpen = true },
                 menuActive = menuOpen,
                 searchActive = searchOpen,
             )
 
-            if (activePanel == "AI") {
-                AgentPanel(projectName = projectName)
-            } else {
-                Row(Modifier.weight(1f)) {
-                    IdeExplorer(
-                        expanded = explorerOpen,
-                        projectName = projectName,
-                        slug = slug,
-                        tree = diskTree,
-                        activeFile = active,
-                        query = query,
-                        onSelect = { file ->
-                            active = file.name
-                            val content = if (file.kind != FileKind.Folder) {
-                                runCatching { repository.readFile(slug, file.path) }.getOrNull()
-                            } else {
-                                null
-                            }
-                            if (tabs.none { it.name == file.name }) {
-                                tabs = tabs + file
-                            }
-                            if (content != null) diskContents[file.name] = content
+            when (activePanel) {
+                "AI" -> AgentPanel(projectName = projectName, modifier = Modifier.weight(1f))
+                "Logcat" -> IdeLogcatPanel(
+                    lines = logLines,
+                    modifier = Modifier.weight(1f),
+                )
+                "Build" -> IdeBuildPanel(
+                    building = building,
+                    errorCount = projectErrors,
+                    completedTasks = if (building) buildTaskIndex else BuildTasks.size,
+                    onRun = {
+                        // Spec 7: build and run are blocked while any error exists.
+                        if (projectErrors > 0) {
+                            toast = "Fix ${projectErrors} errors before building"
+                            activePanel = "Build"
+                        } else {
+                            building = true
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+                else -> {
+                    // Code, the block editor and Preview share one path bar, so the way back to the
+                    // code is always one `<>` tap away.
+                    IdePathBar(
+                        filePath = activeFile?.path ?: active,
+                        previewable = isPreviewable(activeFile?.kind, active),
+                        // Every file can be projected, not just Kotlin: non-Kotlin sources have no
+                        // live projection, so the panel renders the honest empty state instead of
+                        // hiding the button that would have explained why.
+                        blockable = true,
+                        previewActive = activePanel == "Preview",
+                        blocksActive = activePanel == "Blocks",
+                        onCode = { activePanel = "Code" },
+                        onBlocks = { activePanel = "Blocks" },
+                        onPreview = {
+                            val buffer = liveBuffers[active]
+                            val saved = diskContents[active]
+                            if (buffer != null && buffer != saved) saveActiveFile()
+                            activePanel = "Preview"
                         },
                     )
+                    when (activePanel) {
+                        "Preview" -> IdePreviewPanel(
+                            fileName = active,
+                            fileKind = activeFile?.kind,
+                            projectPath = activeFile?.path.orEmpty(),
+                            loader = { path ->
+                                runCatching { repository.readFile(slug, path) }.getOrNull()
+                            },
+                            binaryLoader = { path ->
+                                runCatching { repository.readFileBytes(slug, path) }.getOrNull()
+                            },
+                            diskTree = diskTree,
+                            projectRepository = repository,
+                            refreshToken = previewRefresh,
+                            projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                            modifier = Modifier.weight(1f),
+                        )
 
-                    IdeEditorArea(
-                        explorerOpen = explorerOpen,
-                        onToggleExplorer = { explorerOpen = !explorerOpen },
-                        modifier = Modifier.weight(1f),
-                        tabs = tabs,
-                        active = active,
-                        language = language,
-                        contentFor = { name -> diskContents[name] ?: "" },
-                        onSelectTab = { active = it },
-                        onCloseTab = { name ->
-                            tabs = tabs.filterNot { it.name == name }
-                            if (active == name) active = tabs.lastOrNull()?.name.orEmpty()
-                        },
-                    )
+                        "Blocks" -> IdeBlockPanel(
+                            fileName = active,
+                            language = language,
+                            source = liveBuffers[active] ?: diskContents[active].orEmpty(),
+                            onChange = { next ->
+                                // The editor owns the text field, so the rewrite is handed over as
+                                // a revision it re-seeds from rather than as a mutation it has to
+                                // notice mid-edit. A reorder does not care where the caret was, so
+                                // the caret falls back to the end of the code.
+                                liveBuffers[active] = next
+                                caretRequest = -1
+                                sourceRevision++
+                            },
+                            onAddBlock = { addBlockOpen = true },
+                            modifier = Modifier.weight(1f),
+                        )
+
+                        else -> Row(Modifier.weight(1f)) {
+                            IdeExplorer(
+                                expanded = explorerOpen,
+                                projectName = projectName,
+                                slug = slug,
+                                tree = diskTree,
+                                activeFile = active,
+                                query = explorerFilter,
+                                tab = explorerTab,
+                                onTab = { explorerTab = it },
+                                onCreateFile = { namingFile = true },
+                                onCreateFolder = { namingFolder = true },
+                                onSelect = { file ->
+                                    openFile(file)
+                                    explorerOpen = false
+                                },
+                                projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                            )
+
+                            IdeEditorArea(
+                                explorerOpen = explorerOpen,
+                                onToggleExplorer = { explorerOpen = !explorerOpen },
+                                modifier = Modifier.weight(1f),
+                                tabs = tabs,
+                                active = active,
+                                language = language,
+                                contentFor = { name -> liveBuffers[name] ?: diskContents[name] ?: "" },
+                                onSelectTab = { active = it },
+                                onCloseTab = { name ->
+                                    tabs = tabs.filterNot { it.name == name }
+                                    if (active == name) active = tabs.lastOrNull()?.name.orEmpty()
+                                },
+                                onFocusChange = { editorFocused = it },
+                                onBufferChange = { text -> liveBuffers[active] = text },
+                                onToast = { text -> toast = text },
+                                bufferOf = { name -> liveBuffers[name] },
+                                savedOf = { name -> diskContents[name] },
+                                problemSheetLine = problemSheet,
+                                activeKind = activeFile?.kind,
+                                formatRequest = formatRequest,
+                                undoRequest = undoRequest,
+                                redoRequest = redoRequest,
+                                sourceRevision = sourceRevision,
+                                caretRequest = caretRequest,
+                                onCaretChange = { editorCaret = it },
+                                projectSymbols = projectNames,
+                                onSaveRequest = { saveActiveFile() },
+                                onHistoryState = { undo, redo ->
+                                    canUndo = undo
+                                    canRedo = redo
+                                },
+                                onSuggestionsOpen = { suggestionsOpen = it },
+                                showToolRow = editorFocused && !suggestionsOpen,
+                            )
+                        }
+                    }
                 }
             }
 
-            IdeStatusBar(
-                language = language,
-                statusText = when {
-                    building -> "● Building…"
-                    toast?.startsWith("Build successful") == true -> "● Build successful"
-                    else -> "● Ready"
-                },
-                projectName = projectName,
-            )
-
             IdeNav(
-                active = activePanel,
-                onSelect = { activePanel = it },
+                active = when {
+                    findOpen -> "Search"
+                    moreOpen -> "More"
+                    activePanel == "AI" -> "AI"
+                    else -> ""
+                },
+                onSelect = { item ->
+                    // Spec item 4's save-on-Preview now lives on the path bar, because Preview is
+                    // no longer something the bottom bar selects directly.
+                    when (item) {
+                        "Search" -> findOpen = true
+                        "AI" -> activePanel = if (activePanel == "AI") "Code" else "AI"
+                        "More" -> moreOpen = true
+                    }
+                },
             )
         }
 
@@ -207,12 +565,82 @@ fun IdeScreen(
             visible = searchOpen,
             enter = fadeIn(tween(160)),
             exit = fadeOut(tween(160)),
-            modifier = Modifier.align(Alignment.TopEnd),
+            modifier = Modifier.align(Alignment.TopStart),
         ) {
-            IdeSearchPanel(
+            CommandPalette(
+                commands = buildList {
+                    add(
+                        PaletteCommand(
+                            label = "Save file",
+                            shortcut = "Ctrl S",
+                            run = {
+                                saveActiveFile()
+                                searchOpen = false
+                            },
+                        ),
+                    )
+                    add(
+                        PaletteCommand("Run app", "Ctrl R", {
+                            // Spec 7: running is blocked while the project has errors.
+                            if (projectErrors > 0) {
+                                toast = "Fix $projectErrors errors before running"
+                                problemSheet.value = problemSheet.value ?: 1
+                            } else {
+                                building = true
+                            }
+                            searchOpen = false
+                        }),
+                    )
+                    add(
+                        PaletteCommand("Build debug APK", null, {
+                            if (projectErrors > 0) {
+                                toast = "Fix $projectErrors errors before building"
+                                problemSheet.value = problemSheet.value ?: 1
+                            } else {
+                                building = true
+                            }
+                            searchOpen = false
+                        }),
+                    )
+                    add(PaletteCommand("Format file", null, {
+                        formatRequest++
+                        searchOpen = false
+                    }))
+                    add(PaletteCommand("Show problems", null, {
+                        problemSheet.value = problemSheet.value ?: 1
+                        searchOpen = false
+                    }))
+                    add(PaletteCommand("Show logcat", null, {
+                        activePanel = "Logcat"
+                        searchOpen = false
+                    }))
+                    add(PaletteCommand("Toggle theme", null, {
+                        onToggleTheme()
+                        searchOpen = false
+                    }))
+                    // Spec 5: one "Open <file>" command per file in the project.
+                    for (file in diskTree) {
+                        if (file.kind == FileKind.Folder) continue
+                        add(
+                            PaletteCommand(
+                                label = "Open ${file.name}",
+                                shortcut = null,
+                                run = {
+                                    active = file.name
+                                    if (tabs.none { it.name == file.name }) tabs = tabs + file
+                                    diskContents.getOrPut(file.name) {
+                                        runCatching { repository.readFile(slug, file.path) }.getOrDefault("")
+                                    }
+                                    activePanel = "Code"
+                                    searchOpen = false
+                                },
+                            ),
+                        )
+                    }
+                },
                 query = query,
                 onQueryChange = { query = it },
-                onClose = {
+                onDismiss = {
                     searchOpen = false
                     query = ""
                 },
@@ -225,18 +653,32 @@ fun IdeScreen(
             exit = fadeOut(tween(200)),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 66.dp),
+                .padding(bottom = 78.dp),
         ) {
             IdeToast(toast.orEmpty())
         }
 
         if (menuOpen) {
             OverflowMenu(
+                // Spec 4.1 lists the three rows the overflow opens. The project-level rows the app
+                // already had are kept below them, so nothing that used to be reachable is lost
+                // when the Format and search buttons left the header.
                 actions = listOf(
-                    OverflowAction("Settings", "⚙"),
-                    OverflowAction("New project", "+"),
-                    OverflowAction("Close project", "×"),
-                    OverflowAction("Compiler probe", "◆"),
+                    OverflowAction("Search and commands", "⌕") {
+                        searchOpen = true
+                        menuOpen = false
+                    },
+                    OverflowAction("Format file", "⌗") {
+                        formatRequest++
+                        menuOpen = false
+                    },
+                    OverflowAction("Toggle theme", "◐") {
+                        onToggleTheme()
+                        menuOpen = false
+                    },
+                    OverflowAction("Settings", "⚙") { onOpenSettings() },
+                    OverflowAction("New project", "+") { onExit() },
+                    OverflowAction("Close project", "×") { onExit() },
                 ),
                 onPick = { action ->
                     menuOpen = false
@@ -244,10 +686,102 @@ fun IdeScreen(
                         "Settings" -> onOpenSettings()
                         "New project" -> onExit()
                         "Close project" -> onExit()
-                        "Compiler probe" -> probeOpen = true
                     }
                 },
                 onDismiss = { menuOpen = false },
+            )
+        }
+
+        // Find in project. The sheet stays up while results are tapped so the match and the code
+        // it came from are on screen together; the scrim is what closes it.
+        if (findOpen) {
+            // Reading every file in the project is disk work, and inside `remember` it ran on the
+            // composition path — one full project read between frames. `produceState` moves the read
+            // to Dispatchers.IO and hands the list back when it lands; the sheet simply shows no
+            // hits until it does.
+            val searchSources by produceState(
+                initialValue = emptyList(),
+                key1 = slug,
+                key2 = treeVersion,
+            ) {
+                val files = diskTree.filter { it.kind != FileKind.Folder }
+                value = withContext(Dispatchers.IO) {
+                    files.mapNotNull { file ->
+                        val text = runCatching { repository.readFile(slug, file.path) }.getOrNull()
+                        if (text == null || text.length > MAX_SEARCH_FILE_CHARS) null
+                        else file to text
+                    }
+                }
+            }
+            val hits = remember(findQuery, searchSources) {
+                findInSources(findQuery, searchSources)
+            }
+            IdeSearchSheet(
+                query = findQuery,
+                onQueryChange = { findQuery = it },
+                hits = hits,
+                onOpen = { hit ->
+                    diskTree.firstOrNull { it.path == hit.path }?.let { openFile(it) }
+                    activePanel = "Code"
+                },
+                onDismiss = {
+                    findOpen = false
+                    findQuery = ""
+                },
+            )
+        }
+
+        if (addBlockOpen) {
+            IdeAddBlockSheet(
+                onInsert = { template ->
+                    val source = liveBuffers[active] ?: diskContents[active].orEmpty()
+                    val (next, at) = insertBlockAt(source, editorCaret, template)
+                    liveBuffers[active] = next
+                    caretRequest = at
+                    sourceRevision++
+                    addBlockOpen = false
+                    // Straight back to Code, so the caret the sheet just placed is on screen.
+                    activePanel = "Code"
+                },
+                onDismiss = { addBlockOpen = false },
+            )
+        }
+
+        if (moreOpen) {
+            IdeMoreSheet(
+                actions = listOf(
+                    MoreAction("Logcat", "≡") { activePanel = "Logcat" },
+                    MoreAction("Build", "✓") { activePanel = "Build" },
+                    MoreAction("Settings", "⚙") { onOpenSettings() },
+                    MoreAction("Toggle theme", "◐") { onToggleTheme() },
+                    MoreAction("New project", "+") { onExit() },
+                    MoreAction("Close project", "×") { onExit() },
+                ),
+                onDismiss = { moreOpen = false },
+            )
+        }
+
+        if (namingFile) {
+            IdeNameDialog(
+                title = "New file",
+                hint = "MainActivity.kt",
+                onCreate = {
+                    namingFile = false
+                    createEntry(isFolder = false, rawName = it)
+                },
+                onDismiss = { namingFile = false },
+            )
+        }
+
+        if (namingFolder) {
+            IdeNameDialog(
+                title = "New folder",
+                hint = "feature",
+                onCreate = {
+                    namingFolder = false
+                    createEntry(isFolder = true, rawName = it)
+                },
+                onDismiss = { namingFolder = false },
             )
         }
     }
@@ -256,9 +790,13 @@ fun IdeScreen(
 @Composable
 private fun IdeTopBar(
     projectName: String,
-    subtitle: String,
+    dirty: Boolean,
+    canUndo: Boolean,
+    canRedo: Boolean,
+    onSave: () -> Unit,
+    onUndo: () -> Unit,
+    onRedo: () -> Unit,
     onSearch: () -> Unit,
-    onGit: () -> Unit,
     onRun: () -> Unit,
     onMore: () -> Unit,
     menuActive: Boolean,
@@ -269,87 +807,281 @@ private fun IdeTopBar(
     Row(
         Modifier
             .fillMaxWidth()
-            .height(58.dp)
             .background(c.panel)
-            .border(1.dp, c.ln, RoundedCornerShape(0.dp))
-            .padding(horizontal = 14.dp),
+            .drawBehind {
+                drawLine(
+                    color = c.ln,
+                    start = androidx.compose.ui.geometry.Offset(0f, size.height - 0.5f),
+                    end = androidx.compose.ui.geometry.Offset(size.width, size.height - 0.5f),
+                    strokeWidth = 1f,
+                )
+            }
+            .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // Spec 4.1 logo tile: 28 x 28, radius 8, light fill with a 1 dp border and a dark `</>`.
         Box(
             Modifier
                 .size(28.dp)
-                .background(c.tx, RoundedCornerShape(8.dp)),
+                .clip(RoundedCornerShape(8.dp))
+                .background(c.panel)
+                .border(1.dp, c.ln, RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = "</>",
-                color = c.bg,
-                fontSize = 10.sp,
-                fontFamily = Mono,
-                fontWeight = FontWeight.Bold,
-            )
+            CcIcon(CcIcons.Logo, Color(0xFF12151C), 16.dp)
         }
+        // The project name takes the slot the product word used to hold, 16 sp bold, and takes the
+        // free width so the actions sit against the right edge.
         Text(
-            text = "Closecode",
+            text = projectName,
             color = c.tx,
-            fontSize = 17.sp,
+            fontSize = 16.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(start = 9.dp),
+            letterSpacing = (-0.32).sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
 
-        Column(Modifier.padding(start = 14.dp)) {
+        // Spec 4.1: Save shows accent-soft with an accent icon while the file has unsaved changes.
+        HeaderIconButton(
+            icon = CcIcons.Save,
+            label = "Save",
+            tint = if (dirty) c.ac else c.mu,
+            background = if (dirty) c.selection else Color.Transparent,
+            onClick = onSave,
+        )
+        HeaderIconButton(
+            icon = CcIcons.Undo,
+            label = "Undo",
+            tint = if (canUndo) c.mu else c.mu.copy(alpha = 0.35f),
+            enabled = canUndo,
+            onClick = onUndo,
+        )
+        HeaderIconButton(
+            icon = CcIcons.Redo,
+            label = "Redo",
+            tint = if (canRedo) c.mu else c.mu.copy(alpha = 0.35f),
+            enabled = canRedo,
+            onClick = onRedo,
+        )
+        HeaderIconButton(
+            icon = CcIcons.Search,
+            label = "Search and commands",
+            tint = if (searchActive) c.tx else c.mu,
+            background = if (searchActive) c.panel2 else Color.Transparent,
+            onClick = onSearch,
+        )
+        // Spec 4.1 Run button: height 34, 10 dp horizontal padding, radius 9,
+        // accent fill, white "Run" (weight 600) + filled play icon 18dp, gap 6.
+        Row(
+            Modifier
+                .height(34.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(c.ac)
+                .clickable(onClick = onRun)
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            CcIcon(CcIcons.Play, c.af, 18.dp)
             Text(
-                text = projectName,
-                color = c.tx,
+                text = "Run",
+                color = c.af,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.width(150.dp),
-            )
-            Text(
-                text = subtitle,
-                color = c.mu,
-                fontSize = 11.sp,
-                fontFamily = Sans,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.width(150.dp),
             )
         }
-
-        Box(Modifier.weight(1f))
-
-        TopIcon("⌕", searchActive, onSearch)
-        TopIcon("⌘", false, onGit)
-        TopIcon("▶", false, onRun)
-        TopIcon("⋮", menuActive, onMore)
+        HeaderIconButton(
+            icon = CcIcons.More,
+            label = "More",
+            tint = if (menuActive) c.tx else c.mu,
+            background = if (menuActive) c.panel2 else Color.Transparent,
+            onClick = onMore,
+        )
     }
 }
 
-
-
+/**
+ * One 34 x 34 header button holding an 18 dp icon. [keepFocusClick] is not used here because the
+ * header sits outside the editor, but the icons come from [CcIcons] so they match the prototype's
+ * shapes exactly instead of depending on font glyphs.
+ */
 @Composable
-private fun TopIcon(glyph: String, active: Boolean, onClick: () -> Unit) {
+private fun HeaderIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: Color,
+    background: Color = Color.Transparent,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Box(
+        Modifier
+            .size(34.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(background)
+            .clickable(enabled = enabled, onClick = onClick)
+            .androidxSemantics(label),
+        contentAlignment = Alignment.Center,
+    ) {
+        CcIcon(icon, tint, 18.dp)
+    }
+}
+
+/** Labels a button for accessibility without making it focusable, so the keyboard never moves. */
+private fun Modifier.androidxSemantics(label: String): Modifier =
+    this.then(
+        Modifier.semantics { contentDescription = label },
+    )
+
+/**
+ * Kinds the preview panel can actually render: the Kotlin phone mock, the local web server, the
+ * image decoder and the structured formatters. Gradle, properties and unrecognised text get no
+ * button rather than a button that opens onto "no preview".
+ */
+internal val PreviewableKinds = setOf(
+    FileKind.Kotlin,
+    FileKind.Html,
+    FileKind.Css,
+    FileKind.Js,
+    FileKind.Json,
+    FileKind.Xml,
+    FileKind.Csv,
+    FileKind.Markdown,
+)
+
+private val PreviewableExtensions = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
+
+internal fun isPreviewable(kind: FileKind?, name: String): Boolean {
+    if (kind != null && kind in PreviewableKinds) return true
+    if (kind == FileKind.Folder) return false
+    return name.substringAfterLast('.', "").lowercase() in PreviewableExtensions
+}
+
+/**
+ * The path bar's crumbs: the folders that hold the file, then the file itself. The whole path is
+ * shown while it fits — that is what makes it a breadcrumb rather than a title — and only a path
+ * long enough to be unreadable is shortened, from the left so the package end and the file name
+ * survive.
+ *
+ * `app/build.gradle.kts` → `app › build.gradle.kts`
+ * `app/src/main/java/com/example/myapp/Main.kt` → `… › java › com › example › myapp › Main.kt`
+ */
+internal fun breadcrumbOf(path: String, maxCrumbs: Int = 6): List<String> {
+    val parts = path.split('/').filter { it.isNotBlank() }
+    if (parts.isEmpty()) return emptyList()
+    if (parts.size <= maxCrumbs) return parts
+    return listOf("…") + parts.takeLast(maxCrumbs - 1)
+}
+
+/**
+ * The row between the tab strip and the code: where the file lives, plus the buttons that leave
+ * the code. It replaces the deleted status bar, and it is the only chrome above the editor body,
+ * so it is a fixed 34 dp and never sits over the text.
+ */
+@Composable
+private fun IdePathBar(
+    filePath: String,
+    previewable: Boolean,
+    blockable: Boolean,
+    previewActive: Boolean,
+    blocksActive: Boolean,
+    onCode: () -> Unit,
+    onBlocks: () -> Unit,
+    onPreview: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    val crumbs = breadcrumbOf(filePath)
+    val folders = crumbs.dropLast(1)
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(34.dp)
+            .background(c.panel2)
+            .border(1.dp, c.ln, RoundedCornerShape(0.dp))
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // The folders carry the weight, so a deep package ellipsizes from the right while the file
+        // name keeps its intrinsic width and stays whole — the name is what the reader is after.
+        // With no folders there is nothing to shrink, so the file name takes the weight instead and
+        // keeps the buttons pinned to the right edge as it did when the bar showed a project name.
+        val folderCrumb = folders.joinToString(" › ")
+        if (folderCrumb.isNotEmpty()) {
+            Text(
+                text = folderCrumb,
+                color = c.mu,
+                fontSize = 12.sp,
+                fontFamily = Mono,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = " › ",
+                color = c.mu,
+                fontSize = 12.sp,
+                fontFamily = Mono,
+            )
+            Text(
+                text = crumbs.last(),
+                color = if (previewActive || blocksActive) c.ac else c.tx,
+                fontSize = 12.sp,
+                fontFamily = Mono,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        } else {
+            // No folders to shrink, so the file name takes the weight itself and keeps the buttons
+            // pinned to the right edge — the same thing the row did when it showed a project name.
+            Text(
+                text = crumbs.lastOrNull() ?: "No file",
+                color = if (previewActive || blocksActive) c.ac else c.tx,
+                fontSize = 12.sp,
+                fontFamily = Mono,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        // The three doors out of the code: stay on it, reshape it as blocks, or run it.
+        PathBarButton(CcIcons.Code, "Code", selected = !previewActive && !blocksActive, onClick = onCode)
+        if (blockable) {
+            PathBarButton(CcIcons.Layers, "Blocks", selected = blocksActive, onClick = onBlocks)
+        }
+        if (previewable) {
+            PathBarButton(CcIcons.Image, "Preview", selected = previewActive, onClick = onPreview)
+        }
+    }
+}
+
+/** One 26 dp icon button on the path bar. [selected] is the accent tint, not a fill, because the
+ *  bar is only 34 dp tall and a filled chip would read as a second tab. */
+@Composable
+private fun PathBarButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
     val c = LocalPageColors.current
     Box(
         Modifier
-            .padding(start = 4.dp)
-            .size(36.dp)
-            .clip(RoundedCornerShape(9.dp))
-            .background(if (active) c.panel2 else Color.Transparent)
-            .border(1.dp, if (active) c.ln else Color.Transparent, RoundedCornerShape(9.dp))
-            .clickable(onClick = onClick),
+            .size(26.dp)
+            .clip(RoundedCornerShape(7.dp))
+            .background(if (selected) c.panel else Color.Transparent)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = glyph,
-            color = if (active) c.tx else c.mu,
-            fontSize = 17.sp,
-            fontFamily = Sans,
-        )
+        CcIcon(icon, if (selected) c.ac else c.mu, 16.dp)
     }
 }
 
@@ -361,21 +1093,49 @@ private fun IdeExplorer(
     tree: List<ProjectFile>,
     activeFile: String,
     query: String,
+    tab: String,
+    onTab: (String) -> Unit,
+    onCreateFile: () -> Unit,
+    onCreateFolder: () -> Unit,
     onSelect: (ProjectFile) -> Unit,
+    projectRoot: File?,
 ) {
     val c = LocalPageColors.current
 
-    val wide = LocalConfiguration.current.screenWidthDp >= 760
-    val fullWidth = if (wide) 290.dp else 235.dp
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val wide = screenWidthDp >= 760
+    // The drawer takes most of the width so files are readable, while the tab strip's chevron and
+    // the first characters of code stay visible behind it.
+    val fullWidth = if (wide) 320.dp else (screenWidthDp * 0.72f).dp
     val width by animateDpAsState(
         targetValue = if (expanded) fullWidth else 0.dp,
         animationSpec = tween(200),
         label = "explorer-width",
     )
 
+    // Keyed by path, not by name: two folders that both happen to be called "util" used to open
+    // and close together.
     var collapsed by remember(slug) { mutableStateOf(setOf<String>()) }
 
     val q = query.trim().lowercase()
+    val matched = if (q.isEmpty()) tree else tree.filter { it.path.lowercase().contains(q) }
+    // A collapsed folder hides its whole subtree, not only its own row. The tree is flat, so the
+    // descendants are found by depth: everything below a collapsed depth stops being listed.
+    val rows = if (q.isNotEmpty()) {
+        matched
+    } else {
+        val out = mutableListOf<ProjectFile>()
+        val hiddenBelow = mutableListOf<Int>()
+        for (file in matched) {
+            while (hiddenBelow.isNotEmpty() && hiddenBelow.last() >= file.depth) {
+                hiddenBelow.removeAt(hiddenBelow.lastIndex)
+            }
+            if (hiddenBelow.isNotEmpty()) continue
+            out += file
+            if (file.kind == FileKind.Folder && file.path in collapsed) hiddenBelow += file.depth
+        }
+        out
+    }
 
     Column(
         Modifier
@@ -387,7 +1147,6 @@ private fun IdeExplorer(
         Row(
             Modifier
                 .width(if (expanded) fullWidth else 0.dp)
-                .fillMaxWidth()
                 .height(50.dp)
                 .border(1.dp, c.ln, RoundedCornerShape(0.dp))
                 .padding(horizontal = 14.dp),
@@ -402,58 +1161,169 @@ private fun IdeExplorer(
                 letterSpacing = 1.2.sp,
                 modifier = Modifier.weight(1f),
             )
+            HeaderIconButton(
+                icon = CcIcons.FilePlus,
+                label = "New file",
+                tint = c.mu,
+                onClick = onCreateFile,
+            )
+            HeaderIconButton(
+                icon = CcIcons.FolderPlus,
+                label = "New folder",
+                tint = c.mu,
+                onClick = onCreateFolder,
+            )
         }
 
-        LazyColumn(
+        Row(
+            Modifier
+                .width(if (expanded) fullWidth else 0.dp)
+                .height(36.dp)
+                .border(1.dp, c.ln, RoundedCornerShape(0.dp)),
+        ) {
+            ExplorerTab("Files", tab == "Files") { onTab("Files") }
+            ExplorerTab("GitHub", tab == "GitHub") { onTab("GitHub") }
+        }
+
+        // Both lists stay composed so the GitHub tab never loses a half-typed commit message
+        // or cancels a commit that is already running on disk.
+        Box(
             Modifier
                 .weight(1f)
                 .width(if (expanded) fullWidth else 0.dp)
+                .fillMaxHeight(),
         ) {
-            item(key = "root") {
-                TreeRow(
-                    label = projectName,
-                    depth = 0,
-                    bold = true,
-                    glyph = "▾",
-                    glyphColor = c.ac,
-                    active = false,
-                    onClick = {},
-                )
-            }
-
-            item(key = "sec-project") { SectionLabel("PROJECT") }
-
-            itemsIndexed(tree, key = { i, f -> "tree-$i-${f.name}" }) { _, file ->
-                if (file.kind == FileKind.Folder && file.name in collapsed) return@itemsIndexed
-                if (q.isNotEmpty() && !file.name.lowercase().contains(q)) {
-                    if (file.kind != FileKind.Folder) return@itemsIndexed
+            LazyColumn(Modifier.fillMaxSize()) {
+                item(key = "root") {
+                    TreeRow(
+                        label = projectName,
+                        depth = 0,
+                        bold = true,
+                        glyph = "▾",
+                        glyphColor = c.ac,
+                        active = false,
+                        onClick = {},
+                    )
                 }
-                TreeRow(
-                    label = file.name,
-                    depth = file.depth + 1,
-                    bold = false,
-                    glyph = kindGlyph(file.kind),
-                    glyphColor = kindColor(file.kind, c),
-                    active = file.name == activeFile,
-                    onClick = {
-                        if (file.kind == FileKind.Folder) {
-                            collapsed = if (file.name in collapsed) {
-                                collapsed - file.name
+
+                item(key = "sec-project") { SectionLabel("PROJECT") }
+
+                itemsIndexed(rows, key = { _, f -> "tree-${f.path}" }) { _, file ->
+                    TreeRow(
+                        label = file.name,
+                        depth = file.depth + 1,
+                        bold = false,
+                        glyph = kindGlyph(file.kind),
+                        glyphColor = kindColor(file.kind, c),
+                        active = file.name == activeFile,
+                        onClick = {
+                            if (file.kind == FileKind.Folder) {
+                                collapsed = if (file.path in collapsed) {
+                                    collapsed - file.path
+                                } else {
+                                    collapsed + file.path
+                                }
                             } else {
-                                collapsed + file.name
+                                onSelect(file)
                             }
-                        } else {
-                            onSelect(file)
-                        }
-                    },
-                )
+                        },
+                    )
+                }
             }
+
+            IdeGitPanel(
+                projectName = projectName,
+                projectRoot = projectRoot,
+                // One modifier or the other, never both. Appending `size(0.dp)` after
+                // `width(...).fillMaxHeight()` could not work: those hand the child an incoming
+                // minimum of full width by full height, `size` is enforce-incoming, so the zero was
+                // clamped straight back up and this opaque panel covered the file tree on both tabs.
+                // On its own `size(0.dp)` really does collapse to nothing — while the panel stays
+                // composed, so a half-typed commit message and a commit already running on disk
+                // both survive the switch.
+                modifier = if (tab == "GitHub") {
+                    Modifier.fillMaxWidth().fillMaxHeight()
+                } else {
+                    Modifier.size(0.dp)
+                },
+            )
         }
     }
 }
 
+/** One half of the drawer's Files / GitHub switch. */
 @Composable
-private fun SectionLabel(text: String) {
+private fun RowScope.ExplorerTab(label: String, selected: Boolean, onClick: () -> Unit) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .weight(1f)
+            .fillMaxHeight()
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = if (selected) c.tx else c.mu,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            letterSpacing = 0.4.sp,
+        )
+        if (selected) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .background(c.ac),
+            )
+        }
+    }
+}
+
+/**
+ * Spec 6.1 file icon tile: 22 x 22, radius 7, an 11 sp bold mono letter. Java is "J", Kotlin "K"
+ * and XML "<>", each on its own tint from the spec's icon colours.
+ */
+@Composable
+private fun FileKindTile(kind: FileKind) {
+    val c = LocalPageColors.current
+    val glyph = when (kind) {
+        FileKind.Kotlin -> "K"
+        FileKind.Xml -> "<>"
+        else -> kindGlyph(kind).ifBlank { "·" }
+    }
+    val background = when (kind) {
+        FileKind.Kotlin -> c.kotlinIconBg
+        FileKind.Xml -> c.xmlIconBg
+        else -> c.stackBadge
+    }
+    val foreground = when (kind) {
+        FileKind.Kotlin -> c.kotlinIconTx
+        FileKind.Xml -> c.xmlIconTx
+        else -> c.mu
+    }
+    Box(
+        Modifier
+            .size(22.dp)
+            .clip(RoundedCornerShape(7.dp))
+            .background(background),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = glyph,
+            color = foreground,
+            fontSize = 11.sp,
+            fontFamily = Mono,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+internal fun SectionLabel(text: String) {
     val c = LocalPageColors.current
     Text(
         text = text,
@@ -518,30 +1388,470 @@ private fun IdeEditorArea(
     onToggleExplorer: () -> Unit,
     onSelectTab: (String) -> Unit,
     onCloseTab: (String) -> Unit,
+    onSuggestionsOpen: (Boolean) -> Unit = {},
+    // Reports whether the code has the focus, which is the only signal that decides whether the
+    // tool row earns its 40 dp.
+    onFocusChange: (Boolean) -> Unit = {},
+    // The tool row hides while it would be idle. It is the only way to reach tab, brace, quote and
+    // comment on a soft keyboard, so it is never removed, only parked until the caret is live.
+    showToolRow: Boolean = true,
+    onBufferChange: (String) -> Unit = {},
+    onToast: (String) -> Unit = {},
+    bufferOf: (String) -> String? = { null },
+    savedOf: (String) -> String? = { null },
+    // Hoisted so the path bar can open the sheet too, not just taps inside the editor.
+    problemSheetLine: MutableState<Int?> = remember { mutableStateOf(null) },
+    activeKind: FileKind? = null,
+    formatRequest: Int = 0,
+    undoRequest: Int = 0,
+    redoRequest: Int = 0,
+    // Bumped when the buffer was rewritten from outside — the block editor moves whole line ranges
+    // and hands the result back. The field re-seeds on this, and its history with it, so undo can
+    // never reach back past a text that no longer exists.
+    sourceRevision: Int = 0,
+    // Where the next re-seed from [sourceRevision] should leave the caret, or -1 for "wherever the
+    // file's code ends". Hoisted because the add-a-block sheet is the one caller that knows.
+    caretRequest: Int = -1,
+    onCaretChange: (Int) -> Unit = {},
+    // Names declared across the whole project, so a sibling file's declaration is not reported
+    // as missing here.
+    projectSymbols: Set<String> = emptySet(),
+    // Ctrl S from a hardware keyboard, which the palette advertises as the save shortcut.
+    onSaveRequest: () -> Unit = {},
+    onHistoryState: (Boolean, Boolean) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
-    val fallback = remember(language) {
+    val fallbackText = remember(language) {
         snippetFor(language, c).joinToString("\n") { it.text }
     }
     val fromDisk = remember(active, contentFor) { contentFor(active) }
-    var code by remember(active, language) {
-        mutableStateOf(fromDisk.ifEmpty { fallback })
+    val initialText = remember(fromDisk, fallbackText) {
+        fromDisk.ifEmpty { fallbackText }
     }
+    var fieldValue by remember(active, language, sourceRevision) {
+        mutableStateOf(
+            TextFieldValue(
+                text = initialText,
+                // Opens on the last line that has code, not on the empty line a trailing newline
+                // leaves behind, so the first thing typed lands on the line the user can see —
+                // unless a caller asked for a specific spot, which only a block insert does.
+                selection = if (caretRequest >= 0) {
+                    TextRange(caretRequest.coerceIn(0, initialText.length))
+                } else {
+                    TextRange(caretOffsetAtEndOfCode(initialText))
+                },
+            ),
+        )
+    }
+    // Spec 4.1 Undo and Redo. Every text change goes through commit(), which records the value being
+    // replaced, so the header can step back through the editor's own history without a native undo
+    // manager. Selection-only moves commit too but record nothing, because they are not edits.
+    val undoStack = remember(active, sourceRevision) { mutableStateListOf<TextFieldValue>() }
+    val redoStack = remember(active, sourceRevision) { mutableStateListOf<TextFieldValue>() }
+
+    fun commit(next: TextFieldValue) {
+        if (next.text != fieldValue.text) {
+            undoStack.add(fieldValue)
+            while (undoStack.size > UNDO_HISTORY_LIMIT) undoStack.removeAt(0)
+            redoStack.clear()
+        }
+        fieldValue = next
+    }
+
+    fun undoOnce() {
+        val previous = undoStack.removeLastOrNull() ?: return
+        redoStack.add(fieldValue)
+        fieldValue = previous
+    }
+
+    fun redoOnce() {
+        val next = redoStack.removeLastOrNull() ?: return
+        undoStack.add(fieldValue)
+        fieldValue = next
+    }
+
+    LaunchedEffect(active, undoStack.size, redoStack.size) {
+        onHistoryState(undoStack.isNotEmpty(), redoStack.isNotEmpty())
+    }
+    LaunchedEffect(undoRequest, active) {
+        if (undoRequest == 0) return@LaunchedEffect
+        undoOnce()
+    }
+    LaunchedEffect(redoRequest, active) {
+        if (redoRequest == 0) return@LaunchedEffect
+        redoOnce()
+    }
+
+    // Opening a file is not an edit, so it replaces the text and starts a fresh history.
     LaunchedEffect(active) {
         val next = contentFor(active)
-        if (next.isNotEmpty()) code = next
+        undoStack.clear()
+        redoStack.clear()
+        fieldValue = TextFieldValue(next, TextRange(caretOffsetAtEndOfCode(next)))
     }
+    // One ScrollState per axis. Sharing a single state between verticalScroll and
+    // horizontalScroll made the two fight over the same value, so the line-number gutter
+    // drifted out of step with the code and error line numbers pointed at the wrong line.
     val codeScroll = rememberScrollState()
-    val suggestions = remember(language) { suggestionsFor(language) }
+    val codeHScroll = rememberScrollState()
+    // Pinch zoom only touches the code text size. Single-finger gestures are never consumed
+    // here, so normal vertical and horizontal scrolling keeps working.
+    var editorScale by remember { mutableFloatStateOf(1f) }
+    val codeFontSize = CodeFontSize * editorScale
+    // Spec section 3: 20 dp is fixed; zoom scales it rather than replacing it, so every layer
+    // positioned against this number keeps its relationship to the code.
+    val codeLineHeight = CodeLineHeight * editorScale
+    // Spec section 3: the row is exactly 20 dp. A `sp` line height would grow with the system font
+    // scale, and every overlay is positioned against this number, so the dp value is converted
+    // through the density here and the scale cancels back out.
+    val codeLineHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+        codeLineHeight.toPx()
+    }
+    val codeLineHeightTextUnit = with(androidx.compose.ui.platform.LocalDensity.current) {
+        codeLineHeightPx.toSp()
+    }
+    val code = fieldValue.text
+    val cursor = fieldValue.selection.start.coerceIn(0, code.length)
+    // Report the buffer for every mutation path, not just typing: quick fixes, suggestion
+    // acceptance and tab switches all rewrite the field without going through onValueChange.
+    // The parent needs this to save before Preview and to count diagnostics project wide.
+    LaunchedEffect(active, code) { onBufferChange(code) }
+    val isKotlin = language.contains("Kotlin", true) || active.endsWith(".kt")
+    val staticSuggestions = remember(language) { suggestionsFor(language) }
     var selectedSug by remember(language) { mutableStateOf(0) }
+
+    var apiIndex by remember { mutableStateOf(AndroidApiAssets.cached()) }
+    val context = LocalContext.current
+    LaunchedEffect(Unit) {
+        AndroidApiAssets.load(context) { loaded ->
+            apiIndex = loaded
+        }
+    }
+
+    var analysis by remember { mutableStateOf<KotlinFileAnalysis?>(null) }
+    LaunchedEffect(code, isKotlin, apiIndex, projectSymbols) {
+        if (!isKotlin || code.length > MAX_ANALYZED_CHARS) {
+            analysis = null
+            return@LaunchedEffect
+        }
+        delay(ANALYSIS_DEBOUNCE_MS)
+        val snapshot = code
+        val index = apiIndex
+        val declared = projectSymbols
+        val computed = withContext(Dispatchers.Default) {
+            runCatching { KotlinAnalyzer.analyze(snapshot, index, declared) }.getOrNull()
+        }
+        if (computed != null) analysis = computed
+    }
 
     val codeLines = remember(code) { code.lines() }
 
-    val visibleSuggestions = remember(code, suggestions) {
-        val tail = code.takeLastWhile { it.isLetterOrDigit() }
-        if (tail.isEmpty()) emptyList() else suggestions.filter { it.name.startsWith(tail) }
+    // Spec 6.3: the first import line carries the fold affordance. Zero means there is none.
+    val firstImportLine = remember(code) {
+        codeLines.indexOfFirst { it.trimStart().startsWith("import ") } + 1
+    }
+
+    // Colorizing the whole file on every keystroke made typing lag on large files. Remembering by
+    // text means cursor moves and layout updates reuse the same colored text.
+    val highlighted = remember(code, c) { highlightCode(code, c) }
+
+    val currentAnalysis = analysis?.takeIf { it.source == code }
+
+    val problems = remember(currentAnalysis) {
+        ProblemsByLine.from(currentAnalysis?.diagnostics.orEmpty())
+    }
+
+    val caretLine = remember(code, cursor) { caretPosition(code, cursor).first }
+    // Reported on every move so the block sheet can insert at the line the caret is actually on.
+    // A plain offset is all the insertion needs, so the whole selection never leaves the editor.
+    LaunchedEffect(cursor) { onCaretChange(cursor) }
+
+    var codeLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    var viewportWidthPx by remember { mutableStateOf(0f) }
+    var viewportHeightPx by remember { mutableStateOf(0f) }
+
+    // Row height measured off the rendered text, so the numbers and the labels cannot drift from
+    // the code the way a hand-converted dp/sp value does.
+    val fallbackLineHeightPx = with(androidx.compose.ui.platform.LocalDensity.current) {
+        codeLineHeight.toPx()
+    }
+    val lineHeightPx = remember(codeLayout, code) {
+        measuredLineHeightPx(codeLayout, code) ?: fallbackLineHeightPx
+    }
+    var quickFixLine by remember { mutableStateOf<Int?>(null) }
+    var quickFixIndex by remember { mutableStateOf(0) }
+
+    val quickFixActions = remember(quickFixLine, problems, currentAnalysis, code) {
+        buildQuickFixActions(quickFixLine, problems, currentAnalysis, code)
+    }
+
+    fun openQuickFix(line: Int) {
+        quickFixLine = line
+        quickFixIndex = 0
+        problemSheetLine.value = null
+    }
+
+    fun openProblemSheet(line: Int) {
+        problemSheetLine.value = line
+        quickFixLine = null
+    }
+
+
+    /** Character offset of a 1-based column on a 1-based line, for text-layout lookups. */
+    fun offsetOfLineColumn(line: Int, column: Int): Int {
+        if (line < 1 || column < 1) return 0
+        var offset = 0
+        var currentLine = 1
+        var i = 0
+        while (i < code.length && currentLine < line) {
+            if (code[i] == '\n') currentLine++
+            i++
+            offset++
+        }
+        return (offset + (column - 1)).coerceIn(0, code.length)
+    }
+
+    val kotlinItems = remember(code, cursor, isKotlin, currentAnalysis) {
+        val live = currentAnalysis
+        if (!isKotlin || live == null) {
+            null
+        } else {
+            runCatching {
+                if (live.prefixAt(cursor).isNotEmpty() || live.isMemberAccess(cursor)) {
+                    live.completionsAt(cursor, limit = 25)
+                } else {
+                    emptyList()
+                }
+            }.getOrDefault(emptyList())
+        }
+    }
+
+    val visibleSuggestions = remember(kotlinItems, staticSuggestions, code, isKotlin) {
+        if (kotlinItems != null) {
+            kotlinItems.map { it.toSuggestion() }
+        } else {
+            val tail = code.takeLastWhile { it.isLetterOrDigit() }
+            if (tail.isEmpty()) emptyList() else staticSuggestions.filter { it.name.startsWith(tail) }
+        }
+    }
+
+    LaunchedEffect(visibleSuggestions) { selectedSug = 0 }
+
+    LaunchedEffect(visibleSuggestions.isNotEmpty()) {
+        onSuggestionsOpen(visibleSuggestions.isNotEmpty())
+    }
+
+    // Leaving the line that owns an open menu dismisses it. Otherwise a stale list from an old
+    // line would offer actions against text that has already moved.
+    LaunchedEffect(caretLine) {
+        if (quickFixLine != null && quickFixLine != caretLine) quickFixLine = null
+    }
+
+    /**
+     * Applies a quick fix and returns the text plus where the caret should land. Keeping this
+     * outside composition means it can be tested and reused by both entry points.
+     */
+    fun applyQuickFix(action: QuickFixAction): Pair<String, Int>? {
+        val target = quickFixActions.firstOrNull { it.label == action.label } ?: return null
+        val line = target.target.toIntOrNull()
+        val (_, column) = caretPosition(code, cursor)
+        return when (target.kind) {
+            QuickFixKind.ADD_IMPORT -> {
+                val next = SourceEdits.addImport(code, target.target)
+                if (next == code) {
+                    null
+                } else {
+                    next to (SourceEdits.caretAfterAddImport(code, target.target) ?: code.length)
+                }
+            }
+
+            QuickFixKind.REMOVE_IMPORT -> {
+                val next = SourceEdits.removeImport(code, target.target)
+                if (next == code) null else next to cursor.coerceAtMost(next.length)
+            }
+
+            // Spec 6.6: E0101 deletes the offending token and leaves the caret where it began,
+            // so a replacement can be typed straight into the gap.
+            QuickFixKind.REMOVE_TOKEN -> {
+                val diagnostic = problems.on(line ?: -1)
+                    .firstOrNull { it.code == DiagnosticCodes.E0101_UNRESOLVED }
+                if (diagnostic == null) return null
+                val next = SourceEdits.removeToken(code, diagnostic.offset, diagnostic.length)
+                    ?: return null
+                next to diagnostic.offset.coerceIn(0, next.length)
+            }
+
+            QuickFixKind.ADD_SEMICOLON -> {
+                if (line == null) return null
+                val next = SourceEdits.addSemicolon(code, line) ?: return null
+                next to next.length.coerceAtMost(next.length)
+            }
+
+            QuickFixKind.NO_FIX -> null
+
+            QuickFixKind.TOGGLE_COMMENT -> {
+                if (line == null) return null
+                val next = SourceEdits.toggleLineComment(code, line)
+                if (next == code) null else next to cursor.coerceAtMost(next.length)
+            }
+
+            QuickFixKind.MOVE_LINE_UP, QuickFixKind.MOVE_LINE_DOWN -> {
+                if (line == null) return null
+                val down = target.kind == QuickFixKind.MOVE_LINE_DOWN
+                val next =
+                    if (down) SourceEdits.moveLineDown(code, line) else SourceEdits.moveLineUp(code, line)
+                if (next == code) {
+                    null
+                } else {
+                    next to SourceEdits.caretAfterLineMove(code, line, column, down)
+                }
+            }
+        }
+    }
+
+    // Keeps the caret on screen. Compose does not do this for a BasicTextField that sits inside a
+    // manually scrolled column, so without this the caret can walk off the bottom while typing.
+    // The row maths reuses rowTopPx, the same function the gutter draws its numbers with, so the
+    // scroll follows the numbers rather than a second set of arithmetic.
+    val autoDensity = androidx.compose.ui.platform.LocalDensity.current
+    val topPaddingPx = with(autoDensity) { EditorTopPadding.toPx() }
+    // The gutter is not part of the code column, so the popup's width and the tap area's minimum
+    // width both measure the code area on its own.
+    val gutterWidthPx = with(autoDensity) { GutterWidth.toPx() }
+    val codeWidthPx = (viewportWidthPx - gutterWidthPx).coerceAtLeast(0f)
+    // The pill layer sits at the code column's text, not at the editor's left edge, so the room it
+    // has on screen starts past the gutter and the column's own inset. Measuring from the editor's
+    // edge accepted a pill that ran off the right side of the screen.
+    val codeColumnOriginPx = with(autoDensity) { CodeColumnStart.toPx() }
+    val pillViewportWidthPx = (viewportWidthPx - codeColumnOriginPx).coerceAtLeast(0f)
+    LaunchedEffect(caretLine, viewportHeightPx, lineHeightPx) {
+        val margin = with(autoDensity) { 24.dp.toPx() }
+        val rowTop = rowTopPx(caretLine, lineHeightPx, topPaddingPx)
+        val rowBottom = rowTop + lineHeightPx
+        val contentHeight = topPaddingPx + codeLines.size * lineHeightPx + with(autoDensity) { 40.dp.toPx() }
+        val maxScroll = (contentHeight - viewportHeightPx).coerceAtLeast(0f)
+        val target = when {
+            rowTop - margin < codeScroll.value -> (rowTop - margin).coerceAtLeast(0f)
+            rowBottom + margin > codeScroll.value + viewportHeightPx ->
+                (rowBottom + margin - viewportHeightPx).coerceIn(0f, maxScroll)
+            else -> codeScroll.value
+        }
+        codeScroll.animateScrollTo(target.toInt().coerceAtLeast(0))
+    }
+
+val applySuggestion: (Int) -> Unit = { index ->
+        val live = fieldValue
+        val liveText = live.text
+        val liveCursor = live.selection.start.coerceIn(0, liveText.length)
+        val liveItems = kotlinItems
+        val insert = liveItems?.getOrNull(index)?.insertText
+            ?: visibleSuggestions.getOrNull(index)?.name
+        if (insert != null) {
+            val prefix = if (liveItems != null) currentAnalysis?.prefixAt(liveCursor).orEmpty() else ""
+            val start = (liveCursor - prefix.length).coerceAtLeast(0)
+            val next = liveText.substring(0, start) + insert + liveText.substring(liveCursor)
+            commit(TextFieldValue(next, TextRange(start + insert.length)))
+        }
+    }
+
+    /** Types [insert] at the caret and leaves the caret after it. */
+    fun typeAtCaret(insert: String) {
+        val live = fieldValue
+        val at = live.selection.start.coerceIn(0, live.text.length)
+        val next = live.text.substring(0, at) + insert + live.text.substring(at)
+        commit(TextFieldValue(next, TextRange(at + insert.length)))
+    }
+
+    /** Moves the caret one line up or down, keeping the column where the line is long enough. */
+    fun moveCaretVertically(delta: Int) {
+        val live = fieldValue
+        val text = live.text
+        val at = live.selection.start.coerceIn(0, text.length)
+        val (line, column) = caretPosition(text, at)
+        // The caret never walks past the last line that shows something. Stopping at the end of the
+        // raw buffer put it on a row with no number and nothing on it, which reads as a bug.
+        val lastVisible = gutterRowCount(text.lines())
+        val target = (line + delta).coerceIn(1, lastVisible)
+        if (target == line) return
+        val lineStart = offsetOfLineColumn(text, target, 1)
+        val lineEnd = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }
+        val caret = (lineStart + column - 1).coerceIn(lineStart, lineEnd)
+        commit(TextFieldValue(text, TextRange(caret)))
+    }
+
+    /** Copies the selection, or the caret's whole line when nothing is selected. */
+    fun copySelectionOrLine() {
+        val live = fieldValue
+        val text = live.text
+        val start = live.selection.min.coerceIn(0, text.length)
+        val end = live.selection.max.coerceIn(0, text.length)
+        val payload = if (end > start) {
+            text.substring(start, end)
+        } else {
+            val (line, _) = caretPosition(text, start)
+            text.substring(offsetOfLineColumn(text, line, 1)).substringBefore('\n')
+        }
+        clipboard.setText(androidx.compose.ui.text.AnnotatedString(payload))
+        onToast("Copied")
+    }
+
+    val onToolAction: (ToolAction) -> Unit = { action ->
+        val live = fieldValue
+        val liveText = live.text
+        val at = live.selection.start.coerceIn(0, liveText.length)
+        val (liveLine, _) = caretPosition(liveText, at)
+        when (action) {
+            // Spec 6.8: Tab accepts the first suggestion when the popup is open, else indents.
+            ToolAction.TAB -> {
+                if (visibleSuggestions.isNotEmpty()) {
+                    applySuggestion(0)
+                } else {
+                    typeAtCaret("  ")
+                }
+            }
+
+            ToolAction.COMMENT -> {
+                val next = SourceEdits.toggleLineComment(liveText, liveLine)
+                if (next != liveText) {
+                    commit(TextFieldValue(next, TextRange(at.coerceAtMost(next.length))))
+                }
+            }
+
+            ToolAction.LINE_UP -> moveCaretVertically(-1)
+            ToolAction.LINE_DOWN -> moveCaretVertically(1)
+            ToolAction.COPY -> copySelectionOrLine()
+
+            // The Problems tab was removed, so the triangle opens the problem sheet instead.
+            ToolAction.PROBLEMS -> if (problems.all.isNotEmpty()) {
+                openProblemSheet(problems.all.first().line)
+            } else {
+                onToast("No problems. Code is clean.")
+            }
+
+            else -> ToolRowInserts[action]?.let { typeAtCaret(it) }
+        }
+    }
+
+    // Header and palette format requests land here because only the editor owns the text field.
+    // Formatting keeps the same line and column when possible; the line count never changes.
+    LaunchedEffect(formatRequest) {
+        if (formatRequest == 0) return@LaunchedEffect
+        val formatted = if (activeKind == FileKind.Kotlin || active.endsWith(".kt", true)) {
+            SourceEdits.formatKotlin(code)
+        } else {
+            SourceEdits.normalizeTrailingWhitespace(code)
+        }
+        if (formatted == code) {
+            onToast("Already formatted")
+            return@LaunchedEffect
+        }
+        val (line, column) = caretPosition(code, cursor)
+        val caret = offsetOfLineColumn(formatted, line, column).coerceIn(0, formatted.length)
+        commit(TextFieldValue(formatted, TextRange(caret)))
+        onToast("Formatted $active")
     }
 
     Column(
@@ -549,293 +1859,846 @@ private fun IdeEditorArea(
             .fillMaxHeight()
             .background(c.editor)
     ) {
-        LazyRow(
+        // Spec 6.1: the file explorer button sits at the left of the strip, outside the scrolling tabs,
+        // so it never scrolls away with them and stays the one way into the drawer on a phone.
+        Row(
             Modifier
                 .fillMaxWidth()
-                .height(47.dp)
+                // The strip needs a bounded height. A Row inside a Column hands its children the
+                // height that is still free, so the chevron's fillMaxHeight would otherwise stretch
+                // this strip over the whole editor and squeeze the code area out of existence.
+                .height(TAB_STRIP_HEIGHT)
                 .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(0.dp)),
+                // A single 1 dp bottom border. The strip is not a box, and the tabs are not boxes.
+                .drawBehind {
+                    val y = size.height - 0.5f
+                    drawLine(
+                        color = c.ln,
+                        start = androidx.compose.ui.geometry.Offset(0f, y),
+                        end = androidx.compose.ui.geometry.Offset(size.width, y),
+                        strokeWidth = 1f,
+                    )
+                },
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            item(key = "explorer-toggle") {
-                Box(
-                    Modifier
-                        .width(47.dp)
-                        .height(47.dp)
-                        .background(c.panel)
-                        .border(1.dp, c.ln, RoundedCornerShape(0.dp))
-                        .clickable(onClick = onToggleExplorer),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = if (explorerOpen) "‹" else "›",
-                        color = c.mu,
-                        fontSize = 22.sp,
-                        fontFamily = Sans,
-                    )
-                }
+            Box(
+                Modifier
+                    .width(44.dp)
+                    .fillMaxHeight()
+                    .drawBehind {
+                        val x = size.width - 0.5f
+                        drawLine(
+                            color = c.ln,
+                            start = androidx.compose.ui.geometry.Offset(x, 0f),
+                            end = androidx.compose.ui.geometry.Offset(x, size.height),
+                            strokeWidth = 1f,
+                        )
+                    }
+                    .clickable(onClick = onToggleExplorer),
+contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(
+                    CcIcons.Chevron,
+                    c.mu,
+                    18.dp,
+                    // Spec 6.1: the chevron turns around while the drawer is open.
+                    Modifier.graphicsLayer { rotationZ = if (explorerOpen) 180f else 0f },
+                )
             }
-            itemsIndexed(tabs, key = { _, t -> "tab-${t.name}" }) { _, tab ->
-                val isActive = tab.name == active
-                Row(
-                    Modifier
-                        .widthIn(min = 150.dp)
-                        .height(47.dp)
-                        .background(if (isActive) c.editor else Color.Transparent)
-                        .border(1.dp, c.ln, RoundedCornerShape(0.dp))
-                        .clickable { onSelectTab(tab.name) }
-                        .padding(horizontal = 13.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (isActive) {
-                        Box(
-                            Modifier
-                                .fillMaxWidth(1f)
-                                .height(2.dp)
-                                .background(c.ac)
+            LazyRow(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                // Spec 6.1: 8 dp around the tabs, 8 dp between them.
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    start = 10.dp,
+                    end = 10.dp,
+                    top = 8.dp,
+                    bottom = 8.dp,
+                ),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                itemsIndexed(tabs, key = { _, t -> "tab-${t.name}" }) { _, tab ->
+                    val isActive = tab.name == active
+                    // Spec 6.1: the unsaved dot shows only while the buffer differs from last saved.
+                    val buffer = bufferOf(tab.name)
+                    val saved = savedOf(tab.name)
+                    val dirty = buffer != null && saved != null && buffer != saved
+                    Row(
+                        Modifier
+                            .height(TAB_HEIGHT)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (isActive) c.panel2 else Color.Transparent)
+                            .clickable { onSelectTab(tab.name) }
+                            .padding(horizontal = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FileKindTile(tab.kind)
+                        Text(
+                            text = tab.name,
+                            color = if (isActive) c.tx else c.mu,
+                            fontSize = 14.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.widthIn(max = 150.dp),
                         )
+                        if (dirty) {
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(c.red),
+                            )
+                        }
+                        // Spec 6.1: the last remaining tab cannot be closed.
+                        if (tabs.size > 1) {
+                            Box(
+                                Modifier
+                                    .size(22.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { onCloseTab(tab.name) },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "×",
+                                    color = c.mu,
+                                    fontSize = 15.sp,
+                                    fontFamily = Sans,
+                                )
+                            }
+                        }
                     }
-                    Text(
-                        text = kindGlyph(tab.kind),
-                        color = kindColor(tab.kind, c),
-                        fontSize = 11.sp,
-                        fontFamily = Mono,
-                        modifier = Modifier.padding(end = 8.dp),
-                    )
-                    Text(
-                        text = tab.name,
-                        color = if (isActive) c.tx else c.mu,
-                        fontSize = 12.sp,
-                        fontFamily = Sans,
-                        maxLines = 1,
-                    )
-                    if (isActive) {
-                        Box(
-                            Modifier
-                                .padding(start = 8.dp)
-                                .size(6.dp)
-                                .background(c.ac, RoundedCornerShape(3.dp))
-                        )
-                    }
-                    Text(
-                        text = "×",
-                        color = c.mu,
-                        fontSize = 15.sp,
-                        fontFamily = Sans,
-                        modifier = Modifier
-                            .padding(start = 8.dp)
-                            .clickable { onCloseTab(tab.name) },
-                    )
                 }
             }
         }
 
-        Box(Modifier.weight(1f)) {
-            Row(Modifier.fillMaxSize()) {
-                Column(
+        Box(
+            Modifier
+                .weight(1f)
+                .onSizeChanged {
+                    viewportWidthPx = it.width.toFloat()
+                    viewportHeightPx = it.height.toFloat()
+                },
+        ) {
+            // One vertical scroll for the whole editor. The line numbers and the code are both
+            // children of this box, so they share a coordinate space and cannot drift apart.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(codeScroll)
+                    // Spec 6.3: the one top padding the editor has. The gutter is a sibling inside
+                    // this same container and adds nothing of its own, so a number, its dot and its
+                    // code line always share one top edge and one row height.
+                    .padding(top = EditorTopPadding, bottom = 40.dp),
+            ) {
+                Row(Modifier.horizontalScroll(codeHScroll)) {
+                    Box(
                         Modifier
-                            .width(52.dp)
-                            .background(c.editor)
-                            .verticalScroll(codeScroll)
-                            .padding(top = 17.dp, end = 12.dp),
-                        horizontalAlignment = Alignment.End,
+                            // The code area is at least as wide as the visible column, so a tap on
+                            // the empty space to the right of a short line still reaches the text
+                            // field and focuses the editor.
+                            .widthIn(min = with(androidx.compose.ui.platform.LocalDensity.current) { codeWidthPx.toDp() })
+                            // Spec 6.3: the code column starts one inset past the gutter divider,
+                            // and every overlay inside it reads x from that same origin.
+                            .padding(
+                                start = CodeColumnStart,
+                                end = CodeLeftInset,
+                            )
+                            // Two-finger pinch scales the editor; we only consume when a second
+                            // finger lands, so single-finger drags still reach the scrollers.
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    var distanceAtLastChange = 0f
+                                    var wasZooming = false
+                                    do {
+                                        val event = awaitPointerEvent()
+                                        val positions = event.changes.mapNotNull { it.position.takeIf { c -> it.pressed } }
+                                        if (positions.size >= 2) {
+                                            val distance = (positions[0] - positions[1]).getDistance()
+                                            if (wasZooming && distanceAtLastChange > 0f) {
+                                                val delta = distance / distanceAtLastChange
+                                                editorScale = (editorScale * delta).coerceIn(0.6f, 2.4f)
+                                            }
+                                            distanceAtLastChange = distance
+                                            wasZooming = true
+                                            event.changes.forEach { it.consume() }
+                                        } else {
+                                            distanceAtLastChange = 0f
+                                            wasZooming = false
+                                        }
+                                    } while (event.changes.any { it.pressed })
+                                }
+                            },
                     ) {
-                        codeLines.forEachIndexed { i, line ->
-                            val errored = isErrorLine(line)
-                            Text(
-                                text = "${i + 1}",
-                                color = if (errored) c.red else c.mu.copy(alpha = 0.55f),
-                                fontSize = 12.sp,
-                                lineHeight = 22.sp,
+                        Text(
+                            text = highlighted,
+                            color = c.tx,
+                            fontSize = codeFontSize,
+                            // Centring the glyphs in the fixed row is what lets the gutter number
+                            // share the row's baseline.
+                            style = androidx.compose.ui.text.TextStyle(
+                                lineHeight = codeLineHeightTextUnit,
+                                lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
+                                    alignment = androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center,
+                                    trim = androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
+                                ),
+                            ),
+                            fontFamily = Mono,
+                            softWrap = false,
+                            // The layout comes from *this* Text, the one whose glyphs the user
+                            // actually sees. Taking it from the transparent BasicTextField below
+                            // gave a different line advance, which is what made the gutter rows,
+                            // pills and bulb drift away from the code.
+                            onTextLayout = { codeLayout = it },
+                        )
+                        BasicTextField(
+                            value = fieldValue,
+                            onValueChange = { incoming ->
+                                // Spec 6.3: Enter carries the indentation over. The IME's own key
+                                // handling is left alone, so Enter still works with the popup open.
+                                val caret = incoming.selection.start.coerceIn(0, incoming.text.length)
+                                val indented = autoIndentAfterEnter(fieldValue.text, incoming.text, caret)
+                                commit(
+                                    if (indented == null) {
+                                        incoming
+                                    } else {
+                                        TextFieldValue(indented.first, TextRange(indented.second))
+                                    },
+                                )
+                            },
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                color = Color.Transparent,
+                                fontSize = codeFontSize,
+                                // Same row metrics as the Text above, so the caret lands on the same
+                                // row the glyphs are drawn on.
+                                lineHeight = codeLineHeightTextUnit,
+                                lineHeightStyle = androidx.compose.ui.text.style.LineHeightStyle(
+                                    alignment = androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center,
+                                    trim = androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
+                                ),
                                 fontFamily = Mono,
-                                fontWeight = if (errored) FontWeight.Bold else FontWeight.Normal,
+                            ),
+                            cursorBrush = SolidColor(c.ac),
+                            // ImeAction.Default with no KeyboardActions, so Enter always inserts a
+                            // newline even while the suggestion popup is open. Only Tab or tapping
+                            // a row accepts a suggestion.
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                // The tool row only earns its 46 dp while this field has the
+                                // focus, which is exactly when it is useful.
+                                .onFocusChanged { onFocusChange(it.isFocused) }
+                                // Spec 4.1: the palette advertises Ctrl S, and the reference binds
+                                // the hardware keys for save, undo and redo. Enter is owned here
+                                // too, ahead of the IME, so one press can never produce two rows.
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    when {
+                                        event.isCtrlPressed && event.key == Key.S -> {
+                                            onSaveRequest()
+                                            true
+                                        }
+
+                                        event.isCtrlPressed && event.key == Key.Z -> {
+                                            if (event.isShiftPressed) redoOnce() else undoOnce()
+                                            true
+                                        }
+
+                                        event.key == Key.Enter || event.key == Key.NumPadEnter -> {
+                                            // Spec 6.3: one press, one row down. Own the newline so
+                                            // the IME cannot hand back two of them for one key.
+                                            val current = fieldValue
+                                            val (next, caret) = enterEdit(
+                                                current.text,
+                                                minOf(current.selection.start, current.selection.end),
+                                                maxOf(current.selection.start, current.selection.end),
+                                            )
+                                            commit(TextFieldValue(next, TextRange(caret)))
+                                            true
+                                        }
+
+                                        event.key == Key.Tab -> {
+                                            onToolAction(ToolAction.TAB)
+                                            true
+                                        }
+
+                                        else -> false
+                                    }
+                                },
+                        )
+                        if (problems.byLine.isNotEmpty()) {
+                            // Wavy lines under the exact bad characters. Drawn before the labels
+                            // so the labels stay readable on top of them.
+                            SquiggleLayer(
+                                problems = problems,
+                                layout = codeLayout,
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .fillMaxSize(),
+                            )
+                            InlineProblemLayer(
+                                problems = problems,
+                                lineHeightPx = lineHeightPx,
+                                viewportWidthPx = pillViewportWidthPx,
+                                // Spec 6.5: two characters past the end of the line's text, both
+                                // measured off the rendered layout. The line's own newline has no
+                                // width, so the anchor is its right edge, never the character.
+                                gapPx = 2f * (charWidthPx(codeLayout, code) ?: 0f),
+                                anchorX = { line -> endOfLineX(codeLayout, code, line) },
+                                yOfLine = { line -> lineTopPx(codeLayout, code, line) },
+                                // Spec 7: a pill is one of the four ways into the Problems sheet.
+                                onTap = { diagnostic ->
+                                    commit(
+                                        TextFieldValue(
+                                            code,
+                                            TextRange(offsetOfLineColumn(code, diagnostic.line, diagnostic.column)),
+                                        ),
+                                    )
+                                    openProblemSheet(diagnostic.line)
+                                },
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .fillMaxWidth(),
                             )
                         }
-                    }
-
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .verticalScroll(codeScroll)
-                        .padding(start = 8.dp, end = 22.dp, top = 17.dp, bottom = 40.dp)
-                ) {
-                    Row(Modifier.horizontalScroll(codeScroll)) {
-                        Box {
-                            Text(
-                                text = highlightCode(code, c),
-                                color = c.tx,
-                                fontSize = 13.sp,
-                                lineHeight = 22.sp,
-                                fontFamily = Mono,
-                                softWrap = false,
-                            )
-                            BasicTextField(
-                                value = code,
-                                onValueChange = { code = it },
-                                textStyle = androidx.compose.ui.text.TextStyle(
-                                    color = Color.Transparent,
-                                    fontSize = 13.sp,
-                                    lineHeight = 22.sp,
-                                    fontFamily = Mono,
+                        // Spec 6.6: shown only when the caret line has a problem and the autocomplete popup is closed.
+                        if (problems.on(caretLine).isNotEmpty() && visibleSuggestions.isEmpty()) {
+                            val bulbDensity = androidx.compose.ui.platform.LocalDensity.current
+                            val bulbHeightPx = with(bulbDensity) { 33.dp.toPx() }
+                            // Spec 6.6: the bulb hangs off the line above, anchored on the caret
+                            // line's real top from the layout.
+                            val caretTopContent = lineTopPx(codeLayout, code, caretLine)
+                                ?: pillTopPx(caretLine, lineHeightPx)
+                            LineBulb(
+                                top = bulbTopPx(
+                                    caretLineTopPx = caretTopContent,
+                                    lineHeightPx = lineHeightPx,
+                                    bulbHeightPx = bulbHeightPx,
+                                    minTopPx = with(bulbDensity) { 2.dp.toPx() },
                                 ),
-                                cursorBrush = SolidColor(c.ac),
-                                modifier = Modifier.fillMaxSize(),
+                                // Spec 6.6: 3 dp from the left of the code column, which is where the
+                                // prototype hangs it, so it clears the gutter rule and the text.
+                                anchorX = with(bulbDensity) { 3.dp.toPx() },
+                                lineHeightPx = lineHeightPx,
+                                onTap = { openQuickFix(caretLine) },
                             )
                         }
                     }
                 }
+
+                // Drawn last with an opaque background: code scrolled sideways passes underneath.
+                LineNumberLayer(
+                    lineCount = gutterRowCount(codeLines),
+                    lineHeightPx = lineHeightPx,
+                    problems = problems,
+                    caretLine = caretLine,
+                    // Rows come from the layout that drew the glyphs, not from a second row model.
+                    layout = codeLayout,
+                    // Spec 6.3: the first import line gets the fold affordance.
+                    foldLine = firstImportLine,
+                    onFoldTap = { onToast("Code folding is not available yet") },
+                    modifier = Modifier.align(Alignment.TopStart),
+                )
             }
 
+            val menuDensity = androidx.compose.ui.platform.LocalDensity.current
+            val menuGapPx = with(menuDensity) { 6.dp.toPx() }
+            val menuOffsetX = with(menuDensity) { CodeColumnStart.toPx() }
             androidx.compose.animation.AnimatedVisibility(
-                visible = visibleSuggestions.isNotEmpty(),
+                visible = quickFixLine != null && quickFixActions.isNotEmpty(),
                 enter = fadeIn(tween(120)),
                 exit = fadeOut(tween(120)),
                 modifier = Modifier
-                    .align(Alignment.CenterEnd)
-                    .padding(end = 18.dp, bottom = 40.dp),
+                    .align(Alignment.TopStart)
+                    .offset {
+                        val line = quickFixLine ?: 1
+                        // The card lives in the viewport, the layout in the scrolled content, so the
+                        // scroll offset has to come off before the card can sit on its line.
+                        val contentTop = lineTopPx(codeLayout, code, line)
+                            ?: pillTopPx(line, lineHeightPx)
+                        val top = topPaddingPx + contentTop - codeScroll.value
+                        androidx.compose.ui.unit.IntOffset(
+                            menuOffsetX.toInt(),
+                            (top + lineHeightPx + menuGapPx).toInt(),
+                        )
+                    }
+                    .padding(end = 12.dp),
             ) {
-                SuggestionPopup(
-                    suggestions = visibleSuggestions,
-                    selected = selectedSug,
-                    onSelect = { selectedSug = it },
-                    modifier = Modifier,
+                IdeActionCard(
+                    rows = quickFixActions.map { it.label to null },
+                    selected = quickFixIndex,
+                    onSelect = { index ->
+                        quickFixIndex = index
+                        quickFixActions.getOrNull(index)?.let { action ->
+                            applyQuickFix(action)?.let { (text, caret) ->
+                                commit(TextFieldValue(text, TextRange(caret.coerceIn(0, text.length))))
+                                quickFixLine = null
+                                problemSheetLine.value = null
+                            }
+                        }
+                    },
                 )
             }
+
+            androidx.compose.animation.AnimatedVisibility(
+                visible = problemSheetLine.value != null,
+                enter = slideInVertically(tween(160)) { it } + fadeIn(tween(160)),
+                exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(160)),
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 8.dp),
+            ) {
+                ProblemSheet(
+                    // The Problems tab was removed, so the sheet is the full list for this file.
+                    problems = problems.all,
+                    fileLabel = active,
+                    onSelect = { diagnostic ->
+                        val offset = offsetOfLineColumn(code, diagnostic.line, diagnostic.column)
+                        commit(TextFieldValue(code, TextRange(offset)))
+                        problemSheetLine.value = null
+                    },
+                    onDismiss = { problemSheetLine.value = null },
+                )
+            }
+
+            // Anchored on the rendered caret line, never on an assumed row height. The popup sits on the row
+            // below the line being typed so that line stays readable while typing, and flips above it
+            // when the keyboard leaves no room below. It never overlaps the caret line or its pill.
+            val popupDensity = androidx.compose.ui.platform.LocalDensity.current
+            val popupGapPx = with(popupDensity) { POPUP_GAP.toPx() }
+            val popupRowHeightPx = with(popupDensity) { POPUP_ROW_HEIGHT.toPx() }
+            val popupRows = visibleSuggestions.take(MAX_VISIBLE_SUGGESTIONS).size.coerceAtLeast(1)
+            val popupEdgePx = with(popupDensity) { POPUP_EDGE_INSET.toPx() }
+            val popupWidthPx = popupWidthPx(
+                maxWidthPx = with(popupDensity) { POPUP_MAX_WIDTH.toPx() },
+                viewportWidthPx = viewportWidthPx,
+                gutterWidthPx = gutterWidthPx,
+                insetPx = popupEdgePx,
+            ).coerceAtLeast(with(popupDensity) { 120.dp.toPx() })
+            // The border is 1.5 dp on each side, so a row count alone understates the real height.
+            val popupHeightPx = popupRowHeightPx * popupRows + with(popupDensity) { 3.dp.toPx() }
+            val caretTopContent = lineTopPx(codeLayout, code, caretLine)
+                ?: pillTopPx(caretLine, lineHeightPx)
+            val caretTopViewport = topPaddingPx + caretTopContent - codeScroll.value
+            // Spec 6.7: the popup hides when the caret line scrolls out of view, so it never floats
+            // over unrelated code, and comes back when the line is on screen again.
+            val caretRowVisible = caretTopViewport + lineHeightPx > 0f &&
+                caretTopViewport < viewportHeightPx
+            val popupTop = popupTopPx(
+                caretTopPx = caretTopViewport,
+                lineHeightPx = lineHeightPx,
+                gapPx = popupGapPx,
+                popupHeightPx = popupHeightPx,
+                viewportHeightPx = viewportHeightPx,
+                edgePx = popupGapPx,
+            )
+            val popupLeft = popupLeftPx(
+                wordX = xForOffset(codeLayout, wordStartOffset(code, cursor.coerceIn(0, code.length))) ?: 0f,
+                columnStartPx = with(popupDensity) { CodeColumnStart.toPx() },
+                hScrollPx = codeHScroll.value,
+                popupWidthPx = popupWidthPx,
+                codeWidthPx = codeWidthPx,
+                insetPx = popupEdgePx,
+            )
+            androidx.compose.animation.AnimatedVisibility(
+                visible = quickFixLine == null && visibleSuggestions.isNotEmpty() && caretRowVisible,
+                enter = fadeIn(tween(120)),
+                exit = fadeOut(tween(120)),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset {
+                        androidx.compose.ui.unit.IntOffset(popupLeft.toInt(), popupTop.toInt())
+                    },
+            ) {
+                SuggestionPopup(
+                    suggestions = visibleSuggestions.take(MAX_VISIBLE_SUGGESTIONS),
+                    selected = selectedSug.coerceIn(0, visibleSuggestions.lastIndex.coerceAtLeast(0)),
+                    onSelect = { selectedSug = it },
+                    onAccept = applySuggestion,
+                    // Spec 6.7: min(430 dp, editor width - 16 dp).
+                    modifier = Modifier.width(with(popupDensity) { popupWidthPx.toDp() }),
+                )
+            }
+
+            // A selection earns its own bar. It is placed with the same helpers the suggestion
+            // popup uses, so it anchors to the rendered row rather than an assumed row height and
+            // flips above the selection when the keyboard leaves no room below. It stands down
+            // while the suggestion popup or a quick fix owns the space — two floating panels
+            // over the same caret is two panels fighting.
+            val selectedRange = fieldValue.selection
+            val hasSelection = selectedRange.max > selectedRange.min
+            if (hasSelection) {
+                val selectedLine = caretPosition(code, selectedRange.min).first
+                val selectedTopContent =
+                    lineTopPx(codeLayout, code, selectedLine) ?: pillTopPx(selectedLine, lineHeightPx)
+                val selectedTopViewport = topPaddingPx + selectedTopContent - codeScroll.value
+                val selectionBarHeightPx =
+                    with(popupDensity) { SELECTION_BAR_HEIGHT.toPx() }
+                val selectionBarWidthPx =
+                    with(popupDensity) { SELECTION_BAR_WIDTH.toPx() }
+                val selectionBarTop = popupTopPx(
+                    caretTopPx = selectedTopViewport,
+                    lineHeightPx = lineHeightPx,
+                    gapPx = popupGapPx,
+                    popupHeightPx = selectionBarHeightPx,
+                    viewportHeightPx = viewportHeightPx,
+                    edgePx = popupEdgePx,
+                )
+                val selectionBarLeft = popupLeftPx(
+                    wordX = xForOffset(codeLayout, selectedRange.min) ?: 0f,
+                    columnStartPx = with(popupDensity) { CodeColumnStart.toPx() },
+                    hScrollPx = codeHScroll.value,
+                    popupWidthPx = selectionBarWidthPx,
+                    codeWidthPx = codeWidthPx,
+                    insetPx = popupEdgePx,
+                )
+                val selectionRowVisible = selectedTopViewport + lineHeightPx > 0f &&
+                    selectedTopViewport < viewportHeightPx
+                val selectedText = fieldValue.text.substring(selectedRange.min, selectedRange.max)
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = selectionRowVisible &&
+                        quickFixLine == null &&
+                        visibleSuggestions.isEmpty() &&
+                        problemSheetLine.value == null,
+                    enter = fadeIn(tween(120)),
+                    exit = fadeOut(tween(120)),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset {
+                            IntOffset(selectionBarLeft.toInt(), selectionBarTop.toInt())
+                        },
+                ) {
+                    SelectionBar(
+                        onPaste = {
+                            val pasted = clipboard.getText()?.text
+                            if (pasted.isNullOrEmpty()) {
+                                onToast("Clipboard is empty")
+                            } else {
+                                commit(
+                                    TextFieldValue(
+                                        text = fieldValue.text
+                                            .replaceRange(selectedRange.min, selectedRange.max, pasted),
+                                        selection = TextRange(selectedRange.min + pasted.length),
+                                    ),
+                                )
+                            }
+                        },
+                        onSelectAll = {
+                            commit(fieldValue.copy(selection = TextRange(0, fieldValue.text.length)))
+                        },
+                        onInfo = {
+                            val lines = selectedText.count { it == '\n' } + 1
+                            onToast("${selectedText.length} chars · $lines lines")
+                        },
+                        onCopy = {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(selectedText))
+                            onToast("Copied ${selectedText.length} chars")
+                        },
+                        onComment = {
+                            // Every line the selection touches, top to bottom, so a selection that
+                            // starts mid-line still comments the line the reader is on.
+                            val first = caretPosition(code, selectedRange.min).first
+                            val last = caretPosition(code, selectedRange.max).first
+                            val next = (first..last).fold(fieldValue.text) { acc, lineNo ->
+                                SourceEdits.toggleLineComment(acc, lineNo)
+                            }
+                            commit(TextFieldValue(next, fieldValue.selection))
+                        },
+                        onDuplicate = {
+                            val next = fieldValue.text.substring(0, selectedRange.max) +
+                                selectedText +
+                                fieldValue.text.substring(selectedRange.max)
+                            commit(
+                                TextFieldValue(
+                                    text = next,
+                                    selection = TextRange(selectedRange.min, selectedRange.max + selectedText.length),
+                                ),
+                            )
+                        },
+                    )
+                }
+            }
+
+            // The scrollbars are children of the same box that owns both scrollers, so they float
+            // over the code instead of costing it a column of width, and they line up with the
+            // axis they report on.
+            EditorScrollbar(codeHScroll, viewportWidthPx, horizontal = true)
+            EditorScrollbar(codeScroll, viewportHeightPx, horizontal = false)
+        }
+
+        // Spec 6.8's tool row, parked while the editor is idle. It still owns its 46 dp when shown,
+        // so the code area grows rather than slides.
+        val toolRowHeight by animateDpAsState(
+            targetValue = if (showToolRow) ToolRowHeight else 0.dp,
+            animationSpec = tween(160),
+            label = "tool-row-height",
+        )
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(toolRowHeight)
+                .clipToBounds(),
+        ) {
+            IdeToolRow(onAction = onToolAction)
         }
     }
 }
 
+
+private val SCROLLBAR_THICKNESS = 6.dp
+
+/** The floating bar a selection earns: wide enough for the two words plus the two glyphs. */
+private val SELECTION_BAR_WIDTH = 240.dp
+private val SELECTION_BAR_HEIGHT = 40.dp
+
+/**
+ * The four actions that reach for selected text: paste over it, stretch the selection to the whole
+ * buffer, read what was selected, and the rest behind a menu. The bar is a fixed size so its
+ * caller can clamp it into the viewport without measuring it, which is the same deal the
+ * suggestion popup makes.
+ */
+@Composable
+private fun SelectionBar(
+    onPaste: () -> Unit,
+    onSelectAll: () -> Unit,
+    onInfo: () -> Unit,
+    onCopy: () -> Unit,
+    onComment: () -> Unit,
+    onDuplicate: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalPageColors.current
+    var menuOpen by remember { mutableStateOf(false) }
+    Box(modifier) {
+        Row(
+            Modifier
+                .width(SELECTION_BAR_WIDTH)
+                .height(SELECTION_BAR_HEIGHT)
+                .clip(RoundedCornerShape(10.dp))
+                .background(c.panel)
+                .border(1.dp, c.ln, RoundedCornerShape(10.dp)),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SelectionBarLabel("Paste", Modifier.weight(1f), onPaste)
+            SelectionBarLabel("Select all", Modifier.weight(1f), onSelectAll)
+            SelectionBarGlyph("ⓘ", "Selection details", onInfo)
+            SelectionBarGlyph("⋯", "More actions") { menuOpen = true }
+        }
+        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+            DropdownMenuItem(text = { Text("Copy", fontFamily = Sans) }, onClick = {
+                menuOpen = false
+                onCopy()
+            })
+            DropdownMenuItem(text = { Text("Comment", fontFamily = Sans) }, onClick = {
+                menuOpen = false
+                onComment()
+            })
+            DropdownMenuItem(text = { Text("Duplicate", fontFamily = Sans) }, onClick = {
+                menuOpen = false
+                onDuplicate()
+            })
+        }
+    }
+}
+
+@Composable
+private fun RowScope.SelectionBarLabel(label: String, modifier: Modifier, onClick: () -> Unit) {
+    val c = LocalPageColors.current
+    Box(
+        modifier
+            .fillMaxHeight()
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = c.tx,
+            fontSize = 13.sp,
+            fontFamily = Sans,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 10.dp),
+        )
+    }
+}
+
+@Composable
+private fun RowScope.SelectionBarGlyph(glyph: String, label: String, onClick: () -> Unit) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .size(SELECTION_BAR_HEIGHT)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = glyph, color = c.mu, fontSize = 15.sp, fontFamily = Sans, maxLines = 1)
+    }
+}
+
+/**
+ * The thumb for one axis of the editor, drawn over the code rather than beside it so that
+ * scrolling never costs a column of width.
+ *
+ * A `ScrollState` never exposes the content size, only `maxValue`, so the geometry is derived from
+ * that: the content is viewport + hidden extent, the thumb is the viewport's share of it, and
+ * dragging the thumb by a slice of its travel moves the scroll by the same slice of `maxValue`.
+ * Nothing is drawn while the axis already fits, because a thumb that cannot move reads as a defect.
+ */
+@Composable
+private fun BoxScope.EditorScrollbar(
+    state: ScrollState,
+    viewportPx: Float,
+    horizontal: Boolean,
+) {
+    if (state.maxValue <= 0 || viewportPx <= 1f) return
+    val c = LocalPageColors.current
+    val density = LocalDensity.current
+    val contentPx = viewportPx + state.maxValue
+    val thumbPx = (viewportPx * viewportPx / contentPx).coerceAtLeast(1f)
+    val travelPx = (viewportPx - thumbPx).coerceAtLeast(0f)
+    val progress = state.value.toFloat() / state.maxValue
+    val thumbDp = with(density) { thumbPx.toDp() }
+    val track = if (horizontal) {
+        Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(SCROLLBAR_THICKNESS)
+    } else {
+        Modifier.align(Alignment.CenterEnd).width(SCROLLBAR_THICKNESS).fillMaxHeight()
+    }
+    Box(
+        track
+            .clip(RoundedCornerShape(SCROLLBAR_THICKNESS / 2))
+            .pointerInput(horizontal, viewportPx, state.maxValue) {
+                detectDragGestures { change, dragAmount ->
+                    change.consume()
+                    val dragged = if (horizontal) dragAmount.x else dragAmount.y
+                    state.dispatchRawDelta(dragged * contentPx / viewportPx)
+                }
+            },
+    ) {
+        Box(
+            Modifier
+                .then(
+                    if (horizontal) {
+                        Modifier.fillMaxHeight().width(thumbDp)
+                    } else {
+                        Modifier.fillMaxWidth().height(thumbDp)
+                    },
+                )
+                .offset {
+                    val along = (progress * travelPx).toInt()
+                    IntOffset(if (horizontal) along else 0, if (horizontal) 0 else along)
+                }
+                .background(c.tx.copy(alpha = 0.30f), RoundedCornerShape(SCROLLBAR_THICKNESS / 2)),
+        )
+    }
+}
 
 @Composable
 private fun SuggestionPopup(
     suggestions: List<com.closecode.ui.ide.model.Suggestion>,
     selected: Int,
     onSelect: (Int) -> Unit,
+    onAccept: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
 
     Column(
         modifier
-            .width(300.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(c.panel2)
-            .border(1.dp, c.ln, RoundedCornerShape(10.dp))
+            // Spec 6.7: width min(430, editor width - 16), radius 16, 1.5 dp border. The caller
+            // supplies the clamped width, so this only guarantees the corner radius.
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.panel)
+            .border(1.5.dp, c.ln, RoundedCornerShape(16.dp))
     ) {
         suggestions.forEachIndexed { index, item ->
             val isSel = index == selected
-            Row(
+            val secondary = item.subtitle?.takeIf { it.isNotBlank() } ?: item.detail
+            Column(
                 Modifier
                     .fillMaxWidth()
-                    .height(32.dp)
-                    .background(if (isSel) c.selection else Color.Transparent)
-                    .clickable { onSelect(index) }
-                    .padding(horizontal = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    // Spec 6.7: every row is 53 dp so the package line under the name is never
+                    // squeezed against the row below it.
+                    .height(POPUP_ROW_HEIGHT)
+                    .drawBehind {
+                        if (index != suggestions.lastIndex) {
+                            val y = size.height - 0.5f
+                            drawLine(
+                                color = c.ln.copy(alpha = 0.45f),
+                                start = androidx.compose.ui.geometry.Offset(0f, y),
+                                end = androidx.compose.ui.geometry.Offset(size.width, y),
+                                strokeWidth = 1f,
+                            )
+                        }
+                    }
+                    // Spec 6.7: the selected row is purple with white text.
+                    .background(if (isSel) c.purple else Color.Transparent)
+                    .clickable {
+                        onSelect(index)
+                        onAccept(index)
+                    }
+                    .padding(horizontal = 12.dp),
+                verticalArrangement = Arrangement.Center,
             ) {
-                Box(
-                    Modifier
-                        .size(18.dp)
-                        .background(c.panel3, RoundedCornerShape(5.dp)),
-                    contentAlignment = Alignment.Center,
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(30.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSel) c.autoIconBgSelected else c.autoIconBg),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = item.glyph.ifBlank { "C" }.take(2),
+                            color = if (isSel) Color.White else c.autoIconTx,
+                            fontSize = 13.sp,
+                            fontFamily = Mono,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                    }
                     Text(
-                        text = item.glyph,
-                        color = c.fn,
-                        fontSize = 10.sp,
+                        text = item.name,
+                        color = if (isSel) Color.White else c.tx,
+                        fontSize = 14.sp,
                         fontFamily = Mono,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(start = 12.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
-                Text(
-                    text = item.name,
-                    color = c.tx,
-                    fontSize = 12.sp,
-                    fontFamily = Mono,
-                    modifier = Modifier.padding(start = 9.dp),
-                )
-                Text(
-                    text = item.detail,
-                    color = c.mu,
-                    fontSize = 12.sp,
-                    fontFamily = Mono,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                )
+                if (!secondary.isNullOrBlank()) {
+                    // Spec 6.7: the package sits under the name, at 75% white on the selected row.
+                    Text(
+                        text = secondary,
+                        color = if (isSel) Color.White.copy(alpha = 0.75f) else c.mu,
+                        fontSize = 12.sp,
+                        fontFamily = Mono,
+                        modifier = Modifier.padding(start = 42.dp, top = 1.dp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
 }
 
-@Composable
-private fun IdeStatusBar(
-    language: String,
-    statusText: String,
-    projectName: String,
-) {
-    val c = LocalPageColors.current
+/** "1 error" and "0 errors", so a count never reads "1 errors". */
+internal fun pluralProblems(count: Int, noun: String): String =
+    if (count == 1) "1 $noun" else "$count ${noun}s"
 
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(27.dp)
-            .background(c.panel)
-            .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(15.dp),
-    ) {
-        Text(
-            text = statusText,
-            color = if (statusText.contains("Building")) c.ac else c.string,
-            fontSize = 10.sp,
-            fontFamily = Mono,
-            maxLines = 1,
-            softWrap = false,
-        )
-        Text(
-            text = "Ln 1, Col 1",
-            color = c.mu,
-            fontSize = 10.sp,
-            fontFamily = Mono,
-            maxLines = 1,
-            softWrap = false,
-        )
-        Text(
-            text = language,
-            color = c.mu,
-            fontSize = 10.sp,
-            fontFamily = Mono,
-            maxLines = 1,
-            softWrap = false,
-        )
-        Box(Modifier.weight(1f))
-        Text(
-            text = "UTF-8",
-            color = c.mu,
-            fontSize = 10.sp,
-            fontFamily = Mono,
-            maxLines = 1,
-            softWrap = false,
-        )
-        Text(
-            text = "Spaces: 4",
-            color = c.mu,
-            fontSize = 10.sp,
-            fontFamily = Mono,
-            maxLines = 1,
-            softWrap = false,
-        )
-        Text(
-            text = projectName,
-            color = c.mu,
-            fontSize = 10.sp,
-            fontFamily = Mono,
-            maxLines = 1,
-            softWrap = false,
-        )
-    }
-}
-
+/**
+ * The bottom bar. Three equal doors: Search and More open a sheet and hand the screen straight
+ * back, while AI is the only one that takes the pane — and even it leaves the editor one tap away.
+ * The counts that used to sit in the status bar live on the editor's badge, because the status bar
+ * is gone and a badge on the bar would be a fourth thing to look at.
+ */
 @Composable
 private fun IdeNav(active: String, onSelect: (String) -> Unit) {
     val c = LocalPageColors.current
@@ -843,94 +2706,32 @@ private fun IdeNav(active: String, onSelect: (String) -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .height(48.dp)
             .background(c.panel)
+            // Spec 4.2: a 1 dp top border, no pill or indicator behind the active item.
             .border(1.dp, c.ln, RoundedCornerShape(0.dp)),
-        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IdePanels.forEach { panel ->
-            val isActive = panel == active
+        IdeNavItems.forEach { item ->
+            val isActive = item == active
             Box(
                 Modifier
-                    .padding(horizontal = 3.dp)
-                    .height(36.dp)
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(if (isActive) c.panel3 else Color.Transparent)
-                    .clickable { onSelect(panel) }
-                    .padding(horizontal = 14.dp),
+                    // Three equal-width items. The height comes from the 9 dp vertical padding
+                    // and the label, not a fixed bar height.
+                    .weight(1f)
+                    .clickable { onSelect(item) }
+                    .padding(vertical = 9.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = panel,
-                    color = if (isActive) c.tx else c.mu,
+                    text = item,
+                    color = if (isActive) c.ac else c.mu,
                     fontSize = 12.sp,
                     fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun IdeSearchPanel(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClose: () -> Unit,
-) {
-    val c = LocalPageColors.current
-
-    Column(
-        Modifier
-            .padding(top = 67.dp, end = 14.dp)
-            .width(300.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(c.panel2)
-            .border(1.dp, c.ln, RoundedCornerShape(12.dp))
-            .padding(10.dp)
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(38.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(c.editor)
-                .border(1.dp, c.ln, RoundedCornerShape(8.dp))
-                .padding(horizontal = 10.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            if (query.isEmpty()) {
-                Text(
-                    text = "Search files and symbols…",
-                    color = c.mu,
-                    fontSize = 12.sp,
-                    fontFamily = Mono,
-                )
-            }
-            BasicTextField(
-                value = query,
-                onValueChange = onQueryChange,
-                singleLine = true,
-                textStyle = LocalTextStyle.current.copy(
-                    color = c.tx,
-                    fontSize = 12.sp,
-                    fontFamily = Mono,
-                ),
-                cursorBrush = SolidColor(c.ac),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        Text(
-            text = "⌘ K command palette · Esc close",
-            color = c.mu,
-            fontSize = 11.sp,
-            fontFamily = Mono,
-            modifier = Modifier
-                .padding(start = 2.dp, top = 8.dp, bottom = 2.dp)
-                .clickable(onClick = onClose),
-        )
     }
 }
 
@@ -940,14 +2741,113 @@ private fun IdeToast(text: String) {
 
     Text(
         text = text,
-        color = c.tx,
+        color = c.panel,
         fontSize = 12.sp,
         fontFamily = Sans,
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(c.panel3)
-            .border(1.dp, c.ln, RoundedCornerShape(10.dp))
-            .padding(horizontal = 15.dp, vertical = 10.dp),
+            .background(c.tx)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
     )
 }
 
+
+private const val MAX_ANALYZED_CHARS = 200_000
+
+/** Files larger than this are skipped by find-in-project; their content would swamp the sheet. */
+private const val MAX_SEARCH_FILE_CHARS = 200_000
+private const val ANALYSIS_DEBOUNCE_MS = 120L
+
+/** Project-wide totals run over every Kotlin file, so they wait longer and stop at a file cap. */
+private const val PROJECT_ANALYSIS_DEBOUNCE_MS = 400L
+private const val PROJECT_ANALYSIS_MAX_FILES = 60
+
+/** Spec 6.7: the popup shows at most five rows. */
+internal const val MAX_VISIBLE_SUGGESTIONS = 5
+
+/** Exposed for the geometry tests. */
+internal const val MAX_VISIBLE_SUGGESTIONS_FOR_TEST = MAX_VISIBLE_SUGGESTIONS
+
+/** Spec 6.7 popup metrics. */
+private val POPUP_ROW_HEIGHT = 53.dp
+private val POPUP_MAX_WIDTH = 430.dp
+private val POPUP_EDGE_INSET = 6.dp
+
+/** Spec 6.7: the gap between the caret line and the popup, whichever side it opens on. */
+private val POPUP_GAP = 6.dp
+
+/**
+ * Every item the header shows, in order. This list is the whole contract: the header composes from
+ * it and the unit test pins it, so a button cannot be added to or removed from the row without the
+ * test noticing. The file drawer is deliberately absent, because it opens from the chevron at the
+ * left of the tab strip and a second entry point duplicated it.
+ */
+enum class HeaderItem {
+    LOGO,
+    PROJECT_NAME,
+    SAVE,
+    UNDO,
+    REDO,
+    SEARCH,
+    RUN,
+    OVERFLOW,
+}
+
+internal val HeaderItems: List<HeaderItem> = listOf(
+    HeaderItem.LOGO,
+    HeaderItem.PROJECT_NAME,
+    HeaderItem.SAVE,
+    HeaderItem.UNDO,
+    HeaderItem.REDO,
+    HeaderItem.SEARCH,
+    HeaderItem.RUN,
+    HeaderItem.OVERFLOW,
+)
+
+/** Spec 4.1: how many edits Undo can step back through before the oldest one is dropped. */
+private const val UNDO_HISTORY_LIMIT = 100
+
+/**
+ * Height of the file tab strip. It has to be stated rather than wrapped around the tabs, because
+ * the explorer cell stretches to the full strip height and a Row in a Column would otherwise hand
+ * it every pixel the editor had left.
+ */
+internal val TAB_STRIP_HEIGHT = 50.dp
+
+/** Spec 6.1: the tab pill's own height inside the strip. */
+internal val TAB_HEIGHT = 34.dp
+
+/** Exposed for the geometry tests: the spec's 53 dp row, not the 46 dp that clipped the package. */
+internal val POPUP_ROW_HEIGHT_FOR_TEST = POPUP_ROW_HEIGHT
+
+private fun caretPosition(code: String, cursor: Int): Pair<Int, Int> {
+    val safe = cursor.coerceIn(0, code.length)
+    var line = 1
+    var lineStart = 0
+    for (i in 0 until safe) {
+        if (code[i] == '\n') {
+            line++
+            lineStart = i + 1
+        }
+    }
+    return line to (safe - lineStart + 1)
+}
+
+private fun CompletionItem.toSuggestion() = com.closecode.ui.ide.model.Suggestion(
+    glyph = when (kind) {
+        CompletionKind.CLASS -> "C"
+        CompletionKind.MEMBER -> "M"
+        CompletionKind.FUNCTION -> "ƒ"
+        CompletionKind.PROPERTY -> "P"
+        CompletionKind.PARAMETER -> "p"
+        CompletionKind.LOCAL -> "L"
+        CompletionKind.KEYWORD -> "K"
+        CompletionKind.ENUM_ENTRY -> "E"
+        CompletionKind.STDLIB_CLASS -> "C"
+        CompletionKind.STDLIB_FUNCTION -> "ƒ"
+        CompletionKind.STDLIB_MEMBER -> "M"
+    },
+    name = label,
+    detail = detail.orEmpty(),
+    subtitle = subtitle,
+)

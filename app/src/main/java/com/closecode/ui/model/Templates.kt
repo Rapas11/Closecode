@@ -28,7 +28,7 @@ data class ProjectFile(
     val path: String = name,
 )
 
-enum class FileKind { Folder, Kotlin, Xml, Gradle, Properties, Markdown, Json, Html, Css, Js, Csv }
+enum class FileKind { Folder, Kotlin, Xml, Gradle, Properties, Markdown, Json, Html, Css, Js, Csv, Unknown }
 
 val Templates: Map<TemplateTab, List<ProjectTemplate>> = mapOf(
     TemplateTab.Web to listOf(

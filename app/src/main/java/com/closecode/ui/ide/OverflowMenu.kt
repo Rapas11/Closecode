@@ -19,7 +19,15 @@ import androidx.compose.ui.unit.sp
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
 
-data class OverflowAction(val label: String, val glyph: String)
+/**
+ * One overflow row. [onClick] carries the row's own behaviour; when it is null the menu falls back
+ * to [OverflowMenu]'s `onPick`, which is how the older label-matched rows still work.
+ */
+data class OverflowAction(
+    val label: String,
+    val glyph: String,
+    val onClick: (() -> Unit)? = null,
+)
 
 @Composable
 fun OverflowMenu(
@@ -41,9 +49,10 @@ fun OverflowMenu(
             Modifier
                 .align(Alignment.TopEnd)
                 .padding(top = 66.dp, end = 8.dp)
-                .width(190.dp)
+                // Spec 4.1: min width 210, radius 12, a 1 dp border and a panel fill.
+                .width(210.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(c.panel2)
+                .background(c.panel)
                 .border(1.dp, c.ln, RoundedCornerShape(12.dp))
         ) {
             actions.forEach { action ->
@@ -54,7 +63,7 @@ fun OverflowMenu(
                     fontFamily = Sans,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onPick(action) }
+                        .clickable { action.onClick?.invoke() ?: onPick(action) }
                         .padding(horizontal = 14.dp, vertical = 11.dp),
                 )
             }

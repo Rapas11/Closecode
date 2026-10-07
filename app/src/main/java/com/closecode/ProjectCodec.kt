@@ -40,6 +40,14 @@ object ProjectCodec {
         val parts = raw.split(FIELD)
         if (parts.size != 6) return null
         return runCatching {
+            // A project id is one directory name under the projects root, not a path. The record is
+            // a saved string, so it is re-checked here: a stale or hand-edited one must fall back to
+            // the start screen rather than let `projectDir` aim a project root outside its folder.
+            val slug = unesc(parts[5])
+            require(
+                slug.isNotBlank() && slug != "." && slug != ".." &&
+                    '/' !in slug && '\\' !in slug && slug.none { it.isISOControl() },
+            ) { "Illegal project id." }
             Project(
                 name = unesc(parts[0]),
                 selection = SelectedTemplate(
@@ -48,7 +56,7 @@ object ProjectCodec {
                 ),
                 templateName = unesc(parts[3]),
                 config = ProjectConfig.decode(unesc(parts[4])),
-                slug = unesc(parts[5]),
+                slug = slug,
             )
         }.getOrNull()
     }

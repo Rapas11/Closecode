@@ -2,6 +2,7 @@ package com.closecode
 
 import android.content.Context
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -12,6 +13,8 @@ import com.closecode.ui.model.RecentProject
 import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.project.ProjectRecord
 import com.closecode.ui.project.ProjectRepository
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 @Composable
 fun rememberProjectRepository(): ProjectRepository {
@@ -38,12 +41,11 @@ class RecentListState(
         projects = repository.listProjects().map { it.toRecent() }
     }
 
-    /** Reads disk only when the list is first built, not on every recomposition. */
-    fun refreshOnce() {
-        if (!loaded) {
-            loaded = true
-            refresh()
-        }
+    /** Reads disk only when the list is first built, and never from the composition path. */
+    suspend fun refreshOnce() {
+        if (loaded) return
+        loaded = true
+        projects = withContext(Dispatchers.IO) { repository.listProjects().map { it.toRecent() } }
     }
 
     fun delete(slug: String) {
@@ -65,7 +67,7 @@ fun RecentProjectsRoute(
     onBack: () -> Unit,
 ) {
     val state = remember(repository) { RecentListState(repository) }
-    state.refreshOnce()
+    LaunchedEffect(state) { state.refreshOnce() }
 
     RecentProjectsScreen(
         projects = state.projects,

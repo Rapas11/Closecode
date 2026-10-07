@@ -100,10 +100,22 @@ class ProjectRepository(context: Context) {
         return updated
     }
 
+    fun projectDir(slug: String): java.io.File = store.projectDir(slug)
+
     fun readFile(slug: String, relative: String): String = store.readText(slug, relative)
+
+    /** Raw bytes, used by Preview to decode images. Must be called off the main thread. */
+    fun readFileBytes(slug: String, relative: String): ByteArray = store.readBytes(slug, relative)
 
     fun writeFile(slug: String, relative: String, content: String) =
         store.writeText(slug, relative, content)
+
+    fun createFile(slug: String, relative: String, content: String) =
+        store.createFile(slug, relative, content)
+
+    fun createFolder(slug: String, relative: String) = store.createFolder(slug, relative)
+
+    fun deletePath(slug: String, relative: String) = store.deletePath(slug, relative)
 
     fun tree(slug: String): List<ProjectFile> = store.readTree(slug)
 

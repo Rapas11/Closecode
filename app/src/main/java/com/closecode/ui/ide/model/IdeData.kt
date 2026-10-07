@@ -10,6 +10,8 @@ data class Suggestion(
     val glyph: String,
     val name: String,
     val detail: String,
+    /** Package or fqn shown on a dimmer second line, when known. */
+    val subtitle: String? = null,
 )
 
 val KotlinSuggestions = listOf(
@@ -39,11 +41,13 @@ fun suggestionsFor(language: String): List<Suggestion> = when {
     else -> KotlinSuggestions
 }
 
+// Red is reserved for diagnostics only, so a red badge always means an actual error.
+// File-type badges identify the file, they never alarm.
 fun kindColor(kind: FileKind, c: PageColors): Color = when (kind) {
     FileKind.Folder -> c.ac
     FileKind.Kotlin -> c.keyword
     FileKind.Xml, FileKind.Html -> c.string
-    FileKind.Gradle, FileKind.Json, FileKind.Js, FileKind.Csv -> c.red
+    FileKind.Gradle, FileKind.Json, FileKind.Js, FileKind.Csv -> c.mu
     else -> c.mu
 }
 
@@ -58,9 +62,18 @@ fun kindGlyph(kind: FileKind): String = when (kind) {
     FileKind.Js -> "JS"
     FileKind.Csv -> "≣"
     FileKind.Markdown, FileKind.Properties -> "◇"
+    FileKind.Unknown -> ""
 }
 
-val IdePanels = listOf("Search", "Source Control", "AI", "Run", "Terminal")
+/**
+ * Bottom bar items, in order.
+ *
+ * The bar stopped being a place that swaps the editor's content: it is three doors. Search and More
+ * open sheets and close themselves, and only AI takes the main pane, so the code stays on screen
+ * unless the user sends it away. Everything that used to live here — Preview, Logcat, Build — is
+ * reached from the path bar or from More instead.
+ */
+val IdeNavItems = listOf("Search", "AI", "More")
 
 val AgentChips = listOf(
     "fix the null crashes",

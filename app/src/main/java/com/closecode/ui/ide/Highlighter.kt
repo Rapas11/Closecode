@@ -18,11 +18,6 @@ private val KeywordTokens = setOf(
     "finally", "throw", "with", "in", "is", "as", "typeof", "yield",
 )
 
-private val ErrorMarkers = listOf("!!", "TODO", "error(", "FIXME")
-
-fun isErrorLine(line: String): Boolean =
-    ErrorMarkers.any { line.contains(it) }
-
 fun highlightCode(text: String, c: PageColors): AnnotatedString =
     buildAnnotatedString {
         text.lines().forEachIndexed { index, raw ->
@@ -66,6 +61,15 @@ fun highlightCode(text: String, c: PageColors): AnnotatedString =
                             append(raw.substring(i, end))
                         }
                         i = end
+                    }
+
+                    ch == '@' -> {
+                        var j = i + 1
+                        while (j < n && (raw[j].isLetterOrDigit() || raw[j] == '_' || raw[j] == '.')) j++
+                        withStyle(SpanStyle(color = c.annotation)) {
+                            append(raw.substring(i, j))
+                        }
+                        i = j
                     }
 
                     ch.isLetter() || ch == '_' -> {

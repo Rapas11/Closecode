@@ -513,13 +513,21 @@ private fun markdown(c: PageColors): List<AnnotatedString> {
     )
 }
 
+/**
+ * Starter snippet for a language, or nothing when the language is not recognised. An unknown
+ * language must never fall back to a different language's template: an empty file with no
+ * recognised extension would otherwise be filled with the Kotlin starter.
+ */
 fun snippetFor(language: String, c: PageColors): List<AnnotatedString> = when {
+    // "Gradle Kotlin" contains "Kotlin", so the Gradle test has to come first or every
+    // build script would be given the plain Kotlin template.
     language.contains("Gradle", true) -> gradle(c)
+    language.contains("Kotlin", true) -> kotlin(c)
     language.contains("XML", true) -> xml(c)
     language.contains("HTML", true) -> html(c)
     language.contains("JavaScript", true) -> js(c)
     language.contains("CSS", true) -> css(c)
     language.contains("JSON", true) -> json(c)
     language.contains("Markdown", true) -> markdown(c)
-    else -> kotlin(c)
+    else -> emptyList()
 }

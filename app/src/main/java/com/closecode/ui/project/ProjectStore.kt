@@ -11,7 +11,7 @@ class ProjectStore(context: Context) {
 
     fun projectsDir(): File = projectsRoot
 
-    fun projectDir(slug: String): File = File(projectsRoot, slug)
+    fun projectDir(slug: String): File = File(projectsRoot, ProjectSafety.sanitizeSlug(slug))
 
     fun ensureRoot() {
         if (!projectsRoot.exists()) projectsRoot.mkdirs()
@@ -27,6 +27,18 @@ class ProjectStore(context: Context) {
         ProjectSafety.ensureWritable(file)
         if (!file.isFile) throw ProjectPathException("Not a file: $relative")
         return ProjectSafety.readTextOrThrow(file)
+    }
+
+    /**
+     * Reads a file as raw bytes, for Preview to decode images. Same path containment checks as
+     * [readText]; [ProjectSafety.ensureWritable] is deliberate so Preview cannot be used to read
+     * outside the project the user opened.
+     */
+    fun readBytes(slug: String, relative: String): ByteArray {
+        val file = ProjectSafety.resolveInProject(projectDir(slug), relative)
+        ProjectSafety.ensureWritable(file)
+        if (!file.isFile) throw ProjectPathException("Not a file: $relative")
+        return file.readBytes()
     }
 
     fun writeText(slug: String, relative: String, content: String) {
@@ -47,6 +59,19 @@ class ProjectStore(context: Context) {
         ProjectSafety.writeAtomic(file, content)
     }
 
+    /**
+     * Creates a directory and any missing parents. Separate from [createFile] because an empty
+     * string written through [ProjectSafety.writeAtomic] would leave a file where a folder belongs,
+     * and the drawer would then refuse to expand it.
+     */
+    fun createFolder(slug: String, relative: String) {
+        val dir = ProjectSafety.resolveInProject(projectDir(slug), relative)
+        ProjectSafety.ensureWritable(dir)
+        if (!dir.isDirectory && !dir.mkdirs()) {
+            throw ProjectPathException("Could not create $relative")
+        }
+    }
+
     fun readTree(slug: String): List<ProjectFile> {
         val root = projectDir(slug)
         if (!root.isDirectory) return emptyList()
@@ -61,7 +86,7 @@ class ProjectStore(context: Context) {
         ) ?: return
 
         for (child in children) {
-            if (ProjectSafety.isHiddenName(child.name)) continue
+            if (isHiddenEntry(child.name)) continue
             val relative = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
             if (child.isDirectory) {
                 into.add(
@@ -89,6 +114,14 @@ class ProjectStore(context: Context) {
         }
     }
 
+    /**
+     * Entries the drawer never shows. `.git` is an implementation detail of version control: the
+     * repository is manipulated through the GitHub tab, never by browsing inside it, and showing
+     * hundreds of objects under a folder named `.git` only invites the user to edit one.
+     */
+    private fun isHiddenEntry(name: String): Boolean =
+        ProjectSafety.isHiddenName(name) || name == ".git"
+
     private fun kindOf(name: String): FileKind = when {
         name.endsWith(".kt") || name.endsWith(".kts") -> FileKind.Kotlin
         name.endsWith(".xml") -> FileKind.Xml
@@ -98,7 +131,10 @@ class ProjectStore(context: Context) {
         name.endsWith(".json") -> FileKind.Json
         name.endsWith(".csv") -> FileKind.Csv
         name.endsWith(".md") -> FileKind.Markdown
-        else -> FileKind.Gradle
+        name.endsWith(".gradle") -> FileKind.Gradle
+        // Anything without a recognised extension gets no badge. Treating it as Gradle made
+        // files like .gitkeep render with a red "G".
+        else -> FileKind.Unknown
     }
 
     private fun languageOf(name: String): String = when {

@@ -168,7 +168,6 @@ val Sections = listOf(
             Group(
                 "Build Behavior",
                 listOf(
-                    Row.Toggle("Offline mode", null, false),
                     Row.Toggle("Build cache", null, true),
                     Row.Nav("SDK Manager", "Manage installed Android SDK packages.", "Open"),
                 ),
