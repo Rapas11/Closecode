@@ -93,6 +93,43 @@ class ProjectRepository(context: Context) {
         return store.deleteProject(slug)
     }
 
+    /**
+     * Clones a repository into a fresh project folder and registers the result, in that order.
+     *
+     * JGit refuses to clone into a non-empty directory, so the folder is claimed and left empty
+     * while [clone] fills it, and only then is the record written — which is what puts the project
+     * on the start screen. A failed clone removes the folder again, so a half-written repository
+     * never shows up as a project or gets cloned into on the next attempt.
+     */
+    fun importCloned(
+        name: String,
+        now: Long = System.currentTimeMillis(),
+        clone: (target: java.io.File) -> Unit,
+    ): ProjectRecord {
+        store.ensureRoot()
+        val slug = uniqueSlug(name)
+        val target = store.projectDir(slug)
+        target.mkdirs()
+        try {
+            clone(target)
+        } catch (failure: Throwable) {
+            target.deleteRecursively()
+            throw failure
+        }
+        val record = ProjectRecord(
+            slug = slug,
+            name = name,
+            tab = TemplateTab.Web,
+            templateIndex = 0,
+            templateName = "",
+            config = ProjectConfig(),
+            createdAt = now,
+            lastOpened = now,
+        )
+        store.createFile(slug, ProjectStore.METADATA, record.toJson())
+        return record
+    }
+
     fun touch(slug: String, now: Long = System.currentTimeMillis()): ProjectRecord? {
         val record = find(slug) ?: return null
         val updated = record.copy(lastOpened = now)
@@ -130,7 +167,9 @@ class ProjectRepository(context: Context) {
         val base = slugify(name)
         var candidate = base
         var counter = 2
-        while (store.exists(candidate)) {
+        // Checks the folder as well as the record: a clone that fails leaves a directory behind
+        // with no `.closecode.json` in it, and the next project must not be created inside it.
+        while (store.exists(candidate) || store.projectDir(candidate).exists()) {
             candidate = "$base-$counter"
             counter++
         }

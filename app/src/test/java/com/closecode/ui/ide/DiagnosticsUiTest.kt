@@ -1,6 +1,7 @@
 package com.closecode.ui.ide
 import com.closecode.lang.DiagnosticCodes
 
+import androidx.compose.ui.unit.IntOffset
 import com.closecode.lang.AndroidApiIndex
 import com.closecode.lang.KotlinAnalyzer
 import com.closecode.lang.Severity
@@ -87,6 +88,26 @@ class PillPlacementTest {
     fun aViewportNarrowerThanThePillDoesNotGoNegative() {
         assertEquals(0f, pillAnchorX(500f, 0f, 100f, 124f), 0.01f)
     }
+
+    @Test
+    fun thePillOffsetCarriesTheXAndNotJustTheTop() {
+        // Regression: the layer computed x from the line's real right edge and then handed the
+        // offset an IntOffset(0, top), painting every pill over the first characters of its own
+        // line. The offset is the only place that number reaches the screen.
+        assertEquals(IntOffset(100, 19), pillOffsetOf(100f, 19f))
+        assertEquals(IntOffset(0, -4), pillOffsetOf(0.4f, -4f))
+        assertEquals(IntOffset(641, 0), pillOffsetOf(640.6f, 0.1f))
+    }
+
+    @Test
+    fun thePillStaysInsideAHorizontallyScrolledWindow() {
+        // The layer scrolls with the text, so the right edge the pill must stay left of is
+        // hScroll + visible width, not the visible width alone.
+        val scrolledRight = 300f + 200f
+        val x = pillAnchorX(500f, 0f, scrolledRight, 124f)
+        assertTrue("pill must fit the scrolled window", x + 124f <= scrolledRight)
+        assertEquals(376f, x, 0.01f)
+    }
 }
 
 class LineNumberRowCountTest {
@@ -105,12 +126,34 @@ class LineNumberRowCountTest {
     }
 
     @Test
-    fun theCaretCannotMakeNumbersAppearPastTheContent() {
-        // The bug this pins: numbering ran up to wherever the caret was, so walking down through
-        // blank rows produced numbered lines with nothing on them. There is no caret argument any
-        // more, and the caret is clamped to the last visible line instead.
+    fun blankRowsBelowTheCaretAreNotNumbered() {
+        // Numbering runs up to the caret, never past it. Walking down through blank rows used to
+        // produce numbered lines with nothing on them; the rows below where the user is must
+        // stay unnumbered whether or not a caret line is passed in.
         assertEquals(1, gutterRowCount(listOf("a", "", "", "")))
         assertEquals(2, gutterRowCount(listOf("a", "b", "", "", "", "")))
+        assertEquals(1, gutterRowCount(listOf("a", "", "", ""), caretLine = 1))
+        assertEquals(2, gutterRowCount(listOf("a", "", "", "", ""), caretLine = 2))
+        assertEquals(3, gutterRowCount(listOf("a", "", "", "", ""), caretLine = 3))
+    }
+
+    @Test
+    fun theCaretLineIsNumberedBeforeAnythingIsTypedOnIt() {
+        // Pressing Enter lands the caret on a blank row. Until that row gets its number the
+        // reader cannot tell it exists — which is exactly "the line number only shows up once
+        // I type on the line".
+        assertEquals(2, gutterRowCount(listOf("a", ""), caretLine = 2))
+        assertEquals(3, gutterRowCount(listOf("a", "", ""), caretLine = 3))
+        assertEquals(2, gutterRowCount(listOf("a", "b", ""), caretLine = 2))
+        // A caret on a row that already has code changes nothing.
+        assertEquals(3, gutterRowCount(listOf("a", "b", "c"), caretLine = 3))
+    }
+
+    @Test
+    fun aCaretPastTheBufferIsClampedToIt() {
+        assertEquals(3, gutterRowCount(listOf("a", "b", "c"), caretLine = 99))
+        assertEquals(1, gutterRowCount(emptyList(), caretLine = 5))
+        assertEquals(1, gutterRowCount(listOf(""), caretLine = 99))
     }
 
     @Test

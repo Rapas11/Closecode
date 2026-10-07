@@ -84,6 +84,22 @@ class GitService(private val root: File) {
         Git.init().setDirectory(root).setInitialBranch(initialBranch).call()
     }
 
+    /**
+     * Creates the app's `.gitignore` when the repository has none. Never overwrites a file the
+     * user wrote, and does nothing to a project that is not under version control.
+     *
+     * This is the one owner of that file — the GitHub panel calls it before every status read —
+     * because without it a repository lists `.closecode.json` (rewritten each time the project is
+     * opened) and every generated build file as a change the user never made.
+     */
+    fun ensureGitignore(): Boolean = runCatching {
+        if (!isVersioned()) return@runCatching false
+        val target = File(root, GITIGNORE)
+        if (target.exists()) return@runCatching false
+        target.writeText(DEFAULT_GITIGNORE)
+        true
+    }.getOrDefault(false)
+
     fun snapshot(): Result<GitSnapshot> = runCatching {
         open().use { git ->
             val repo = git.repository
@@ -156,6 +172,46 @@ class GitService(private val root: File) {
         }
     }
 
+    /**
+     * True when `refs/stash` exists, so the panel can offer to restore work it knows is there
+     * rather than showing a button that only ever answers "nothing stashed".
+     */
+    fun hasStash(): Boolean = runCatching {
+        if (!isVersioned()) return@runCatching false
+        open().use { it.repository.exactRef(Constants.R_STASH) != null }
+    }.getOrDefault(false)
+
+    /**
+     * Parks the tracked edits and the index and returns the working tree to HEAD, which is what
+     * `git stash` does — the CHANGES list empties instead of the button looking inert. Untracked
+     * files stay, matching git's own default.
+     */
+    fun stash(): Result<String> = runCatching {
+        open().use { git ->
+            require(git.repository.resolve(Constants.HEAD) != null) {
+                "Stash needs at least one commit to save your work against."
+            }
+            val created = git.stashCreate().call()
+                ?: throw IllegalArgumentException("There is nothing to stash.")
+            "Stashed your work as ${created.name.take(7)}."
+        }
+    }
+
+    /**
+     * Re-applies the newest stash and drops it only after the apply succeeded, so a conflict
+     * keeps the stash instead of quietly losing it.
+     */
+    fun stashPop(): Result<String> = runCatching {
+        open().use { git ->
+            require(git.repository.exactRef(Constants.R_STASH) != null) {
+                "There is no stash to restore."
+            }
+            git.stashApply().setRestoreIndex(true).call()
+            git.stashDrop().call()
+            "Restored your stashed changes."
+        }
+    }
+
     fun history(limit: Int = 50): Result<List<GitCommit>> = runCatching {
         open().use { git ->
             if (git.repository.resolve(Constants.HEAD) == null) return@runCatching emptyList()
@@ -204,6 +260,25 @@ class GitService(private val root: File) {
         const val DETACHED = "detached"
         const val DEFAULT_USER = "Closecode"
         const val DEFAULT_EMAIL = "closecode@localhost"
+        const val GITIGNORE = ".gitignore"
+
+        /** What a repository Closecode initializes gets, so generated files never look like edits. */
+        internal val DEFAULT_GITIGNORE = """
+            # Closecode's own project state. It changes every time the project is opened.
+            .closecode.json
+
+            # Machine-local settings and build output.
+            local.properties
+            .gradle/
+            build/
+            .idea/
+            *.iml
+            captures/
+            .externalNativeBuild/
+            .cxx/
+            *.apk
+            *.aab
+        """.trimIndent()
 
         /**
          * JGit's `Status` splits the index and the working tree into two disjoint halves:

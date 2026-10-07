@@ -39,6 +39,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.ui.github.GitHubClient
+import com.closecode.ui.github.GitHubException
 import com.closecode.ui.github.GitHubRemote
 import com.closecode.ui.github.GitHubUser
 import com.closecode.ui.github.GitHubRepo
@@ -78,6 +79,10 @@ private sealed interface GitUiState {
 fun IdeGitPanel(
     projectName: String,
     projectRoot: File?,
+    // Bumped by the editor whenever a file is written, created or deleted. CHANGES describes
+    // the working tree, so a snapshot taken when the project opened would otherwise go on
+    // showing files that have since been edited, reverted or removed.
+    revision: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -98,24 +103,33 @@ fun IdeGitPanel(
     val gitHubClient = remember { GitHubClient() }
     var githubToken by remember { mutableStateOf(tokenStore.read()) }
     var account by remember { mutableStateOf<GitHubUser?>(null) }
-    var remoteUrl by remember { mutableStateOf<String?>(null) }
-    var githubBusy by remember { mutableStateOf(false) }
-    var githubError by remember { mutableStateOf<String?>(null) }
-    var githubNote by remember { mutableStateOf<String?>(null) }
+    // Everything below describes one project. Keyed by it so an error, a note or a linked
+    // remote from the last project cannot travel into this one and look like its own.
+    var remoteUrl by remember(projectRoot) { mutableStateOf<String?>(null) }
+    var githubBusy by remember(projectRoot) { mutableStateOf(false) }
+    var githubError by remember(projectRoot) { mutableStateOf<String?>(null) }
+    var githubNote by remember(projectRoot) { mutableStateOf<String?>(null) }
     var signInOpen by remember { mutableStateOf(false) }
-    var showRepos by remember { mutableStateOf(false) }
-    var repos by remember { mutableStateOf<List<GitHubRepo>>(emptyList()) }
+    var showRepos by remember(projectRoot) { mutableStateOf(false) }
+    var repos by remember(projectRoot) { mutableStateOf<List<GitHubRepo>>(emptyList()) }
+    // Read straight from `refs/stash` rather than carried on GitSnapshot, so restoring a stash
+    // shows up after the reload that follows it without reshaping every snapshot test.
+    var hasStash by remember(projectRoot) { mutableStateOf(false) }
 
     suspend fun reload() {
         val service = git
         if (service == null) {
             state = GitUiState.NoProject
+            hasStash = false
             return
         }
         state = withContext(Dispatchers.IO) {
             if (!service.isVersioned()) {
                 GitUiState.NoRepository
             } else {
+                // Older projects were initialized before the app wrote a .gitignore, so their
+                // first status lists generated files the user never touched. Create it once.
+                service.ensureGitignore()
                 val snap = service.snapshot()
                 if (snap.isFailure) {
                     GitUiState.Failed(snap.exceptionOrNull()?.message ?: "Could not read the repository.")
@@ -125,6 +139,7 @@ fun IdeGitPanel(
                 }
             }
         }
+        hasStash = withContext(Dispatchers.IO) { service.hasStash() }
         remoteUrl = withContext(Dispatchers.IO) {
             projectRoot?.let { GitHubRemote(it).originUrl() }
         }
@@ -137,7 +152,8 @@ fun IdeGitPanel(
         error = null
         scope.launch {
             val outcome = withContext(Dispatchers.IO) { runCatching { service.block().getOrThrow() } }
-            error = outcome.exceptionOrNull()?.message ?: outcome.exceptionOrNull()?.toString()
+            error = outcome.exceptionOrNull()
+                ?.let { describeFailure(it, "That git action did not finish.") }
             reload()
             busy = false
         }
@@ -150,16 +166,21 @@ fun IdeGitPanel(
         githubNote = null
         scope.launch {
             val outcome = withContext(Dispatchers.IO) { runCatching { block().getOrThrow() } }
-            githubError = outcome.exceptionOrNull()?.message ?: outcome.exceptionOrNull()?.toString()
+            githubError = outcome.exceptionOrNull()
+                ?.let { describeFailure(it, "GitHub did not finish that.") }
             githubNote = outcome.getOrNull() as? String
             remoteUrl = withContext(Dispatchers.IO) {
                 projectRoot?.let { GitHubRemote(it).originUrl() }
             }
+            // A push or a pull changes what CHANGES and HISTORY should say. Without this the
+            // panel kept the snapshot it read when the project opened, so a successful push
+            // left the history looking untouched.
+            reload()
             githubBusy = false
         }
     }
 
-    LaunchedEffect(projectRoot) { reload() }
+    LaunchedEffect(projectRoot, revision) { reload() }
 
     LaunchedEffect(githubToken) {
         val token = githubToken
@@ -222,6 +243,7 @@ fun IdeGitPanel(
                 error?.let { ErrorLine(it) }
                 BranchBar(
                     snap = current.snap,
+                    remoteUrl = remoteUrl,
                     onNewBranch = { namingBranch = true },
                 )
 
@@ -265,6 +287,32 @@ fun IdeGitPanel(
                         onAction = { actOn { stage(current.snap.untracked.map { it.path }) } },
                         onRow = { change -> actOn { stage(listOf(change.path)) } },
                     )
+                }
+
+                // Stash sits with the changes it would clear, because that is where a reader
+                // looking at a dirty tree is already looking.
+                if (!current.snap.isClean || hasStash) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (!current.snap.isClean && current.snap.conflicts.isEmpty()) {
+                            PanelButton(
+                                label = "Stash",
+                                enabled = !busy,
+                                modifier = Modifier.weight(1f),
+                            ) { actOn { stash() } }
+                        }
+                        if (hasStash) {
+                            PanelButton(
+                                label = "Restore stash",
+                                enabled = !busy,
+                                modifier = Modifier.weight(1f),
+                            ) { actOn { stashPop() } }
+                        }
+                    }
                 }
 
                 CommitBox(
@@ -322,7 +370,17 @@ fun IdeGitPanel(
                             githubAct {
                                 val created = gitHubClient
                                     .createRepository(token, projectName, isPrivate = true)
-                                    .getOrThrow()
+                                    .getOrElse { failure ->
+                                        // 422 is GitHub saying the name is taken on this account —
+                                        // usually the same Publish pressed twice. Link what is
+                                        // already there instead of failing the second time.
+                                        val taken = (failure as? GitHubException)?.code == 422
+                                        if (!taken) throw failure
+                                        gitHubClient.repositories(token).getOrThrow()
+                                            .firstOrNull {
+                                                it.fullName.substringAfter('/') == projectName
+                                            } ?: throw failure
+                                    }
                                 GitHubRemote(root).link(created.cloneUrl).getOrThrow()
                                 GitHubRemote(root).push(token)
                             }
@@ -422,7 +480,7 @@ private fun ErrorLine(message: String) {
 }
 
 @Composable
-private fun BranchBar(snap: GitSnapshot, onNewBranch: () -> Unit) {
+private fun BranchBar(snap: GitSnapshot, remoteUrl: String?, onNewBranch: () -> Unit) {
     val c = LocalPageColors.current
     Row(
         Modifier
@@ -473,9 +531,11 @@ private fun BranchBar(snap: GitSnapshot, onNewBranch: () -> Unit) {
             }
         }
     }
+    // Reads the remote we actually know about: ahead 0 and behind 0 with a remote configured
+    // means the push landed, and saying "no remote yet" there was simply wrong.
     if (snap.hasCommits && snap.ahead == 0 && snap.behind == 0) {
         Text(
-            text = "Local only · no remote yet",
+            text = if (remoteUrl == null) "Local only · no remote yet" else "Up to date with origin",
             color = c.mu.copy(alpha = 0.75f),
             fontSize = 10.sp,
             fontFamily = Sans,
@@ -881,6 +941,15 @@ private fun GitHubSection(
                 )
             }
         } else {
+            if (!hasCommits) {
+                Text(
+                    text = "Commit something first — a repository with no history has nothing to push.",
+                    color = c.mu,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    lineHeight = 17.sp,
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PanelButton(
                     label = if (busy) "…" else "Pull",
@@ -888,9 +957,11 @@ private fun GitHubSection(
                     modifier = Modifier.weight(1f),
                     onClick = onPull,
                 )
+                // Push with an unborn HEAD is a guaranteed transport failure; say so up front
+                // rather than handing the user JGit's opaque wrapper.
                 PanelButton(
                     label = if (busy) "…" else "Push",
-                    enabled = !busy,
+                    enabled = !busy && hasCommits,
                     modifier = Modifier.weight(1f),
                     onClick = onPush,
                 )

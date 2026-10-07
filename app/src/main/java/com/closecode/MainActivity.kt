@@ -60,6 +60,9 @@ class MainActivity : ComponentActivity() {
                                 Project(record.name, selection, templateName, config)
                             )
                         },
+                        // A clone already owns its directory and its record, so it carries its own
+                        // slug rather than deriving one from the name.
+                        onProjectCloned = { record -> encoded = encodeRecord(record) },
                         onOpenRecent = { recentOpen = true },
                     )
 
@@ -94,10 +97,13 @@ class MainActivity : ComponentActivity() {
 
     private fun encodeRecord(record: ProjectRecord): String = ProjectCodec.encode(
         Project(
-            record.name,
-            SelectedTemplate(record.tab, record.templateIndex),
-            record.templateName,
-            record.config,
+            name = record.name,
+            selection = SelectedTemplate(record.tab, record.templateIndex),
+            templateName = record.templateName,
+            config = record.config,
+            // The record's own id, not one re-derived from the name: a cloned project's folder is
+            // named when the slug is reserved, and re-slugifying could point at a different one.
+            slug = record.slug,
         )
     )
 }

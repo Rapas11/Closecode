@@ -2,6 +2,7 @@ package com.closecode.ui.github
 
 import java.io.File
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.api.errors.RefNotAdvertisedException
 import org.eclipse.jgit.transport.CredentialItem
 import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.transport.RemoteRefUpdate
@@ -49,6 +50,11 @@ class GitHubRemote(private val root: File) {
     /** Sends the current branch to the remote. Returns a sentence describing what happened. */
     fun push(token: String): Result<String> = runCatching {
         Git.open(root).use { git ->
+            // repository.branch reports "main" even before the first commit, so an unborn HEAD
+            // used to sail past the guard below and come back as JGit's opaque transport error.
+            if (git.repository.resolve("HEAD") == null) {
+                throw GitHubException("There is nothing to push yet. Make a commit first.")
+            }
             val branch = git.repository.branch
                 ?: throw GitHubException("There is no branch to push yet. Make a commit first.")
             val result = git.push()
@@ -70,9 +76,16 @@ class GitHubRemote(private val root: File) {
     /** Brings the current branch up to date from the remote. */
     fun pull(token: String): Result<String> = runCatching {
         Git.open(root).use { git ->
-            val result = git.pull()
-                .setCredentialsProvider(tokenCredentials(token))
-                .call()
+            val result = try {
+                git.pull()
+                    .setCredentialsProvider(tokenCredentials(token))
+                    .call()
+            } catch (emptyRemote: RefNotAdvertisedException) {
+                // Publish creates the repository with no initial commit, so the first pull finds
+                // an empty remote. JGit's own sentence names a ref; the user needs to be told
+                // which button to press instead.
+                throw GitHubException("The remote repository is empty. Push this project first.")
+            }
             val failures = result.mergeResult?.let { merge ->
                 if (merge.mergeStatus.isSuccessful) {
                     if (merge.newHead == null) "Already up to date."
@@ -100,30 +113,39 @@ class GitHubRemote(private val root: File) {
         return if (updates.size == 1) "Pushed ${updates.first().remoteName}." else "Pushed ${updates.size} refs."
     }
 
-    private fun tokenCredentials(token: String): CredentialsProvider =
-        object : CredentialsProvider() {
-            override fun isInteractive(): Boolean = false
-
-            override fun supports(vararg items: CredentialItem): Boolean = items.all {
-                it is CredentialItem.Username || it is CredentialItem.Password
-            }
-
-            override fun get(uri: URIish?, vararg items: CredentialItem): Boolean {
-                for (item in items) {
-                    when (item) {
-                        is CredentialItem.Username -> item.value = TOKEN_USER
-                        // Password stores itself as a char[] (it extends CharArrayType), so the
-                        // token is handed over in the shape the item actually holds.
-                        is CredentialItem.Password -> item.setValue(token.toCharArray())
-                        else -> return false
-                    }
-                }
-                return true
-            }
-        }
-
     private companion object {
         const val ORIGIN = "origin"
-        const val TOKEN_USER = "x-access-token"
     }
 }
+
+private const val TOKEN_USER = "x-access-token"
+
+/**
+ * How every HTTPS git operation here authenticates: the Device Flow token as an x-access-token
+ * basic-auth pair. Shared by [GitHubRemote] and the clone so a repository can be linked, pushed
+ * and fetched with the same credential the sign-in produced.
+ *
+ * Nothing here stores credentials in the repository — the token stays in [TokenStore] — so a
+ * `.git/config` left behind on shared storage cannot leak access.
+ */
+internal fun tokenCredentials(token: String): CredentialsProvider =
+    object : CredentialsProvider() {
+        override fun isInteractive(): Boolean = false
+
+        override fun supports(vararg items: CredentialItem): Boolean = items.all {
+            it is CredentialItem.Username || it is CredentialItem.Password
+        }
+
+        override fun get(uri: URIish?, vararg items: CredentialItem): Boolean {
+            for (item in items) {
+                when (item) {
+                    is CredentialItem.Username -> item.value = TOKEN_USER
+                    // Password stores itself as a char[] (it extends CharArrayType), so the
+                    // token is handed over in the shape the item actually holds.
+                    is CredentialItem.Password -> item.setValue(token.toCharArray())
+                    else -> return false
+                }
+            }
+            return true
+        }
+    }

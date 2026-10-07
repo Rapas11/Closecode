@@ -135,6 +135,10 @@ fun IdeScreen(
     var tabs by remember { mutableStateOf(emptyList<ProjectFile>()) }
     var active by remember { mutableStateOf("") }
     var treeVersion by remember { mutableIntStateOf(0) }
+    // Bumped whenever a file on disk changes, by any route. The GitHub panel reads the working
+    // tree, so without this it kept the snapshot taken when the project opened and went on
+    // showing edits that had since been made, reverted or abandoned.
+    var gitRevision by remember { mutableIntStateOf(0) }
     // State, not a `remember { repository.tree(slug) }`: a tree walk is a recursive directory read,
     // and running it inside `remember` blocked composition on the disk. It is filled in below by an
     // effect that does the walk on Dispatchers.IO, so the first frame simply shows an empty drawer.
@@ -194,6 +198,27 @@ fun IdeScreen(
     // line the reader is looking at, not at the end of the buffer.
     var editorCaret by remember { mutableIntStateOf(0) }
     var addBlockOpen by remember { mutableStateOf(false) }
+    // Logcat and Build cover the editor, so back has to know what was underneath them rather
+    // than always dropping the reader on Code and losing a Preview they had open.
+    var panelBeforeTool by remember { mutableStateOf("Code") }
+
+    LaunchedEffect(activePanel) {
+        if (activePanel != "Logcat" && activePanel != "Build") panelBeforeTool = activePanel
+    }
+
+    // Spec 6.8 parks the tool row after a pause in the editor. It is the only way to reach tab,
+    // brace, quote and comment on a soft keyboard, so it is never taken away — only parked, and
+    // the next keystroke or caret move brings it straight back.
+    var toolRowIdle by remember { mutableStateOf(false) }
+    var editorActivity by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(editorActivity, editorFocused, suggestionsOpen) {
+        if (!editorFocused || suggestionsOpen) return@LaunchedEffect
+        toolRowIdle = false
+        delay(TOOL_ROW_IDLE_MS)
+        toolRowIdle = true
+    }
+
     // Spec 4.1: the header's Undo and Redo drive the editor's own history. Requests are counters
     // because only the editor owns the text field; the availability flags travel back up so the
     // icons can dim when there is nothing left to step to.
@@ -239,6 +264,7 @@ fun IdeScreen(
             .onSuccess {
                 diskContents[active] = buffer
                 previewRefresh++
+                gitRevision++
                 toast = "Saved $active"
             }
             .onFailure { toast = "Could not save $active" }
@@ -249,6 +275,7 @@ fun IdeScreen(
     // command palette and a file deleted from the shell all repaint the drawer the same way.
     fun refreshTree() {
         treeVersion++
+        gitRevision++
     }
 
     /** Opens a file in a tab, reading it only when it has not been read before. */
@@ -353,9 +380,10 @@ fun IdeScreen(
     // there is nothing left to close. Composed after the exit handler above so it wins while armed.
     BackHandler(
         enabled = moreOpen || findOpen || searchOpen || menuOpen ||
-            namingFile || namingFolder || explorerOpen,
+            namingFile || namingFolder || explorerOpen || addBlockOpen,
     ) {
         when {
+            addBlockOpen -> addBlockOpen = false
             namingFile -> namingFile = false
             namingFolder -> namingFolder = false
             moreOpen -> moreOpen = false
@@ -410,6 +438,7 @@ fun IdeScreen(
                 "AI" -> AgentPanel(projectName = projectName, modifier = Modifier.weight(1f))
                 "Logcat" -> IdeLogcatPanel(
                     lines = logLines,
+                    onBack = { activePanel = panelBeforeTool },
                     modifier = Modifier.weight(1f),
                 )
                 "Build" -> IdeBuildPanel(
@@ -425,6 +454,7 @@ fun IdeScreen(
                             building = true
                         }
                     },
+                    onBack = { activePanel = panelBeforeTool },
                     modifier = Modifier.weight(1f),
                 )
                 else -> {
@@ -492,6 +522,7 @@ fun IdeScreen(
                                 activeFile = active,
                                 query = explorerFilter,
                                 tab = explorerTab,
+                                gitRevision = gitRevision,
                                 onTab = { explorerTab = it },
                                 onCreateFile = { namingFile = true },
                                 onCreateFolder = { namingFolder = true },
@@ -516,7 +547,10 @@ fun IdeScreen(
                                     if (active == name) active = tabs.lastOrNull()?.name.orEmpty()
                                 },
                                 onFocusChange = { editorFocused = it },
-                                onBufferChange = { text -> liveBuffers[active] = text },
+                                onBufferChange = { text ->
+                                    liveBuffers[active] = text
+                                    editorActivity++
+                                },
                                 onToast = { text -> toast = text },
                                 bufferOf = { name -> liveBuffers[name] },
                                 savedOf = { name -> diskContents[name] },
@@ -527,7 +561,10 @@ fun IdeScreen(
                                 redoRequest = redoRequest,
                                 sourceRevision = sourceRevision,
                                 caretRequest = caretRequest,
-                                onCaretChange = { editorCaret = it },
+                                onCaretChange = {
+                                    editorCaret = it
+                                    editorActivity++
+                                },
                                 projectSymbols = projectNames,
                                 onSaveRequest = { saveActiveFile() },
                                 onHistoryState = { undo, redo ->
@@ -535,7 +572,7 @@ fun IdeScreen(
                                     canRedo = redo
                                 },
                                 onSuggestionsOpen = { suggestionsOpen = it },
-                                showToolRow = editorFocused && !suggestionsOpen,
+                                showToolRow = editorFocused && !suggestionsOpen && !toolRowIdle,
                             )
                         }
                     }
@@ -1094,6 +1131,7 @@ private fun IdeExplorer(
     activeFile: String,
     query: String,
     tab: String,
+    gitRevision: Int,
     onTab: (String) -> Unit,
     onCreateFile: () -> Unit,
     onCreateFolder: () -> Unit,
@@ -1234,6 +1272,7 @@ private fun IdeExplorer(
             IdeGitPanel(
                 projectName = projectName,
                 projectRoot = projectRoot,
+                revision = gitRevision,
                 // One modifier or the other, never both. Appending `size(0.dp)` after
                 // `width(...).fillMaxHeight()` could not work: those hand the child an incoming
                 // minimum of full width by full height, `size` is enforce-incoming, so the zero was
@@ -1771,9 +1810,9 @@ val applySuggestion: (Int) -> Unit = { index ->
         val text = live.text
         val at = live.selection.start.coerceIn(0, text.length)
         val (line, column) = caretPosition(text, at)
-        // The caret never walks past the last line that shows something. Stopping at the end of the
-        // raw buffer put it on a row with no number and nothing on it, which reads as a bug.
-        val lastVisible = gutterRowCount(text.lines())
+        // The caret can reach its own row even when that row is still blank — that is exactly what
+        // pressing Enter produces — but never a blank row below it, which would read as a bug.
+        val lastVisible = gutterRowCount(text.lines(), caretLine = line)
         val target = (line + delta).coerceIn(1, lastVisible)
         if (target == line) return
         val lineStart = offsetOfLineColumn(text, target, 1)
@@ -2144,6 +2183,9 @@ contentAlignment = Alignment.Center,
                                 problems = problems,
                                 lineHeightPx = lineHeightPx,
                                 viewportWidthPx = pillViewportWidthPx,
+                                // The layer scrolls with the text, so a sideways scroll moves the
+                                // right edge of the visible window out with it.
+                                hScrollPx = codeHScroll.value.toFloat(),
                                 // Spec 6.5: two characters past the end of the line's text, both
                                 // measured off the rendered layout. The line's own newline has no
                                 // width, so the anchor is its right edge, never the character.
@@ -2192,7 +2234,7 @@ contentAlignment = Alignment.Center,
 
                 // Drawn last with an opaque background: code scrolled sideways passes underneath.
                 LineNumberLayer(
-                    lineCount = gutterRowCount(codeLines),
+                    lineCount = gutterRowCount(codeLines, caretLine),
                     lineHeightPx = lineHeightPx,
                     problems = problems,
                     caretLine = caretLine,
@@ -2450,6 +2492,9 @@ contentAlignment = Alignment.Center,
 
 
 private val SCROLLBAR_THICKNESS = 6.dp
+
+/** Silence in the editor before the tool row parks itself. */
+private const val TOOL_ROW_IDLE_MS = 4_000L
 
 /** The floating bar a selection earns: wide enough for the two words plus the two glyphs. */
 private val SELECTION_BAR_WIDTH = 240.dp

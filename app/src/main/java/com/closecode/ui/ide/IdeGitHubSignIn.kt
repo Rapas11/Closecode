@@ -45,11 +45,25 @@ import kotlinx.coroutines.withContext
  * only ever throws messages it built itself.
  */
 internal fun describeFailure(error: Throwable, fallback: String): String {
-    val message = error.message?.takeIf { it.isNotBlank() }
-    val cause = error.cause?.let { "${it::class.simpleName}: ${it.message}" }?.takeIf { it.isNotBlank() }
-    val head = message ?: "${error::class.simpleName ?: "IOException"}: no detail"
-    val chain = if (cause != null && cause != head) " — $cause" else ""
-    return head + chain
+    val head = error.message?.takeIf { it.isNotBlank() }
+        ?: "${error::class.simpleName ?: "IOException"}: no detail"
+    // JGit wraps transport failures several deep — a push failure is "Exception caught during
+    // execution of push command" around a TransportException around the HTTP status that
+    // actually says why. One level of cause keeps the sentence useless, so walk a few.
+    val seen = mutableSetOf(head)
+    val chain = mutableListOf<String>()
+    var current: Throwable? = error.cause
+    var depth = 0
+    while (current != null && depth < 4 && chain.size < 3) {
+        val step: Throwable = current
+        val cls = step::class.simpleName ?: "Throwable"
+        val text = step.message?.takeIf { it.isNotBlank() && it != head }
+        val label = if (text == null) cls else "$cls: $text"
+        if (seen.add(label)) chain += label
+        current = step.cause
+        depth++
+    }
+    return (listOf(head) + chain).joinToString(" — ")
 }
 
 /**

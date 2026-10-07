@@ -263,4 +263,91 @@ class GitServiceTest {
         assertTrue(git.commit("nope").isFailure)
         assertTrue(git.history().isFailure)
     }
+
+    @Test
+    fun ensureGitignoreFillsTheGapWithoutTouchingAFileTheUserWrote() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+
+        // init() only makes a repository; the .gitignore arrives from the panel before it reads
+        // status, so a test that inspects the working tree still sees only what it wrote.
+        assertTrue(git.ensureGitignore())
+        val written = File(tmp.root, GitService.GITIGNORE)
+        assertTrue(written.exists())
+        assertTrue(
+            "app state must be ignored",
+            written.readText().contains(".closecode.json"),
+        )
+
+        // Already there: the user's own file must never be overwritten.
+        written.writeText("# mine\n")
+        assertFalse(git.ensureGitignore())
+        assertEquals("# mine\n", written.readText())
+    }
+
+    @Test
+    fun ensureGitignoreDoesNothingOutsideARepository() {
+        assertFalse(GitService(tmp.root).ensureGitignore())
+        assertFalse(File(tmp.root, GitService.GITIGNORE).exists())
+    }
+
+    @Test
+    fun stashClearsTheWorkingTreeAndRestoringPutsItBack() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        write("main.kt", "fun main() { one() }\n")
+        git.stage(listOf("main.kt")).getOrThrow()
+        git.commit("first").getOrThrow()
+
+        write("main.kt", "fun main() { two() }\n")
+        assertFalse(git.snapshot().getOrThrow().isClean)
+        assertFalse(git.hasStash())
+
+        assertTrue(git.stash().getOrThrow().startsWith("Stashed"))
+        assertTrue(git.hasStash())
+        // The tree really went back to HEAD; a stash that left the edits in place would make the
+        // button look inert the moment the user pressed it.
+        assertEquals("fun main() { one() }\n", File(tmp.root, "main.kt").readText())
+        assertTrue(git.snapshot().getOrThrow().isClean)
+
+        git.stashPop().getOrThrow()
+        assertEquals("fun main() { two() }\n", File(tmp.root, "main.kt").readText())
+        assertFalse(git.hasStash())
+        assertFalse(git.snapshot().getOrThrow().isClean)
+    }
+
+    @Test
+    fun stashRefusesWhenThereIsNothingToPark() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        write("main.kt", "fun main() {}\n")
+        git.stage(listOf("main.kt")).getOrThrow()
+        git.commit("first").getOrThrow()
+
+        assertTrue(git.stash().isFailure)
+        assertFalse(git.hasStash())
+    }
+
+    @Test
+    fun restoringWithoutAStashSaysSo() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        val pop = git.stashPop()
+        assertTrue(pop.isFailure)
+        assertTrue(pop.exceptionOrNull()?.message.orEmpty().contains("no stash"))
+    }
+
+    @Test
+    fun stashNeedsACommitToParkWorkAgainst() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        write("main.kt", "fun main() {}\n")
+        assertTrue(git.stash().isFailure)
+        assertFalse(git.hasStash())
+    }
+
+    @Test
+    fun hasStashIsFalseOutsideARepository() {
+        assertFalse(GitService(tmp.root).hasStash())
+    }
 }

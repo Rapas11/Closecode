@@ -23,6 +23,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
@@ -31,6 +32,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -147,17 +149,18 @@ fun caretOffsetAtEndOfCode(source: String): Int {
 }
 
 /**
- * How many numbered rows to draw: from 1 to the last line that shows something.
+ * How many numbered rows to draw: from 1 to the last line that shows something, or to the caret's
+ * own line, whichever is further down.
  *
- * There is deliberately no argument for where the caret is. Numbering used to run up to the caret's
- * line, which put numbers on blank rows whenever the caret wandered below the code; a user reading
- * that saw numbered lines with nothing on them. The caret's own line is only numbered when the user
- * has actually put code on it.
+ * [caretLine] exists for one reason: pressing Enter leaves the caret sitting on a blank row, and a
+ * row with no number is a row the reader does not know is there. Rows *below* the caret stay
+ * unnumbered, so walking past the code still does not fill the gutter with numbers for blank tails.
  */
-fun gutterRowCount(lines: List<String>): Int {
+fun gutterRowCount(lines: List<String>, caretLine: Int = 1): Int {
     var last = lines.size
     while (last > 0 && !hasVisibleContent(lines[last - 1])) last--
-    return last.coerceAtLeast(1)
+    val toCaret = caretLine.coerceIn(1, lines.size.coerceAtLeast(1))
+    return maxOf(last, toCaret).coerceAtLeast(1)
 }
 
 /**
@@ -438,6 +441,16 @@ fun pillAnchorX(
 }
 
 /**
+ * The pill's on-screen offset, in the layer's own pixels.
+ *
+ * Both halves are load bearing. Dropping [x] — which is what shipped — drew every pill on top of
+ * the first characters of its own line, because the position computed from the line's real right
+ * edge was thrown away one line before it reached the offset.
+ */
+internal fun pillOffsetOf(x: Float, top: Float): IntOffset =
+    IntOffset(x.roundToInt(), top.roundToInt())
+
+/**
  * Inline problem pills drawn on the code surface, anchored immediately after the offending
  * token and kept inside the viewport so they never run off the right edge.
  *
@@ -445,7 +458,9 @@ fun pillAnchorX(
  * rendered the code, so the pill lands past the real glyphs rather than an estimate. [gapPx] is the
  * air left between the text and the pill. [viewportWidthPx] is the width the user can actually see
  * from the code column's own origin, which is narrower than the scrollable content whenever a line
- * is longer than the screen.
+ * is longer than the screen. [hScrollPx] is the code column's sideways scroll: this layer scrolls
+ * with the text, so everything it draws is in content coordinates and the right edge of what the
+ * user can see sits at `hScrollPx + viewportWidthPx`, not at `viewportWidthPx`.
  */
 @Composable
 fun InlineProblemLayer(
@@ -453,6 +468,7 @@ fun InlineProblemLayer(
     lineHeightPx: Float,
     viewportWidthPx: Float,
     gapPx: Float = 0f,
+    hScrollPx: Float = 0f,
     anchorX: (line: Int) -> Float?,
     yOfLine: (Int) -> Float?,
     onTap: (Diagnostic) -> Unit = {},
@@ -463,8 +479,9 @@ fun InlineProblemLayer(
     val rows = problems.byLine.entries.sortedBy { it.key }
     val chrome = with(density) { PillChromeWidth.toPx() }
     val minMessage = with(density) { PillMinMessageWidth.toPx() }
+    val visibleRight = hScrollPx + viewportWidthPx
 
-    Box(modifier) {
+    Box(modifier.clipToBounds()) {
         rows.forEach { (line, list) ->
             // Spec 6.5: when a line has several problems, show the most severe one and a count.
             val primary = list.minByOrNull { if (it.severity == Severity.ERROR) 0 else 1 } ?: return@forEach
@@ -474,15 +491,17 @@ fun InlineProblemLayer(
 
             // Spec 6.5: past the end of the line's text, wrapped back to the edge when the line is
             // long enough that the pill would otherwise stop fitting.
-            val x = pillAnchorX(anchorX(line) ?: 0f, gapPx, viewportWidthPx, chrome + minMessage)
-            val textRoom = (viewportWidthPx - x - chrome).coerceAtLeast(minMessage)
+            val x = pillAnchorX(anchorX(line) ?: 0f, gapPx, visibleRight, chrome + minMessage)
+            val textRoom = (visibleRight - x - chrome).coerceAtLeast(minMessage)
             // Spec 6.5: top = line top minus 1 dp.
             val top = (yOfLine(line) ?: pillTopPx(line, lineHeightPx)) -
                 with(density) { 1.dp.toPx() }
 
             Row(
                 Modifier
-                    .offset { androidx.compose.ui.unit.IntOffset(0, top.toInt()) }
+                    // The x is load bearing. Dropping it here drew every pill on top of the first
+                    // characters of its own line, with no room of its own.
+                    .offset { pillOffsetOf(x, top) }
                     .height(22.dp)
                     .clip(RoundedCornerShape(11.dp))
                     .background(fill)

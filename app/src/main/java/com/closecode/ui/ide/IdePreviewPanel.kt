@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -33,9 +34,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -56,6 +61,32 @@ import kotlinx.coroutines.withContext
 
 /** Extensions Preview renders as a bitmap rather than as text. */
 private val ImageExtensions = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
+
+/**
+ * The conventional two-tone board behind a decoded bitmap, so a transparent PNG reads as
+ * transparent instead of taking on whatever the page background happens to be.
+ */
+private fun DrawScope.checkerboard(even: Color, odd: Color) {
+    val cell = 14.dp.toPx()
+    var row = 0
+    var y = 0f
+    while (y < size.height) {
+        var col = 0
+        var x = 0f
+        while (x < size.width) {
+            val square = if ((row + col) % 2 == 0) even else odd
+            drawRect(
+                color = square,
+                topLeft = Offset(x, y),
+                size = Size(minOf(cell, size.width - x), minOf(cell, size.height - y)),
+            )
+            x += cell
+            col++
+        }
+        y += cell
+        row++
+    }
+}
 
 /** Above this, images are downscaled before decoding so a large photo cannot exhaust memory. */
 const val PREVIEW_MAX_IMAGE_EDGE = 2048
@@ -773,14 +804,31 @@ private fun StaticPreview(
         if (isImage) {
             when {
                 image == null -> PreviewMessage("No preview available for this image.")
-                else -> Image(
-                    bitmap = image!!.bitmap,
-                    contentDescription = fileName,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(12.dp),
-                )
+                else -> {
+                    val bmp = image!!.bitmap
+                    Box(
+                        Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        // Sized to the picture, so the board sits exactly under the pixels and not
+                        // in the letterbox around them.
+                        Box(
+                            Modifier
+                                .padding(12.dp)
+                                .aspectRatio(
+                                    bmp.width.toFloat() / bmp.height.toFloat().coerceAtLeast(1f),
+                                )
+                                .drawBehind { checkerboard(c.bg, c.panel) },
+                        ) {
+                            Image(
+                                bitmap = bmp,
+                                contentDescription = fileName,
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    }
+                }
             }
             if (image?.note != null) {
                 PreviewMessage(image!!.note!!)
