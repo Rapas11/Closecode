@@ -29,6 +29,19 @@ data class OverflowAction(
     val onClick: (() -> Unit)? = null,
 )
 
+/**
+ * The rows the header's overflow draws, in order. Kept as data so a unit test can pin them without
+ * rendering anything.
+ *
+ * Both rows act on the file that is open, which is why they sit under the file's own header. The
+ * rows that leave the editor — settings, the theme switch — live in the bottom More sheet instead,
+ * so every row has exactly one home rather than two menus that overlap.
+ */
+internal val OverflowLabels = listOf(
+    "Search and commands",
+    "Format file",
+)
+
 @Composable
 fun OverflowMenu(
     actions: List<OverflowAction>,

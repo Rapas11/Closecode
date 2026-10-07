@@ -1053,9 +1053,9 @@ fun IdeScreen(
 
         if (menuOpen) {
             OverflowMenu(
-                // Spec 4.1 lists the three rows the overflow opens. The project-level rows the app
-                // already had are kept below them, so nothing that used to be reachable is lost
-                // when the Format and search buttons left the header.
+                // The two rows that act on the file that is open, and nothing else: settings and
+                // the theme switch live in the bottom More sheet, so there is one home for each
+                // row rather than two menus that overlap.
                 actions = listOf(
                     OverflowAction("Search and commands", "⌕") {
                         searchOpen = true
@@ -1065,22 +1065,10 @@ fun IdeScreen(
                         formatRequest++
                         menuOpen = false
                     },
-                    OverflowAction("Toggle theme", "◐") {
-                        onToggleTheme()
-                        menuOpen = false
-                    },
-                    OverflowAction("Settings", "⚙") { onOpenSettings() },
-                    OverflowAction("New project", "+") { onExit() },
-                    OverflowAction("Close project", "×") { onExit() },
                 ),
-                onPick = { action ->
-                    menuOpen = false
-                    when (action.label) {
-                        "Settings" -> onOpenSettings()
-                        "New project" -> onExit()
-                        "Close project" -> onExit()
-                    }
-                },
+                // Every row above carries its own click, so this only ever runs for a row added
+                // without one. Closing the menu is the right thing to do either way.
+                onPick = { menuOpen = false },
                 onDismiss = { menuOpen = false },
             )
         }
@@ -1148,8 +1136,6 @@ fun IdeScreen(
                     MoreAction("Build", "✓") { activePanel = "Build" },
                     MoreAction("Settings", "⚙") { onOpenSettings() },
                     MoreAction("Toggle theme", "◐") { onToggleTheme() },
-                    MoreAction("New project", "+") { onExit() },
-                    MoreAction("Close project", "×") { onExit() },
                 ),
                 onDismiss = { moreOpen = false },
             )

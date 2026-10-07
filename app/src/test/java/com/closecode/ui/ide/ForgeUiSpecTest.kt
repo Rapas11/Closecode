@@ -183,6 +183,35 @@ class ForgeUiSpecTest {
         assertFalse(showToolRow(imeVisible = false, suggestionsOpen = true))
     }
 
+    // -- menus ---------------------------------------------------------------------
+
+    @Test
+    fun theHeaderOverflowOffersOnlyTheRowsAboutTheOpenFile() {
+        assertEquals(listOf("Search and commands", "Format file"), OverflowLabels)
+    }
+
+    @Test
+    fun theBottomMoreSheetOffersThePanelsAndThePreferences() {
+        assertEquals(listOf("Logcat", "Build", "Settings", "Toggle theme"), MoreLabels)
+    }
+
+    @Test
+    fun theTwoMenusNeverOfferTheSameRow() {
+        // The app used to have two menus that overlapped: settings and the theme switch were in
+        // both, so one app had two names for the same door and the lists could disagree. Every row
+        // now has exactly one home.
+        assertEquals(emptySet<String>(), OverflowLabels.intersect(MoreLabels.toSet()))
+    }
+
+    @Test
+    fun noMenuOffersTheProjectExitsAnymore() {
+        // Leaving a project is the back gesture, not a button in one of two overlapping menus.
+        assertFalse("New project" in OverflowLabels)
+        assertFalse("New project" in MoreLabels)
+        assertFalse("Close project" in OverflowLabels)
+        assertFalse("Close project" in MoreLabels)
+    }
+
     // -- Spec 7 log cap ----------------------------------------------------------------
 
     @Test

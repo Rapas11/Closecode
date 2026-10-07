@@ -143,9 +143,21 @@ data class MoreAction(
 )
 
 /**
- * The More sheet. Everything that used to be a bottom-bar item or an overflow row but is not a
- * place the user lives in — Logcat, Build, Settings, theme, and the two project exits — is in one
- * list here so the bottom bar can stay at three items.
+ * The rows the bottom More sheet draws, in order. Kept as data so a unit test can pin them without
+ * rendering anything — and so every row the editor does not own has one home here rather than
+ * turning up in the header's overflow as well.
+ */
+internal val MoreLabels = listOf(
+    "Logcat",
+    "Build",
+    "Settings",
+    "Toggle theme",
+)
+
+/**
+ * The More sheet: the panels and preferences that are not about the file that is open, in one list
+ * so the bottom bar can stay at three items. The rows that act on the open file — search, format —
+ * live in the header's overflow.
  */
 @Composable
 fun IdeMoreSheet(
