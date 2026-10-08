@@ -2963,10 +2963,6 @@ contentAlignment = Alignment.Center,
                             InlineProblemLayer(
                                 problems = problems,
                                 lineHeightPx = lineHeightPx,
-                                viewportWidthPx = pillViewportWidthPx,
-                                // The layer scrolls with the text, so a sideways scroll moves the
-                                // right edge of the visible window out with it.
-                                hScrollPx = codeHScroll.value.toFloat(),
                                 // Spec 6.5: two characters past the end of the line's text, both
                                 // measured off the rendered layout. The line's own newline has no
                                 // width, so the anchor is its right edge, never the character.

@@ -2,6 +2,7 @@ package com.closecode.ui.ide
 import com.closecode.lang.DiagnosticCodes
 
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
 import com.closecode.lang.AndroidApiIndex
 import com.closecode.lang.KotlinAnalyzer
 import com.closecode.lang.Severity
@@ -66,27 +67,52 @@ class PillPlacementTest {
 
     @Test
     fun aPillStartsJustPastTheEndOfItsLine() {
-        assertEquals(100f, pillAnchorX(90f, 10f, 300f, 124f), 0.01f)
+        assertEquals(100f, pillAnchorX(90f, 10f), 0.01f)
     }
 
     @Test
-    fun aLongLineWrapsThePillBackToWhereItStillFits() {
-        // The line ends past the screen, so the pill comes back far enough to keep its own icon,
-        // code label and badge visible instead of running off the right edge.
-        val x = pillAnchorX(400f, 0f, 300f, 124f)
-        assertEquals(176f, x, 0.01f)
-        assertTrue("pill must fit", x + 124f <= 300f)
+    fun aLongLineKeepsItsPillPastTheEndInsteadOfPullingItBack() {
+        // Regression: the anchor used to be clamped to "the last x where the pill still fits on
+        // screen", which meant a long line — which is exactly the line that has an error — had its
+        // pill dragged backwards until it landed on top of the characters it was describing. Off
+        // screen to the right is the honest answer: the layer is a child of the code column's
+        // horizontal scroller, so the pill travels sideways with its own line.
+        val x = pillAnchorX(400f, 0f)
+        assertEquals(400f, x, 0.01f)
+    }
+
+    @Test
+    fun aPillFarOffScreenIsLeftWhereItsLinePutsIt() {
+        assertEquals(5000f, pillAnchorX(5000f, 0f), 0.01f)
+    }
+
+    @Test
+    fun thePillDoesNotMoveWhenTheCodeIsScrolledSideways() {
+        // The scroll used to be an input, both to clamp the pill and to size its message. Neither
+        // survives: position comes from the line's own right edge, and the message is capped at a
+        // fixed width. So the same line reports the same x however far the column is scrolled,
+        // which is what stops a pill from re-landing on the text every time the reader moves.
+        assertEquals(408f, pillAnchorX(400f, 8f), 0.01f)
+        assertEquals(pillAnchorX(400f, 8f), pillAnchorX(400f, 8f), 0.01f)
+    }
+
+    @Test
+    fun thePillMessageCapIsAFixedWidthNotAGapToTheScreenEdge() {
+        // Sizing the message from "room left before the right edge" made the text grow and shrink
+        // as the column was scrolled, so the same diagnostic read as "U..." on one screen and in
+        // full on the next. A fixed cap breaks a long message at the same word every time.
+        assertEquals(220.dp, PillMaxMessageWidth)
     }
 
     @Test
     fun aPillNeverStartsLeftOfTheGapItNeeds() {
-        assertEquals(8f, pillAnchorX(0f, 8f, 300f, 124f), 0.01f)
-        assertEquals(0f, pillAnchorX(-40f, 0f, 300f, 124f), 0.01f)
+        assertEquals(8f, pillAnchorX(0f, 8f), 0.01f)
+        assertEquals(0f, pillAnchorX(-40f, 0f), 0.01f)
     }
 
     @Test
-    fun aViewportNarrowerThanThePillDoesNotGoNegative() {
-        assertEquals(0f, pillAnchorX(500f, 0f, 100f, 124f), 0.01f)
+    fun aNegativeGapIsTreatedAsNoGapAtAll() {
+        assertEquals(90f, pillAnchorX(90f, -12f), 0.01f)
     }
 
     @Test
@@ -97,16 +123,6 @@ class PillPlacementTest {
         assertEquals(IntOffset(100, 19), pillOffsetOf(100f, 19f))
         assertEquals(IntOffset(0, -4), pillOffsetOf(0.4f, -4f))
         assertEquals(IntOffset(641, 0), pillOffsetOf(640.6f, 0.1f))
-    }
-
-    @Test
-    fun thePillStaysInsideAHorizontallyScrolledWindow() {
-        // The layer scrolls with the text, so the right edge the pill must stay left of is
-        // hScroll + visible width, not the visible width alone.
-        val scrolledRight = 300f + 200f
-        val x = pillAnchorX(500f, 0f, scrolledRight, 124f)
-        assertTrue("pill must fit the scrolled window", x + 124f <= scrolledRight)
-        assertEquals(376f, x, 0.01f)
     }
 }
 

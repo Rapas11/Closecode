@@ -578,40 +578,34 @@ fun pillTopPx(line: Int, lineHeightPx: Float): Float =
     (line - 1).coerceAtLeast(0) * lineHeightPx
 
 /**
- * Width a problem pill needs for everything except its message: padding, the severity icon, the
- * code label and the stack badge. Nothing but the message is allowed to shrink.
+ * How wide a problem pill's message is allowed to get before it starts ellipsising.
  *
- * This is a floor, not a measurement — it is added back to the room left for the message so the
- * pill can never grow past the right edge. It was 124 dp when the icon was 15 dp and the gaps
- * were 7; tightening all of those gave 30 dp back to the message on a phone.
+ * A cap rather than a measurement, because the old measurement was taken from how much room was
+ * left between the pill and the right edge of the *visible* window — so the message grew and shrank
+ * as the reader scrolled sideways, and the same problem read `U…` on one screen and in full on the
+ * next. A fixed cap means a long diagnostic always breaks at the same word, wherever the code is.
+ *
+ * It also stops the pill ballooning across the screen: the icon, the code label and the badge sit
+ * outside it, so 220 dp of message leaves the whole pill comfortably inside a phone's width.
  */
-val PillChromeWidth = 96.dp
-
-/** Smallest message a pill will show before it starts ellipsising. */
-val PillMinMessageWidth = 20.dp
+val PillMaxMessageWidth = 220.dp
 
 /**
- * Left edge of a problem pill: a little past the end of its line, and never past the point where it
- * would stop fitting on screen.
+ * Left edge of a problem pill: a little past the end of its line, in the scrolled content's own
+ * coordinates, so the pill travels sideways with the text it belongs to.
  *
  * [lineEndX] is the right edge of the line's own text and [gapPx] is the air between them, so the
- * pill always begins *after* the code instead of on top of it. A line long enough to push the pill
- * past the right edge wraps it back to the last position where it still fits, leaving
- * [rightReservePx] for its own icon, code label and badge.
+ * pill always begins *after* the code instead of on top of it.
  *
- * [viewportWidthPx] is measured from the code column's own origin, because that is where the layer
- * sits; measuring from the editor's left edge let the clamp accept a pill that ran off the screen.
+ * There is deliberately no clamp to the viewport here. Clamping to "the last position where it
+ * still fits" is what put pills on top of the code: a long line — which is exactly the line that
+ * has an error — pushed the pill past the screen edge, and pulling it back to fit dropped it over
+ * the characters it was describing. Off screen to the right is the honest answer, and the reader
+ * scrolls to it, because this layer is a child of the code column's horizontal scroller. Typing on
+ * that line brings it into view on its own, since the caret already pulls the column sideways.
  */
-fun pillAnchorX(
-    lineEndX: Float,
-    gapPx: Float,
-    viewportWidthPx: Float,
-    rightReservePx: Float,
-): Float {
-    val raw = lineEndX + gapPx.coerceAtLeast(0f)
-    val maxLeft = (viewportWidthPx - rightReservePx).coerceAtLeast(0f)
-    return raw.coerceIn(0f, maxLeft)
-}
+fun pillAnchorX(lineEndX: Float, gapPx: Float): Float =
+    (lineEndX + gapPx.coerceAtLeast(0f)).coerceAtLeast(0f)
 
 /**
  * The pill's on-screen offset, in the layer's own pixels.
@@ -624,35 +618,34 @@ internal fun pillOffsetOf(x: Float, top: Float): IntOffset =
     IntOffset(x.roundToInt(), top.roundToInt())
 
 /**
- * Inline problem pills drawn on the code surface, anchored immediately after the offending
- * token and kept inside the viewport so they never run off the right edge.
+ * Inline problem pills drawn on the code surface, anchored past the end of the line they describe.
  *
  * [anchorX] supplies the right edge of a line's text, measured from the text field that actually
  * rendered the code, so the pill lands past the real glyphs rather than an estimate. [gapPx] is the
- * air left between the text and the pill. [viewportWidthPx] is the width the user can actually see
- * from the code column's own origin, which is narrower than the scrollable content whenever a line
- * is longer than the screen. [hScrollPx] is the code column's sideways scroll: this layer scrolls
- * with the text, so everything it draws is in content coordinates and the right edge of what the
- * user can see sits at `hScrollPx + viewportWidthPx`, not at `viewportWidthPx`.
+ * air left between the text and the pill.
+ *
+ * Nothing here reads the viewport or the sideways scroll, and that is the point. This layer is a
+ * child of the code column's horizontal scroller, so a pill drawn in content coordinates travels
+ * with its own line automatically. The moment a position was derived from the visible edge instead,
+ * two things went wrong at once: the pill had to be clamped to fit, which put it back over the code
+ * on long lines, and its message was sized from the gap to that edge, which made the text change
+ * width every time the reader scrolled. Removing both inputs removes both faults, and takes the
+ * recomposition this layer used to pay on every frame of a sideways scroll with it.
  */
 @Composable
 fun InlineProblemLayer(
     problems: ProblemsByLine,
     lineHeightPx: Float,
-    viewportWidthPx: Float,
     gapPx: Float = 0f,
-    hScrollPx: Float = 0f,
     anchorX: (line: Int) -> Float?,
-    yOfLine: (Int) -> Float?,
+    yOfLine: (line: Int) -> Float?,
     onTap: (Diagnostic) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
     val density = androidx.compose.ui.platform.LocalDensity.current
     val rows = problems.byLine.entries.sortedBy { it.key }
-    val chrome = with(density) { PillChromeWidth.toPx() }
-    val minMessage = with(density) { PillMinMessageWidth.toPx() }
-    val visibleRight = hScrollPx + viewportWidthPx
+    val messageWidth = with(density) { PillMaxMessageWidth }
 
     // No clip here on purpose. The pills sit on their own rows via Modifier.offset, which does not
     // contribute to measurement, so the box only ever measured itself as tall as the widest pill —
@@ -670,10 +663,9 @@ fun InlineProblemLayer(
             // pill. Anchoring at 0 instead would draw it over the first characters of the line.
             val lineEnd = anchorX(line) ?: return@forEach
 
-            // Spec 6.5: past the end of the line's text, wrapped back to the edge when the line is
-            // long enough that the pill would otherwise stop fitting.
-            val x = pillAnchorX(lineEnd, gapPx, visibleRight, chrome + minMessage)
-            val textRoom = (visibleRight - x - chrome).coerceAtLeast(minMessage)
+            // Spec 6.5: past the end of the line's text, in the scrolled content's own
+            // coordinates, so the pill travels sideways with its line and never covers it.
+            val x = pillAnchorX(lineEnd, gapPx)
             // Spec 6.5: top = line top minus 1 dp.
             val top = (yOfLine(line) ?: pillTopPx(line, lineHeightPx)) -
                 with(density) { 1.dp.toPx() }
@@ -703,7 +695,7 @@ fun InlineProblemLayer(
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = with(density) { textRoom.toDp() }),
+                    modifier = Modifier.widthIn(max = messageWidth),
                 )
                 // Spec 6.5: the code is mono at 75 percent opacity, small enough that a line with
                 // several problems still leaves room for the message it is labelling.
