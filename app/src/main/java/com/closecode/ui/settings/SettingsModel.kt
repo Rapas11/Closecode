@@ -193,6 +193,11 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                     Row.Toggle("Line numbers", "Show the number gutter.", BoolSetting.LINE_NUMBERS),
                     Row.Toggle("Word wrap", "Wrap long lines instead of scrolling sideways.", BoolSetting.WORD_WRAP),
                     Row.Toggle("Code folding", "Collapse a block behind its first line.", default = true),
+                    Row.Toggle(
+                        "Rainbow brackets",
+                        "Colour nested brackets by depth.",
+                        BoolSetting.RAINBOW_BRACKETS,
+                    ),
                     Row.Toggle("Bracket guides", "Draw a faint rule down each block's own indent level.", BoolSetting.BRACKET_GUIDES),
                 ),
             ),

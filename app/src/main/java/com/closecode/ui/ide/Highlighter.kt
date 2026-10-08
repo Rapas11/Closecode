@@ -1,5 +1,6 @@
 package com.closecode.ui.ide
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -85,6 +86,22 @@ internal fun highlightCode(text: String, c: PageColors, language: CodeLanguage):
     }
 
 /** The general programming rules: braces, keywords, strings, comments. */
+/**
+ * The colours nested brackets cycle through, or empty when the reader has not asked for any.
+ *
+ * Populated from the theme rather than hard-coded, because a bracket colour that reads on the dark
+ * editor does not read on the light one, and a second palette for five swatches is not worth the
+ * maintenance. Empty means off, which is the honest way to say "colour nothing".
+ */
+internal var RainbowBracketColors: List<Color> = emptyList()
+
+/** Which colour a bracket at this nesting depth gets, or null when the feature is off. */
+internal fun rainbowBracketColor(depth: Int): Color? {
+    val cycle = RainbowBracketColors
+    if (cycle.isEmpty()) return null
+    return cycle[depth.coerceAtLeast(0) % cycle.size]
+}
+
 private fun highlightProgramCode(text: String, c: PageColors): AnnotatedString {
     val commentStyle = SpanStyle(color = c.comment, fontStyle = FontStyle.Italic)
     val stringStyle = SpanStyle(color = c.string)
@@ -94,6 +111,10 @@ private fun highlightProgramCode(text: String, c: PageColors): AnnotatedString {
     val typeStyle = SpanStyle(color = c.type)
     val numberStyle = SpanStyle(color = c.number)
 
+    // Depth carries across lines, because a block does. A counter reset per line gave every line's
+    // first bracket the same colour no matter how deep in the file it sat, which is the one thing the
+    // feature is for.
+    var bracketDepth = 0
     return buildAnnotatedString {
         text.lines().forEachIndexed { index, raw ->
             if (index > 0) append('\n')
@@ -172,6 +193,15 @@ private fun highlightProgramCode(text: String, c: PageColors): AnnotatedString {
                             append(raw, i, j)
                         }
                         i = j
+                    }
+
+                    ch == '{' || ch == '(' || ch == '[' || ch == '}' || ch == ')' || ch == ']' -> {
+                        val opening = ch == '{' || ch == '(' || ch == '['
+                        val depth = if (opening) bracketDepth else bracketDepth - 1
+                        val style = rainbowBracketColor(depth)?.let { SpanStyle(color = it) }
+                        if (style == null) append(ch) else withStyle(style) { append(ch) }
+                        if (opening) bracketDepth++
+                        i++
                     }
 
                     else -> {

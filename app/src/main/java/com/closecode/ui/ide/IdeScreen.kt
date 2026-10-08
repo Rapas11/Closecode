@@ -2402,9 +2402,21 @@ formatRequest: Int = 0,
 
     val codeLines = remember(code) { code.lines() }
 
+
     // Which colouring rules this buffer is under. Decided here as well as in the renderer because
     // the markup check below has to know it is looking at a page and not at code.
     val codeLanguage = remember(code) { codeLanguageFor(languageOf(active)) }
+
+    // Rainbow brackets are a setting, and the cycle is theme data, so it is read here rather than
+    // inside the highlighter — a global mutable list would be read by every file's colouring pass and
+    // would not recompose when the theme changed.
+    LaunchedEffect(c, settings.rainbowBrackets) {
+        RainbowBracketColors = if (settings.rainbowBrackets) {
+            listOf(c.bracket1, c.bracket2, c.bracket3, c.bracket4, c.bracket5)
+        } else {
+            emptyList()
+        }
+    }
 
     // Spec 6.3: the first import line carries the fold affordance. Zero means there is none.
     val firstImportLine = remember(code) {
@@ -2475,6 +2487,15 @@ formatRequest: Int = 0,
             startOffset = offsetOfLineColumn(code, codeRange.first + 1, 1),
             topPx = windowTopPx(codeRange.first, lineHeightPx),
         )
+    }
+
+    // The function the top of the window is inside, for the sticky header. Null while its own opening
+    // line is still on screen: the reader can see it, and a pinned copy above the code is a second
+    // thing saying what that line already says.
+    val scopeHeader = remember(code, codeWindow.firstLine) {
+        enclosingDeclarationAt(code, codeWindow.firstLine + 1)
+            ?.takeIf { it.first < codeWindow.firstLine + 1 }
+            ?.second
     }
     // highlightCode works one line at a time with nothing carried between them, so colourizing the
     // slice gives exactly the rows the whole file would have produced.
@@ -2885,6 +2906,36 @@ fun formatSelection() {
             .fillMaxHeight()
             .background(c.editor)
     ) {
+        // The declaration the top of the window is inside, pinned above the code. It appears only
+        // once its own opening line has scrolled away, and disappears again when it comes back.
+        if (scopeHeader != null) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(c.panel2)
+                    .padding(start = columnStart, end = 12.dp)
+                    .height(SCOPE_HEADER_HEIGHT)
+                    .drawBehind {
+                        drawLine(
+                            color = c.ln,
+                            start = Offset(0f, size.height - 0.5f),
+                            end = Offset(size.width, size.height - 0.5f),
+                            strokeWidth = 1f,
+                        )
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = scopeHeader,
+                    color = c.mu,
+                    fontSize = 12.sp,
+                    fontFamily = Mono,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
         // Spec 6.1: the file explorer button sits at the left of the strip, outside the scrolling tabs,
         // so it never scrolls away with them and stays the one way into the drawer on a phone.
         Row(
@@ -3646,7 +3697,19 @@ contentAlignment = Alignment.Center,
             // over the code instead of costing it a column of width, and they line up with the
             // axis they report on.
             EditorScrollbar(codeHScroll, viewportWidthPx, horizontal = true)
-            EditorScrollbar(codeScroll, viewportHeightPx, horizontal = false)
+            EditorScrollbar(
+                codeScroll,
+                viewportHeightPx,
+                horizontal = false,
+                // Errors above and below the window, marked on the scrollbar so a two-thousand-line
+                // file still answers "is it above me or below me".
+                ticks = errorTickFractions(
+                    errorLines = problems.linesWithErrors,
+                    lineCount = codeLines.size,
+                    visibleTop = codeWindow.firstLine + 1,
+                    visibleBottom = codeWindow.firstLine + codeLines.size,
+                ),
+            )
         }
 
         // Spec 6.8's tool row, shown only while the keyboard is up. It still owns its 46 dp when
@@ -3678,6 +3741,13 @@ private val SCROLLBAR_THICKNESS = 6.dp
  * target is bigger.
  */
 private val SCROLLBAR_TOUCH_SLOP = 28.dp
+
+/** The pinned declaration's own row, small enough that it never looks like another tab strip. */
+private val SCOPE_HEADER_HEIGHT = 24.dp
+
+/** The error mark on the scrollbar: wide enough to see, short enough not to read as a thumb. */
+private val ERROR_TICK_WIDTH = 6.dp
+private val ERROR_TICK_HEIGHT = 3.dp
 
 /**
  * How far a pinch may take the editor away from the size the settings chose: far enough to read a
@@ -3953,6 +4023,9 @@ private fun BoxScope.EditorScrollbar(
     state: ScrollState,
     viewportPx: Float,
     horizontal: Boolean,
+    // Pixel offsets down the vertical track where a mark belongs. Nothing is marked on the
+    // horizontal bar: it reports sideways position, and sideways position has no errors of its own.
+    ticks: List<Float> = emptyList(),
 ) {
     if (state.maxValue <= 0 || viewportPx <= 1f) return
     val c = LocalPageColors.current
@@ -3995,6 +4068,21 @@ private fun BoxScope.EditorScrollbar(
                     }
                 },
         ) {
+            // The marks sit beside the thumb, not under it, and are drawn in the error red rather
+            // than the thumb's grey: a grey mark on a grey bar is something only the code could see.
+            if (!horizontal && ticks.isNotEmpty()) {
+                ticks.forEach { at ->
+                    Box(
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(end = SCROLLBAR_THICKNESS / 2)
+                            .width(ERROR_TICK_WIDTH)
+                            .height(ERROR_TICK_HEIGHT)
+                            .offset { IntOffset(0, at.toInt()) }
+                            .background(c.red, RoundedCornerShape(1.dp)),
+                    )
+                }
+            }
             Box(
                 Modifier
                     .then(

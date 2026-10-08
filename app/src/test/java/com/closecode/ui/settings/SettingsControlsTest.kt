@@ -40,9 +40,10 @@ class SettingsControlsTest {
             .flatMap { section -> section.groups.flatMap { it.rows } }
             .filterIsInstance<Row.Toggle>()
 
-        assertEquals(18, toggles.size)
+        assertEquals(19, toggles.size)
         assertEquals(8, toggles.count { it.key == null })
         assertTrue(toggles.any { it.name == "Word wrap" && it.key == BoolSetting.WORD_WRAP })
+        assertTrue(toggles.any { it.name == "Rainbow brackets" && it.key == BoolSetting.RAINBOW_BRACKETS })
         assertEquals("On", toggleStateLabel(true))
         assertEquals("Off", toggleStateLabel(false))
     }

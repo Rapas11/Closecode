@@ -104,6 +104,16 @@ data class PageColors(
     // annotating, which is the whole job of an annotation not to do.
     val guideRule: Color,
 
+    // The five bracket depths, for the optional rainbow-bracket setting. Taken from the syntax
+    // colours rather than invented: they are already muted enough to sit behind a line of code
+    // without reading as part of its meaning, and both themes have a set that works on their own
+    // editor background.
+    val bracket1: Color,
+    val bracket2: Color,
+    val bracket3: Color,
+    val bracket4: Color,
+    val bracket5: Color,
+
     // -- Terminal ---------------------------------------------------------------
     val ansi: AnsiColors,
 
@@ -218,6 +228,11 @@ val LightColors = PageColors(
 
     // The text colour at 15% alpha.
     guideRule = Color(0x26101826),
+    bracket1 = Color(0xFF8B5CF6),
+    bracket2 = Color(0xFF0EA5A4),
+    bracket3 = Color(0xFFD97706),
+    bracket4 = Color(0xFF2563EB),
+    bracket5 = Color(0xFFDB2777),
 
     ansi = LightAnsi,
 
@@ -276,6 +291,11 @@ val DarkColors = PageColors(
 
     // The text colour at 15% alpha.
     guideRule = Color(0x26E7ECF5),
+    bracket1 = Color(0xFF9D8CFF),
+    bracket2 = Color(0xFF5FD3C6),
+    bracket3 = Color(0xFFF0B429),
+    bracket4 = Color(0xFF7FB2FF),
+    bracket5 = Color(0xFFFF8FB8),
 
     ansi = DarkAnsi,
 

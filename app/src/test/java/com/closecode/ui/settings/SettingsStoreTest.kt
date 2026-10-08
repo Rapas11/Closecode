@@ -136,12 +136,13 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun theScreenIsElevenSectionsAndFiftyThreeRows() {
-        // Eleven sections throughout. The terminal's own section existed before it had anything real
+    fun theScreenIsElevenSectionsAndFiftyFourRows() {
+        // Eleven sections throughout, and the rainbow-bracket switch is the fifty-fourth row: the
+        // terminal's own section existed before it had anything real
         // in it; wiring its colours and size replaced a placeholder with two working rows rather than
         // adding a section, so only the row count moved.
         assertEquals(11, sections(SettingsLive()).size)
-        assertEquals(53, rowCount())
+        assertEquals(54, rowCount())
     }
 
     @Test
@@ -202,7 +203,8 @@ class SettingsStoreTest {
         assertEquals(BoolSetting.DIAGNOSTICS, toggles["Diagnostics"])
         assertEquals(BoolSetting.BRACKET_GUIDES, toggles["Bracket guides"])
         assertEquals(BoolSetting.WORD_WRAP, toggles["Word wrap"])
-        assertEquals(10, toggles.values.filterNotNull().size)
+        assertEquals(BoolSetting.RAINBOW_BRACKETS, toggles["Rainbow brackets"])
+        assertEquals(11, toggles.values.filterNotNull().size)
 
         val options = sections(SettingsLive())
             .flatMap { section -> section.groups.flatMap { it.rows } }

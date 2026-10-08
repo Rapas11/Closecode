@@ -2086,3 +2086,104 @@ internal fun ProblemScope.heading(): String = when (this) {
     ProblemScope.FILE -> "Problems"
     ProblemScope.PROJECT -> "Problems in project"
 }
+
+/**
+ * Where an error line sits down the whole file, as a fraction, for the scrollbar's ticks.
+ *
+ * A tick is the only way to answer "is the thing I am looking for above me or below me" on a screen
+ * that shows twenty lines of a two-thousand-line file. A minimap would answer it better and cost more
+ * than the app can afford: it has to draw every line of code, tiny, on every keystroke.
+ *
+ * Lines past the visible window are the ones worth marking — an error on a row already on screen has
+ * a squiggle under it.
+ */
+internal fun errorTickFractions(
+    errorLines: Set<Int>,
+    lineCount: Int,
+    visibleTop: Int,
+    visibleBottom: Int,
+    limit: Int = 40,
+): List<Float> {
+    if (lineCount <= 0 || visibleBottom <= visibleTop) return emptyList()
+    val height = (visibleBottom - visibleTop).coerceAtLeast(1)
+    return errorLines
+        .filter { it <= visibleTop || it > visibleBottom }
+        .sorted()
+        .let { if (it.size > limit) it.take(limit) else it }
+        .map { line ->
+            // Position by the line's own row within the file, then scaled into the thumb's travel, so
+            // a tick sits where that line actually is rather than evenly spaced down the bar.
+            val rowFraction = ((line - 1).toFloat() / lineCount).coerceIn(0f, 1f)
+            val viewportFraction = ((visibleTop - 1).toFloat() / lineCount).coerceIn(0f, 1f)
+            (rowFraction - viewportFraction).coerceIn(0f, 1f) * height
+        }
+}
+
+/**
+ * The declaration whose body [line] sits in, or null when it sits in none.
+ *
+ * The innermost one, not the outermost: a reader three blocks deep wants the function they are in,
+ * not the class they are inside. The stack of open braces is walked from the top and the first entry
+ * that names a declaration wins, which also skips a bare block — an `if` body has braces and names
+ * nothing.
+ *
+ * Brace depth rather than a parser, because this has to stay right on a file that does not compile:
+ * the editor is most useful when it is wrong about something, and the header must not be the part
+ * that goes blank.
+ */
+internal fun enclosingDeclarationAt(code: String, line: Int): Pair<Int, String>? {
+    if (line < 1) return null
+    val lines = code.lines()
+    val at = line.coerceAtMost(lines.size) - 1
+    val openers = ArrayList<Int>()
+    for (i in 0 until at) {
+        val text = lines[i]
+        var inString = false
+        var quote = ' '
+        var j = 0
+        while (j < text.length) {
+            val ch = text[j]
+            when {
+                inString -> {
+                    if (ch == '\\') j++
+                    else if (ch == quote) inString = false
+                }
+                ch == '"' || ch == '\'' -> {
+                    inString = true
+                    quote = ch
+                }
+                // A line whose brace belongs to a control structure opens a block, not a
+                // declaration: `if (b) {` has braces and names nothing, and pinning "if (b)" as the
+                // header would be both useless and the first thing a reader saw.
+                ch == '{' -> openers.add(if (namesADeclaration(text.substring(0, j))) i else -1)
+                ch == '}' -> if (openers.isNotEmpty()) openers.removeAt(openers.lastIndex)
+            }
+            j++
+        }
+    }
+    for (i in openers.indices.reversed()) {
+        val opener = openers[i]
+        if (opener < 0) continue
+        return (opener + 1) to declarationOf(lines[opener])
+    }
+    return null
+}
+
+/** Whether the text before a brace names something, rather than introducing a block. */
+internal fun namesADeclaration(head: String): Boolean {
+    val text = head.trim()
+    if (text.isEmpty()) return false
+    val word = text.substringBefore('(').trim().substringBefore(' ')
+    return word.lowercase() !in BlockIntroducers
+}
+
+/** The words that open a block rather than declare something. */
+private val BlockIntroducers = setOf(
+    "if", "else", "when", "while", "for", "do", "try", "catch", "finally", "init",
+)
+
+internal fun declarationOf(line: String): String {
+    val brace = line.indexOf('{')
+    val head = if (brace >= 0) line.substring(0, brace).trim() else line.trim()
+    return head.ifEmpty { line.trim() }
+}

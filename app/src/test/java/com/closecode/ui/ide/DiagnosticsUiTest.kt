@@ -10,6 +10,8 @@ import com.closecode.lang.SourceEdits
 import com.closecode.lang.Diagnostic
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -768,5 +770,173 @@ class RunBlockerTest {
     fun theTwoScopesSayDifferentHeadings() {
         assertEquals("Problems", ProblemScope.FILE.heading())
         assertEquals("Problems in project", ProblemScope.PROJECT.heading())
+    }
+}
+
+/** Where the scrollbar's error marks land, and why a line already on screen has none. */
+class ErrorTickTest {
+
+    @Test
+    fun anErrorBelowTheWindowIsMarkedNearTheBottom() {
+        // A hundred lines visible, a two-thousand-line file, an error on line 1500: it has to land
+        // in the lower half or the mark is telling the reader the wrong direction.
+        val ticks = errorTickFractions(
+            errorLines = setOf(1500),
+            lineCount = 2000,
+            visibleTop = 1,
+            visibleBottom = 100,
+        )
+        assertEquals(1, ticks.size)
+        assertTrue(ticks[0] > 50f)
+        assertTrue(ticks[0] <= 100f)
+    }
+
+    @Test
+    fun anErrorAboveTheWindowIsMarkedNearTheTop() {
+        val ticks = errorTickFractions(
+            errorLines = setOf(40),
+            lineCount = 2000,
+            visibleTop = 900,
+            visibleBottom = 1000,
+        )
+        assertTrue(ticks[0] < 50f)
+    }
+
+    @Test
+    fun aLineAlreadyOnScreenGetsNoMark() {
+        // It has a squiggle under it. A mark as well is two signals for one fact, and the scrollbar
+        // one would sit on the row the reader is already looking at.
+        assertEquals(
+            emptyList<Float>(),
+            errorTickFractions(setOf(50), lineCount = 2000, visibleTop = 1, visibleBottom = 100),
+        )
+    }
+
+    @Test
+    fun marksNeverFallOutsideTheBar() {
+        val ticks = errorTickFractions(
+            errorLines = setOf(1, 2000),
+            lineCount = 2000,
+            visibleTop = 1000,
+            visibleBottom = 1100,
+        )
+        ticks.forEach { assertTrue("tick at $it", it >= 0f) }
+    }
+
+    @Test
+    fun manyErrorsAreCappedRatherThanDrawingAWall() {
+        // A file that fails to compile has hundreds of them; four hundred red marks is a bar, not a
+        // map, and it hides the thumb underneath it.
+        val many = (1..2000).toSet()
+        val ticks = errorTickFractions(many, lineCount = 2000, visibleTop = 1, visibleBottom = 100)
+        assertTrue(ticks.size <= 40)
+    }
+
+    @Test
+    fun nothingToSayIsNothingToDraw() {
+        assertEquals(
+            emptyList<Float>(),
+            errorTickFractions(emptySet(), lineCount = 100, visibleTop = 1, visibleBottom = 50),
+        )
+        // Nothing laid out, or a viewport of no height: no geometry, so no marks.
+        assertEquals(
+            emptyList<Float>(),
+            errorTickFractions(setOf(5), lineCount = 0, visibleTop = 1, visibleBottom = 50),
+        )
+        assertEquals(
+            emptyList<Float>(),
+            errorTickFractions(setOf(5), lineCount = 100, visibleTop = 20, visibleBottom = 20),
+        )
+    }
+}
+
+/** The declaration the sticky header pins, and when it stays hidden. */
+class ScopeHeaderTest {
+
+    // Line numbers: 1 package, 2 blank, 3 class, 4 fun onCreate, 5 body, 6 closing fun, 7 blank,
+    // 8 fun onResume, 9 body, 10 closing fun, 11 closing class.
+    private val code = """
+        package com.example
+
+        class MainActivity {
+            fun onCreate(state: Bundle?) {
+                val a = 1
+            }
+
+            fun onResume() {
+                val b = 2
+            }
+        }
+    """.trimIndent()
+
+    @Test
+    fun theInnermostDeclarationIsFoundNotTheOutermostOne() {
+        // A reader two blocks deep wants the function they are in, not the class they are inside.
+        val found = enclosingDeclarationAt(code, 5)
+        assertNotNull(found)
+        assertEquals(4, found!!.first)
+        assertTrue(found.second, found.second.contains("onCreate"))
+    }
+
+    @Test
+    fun aSecondDeclarationIsFoundAfterTheFirstHasClosed() {
+        val found = enclosingDeclarationAt(code, 9)
+        assertNotNull(found)
+        assertEquals(8, found!!.first)
+        assertTrue(found.second, found.second.contains("onResume"))
+    }
+
+    @Test
+    fun aBraceInAStringIsNotABlock() {
+        val src = "fun a() {\n    val s = \"{\"\n    val b = 1\n}"
+        val found = enclosingDeclarationAt(src, 3)
+        assertNotNull(found)
+        assertTrue(found!!.second, found.second.contains("fun a()"))
+    }
+
+    @Test
+    fun aDeclarationLineItselfBelongsToItsEnclosingBlockNotItsOwn() {
+        // Line 4 opens a brace, so the block it opens is not yet the one line 4 is *in*. The header
+        // for line 4 is the class, which is what the reader is actually looking at.
+        val found = enclosingDeclarationAt(code, 4)
+        assertNotNull(found)
+        assertEquals(3, found!!.first)
+    }
+
+    @Test
+    fun theTopLevelShowsNoHeader() {
+        // Outside every block there is no declaration to be inside of, and a header with nothing to
+        // say is just a row of chrome.
+        assertNull(enclosingDeclarationAt("val a = 1\nval b = 2", 2))
+        assertNull(enclosingDeclarationAt("", 1))
+    }
+
+    @Test
+    fun aClosedBlockDoesNotPinAnything() {
+        val src = "fun a() {\n}\nval after = 1"
+        assertNull(enclosingDeclarationAt(src, 3))
+    }
+
+    @Test
+    fun aBraceOnlyLineOpensABlockRatherThanADeclaration() {
+        // An if body has braces and names nothing, so it must not become the header.
+        val src = "fun a() {\n    if (b) {\n        c()\n    }\n}"
+        val found = enclosingDeclarationAt(src, 3)
+        assertNotNull(found)
+        assertTrue(found!!.second, found.second.contains("fun a()"))
+    }
+
+    @Test
+    fun theHeaderNamesTheDeclarationRatherThanTheLine() {
+        assertEquals(
+            "fun onCreate(state: Bundle?)",
+            declarationOf("    fun onCreate(state: Bundle?) {"),
+        )
+        assertEquals(
+            "class MainActivity : Component()",
+            declarationOf("class MainActivity : Component() {"),
+        )
+        // An unrecognised line is shown whole. Slightly wrong beats nothing.
+        assertEquals("something odd", declarationOf("something odd"))
     }
 }
