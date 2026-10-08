@@ -85,6 +85,58 @@ class TerminalTest {
     }
 
     @Test
+    fun aCommandThatFloodsStandardErrorStillFinishesAndReports() {
+        // Regression: standard error had its own pipe and nothing read it. A pipe holds roughly
+        // 64 KB and the shell blocks the instant it fills, so a command writing more than that to
+        // stderr stopped dead — no output, no prompt, no error, and no way back. 3000 lines is about
+        // 150 KB, comfortably past the point where an unread stderr wedges the shell for good.
+        //
+        // Newline separated on purpose. The exit marker is printed straight after whatever the
+        // command emitted, so a flood with no newlines in it swallows the marker into its last line
+        // and this test would be measuring its own fixture rather than the shell.
+        val flood = "i=0; while [ \$i -lt 3000 ]; do " +
+            "echo stderr-filler-012345678901234567890123456789 \$i >&2; i=\$((i + 1)); done"
+        val output = CopyOnWriteArrayList<String>()
+        val shell = ShellProcess(directory = null, onLine = output::add, shellPath = "/bin/sh")
+        shell.start()
+        if (!shell.isRunning) return
+
+        try {
+            shell.run(flood)
+            // With stderr undrained this never arrives and the list comes back empty, so the failure
+            // is "no status at all" rather than a wrong value — which is exactly the bug.
+            val codes = awaitExitCodes(output, 1)
+            assertEquals(listOf(0), codes.takeLast(1))
+            val flooded = output.filter { it.startsWith("stderr-filler-") }.sumOf { it.length }
+            assertTrue("only $flooded bytes reached the panel", flooded > 64 * 1024)
+        } finally {
+            shell.close()
+        }
+        assertFalse("the shell must not still be wedged", shell.isRunning)
+    }
+
+    @Test
+    fun aFloodedErrorStillReachesThePanel() {
+        // Merging the streams must not mean discarding one of them: the text a command complained
+        // about is the text the reader needs to see.
+        val output = CopyOnWriteArrayList<String>()
+        val shell = ShellProcess(directory = null, onLine = output::add, shellPath = "/bin/sh")
+        shell.start()
+        if (!shell.isRunning) return
+
+        try {
+            shell.run("echo complaint >&2")
+            val deadline = System.currentTimeMillis() + 5_000
+            while (System.currentTimeMillis() < deadline && output.none { it.trim() == "complaint" }) {
+                Thread.sleep(20)
+            }
+            assertTrue("stderr was dropped: $output", output.any { it.trim() == "complaint" })
+        } finally {
+            shell.close()
+        }
+    }
+
+    @Test
     fun terminalCoversTheEditorLikeTheOtherToolPanels() {
         // Back remembers what was underneath, so every full-screen tool panel has to be registered
         // or back would land on Code and lose the Preview that was open.

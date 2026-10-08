@@ -123,6 +123,19 @@ internal class ShellProcess(
         val started = runCatching {
             val builder = ProcessBuilder(shellPath)
             directory?.let { builder.directory(it) }
+            // Standard error is folded into standard output rather than given its own pipe.
+            //
+            // It used to have one, and nothing ever read it. A pipe holds about 64 KB and the shell
+            // blocks the moment it fills, so any command that wrote more than that to stderr — a
+            // build's warnings, a `grep` that had something to say, a download — stopped dead with
+            // no output, no prompt and no error: the terminal simply went quiet and stayed quiet.
+            // That is the worst possible failure for a shell, and it was reachable from one line
+            // of ordinary use.
+            //
+            // Merging also gets the ordering right, which two reader threads could not: the panel
+            // then shows exactly the sequence the shell wrote, rather than two streams interleaved
+            // by whichever thread the scheduler ran first.
+            builder.redirectErrorStream(true)
             builder.start()
         }.getOrNull() ?: return
         process = started
