@@ -71,15 +71,70 @@ fun MutableList<LogLine>.appendCapped(line: LogLine) {
     }
 }
 
-/** Spec 7 build task names, in execution order. */
-val BuildTasks = listOf(
-    "preBuild",
-    "compileDebugKotlin",
-    "mergeDebugResources",
-    "dexBuilderDebug",
-    "packageDebug",
-    "assembleDebug",
+/**
+ * How far through a build a step is.
+ *
+ * There is no FAILED state: a build that reports an error still completed its work, and showing a
+ * red cross beside a step that actually finished would be a second lie on top of the first one.
+ * Whether the project compiled is the result line's business, not a step's.
+ */
+internal enum class StepState { PENDING, RUNNING, DONE }
+
+/** Which part of the sweep a build is in, in the order it happens. */
+enum class BuildPhase { IDLE, SYMBOLS, FILES, DONE }
+
+/** The steps a build goes through, named after what they actually do. */
+internal fun buildStepLabels(fileCount: Int): List<String> = listOf(
+    "Read project symbols",
+    when (fileCount) {
+        0 -> "No Kotlin files"
+        1 -> "Analyse 1 file"
+        else -> "Analyse $fileCount files"
+    }
 )
+
+/**
+ * Which step each phase of a build is in.
+ *
+ * One number would have been tidier — divide the bar into equal shares — but it would have been
+ * wrong. Reading the project's symbols is a single quick pass over every file, while analysing them
+ * is the long haul, so on a real project the first step is finished long before a half-full bar.
+ * Tracking the phase instead of guessing at a fraction is what lets the list say something true.
+ */
+internal fun buildStepStates(phase: BuildPhase): List<StepState> = when (phase) {
+    BuildPhase.IDLE -> listOf(StepState.PENDING, StepState.PENDING)
+    BuildPhase.SYMBOLS -> listOf(StepState.RUNNING, StepState.PENDING)
+    BuildPhase.FILES -> listOf(StepState.DONE, StepState.RUNNING)
+    BuildPhase.DONE -> listOf(StepState.DONE, StepState.DONE)
+}
+
+/** The length a build is reported in, so a sub-second check does not read as "0 ms". */
+internal fun formatBuildTime(elapsedMs: Long): String =
+    if (elapsedMs < 1000) {
+        "$elapsedMs ms"
+    } else {
+        String.format(java.util.Locale.US, "%.1f s", elapsedMs / 1000.0)
+    }
+
+private fun countOf(n: Int, one: String, many: String): String =
+    "$n ${if (n == 1) one else many}"
+
+/**
+ * The one line that says whether the project compiled.
+ *
+ * Counts and time come from the sweep that just ran, so this is a report rather than a mood. The
+ * failing case says the errors are in the marked lines, because that is where they can be acted on
+ * — the panel opens the Problems sheet from a tap, and the editor has already underlined them.
+ */
+internal fun buildResultLine(errorCount: Int, warningCount: Int, elapsedMs: Long): String {
+    val time = formatBuildTime(elapsedMs)
+    return when {
+        errorCount > 0 -> "BUILD FAILED · ${countOf(errorCount, "error", "errors")}, " +
+            "${countOf(warningCount, "warning", "warnings")} in $time. Open the marked lines to fix."
+        warningCount > 0 -> "BUILD SUCCESSFUL · ${countOf(warningCount, "warning", "warnings")} in $time"
+        else -> "BUILD SUCCESSFUL · 0 errors in $time"
+    }
+}
 
 /**
  * The way out of Logcat and Build. Neither panel has a path bar, so without this the bottom
@@ -195,27 +250,38 @@ fun IdeLogcatPanel(
 }
 
 /**
- * Spec 7 Build panel: a 6 dp progress bar, one row per Gradle task with a status glyph, and a
- * bold result line. Simulated — there is no Gradle daemon in the app — and blocked while the
- * project has compile errors.
+ * Spec 7 Build panel: a 6 dp progress bar, one row per phase of the compile check with a status
+ * glyph, and a bold result line.
+ *
+ * This is a real check, not a Gradle build: there is no Gradle daemon inside an Android app and
+ * there never will be, so the panel runs the app's own Kotlin analyser across the project's files
+ * and reports what it genuinely found. The old version of this panel named Gradle tasks it never
+ * ran and walked them on a timer, which is worse than useless — it looked like a build log without
+ * being one. Everything drawn here now comes from the sweep: the bar from the files it has done, the
+ * steps from the phase it is in, and the result line from the counts and time it measured.
  */
 @Composable
 fun IdeBuildPanel(
     building: Boolean,
     errorCount: Int,
+    warningCount: Int,
+    elapsedMs: Long,
+    phase: BuildPhase,
+    fileCount: Int,
+    progress: Float,
     onRun: () -> Unit,
     modifier: Modifier = Modifier,
-    completedTasks: Int = if (building) 0 else BuildTasks.size,
     onBack: () -> Unit = {},
 ) {
     val c = LocalPageColors.current
     val failed = errorCount > 0
-    val progress = if (building) {
-        completedTasks.toFloat() / BuildTasks.size.coerceAtLeast(1)
-    } else if (failed) {
-        1f / BuildTasks.size
-    } else {
-        1f
+    // While nothing is running the bar shows the whole sweep: full on a clean project, and stopped
+    // where it got to on one that failed, so the last state is still visible rather than snapping
+    // back to empty the moment the button is released.
+    val fraction = when {
+        building -> progress.coerceIn(0f, 1f)
+        failed -> 1f
+        else -> 1f
     }
 
     Column(modifier.fillMaxSize().background(c.bg)) {
@@ -236,10 +302,10 @@ fun IdeBuildPanel(
             ) {
                 Box(
                     Modifier
-                        .fillMaxWidth(progress.coerceIn(0f, 1f))
+                        .fillMaxWidth(fraction)
                         .height(6.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(c.ac),
+                        .background(if (failed) c.red else c.ac),
                 )
             }
             Box(
@@ -260,14 +326,8 @@ fun IdeBuildPanel(
         }
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            BuildTasks.forEachIndexed { index, task ->
-                val state = when {
-                    failed && index == 1 -> TaskState.FAILED
-                    building && index < completedTasks -> TaskState.DONE
-                    building && index == completedTasks -> TaskState.RUNNING
-                    !building && !failed -> TaskState.DONE
-                    else -> TaskState.PENDING
-                }
+            val labels = buildStepLabels(fileCount)
+            buildStepStates(phase).forEachIndexed { index, state ->
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -276,24 +336,19 @@ fun IdeBuildPanel(
                 ) {
                     Text(
                         text = when (state) {
-                            TaskState.PENDING -> "."
-                            TaskState.RUNNING -> "..."
-                            TaskState.DONE -> "✓"
-                            TaskState.FAILED -> "✗"
+                            StepState.PENDING -> "."
+                            StepState.RUNNING -> "..."
+                            StepState.DONE -> "✓"
                         },
-                        color = when (state) {
-                            TaskState.DONE -> c.success
-                            TaskState.FAILED -> c.red
-                            else -> c.mu
-                        },
+                        color = if (state == StepState.DONE) c.success else c.mu,
                         fontSize = 13.sp,
                         fontFamily = Mono,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.size(width = 18.dp, height = 18.dp),
                     )
                     Text(
-                        text = ":app:$task",
-                        color = c.tx,
+                        text = labels[index],
+                        color = if (state == StepState.DONE) c.tx else c.mu,
                         fontSize = 13.sp,
                         fontFamily = Mono,
                     )
@@ -301,11 +356,7 @@ fun IdeBuildPanel(
                 Box(Modifier.fillMaxWidth().height(1.dp).background(c.ln.copy(alpha = 0.45f)))
             }
             Text(
-                text = if (failed) {
-                    "BUILD FAILED · $errorCount compile errors. Open the marked lines to fix."
-                } else {
-                    "BUILD SUCCESSFUL"
-                },
+                text = buildResultLine(errorCount, warningCount, elapsedMs),
                 color = if (failed) c.red else c.success,
                 fontSize = 13.sp,
                 fontFamily = Sans,
@@ -315,8 +366,6 @@ fun IdeBuildPanel(
         }
     }
 }
-
-private enum class TaskState { PENDING, RUNNING, DONE, FAILED }
 
 @Composable
 private fun FilterChip(label: String, active: Boolean, onClick: () -> Unit) {

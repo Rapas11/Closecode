@@ -233,10 +233,9 @@ fun IdeScreen(
     var explorerFilter by remember { mutableStateOf("") }
     var toast by remember { mutableStateOf<String?>(null) }
     var building by remember { mutableStateOf(false) }
-    // The build and logcat streams. Neither reaches the panel as real data yet: the build replays
-    // a fixed task list and the log carries nothing the app itself produced.
+    // The build and logcat streams. The log still carries nothing but what a build reports; the
+    // build now reports a real sweep of the project's own files.
     val logLines = remember { mutableStateListOf<LogLine>() }
-    var buildTaskIndex by remember { mutableIntStateOf(0) }
     // True while the suggestion popup is up. It is the tool row's other reason to hide: the popup
     // covers the row, and a row under a popup only steals taps.
     var suggestionsOpen by remember { mutableStateOf(false) }
@@ -285,6 +284,13 @@ fun IdeScreen(
     // Spec 6.9: the status bar totals cover the project, not just the open file.
     var projectErrors by remember { mutableStateOf(0) }
     var projectWarnings by remember { mutableStateOf(0) }
+    // Build panel state: the sweep's own numbers, not a timer walking a list of task names.
+    var buildProgress by remember { mutableFloatStateOf(0f) }
+    var buildElapsedMs by remember { mutableStateOf(0L) }
+    var buildErrorCount by remember { mutableStateOf(0) }
+    var buildWarningCount by remember { mutableStateOf(0) }
+    var buildPhase by remember { mutableStateOf(BuildPhase.IDLE) }
+    var buildFileCount by remember { mutableIntStateOf(0) }
     // Every name declared anywhere in the project. The editor's own per-file pass needs it so a
     // composable defined in Theme.kt is not reported as missing in MainActivity.kt.
     var projectNames by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -720,30 +726,87 @@ fun IdeScreen(
             toast = null
         }
     }
-
-    // Walks the real Gradle task names from the spec, one per beat, then reports the outcome.
-    // The timings are invented; the task names and the error count are not.
+    // A real build: the app's own Kotlin analyser is run across the project's files and what it finds
+    // is reported. There is no Gradle daemon inside an Android app, so this is a compile check and
+    // the panel says so — but every number here is measured rather than timed out on a schedule.
+    //
+    // The whole sweep runs on Dispatchers.Default. It was on the main thread while the panel showed
+    // a timer, where it was harmless because the work was fake; with real work over up to sixty
+    // files it would have frozen the editor for as long as it took.
     LaunchedEffect(building) {
         if (!building) return@LaunchedEffect
-        logLines.appendCapped(LogLine(LogLevel.INFO, "Build", "Build started"))
-        for (task in BuildTasks) {
-            kotlinx.coroutines.delay(220)
-            buildTaskIndex = BuildTasks.indexOf(task) + 1
-            logLines.appendCapped(LogLine(LogLevel.DEBUG, "Gradle", "> Task :app:$task"))
+        val sources = diskTree
+            .filter { it.kind == FileKind.Kotlin }
+            .take(PROJECT_ANALYSIS_MAX_FILES)
+            .map { it.name to (liveBuffers[it.name] ?: diskContents[it.name].orEmpty()) }
+        buildFileCount = sources.size
+        buildPhase = BuildPhase.SYMBOLS
+        buildProgress = 0f
+        if (sources.isEmpty()) {
+            // Nothing to check is not the same as a project that compiles, so the panel is left in
+            // the idle state rather than being handed a clean bill of health it never earned.
+            building = false
+            buildPhase = BuildPhase.IDLE
+            buildProgress = 0f
+            buildElapsedMs = 0L
+            buildErrorCount = 0
+            buildWarningCount = 0
+            toast = "No Kotlin files to build"
+            return@LaunchedEffect
         }
-        buildTaskIndex = BuildTasks.size
+        val started = System.nanoTime()
+        val result = withContext(Dispatchers.Default) {
+            buildPhase = BuildPhase.FILES
+            val index = AndroidApiAssets.cached()
+            val declared = KotlinAnalyzer.projectSymbols(sources.map { it.second })
+            var errors = 0
+            var warnings = 0
+            // One file at a time, so the bar moves as the work is done rather than jumping at the
+            // end — and so a slow file cannot make the panel look hung.
+            for ((fileIndex, source) in sources.withIndex()) {
+                val text = source.second
+                if (text.isNotBlank() && text.length <= MAX_ANALYZED_CHARS) {
+                    val analysis = runCatching {
+                        KotlinAnalyzer.analyze(text, index, declared)
+                    }.getOrNull()
+                    analysis?.diagnostics?.forEach { d ->
+                        when (d.severity) {
+                            Severity.ERROR -> errors++
+                            Severity.WARNING -> warnings++
+                        }
+                    }
+                }
+                buildProgress = (fileIndex + 1).toFloat() / sources.size.toFloat()
+            }
+            Triple(errors, warnings, (System.nanoTime() - started) / 1_000_000)
+        }
+        val (errors, warnings, elapsedMs) = result
+        buildElapsedMs = elapsedMs.coerceAtMost(MAX_REPORTED_BUILD_MS)
+        buildErrorCount = errors
+        buildWarningCount = warnings
+        buildProgress = 1f
+        buildPhase = BuildPhase.DONE
         building = false
-        if (projectErrors > 0) {
+        if (errors > 0) {
             logLines.appendCapped(
-                LogLine(LogLevel.ERROR, "Build", "BUILD FAILED · $projectErrors compile errors"),
+                LogLine(
+                    LogLevel.ERROR,
+                    "Build",
+                    "BUILD FAILED · $errors errors, $warnings warnings in ${formatBuildTime(buildElapsedMs)}",
+                ),
             )
-            toast = "Build failed · $projectErrors errors"
+            toast = "Build failed · $errors errors"
         } else {
-            logLines.appendCapped(LogLine(LogLevel.INFO, "Build", "BUILD SUCCESSFUL"))
+            logLines.appendCapped(
+                LogLine(
+                    LogLevel.INFO,
+                    "Build",
+                    "BUILD SUCCESSFUL · 0 errors in ${formatBuildTime(buildElapsedMs)}",
+                ),
+            )
             toast = "Build successful · 0 errors"
         }
     }
-
     // The Android back button closes what is open, newest first, and only leaves the project when
     // there is nothing left to close. Composed after the exit handler above so it wins while armed.
     BackHandler(
@@ -825,8 +888,12 @@ fun IdeScreen(
                 )
                 "Build" -> IdeBuildPanel(
                     building = building,
-                    errorCount = projectErrors,
-                    completedTasks = if (building) buildTaskIndex else BuildTasks.size,
+                    errorCount = buildErrorCount,
+                    warningCount = buildWarningCount,
+                    elapsedMs = buildElapsedMs,
+                    phase = buildPhase,
+                    fileCount = buildFileCount,
+                    progress = buildProgress,
                     onRun = {
                         // Spec 7: build and run are blocked while any error exists.
                         if (projectErrors > 0) {
@@ -2812,8 +2879,8 @@ contentAlignment = Alignment.Center,
                             ),
                     ) {
                         // Drawn first, so every rule sits under the glyphs rather than across
-                        // them. Both ends come from the renderer, so a guide and the brace it
-                        // describes cannot drift apart when the font, the zoom or the window moves.
+                        // them. The two ends come from the renderer; the column is arithmetic over
+                        // the file's own indents, times one measured character width.
                         BracketGuideLayer(
                             pairs = braceGuides,
                             source = code,
@@ -3634,10 +3701,7 @@ private fun BoxScope.EditorScrollbar(
     // actually land on it — and the inner one is the bar the reader sees, still 6 dp, still
     // rounded, still carrying the drag. Padding on a single box instead would have inflated the
     // visible bar along with the target, because the thumb fills whatever box it is in.
-    Box(
-        track.then(slop),
-        contentAlignment = if (horizontal) Alignment.BottomCenter else Alignment.CenterEnd,
-    ) {
+    Box(track.then(slop), contentAlignment = if (horizontal) Alignment.BottomCenter else Alignment.CenterEnd) {
         Box(
             bar
                 .clip(RoundedCornerShape(SCROLLBAR_THICKNESS / 2))
@@ -3848,6 +3912,15 @@ private const val ANALYSIS_DEBOUNCE_MS = 200L
 /** Project-wide totals run over every Kotlin file, so they wait longer and stop at a file cap. */
 private const val PROJECT_ANALYSIS_DEBOUNCE_MS = 400L
 private const val PROJECT_ANALYSIS_MAX_FILES = 60
+
+/**
+ * The longest build time the panel will report.
+ *
+ * A number this far from the truth helps nobody, and it only gets there when a device is being
+ * starved of CPU — so past ten seconds the panel says "10.0 s" rather than claiming a minute it did
+ * not take.
+ */
+private const val MAX_REPORTED_BUILD_MS = 10_000L
 
 /** Spec 6.7: the popup shows at most five rows. */
 internal const val MAX_VISIBLE_SUGGESTIONS = 5

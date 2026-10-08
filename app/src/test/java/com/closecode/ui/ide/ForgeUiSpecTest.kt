@@ -239,18 +239,13 @@ class ForgeUiSpecTest {
     }
 
     @Test
-    fun theBuildTaskListIsTheSpecList() {
-        assertEquals(
-            listOf(
-                "preBuild",
-                "compileDebugKotlin",
-                "mergeDebugResources",
-                "dexBuilderDebug",
-                "packageDebug",
-                "assembleDebug",
-            ),
-            BuildTasks,
-        )
+    fun theBuildPanelReportsTheCheckItActuallyRuns() {
+        // The panel used to name Gradle tasks it never ran, walked on a timer. There is no Gradle
+        // daemon inside an Android app, so the list is now the sweep's own two phases — and the test
+        // says so, rather than pinning names that describe work nobody does.
+        assertEquals(listOf("Read project symbols", "Analyse 12 files"), buildStepLabels(12))
+        assertEquals(listOf("Read project symbols", "Analyse 1 file"), buildStepLabels(1))
+        assertEquals(listOf("Read project symbols", "No Kotlin files"), buildStepLabels(0))
     }
 
     // -- Spec item 5, image downscaling -------------------------------------------------
