@@ -219,8 +219,10 @@ fun IdeTerminal(
     projectRoot: File?,
     projectSlug: String = "",
     tree: List<ProjectFile> = emptyList(),
-    modifier: Modifier = Modifier,
+    onOpenPath: (ProjectFile) -> Unit = {},
+    onOpenSourceControl: () -> Unit = {},
     onBack: () -> Unit = {},
+    modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
     val output = remember(projectRoot) { Channel<String>(Channel.UNLIMITED) }
@@ -306,13 +308,35 @@ fun IdeTerminal(
         if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
     }
 
-    fun send() {
-        val command = sanitizeCommand(input.text)
+    /** Remembers, runs and clears the line, which a chip and the send button both need. */
+    fun submit(text: String) {
+        val command = sanitizeCommand(text)
         if (command.isEmpty()) return
         // The prompt is drawn by the app rather than printed by the shell, which never would: a
         // non-interactive shell does not draw one. It carries the exit status too, so the reader
         // learns how the last command went without looking for a number.
         lines.appendTerminalLine("$PROMPT$command")
+
+        // `code` is not a program and never runs. It is the app's own way of saying "show me this
+        // file", and it is handled before the shell sees it so that `code` followed by a name opens
+        // the editor rather than reporting a command that does not exist.
+        val target = codeTarget(command)
+        if (target != null) {
+            val file = codeTargetFile(tree, cwd, target)
+            if (file != null) {
+                onOpenPath(file)
+                lines.appendTerminalLine("Opened ${file.path} in the editor")
+            } else {
+                lines.appendTerminalLine("No file called $target in this project")
+            }
+            history = addToHistory(history, command)
+            if (projectSlug.isNotEmpty()) historyStore.write(projectSlug, history)
+            historyIndex = history.size
+            draft = ""
+            input = TextFieldValue("")
+            return
+        }
+
         shell.run(command)
         // The app tracks the working directory because the shell will not tell it. Anything that
         // changes directory behind the app's back desyncs completion, and there is no way to ask
@@ -324,6 +348,8 @@ fun IdeTerminal(
         draft = ""
         input = TextFieldValue("")
     }
+
+    fun send() = submit(input.text)
 
     /** A latched modifier gives up its hold after the one key it was armed for; a locked one holds. */
     fun finishModifiers() {
@@ -598,6 +624,20 @@ fun IdeTerminal(
                 CcIcon(CcIcons.Chevron, Color.White, 16.dp)
             }
         }
+
+        // The chips sit between the input and the key bar: they are about the line being typed, and that
+        // is the thing just above them.
+        TerminalChipsRow(
+            onChip = { action ->
+                when (action) {
+                    is ChipAction.Command -> {
+                        submit(action.command)
+                        Unit
+                    }
+                    ChipAction.SourceControl -> onOpenSourceControl()
+                }
+            },
+        )
 
         // The key bar sits below the input rather than above it, so it lands directly on top of the
         // soft keyboard with nothing between them — which is where a thumb already is.

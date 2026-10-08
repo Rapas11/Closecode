@@ -1,5 +1,6 @@
 package com.closecode.ui.ide
 
+import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
 
 /**
@@ -130,7 +131,7 @@ internal fun completionCandidates(
         .filter { it.name != ".git" }
         .distinctBy { it.name }
         .sortedBy { it.name }
-        .map { Completion(it.name, it.kind == com.closecode.ui.model.FileKind.Folder) }
+        .map { Completion(it.name, it.kind == FileKind.Folder) }
         .toList()
 }
 
@@ -159,6 +160,41 @@ internal fun commonPrefixOf(candidates: List<Completion>): String {
  */
 internal fun completionLabels(candidates: List<Completion>): List<String> =
     candidates.map { if (it.isFolder) "${it.name}/" else it.name }
+
+/**
+ * The path a `code` command names, or null when this is an ordinary command.
+ *
+ * `code` is not a program — there is nothing in Android's shell by that name, and shipping one to
+ * reach a screen the app already has would be silly. So the app reads the word itself and opens the
+ * file, which is also the only way it can do anything useful with the editor it is about to show.
+ *
+ * Quotes are stripped because a path with a space in it is the one case where somebody reaches for
+ * them, and a chip that silently failed on those would be worse than no chip.
+ */
+internal fun codeTarget(command: String): String? {
+    val trimmed = command.trim()
+    val head = trimmed.substringBefore(' ')
+    if (head != "code") return null
+    val rest = trimmed.removePrefix("code").trim()
+    if (rest.isEmpty()) return null
+    return rest.removeSurrounding("\"").removeSurrounding("'").takeIf { it.isNotBlank() }
+}
+
+/**
+ * The file in [tree] that a `code` command names, or null when there is no such file.
+ *
+ * Resolved the same way Tab resolves a path, so `code app/Theme.kt` and `code src/main` mean what
+ * they look like from wherever the shell currently is.
+ */
+internal fun codeTargetFile(tree: List<ProjectFile>, cwd: String, path: String): ProjectFile? {
+    val relative = if (path.startsWith("/")) {
+        path.trimStart('/')
+    } else {
+        resolvePath(cwd, path)
+    }
+    if (relative.isEmpty()) return null
+    return tree.firstOrNull { it.path == relative && it.kind != FileKind.Folder }
+}
 
 /**
  * What the next Tab should insert.

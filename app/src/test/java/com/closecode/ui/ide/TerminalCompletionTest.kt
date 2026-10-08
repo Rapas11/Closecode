@@ -292,4 +292,97 @@ class TerminalCompletionTest {
         val labels = completionLabels(listOf(Completion("res", true), Completion("Theme.kt", false)))
         assertEquals(listOf("res/", "Theme.kt"), labels)
     }
+
+    // -- The chips -------------------------------------------------------------
+
+    @Test
+    fun everyChipEitherRunsACommandOrOpensAScreen() {
+        // Nothing on the row is allowed to be decorative, and nothing is allowed to claim it will
+        // run something the shell has no binary for.
+        for ((label, action) in TerminalChips) {
+            assertTrue(label, label.isNotBlank())
+            assertTrue(label, action is ChipAction.Command || action is ChipAction.SourceControl)
+        }
+    }
+
+    @Test
+    fun theChipsRunExactlyWhatTheySay() {
+        val commands = TerminalChips.mapNotNull { (_, action) -> (action as? ChipAction.Command)?.command }
+        assertEquals(listOf("ls -la", "pwd", "ps", "clear", "kill"), commands)
+    }
+
+    @Test
+    fun theGitChipsOpenSourceControlRatherThanRunningGit() {
+        // There is no git binary in the shell. A chip that typed `git status` would report
+        // "not found" every time, which is why these two go to the panel where Git really is.
+        val opens = TerminalChips.filter { it.second == ChipAction.SourceControl }.map { it.first }
+        assertEquals(listOf("Status", "Diff"), opens)
+        assertTrue(TerminalChips.none { (_, action) -> action is ChipAction.Command && action.command.startsWith("git") })
+    }
+
+    @Test
+    fun aChipIsNeverEmpty() {
+        assertTrue(TerminalChips.isNotEmpty())
+    }
+
+    // -- code ------------------------------------------------------------------
+
+    @Test
+    fun codeNamesTheFileItShouldOpen() {
+        assertEquals("app/Theme.kt", codeTarget("code app/Theme.kt"))
+    }
+
+    @Test
+    fun codeToleratesQuotedPaths() {
+        // A path with a space is the one case somebody reaches for quotes, and a chip that silently
+        // failed on those would be worse than no chip.
+        assertEquals("my docs/notes.md", codeTarget("code \"my docs/notes.md\""))
+        assertEquals("my docs/notes.md", codeTarget("code 'my docs/notes.md'"))
+    }
+
+    @Test
+    fun codeOnItsOwnNamesNothing() {
+        assertNull(codeTarget("code"))
+        assertNull(codeTarget("code   "))
+    }
+
+    @Test
+    fun anOrdinaryCommandIsNotCode() {
+        assertNull(codeTarget("ls -la"))
+        assertNull(codeTarget("echo code"))
+        // Only the whole first word counts: a command that merely starts with those letters is not it.
+        assertNull(codeTarget("codes something"))
+        assertNull(codeTarget("encode x"))
+    }
+
+    @Test
+    fun codeFindsTheFileItNames() {
+        val found = codeTargetFile(tree, "", "app/Theme.kt")
+        assertEquals("app/Theme.kt", found?.path)
+    }
+
+    @Test
+    fun codeResolvesFromWhereverTheShellIs() {
+        val found = codeTargetFile(tree, "app", "res/strings.xml")
+        assertEquals("app/res/strings.xml", found?.path)
+    }
+
+    @Test
+    fun codeAcceptsAnAbsolutePath() {
+        assertEquals("README.md", codeTargetFile(tree, "app", "/README.md")?.path)
+    }
+
+    @Test
+    fun codeRefusesAFolderBecauseThereIsNothingToOpen() {
+        assertNull(codeTargetFile(tree, "", "app"))
+        assertNull(codeTargetFile(tree, "", "app/res"))
+    }
+
+    @Test
+    fun codeSaysSoWhenTheFileIsNotThere() {
+        // The alternative is running `code` in the shell, which would report that no such command
+        // exists — technically true and completely useless.
+        assertNull(codeTargetFile(tree, "", "nope.kt"))
+        assertNull(codeTargetFile(emptyList(), "", "anything.kt"))
+    }
 }
