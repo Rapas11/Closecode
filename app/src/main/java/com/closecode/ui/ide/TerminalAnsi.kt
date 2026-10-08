@@ -14,7 +14,9 @@ import androidx.compose.material3.Text
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
+import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.theme.AnsiColors
+import com.closecode.ui.theme.TerminalPalettes
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 
@@ -323,14 +325,19 @@ internal const val DimAlpha = 0.62f
 @Composable
 internal fun ansiAnnotated(line: String): AnnotatedString {
     val c = LocalPageColors.current
+    // The palette the reader chose, not the app's own: a program asking for "green" means the
+    // green of the scheme they are used to. Falls back to the app's own when the setting names a
+    // scheme this build does not carry, rather than drawing nothing at all.
+    val settings = LocalSettings.current
+    val ansi = TerminalPalettes[settings.terminalTheme] ?: c.ansi
     val parsed = remember(line) { parseAnsi(line) }
-    return remember(parsed, c) {
+    return remember(parsed, ansi, c) {
         buildAnnotatedString {
             parsed.runs.forEach { run ->
                 if (run.style == AnsiStyle.Plain) {
                     append(run.text)
                 } else {
-                    pushStyle(spanStyleFor(run.style, c.ansi, c.tx, c.bg))
+                    pushStyle(spanStyleFor(run.style, ansi, c.tx, c.bg))
                     append(run.text)
                     pop()
                 }
@@ -349,19 +356,34 @@ internal fun ansiAnnotated(line: String): AnnotatedString {
 internal fun TerminalLine(
     line: String,
     modifier: Modifier = Modifier,
-    fontSize: TextUnit = 13.sp,
+    fontSize: TextUnit? = null,
     fontFamily: FontFamily = Mono,
     color: Color? = null,
 ) {
     val c = LocalPageColors.current
+    val settings = LocalSettings.current
     val hasEscapes = remember(line) { line.indexOf(ESC) >= 0 }
     Text(
         text = if (hasEscapes) ansiAnnotated(line) else AnnotatedString(line),
         color = color ?: c.tx,
-        fontSize = fontSize,
+        // Null means "whatever the terminal is set to", so a line of output and the line being
+        // typed are always the same size.
+        fontSize = fontSize ?: terminalFontSize(settings).sp,
         fontFamily = fontFamily,
         maxLines = 1,
         softWrap = false,
         modifier = modifier,
     )
 }
+/**
+ * The terminal's text size in points.
+ *
+ * Clamped rather than taken as given: a preference written by an older build, or edited by hand,
+ * must never be able to set the terminal to a size nothing can be read at. It is clamped to the
+ * ends of the range the settings screen offers, so the answer is always a size somebody chose.
+ */
+internal fun terminalFontSize(settings: com.closecode.ui.settings.Settings): Int =
+    settings.terminalFontSize.coerceIn(
+        com.closecode.ui.settings.TerminalFontSizeChoices.first().toInt(),
+        com.closecode.ui.settings.TerminalFontSizeChoices.last().toInt(),
+    )

@@ -132,9 +132,12 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun theScreenIsElevenSectionsAndFiftyTwoRows() {
+    fun theScreenIsElevenSectionsAndFiftyThreeRows() {
+        // Eleven sections throughout. The terminal's own section existed before it had anything real
+        // in it; wiring its colours and size replaced a placeholder with two working rows rather than
+        // adding a section, so only the row count moved.
         assertEquals(11, sections(SettingsLive()).size)
-        assertEquals(52, rowCount())
+        assertEquals(53, rowCount())
     }
 
     @Test
@@ -200,7 +203,9 @@ class SettingsStoreTest {
         assertEquals(OptionSetting.THEME, options["Theme"])
         assertEquals(OptionSetting.FONT_SIZE, options["Font size"])
         assertEquals(OptionSetting.TAB_SIZE, options["Tab size"])
-        assertEquals(3, options.size)
+        assertEquals(OptionSetting.TERMINAL_THEME, options["Terminal colours"])
+        assertEquals(OptionSetting.TERMINAL_FONT_SIZE, options["Terminal font size"])
+        assertEquals(5, options.size)
     }
 
     @Test

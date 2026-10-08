@@ -23,7 +23,22 @@ enum class OptionSetting {
     THEME,
     FONT_SIZE,
     TAB_SIZE,
+    TERMINAL_THEME,
+    TERMINAL_FONT_SIZE,
 }
+
+/**
+ * The colours a terminal can draw.
+ *
+ * "Closecode" is the default because it is the one that already agrees with everything else on
+ * screen; the other four are the schemes a reader is likely to already know. Each is a palette the
+ * ANSI parser resolves its sixteen colours against, so a program that asks for red gets that
+ * theme's red rather than the editor's error colour.
+ */
+val TerminalThemeChoices = listOf("Closecode", "Dracula", "One Dark", "Monokai", "Matrix")
+
+/** Terminal font sizes in points. Small enough to fit more of a line, large enough to read on glass. */
+val TerminalFontSizeChoices = listOf("9", "10", "11", "12", "13", "14", "16", "18")
 
 /** The choices each [OptionSetting] accepts. Anything else read from storage is rejected. */
 val ThemeChoices = listOf("System", "Dark", "Light")
@@ -51,6 +66,8 @@ data class Settings(
     val theme: String = "System",
     val fontSize: Int = 13,
     val tabSize: Int = 2,
+    val terminalTheme: String = "Closecode",
+    val terminalFontSize: Int = 13,
 ) {
     fun flag(key: BoolSetting): Boolean = when (key) {
         BoolSetting.OPEN_LAST_PROJECT -> openLastProject
@@ -80,6 +97,8 @@ data class Settings(
         OptionSetting.THEME -> theme
         OptionSetting.FONT_SIZE -> fontSize.toString()
         OptionSetting.TAB_SIZE -> tabSize.toString()
+        OptionSetting.TERMINAL_THEME -> terminalTheme
+        OptionSetting.TERMINAL_FONT_SIZE -> terminalFontSize.toString()
     }
 
     /**
@@ -97,6 +116,17 @@ data class Settings(
 
         OptionSetting.TAB_SIZE -> if (value in TabSizeChoices) {
             copy(tabSize = value.toInt())
+        } else {
+            this
+        }
+        OptionSetting.TERMINAL_THEME -> if (value in TerminalThemeChoices) {
+            copy(terminalTheme = value)
+        } else {
+            this
+        }
+
+        OptionSetting.TERMINAL_FONT_SIZE -> if (value in TerminalFontSizeChoices) {
+            copy(terminalFontSize = value.toInt())
         } else {
             this
         }
@@ -128,6 +158,11 @@ class SettingsStore(private val kv: KeyValueStore) {
             .coerceIn(FontSizeChoices.first().toInt(), FontSizeChoices.last().toInt()),
         tabSize = kv.getInt(KEY_TAB_SIZE, Settings().tabSize)
             .coerceIn(TabSizeChoices.first().toInt(), TabSizeChoices.last().toInt()),
+        terminalTheme = kv.getString(KEY_TERMINAL_THEME, Settings().terminalTheme)
+            ?.takeIf { it in TerminalThemeChoices }
+            ?: Settings().terminalTheme,
+        terminalFontSize = kv.getInt(KEY_TERMINAL_FONT_SIZE, Settings().terminalFontSize)
+            .coerceIn(TerminalFontSizeChoices.first().toInt(), TerminalFontSizeChoices.last().toInt()),
     )
 
     /**
@@ -148,6 +183,8 @@ class SettingsStore(private val kv: KeyValueStore) {
         kv.putString(KEY_THEME, settings.theme)
         kv.putInt(KEY_FONT_SIZE, settings.fontSize)
         kv.putInt(KEY_TAB_SIZE, settings.tabSize)
+        kv.putString(KEY_TERMINAL_THEME, settings.terminalTheme)
+        kv.putInt(KEY_TERMINAL_FONT_SIZE, settings.terminalFontSize)
         return read()
     }
 
@@ -164,6 +201,8 @@ class SettingsStore(private val kv: KeyValueStore) {
         const val KEY_THEME = "theme"
         const val KEY_FONT_SIZE = "font_size"
         const val KEY_TAB_SIZE = "tab_size"
+        const val KEY_TERMINAL_THEME = "terminal_theme"
+        const val KEY_TERMINAL_FONT_SIZE = "terminal_font_size"
     }
 }
 

@@ -45,6 +45,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.ui.model.ProjectFile
+import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import java.io.BufferedWriter
@@ -228,6 +229,7 @@ fun IdeTerminal(
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
+    val settings = LocalSettings.current
     var ctrl by remember { mutableStateOf(ModifierLatch.OFF) }
     var alt by remember { mutableStateOf(ModifierLatch.OFF) }
     var completionCandidates by remember { mutableStateOf(emptyList<Completion>()) }
@@ -551,7 +553,7 @@ fun IdeTerminal(
                 Text(
                     text = "Android's shell, in the project's folder. Type a command and send it.",
                     color = c.mu,
-                    fontSize = 13.sp,
+                    fontSize = terminalFontSize(settings).sp,
                     fontFamily = Mono,
                 )
             }
@@ -617,14 +619,20 @@ fun IdeTerminal(
             Text(
                 text = PROMPT,
                 color = if (session.lastExit == null) c.ac else if (session.lastExit == 0) c.success else c.red,
-                fontSize = 13.sp,
+                fontSize = terminalFontSize(settings).sp,
                 fontFamily = Mono,
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
             )
             BasicTextField(
                 value = session.input,
                 onValueChange = { session.input = it },
-                textStyle = TextStyle(color = c.tx, fontFamily = Mono, fontSize = 13.sp),
+                textStyle = TextStyle(
+                    color = c.tx,
+                    fontFamily = Mono,
+                    // The same size as the output, so a line of results and the command that
+                    // produced it are the same height and can be read as one line.
+                    fontSize = terminalFontSize(settings).sp,
+                ),
                 cursorBrush = SolidColor(c.ac),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { send() }),
@@ -712,6 +720,7 @@ private fun TerminalCompletionPopup(
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
+    val settings = LocalSettings.current
     Row(
         modifier
             .fillMaxWidth()

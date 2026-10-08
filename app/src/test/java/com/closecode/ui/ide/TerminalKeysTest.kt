@@ -3,9 +3,12 @@ package com.closecode.ui.ide
 import com.closecode.ui.settings.KeyValueStore
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.closecode.ui.theme.DarkAnsi
+import com.closecode.ui.theme.TerminalPalettes
 
 /**
  * The line editor a pipe-driven shell does not have.
@@ -535,5 +538,68 @@ class TerminalSessionTest {
     @Test
     fun eachTabHasItsOwnNumber() {
         assertTrue(TerminalSession(1).number != TerminalSession(2).number)
+    }
+}
+
+/**
+ * The two things a reader can change about the terminal's appearance.
+ *
+ * Both are preferences the app has to honour, and both have a way of being wrong that is worse than
+ * not offering the setting at all: a palette that cannot be read, and a size nobody can read it at.
+ */
+class TerminalAppearanceTest {
+
+    private fun settings(theme: String = "Closecode", size: Int = 13) =
+        com.closecode.ui.settings.Settings(terminalTheme = theme, terminalFontSize = size)
+
+    @Test
+    fun everySchemeOnOfferIsOneTheAppCanActuallyDraw() {
+        // A setting that names a scheme this build does not carry would otherwise select nothing and
+        // draw the text in no colour at all, which reads as a bug rather than as a missing theme.
+        for (choice in com.closecode.ui.settings.TerminalThemeChoices) {
+            assertNotNull(choice, TerminalPalettes[choice])
+        }
+    }
+
+    @Test
+    fun closecodesOwnSchemeIsTheDefault() {
+        assertEquals("Closecode", settings().terminalTheme)
+        assertEquals(
+            com.closecode.ui.theme.DarkAnsi,
+            TerminalPalettes[com.closecode.ui.settings.TerminalThemeChoices.first()],
+        )
+    }
+
+    @Test
+    fun everySchemeHasSixteenColours() {
+        for ((name, palette) in TerminalPalettes) {
+            assertEquals(name, 8, palette.normal.size)
+            assertEquals(name, 8, palette.bright.size)
+        }
+    }
+
+    @Test
+    fun aSchemeNamedByAFutureBuildFallsBackRatherThanDrawingNothing() {
+        // A preference written by a newer build, or hand-edited. Falling back to something readable
+        // beats selecting a scheme that is not there.
+        assertNull(TerminalPalettes["A scheme from another build"])
+    }
+
+    @Test
+    fun theFontSizeIsClampedToSomethingReadable() {
+        val smallest = com.closecode.ui.settings.TerminalFontSizeChoices.first().toInt()
+        val largest = com.closecode.ui.settings.TerminalFontSizeChoices.last().toInt()
+        assertEquals(smallest, terminalFontSize(settings(size = 0)))
+        assertEquals(smallest, terminalFontSize(settings(size = -99)))
+        assertEquals(largest, terminalFontSize(settings(size = 9_999)))
+        assertEquals(13, terminalFontSize(settings()))
+    }
+
+    @Test
+    fun theSizeIsClampedToTheEndsOfTheRange() {
+        // Clamped rather than refused: the reader's nearest readable size is a better answer than
+        // silently keeping the old one, which they would not know had happened.
+        assertEquals(9, terminalFontSize(settings(size = 2)))
+        assertEquals(18, terminalFontSize(settings(size = 40)))
     }
 }

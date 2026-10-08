@@ -281,7 +281,19 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                 "Terminal",
                 listOf(
                     Row.Value("Default shell", null, "System"),
-                    Row.Value("Font size", null, "13 px"),
+                    Row.Options(
+                        "Terminal colours",
+                        "The palette a program's own colour codes are drawn against.",
+                        OptionSetting.TERMINAL_THEME,
+                        TerminalThemeChoices,
+                    ),
+                    Row.Options(
+                        "Terminal font size",
+                        "Larger fits less of a line across the screen.",
+                        OptionSetting.TERMINAL_FONT_SIZE,
+                        TerminalFontSizeChoices,
+                        unit = " pt",
+                    ),
                     Row.Toggle("Command history", "Keep the commands you have run.", default = true),
                 ),
             ),

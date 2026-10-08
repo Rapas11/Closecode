@@ -295,3 +295,63 @@ val DarkColors = PageColors(
 )
 
 val LocalPageColors = staticCompositionLocalOf { LightColors }
+
+/**
+ * The terminal palettes a reader can choose between.
+ *
+ * Four of these are schemes people already know by name, so choosing one gets them the colours they
+ * have on every other machine. Each is a full set of sixteen, tuned to read on the app's editor
+ * background rather than copied wholesale — a palette that was legible on its own scheme's ground
+ * can be unreadable on this one, and a terminal that cannot be read is not a theme.
+ *
+ * These are keyed by the names in `TerminalThemeChoices`, so adding a scheme there without adding
+ * one here falls back to Closecode's own rather than drawing nothing.
+ */
+val TerminalPalettes: Map<String, AnsiColors> = mapOf(
+    "Closecode" to DarkAnsi,
+    // Dracula: its background, with its foreground family shifted for a near-black ground.
+    "Dracula" to AnsiColors(
+        normal = listOf(
+            Color(0xFF21222C), Color(0xFFFF5555), Color(0xFF50FA7B), Color(0xFFF1FA8C),
+            Color(0xFFBD93F9), Color(0xFFFF79C6), Color(0xFF8BE9FD), Color(0xFFF8F8F2),
+        ),
+        bright = listOf(
+            Color(0xFF6272A4), Color(0xFFFF6E6E), Color(0xFF69FF94), Color(0xFFFFEA80),
+            Color(0xFFD6ACFF), Color(0xFFFF92D0), Color(0xFFA4FFFF), Color(0xFFFFFFFF),
+        ),
+    ),
+    // One Dark: desaturated and low-contrast on purpose, which is the whole point of it.
+    "One Dark" to AnsiColors(
+        normal = listOf(
+            Color(0xFF3E4451), Color(0xFFE05561), Color(0xFF8CC265), Color(0xFFD18F52),
+            Color(0xFF4AA5F0), Color(0xFFC162DE), Color(0xFF42B3C2), Color(0xFFABB2BF),
+        ),
+        bright = listOf(
+            Color(0xFF5C6370), Color(0xFFFF616E), Color(0xFFA5D075), Color(0xFFF0A45D),
+            Color(0xFF4DC4FF), Color(0xFFD37AD9), Color(0xFF4CD1E0), Color(0xFFE6E6E6),
+        ),
+    ),
+    // Monokai: warm greys, and a brown so dark it is nearly the background — which is how Monokai
+    // has always drawn comments, and the reason its dark greys are so light.
+    "Monokai" to AnsiColors(
+        normal = listOf(
+            Color(0xFF3D3D3D), Color(0xFFF92672), Color(0xFFA6E22E), Color(0xFFE6DB74),
+            Color(0xFF66D9EF), Color(0xFFAE81FF), Color(0xFFA1EFE4), Color(0xFFF8F8F2),
+        ),
+        bright = listOf(
+            Color(0xFF75715E), Color(0xFFF92672), Color(0xFFA6E22E), Color(0xFFE6DB74),
+            Color(0xFF66D9EF), Color(0xFFAE81FF), Color(0xFFA1EFE4), Color(0xFFFFFFFF),
+        ),
+    ),
+    // Matrix: green, in the four shades the film uses, so a green-on-black habit reads correctly.
+    "Matrix" to AnsiColors(
+        normal = listOf(
+            Color(0xFF0B3D0B), Color(0xFF00FF41), Color(0xFF00C853), Color(0xFF7CFF7C),
+            Color(0xFF00E5A0), Color(0xFF3BFFC3), Color(0xFF00FF9C), Color(0xFFB7FFC7),
+        ),
+        bright = listOf(
+            Color(0xFF1B5E20), Color(0xFF6EFF8A), Color(0xFF4DFF8A), Color(0xFFB7FFC7),
+            Color(0xFF54FFB0), Color(0xFF8CFFD6), Color(0xFF6EFFC0), Color(0xFFFFFFFF),
+        ),
+    ),
+)
