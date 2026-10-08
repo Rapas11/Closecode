@@ -237,8 +237,30 @@ private fun html(c: PageColors): List<AnnotatedString> {
         line {
             append("      ")
             withStyle(ty) { append("<h1>") }
-            append("Build Android apps, anywhere.")
+            append("Your project")
             withStyle(ty) { append("</h1>") }
+        },
+        line {
+            append("      ")
+            withStyle(ty) { append("<p>") }
+            append("Edit this page and watch it change.")
+            withStyle(ty) { append("</p>") }
+        },
+        line {
+            append("      ")
+            withStyle(ty) { append("<button type=\"button\" class=\"primary\">") }
+            append("Run")
+            withStyle(ty) { append("</button>") }
+        },
+        line {
+            append("      ")
+            withStyle(ty) { append("<hr>") }
+        },
+        line {
+            append("      ")
+            withStyle(ty) { append("<small>") }
+            append("Created by Closecode")
+            withStyle(ty) { append("</small>") }
         },
         line {
             append("    ")

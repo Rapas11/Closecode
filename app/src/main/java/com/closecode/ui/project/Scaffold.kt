@@ -360,6 +360,18 @@ object Scaffold {
         </resources>
     """.trimIndent() + "\n"
 
+    /**
+     * The page a new project starts with.
+     *
+     * Richer than it was on purpose. It used to be a bare `<h1>`, which made Preview impossible to
+     * tell apart from a failure: an empty-looking page is what a broken `styles.css` also looks
+     * like. A heading, a line of copy, a button and a rule give the preview something to show and the
+     * editor something to open, and it is all the reader can delete.
+     *
+     * The title and the heading both say the project's name, which is the same thing the editor's own
+     * HTML snippet now says — the two used to disagree, so the file on disk and the file the snippet
+     * produced were visibly different documents.
+     */
     private fun indexHtml(projectName: String): String = """
         <!DOCTYPE html>
         <html lang="en">
@@ -372,6 +384,10 @@ object Scaffold {
         <body>
           <main class="hero">
             <h1>${escapeHtml(projectName)}</h1>
+            <p>Edit this page and watch it change.</p>
+            <button type="button" class="primary">Run</button>
+            <hr>
+            <small>Created by Closecode</small>
           </main>
         </body>
         </html>
@@ -397,7 +413,29 @@ object Scaffold {
         .hero {
           display: grid;
           gap: 12px;
+          justify-items: start;
           padding: 48px 22px;
+        }
+
+        .hero p {
+          margin: 0;
+          color: #5b6b83;
+          max-width: 34ch;
+          line-height: 1.5;
+        }
+
+        .hero .primary {
+          background: #2457ff;
+          color: #fff;
+          border: 0;
+          border-radius: 10px;
+          padding: 12px 22px;
+          font: inherit;
+          font-weight: 600;
+        }
+
+        .hero small {
+          color: #8793a8;
         }
     """.trimIndent() + "\n"
 

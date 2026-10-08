@@ -70,6 +70,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
@@ -141,6 +142,7 @@ import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.project.ProjectRecord
 import com.closecode.ui.project.ProjectRepository
 import com.closecode.ui.project.ProjectPathException
+import com.closecode.ui.project.languageOf
 import com.closecode.ui.project.ProjectSafety
 import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.model.projectTree
@@ -2348,6 +2350,10 @@ private fun IdeEditorArea(
 
     val codeLines = remember(code) { code.lines() }
 
+    // Which colouring rules this buffer is under. Decided here as well as in the renderer because
+    // the markup check below has to know it is looking at a page and not at code.
+    val codeLanguage = remember(code) { codeLanguageFor(languageOf(active)) }
+
     // Spec 6.3: the first import line carries the fold affordance. Zero means there is none.
     val firstImportLine = remember(code) {
         codeLines.indexOfFirst { it.trimStart().startsWith("import ") } + 1
@@ -2358,9 +2364,21 @@ private fun IdeEditorArea(
     // Diagnostics off means "show me nothing", not "stop analysing": the analysis still runs,
     // because Run and Build gate on its error count and turning the display off must not quietly
     // make an unbuildable project look buildable. Only what is drawn changes.
-    val problems = remember(currentAnalysis, settings.diagnostics) {
+    // Markup gets its own check. The Kotlin analyser knows nothing about tags, so a page
+    // previously had no diagnostics of any kind — no squiggle, no bar in the margin, no count
+    // anywhere — and an unclosed element was something only the browser would complain about, in
+    // a preview the reader has to switch to in order to find out.
+    val markupDiagnostics = remember(code, codeLanguage) {
+        if (codeLanguage == CodeLanguage.MARKUP) htmlTagDiagnostics(code) else emptyList()
+    }
+
+    val problems = remember(currentAnalysis, markupDiagnostics, settings.diagnostics) {
         ProblemsByLine.from(
-            if (settings.diagnostics) currentAnalysis?.diagnostics.orEmpty() else emptyList()
+            if (settings.diagnostics) {
+                currentAnalysis?.diagnostics.orEmpty() + markupDiagnostics
+            } else {
+                emptyList()
+            }
         )
     }
 
@@ -2408,8 +2426,12 @@ private fun IdeEditorArea(
     }
     // highlightCode works one line at a time with nothing carried between them, so colourizing the
     // slice gives exactly the rows the whole file would have produced.
-    val highlighted = remember(codeRange, code, c) {
-        highlightCode(sliceOfLines(codeLines, codeRange), c)
+    //
+    // The language is the file's, not the slice's. A slice begins wherever the reader has scrolled
+    // to, so a page scrolled to its middle has no doctype and no tag in the first line to guess
+    // from — and a reader who scrolled down a page expects a tag to stay a tag.
+    val highlighted = remember(codeRange, code, c, codeLanguage) {
+        highlightCode(sliceOfLines(codeLines, codeRange), c, codeLanguage)
     }
     // Pairs are found in the whole buffer rather than the window, because a block can open above
     // the slice the renderer is holding; the layer decides for each pair whether either end is on
@@ -2476,8 +2498,43 @@ private fun IdeEditorArea(
         }
     }
 
+    // A tag in progress takes over the list. The generic fallback matched on the word before
+    // the caret, so typing `<di` suggested `div` only by accident of the word being `di` — and
+    // typing `<` or `<button ` suggested nothing at all, which is the exact moment a reader
+    // writing a page needs the list most.
+    val htmlContext = remember(code, cursor, codeLanguage) {
+        if (codeLanguage == CodeLanguage.MARKUP) htmlTagContextAt(code, cursor) else null
+    }
+    val htmlItems = remember(htmlContext, settings.autocomplete) {
+        if (!settings.autocomplete) emptyList()
+        else when {
+            htmlContext == null -> emptyList()
+            htmlContext.afterName -> htmlAttributeSuggestions(
+                tagName = htmlContext.tagName,
+                partial = code.substring(
+                    htmlContextOffset(code, cursor),
+                    cursor,
+                ),
+            ).map {
+                com.closecode.ui.ide.model.Suggestion(
+                    glyph = "A",
+                    name = it,
+                    detail = "attribute",
+                )
+            }
+            else -> htmlTagSuggestions(htmlContext.tagName).map {
+                com.closecode.ui.ide.model.Suggestion(
+                    glyph = "T",
+                    name = it,
+                    detail = "element",
+                )
+            }
+        }
+    }
+
     val visibleSuggestions = remember(
         kotlinItems,
+        htmlItems,
         staticSuggestions,
         code,
         isKotlin,
@@ -2486,6 +2543,7 @@ private fun IdeEditorArea(
         when {
             // Checked first so a reader cannot mistake "switched off" for "nothing matched".
             !settings.autocomplete -> emptyList()
+            htmlContext != null -> htmlItems
             kotlinItems != null -> kotlinItems.map { it.toSuggestion() }
             else -> {
                 val tail = code.takeLastWhile { it.isLetterOrDigit() }
@@ -2796,7 +2854,27 @@ contentAlignment = Alignment.Center,
             LazyRow(
                 Modifier
                     .weight(1f)
-                    .fillMaxHeight(),
+                    .fillMaxHeight()
+                    // The fade over the overflowing edge, drawn over the list's own right-hand
+                    // edge. It used to stop dead there, so a file name was cut in half mid-letter
+                    // with nothing to say there was more of it.
+                    .drawWithCache {
+                        val fadeWidth = minOf(TAB_EDGE_FADE_WIDTH.toPx(), size.width)
+                        val brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
+                            0f to c.bg.copy(alpha = 0f),
+                            1f to c.bg,
+                            startX = size.width - fadeWidth,
+                            endX = size.width,
+                        )
+                        onDrawWithContent {
+                            drawContent()
+                            drawRect(
+                                brush = brush,
+                                topLeft = androidx.compose.ui.geometry.Offset(size.width - fadeWidth, 0f),
+                                size = androidx.compose.ui.geometry.Size(fadeWidth, size.height),
+                            )
+                        }
+                    },
                 // Spec 6.1: 8 dp around the tabs, 8 dp between them.
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     start = 10.dp,
@@ -2811,11 +2889,25 @@ contentAlignment = Alignment.Center,
                     val isActive = tab.name == active
                     // Spec 6.1: the unsaved dot shows only while the buffer differs from last saved.
                     val dirty = dirtyOf(tab.name)
+                    val tabDensity = androidx.compose.ui.platform.LocalDensity.current
                     Row(
                         Modifier
                             .height(TAB_HEIGHT)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(if (isActive) c.panel2 else Color.Transparent)
+                            // The active tab is marked by a rule under its own name rather than by a
+                            // filled pill behind it. A pill is a second block on a row that already
+                            // has a border under it, and it moved the name off the baseline the rest
+                            // of the strip uses; a rule reads as "this one" from the shape alone and
+                            // agrees with the one under the open file's editor.
+                            .drawBehind {
+                                if (!isActive) return@drawBehind
+                                val y = size.height - 1f
+                                drawLine(
+                                    color = c.ac,
+                                    start = androidx.compose.ui.geometry.Offset(0f, y),
+                                    end = androidx.compose.ui.geometry.Offset(size.width, y),
+                                    strokeWidth = with(tabDensity) { TAB_UNDERLINE_THICKNESS.toPx() },
+                                )
+                            }
                             .clickable { onSelectTab(tab.name) }
                             .padding(horizontal = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -3007,11 +3099,18 @@ contentAlignment = Alignment.Center,
                                 } else {
                                     null
                                 }
+                                // Typing `</` completes the tag that is still open, so the reader
+                                // writes the first two characters of a closer and gets the rest.
+                                // Runs after bracket pairing, which has no opinion about a slash.
+                                val tagClosed = closeTagAt(fieldValue.text, adjusted.text, adjusted.selection.start)
                                 commit(
-                                    if (closed == null) {
-                                        adjusted
-                                    } else {
-                                        TextFieldValue(closed.first, TextRange(closed.second))
+                                    when {
+                                        tagClosed != null ->
+                                            TextFieldValue(tagClosed.first, TextRange(tagClosed.second))
+                                        closed != null ->
+                                            TextFieldValue(closed.first, TextRange(closed.second))
+                                        else ->
+                                            adjusted
                                     }
                                 )
                             },
@@ -4079,8 +4178,26 @@ internal const val TreeListHeaderItems = 2
  */
 internal val TAB_STRIP_HEIGHT = 50.dp
 
-/** Spec 6.1: the tab pill's own height inside the strip. */
+/** Spec 6.1: the tab's own height inside the strip. */
 internal val TAB_HEIGHT = 34.dp
+
+/**
+ * The rule under the open tab.
+ *
+ * Two dp for the same reason the brace mark is two dp and the scrollbar's thumb is six: the marks
+ * along an edge should read as one family, and a one dp rule on a 1 dp border is just a second
+ * border.
+ */
+internal val TAB_UNDERLINE_THICKNESS = 2.dp
+
+/**
+ * How wide the fade over the tab strip's overflowing edge is.
+ *
+ * Tabs used to stop dead at the panel's edge, so a file name was cut in half mid-letter with nothing
+ * to say there was more. A fade says "there is more over there" without a scrollbar or a chevron to
+ * take the eye, and costs nothing to draw.
+ */
+internal val TAB_EDGE_FADE_WIDTH = 44.dp
 
 /** Exposed for the geometry tests: the spec's 53 dp row, not the 46 dp that clipped the package. */
 internal val POPUP_ROW_HEIGHT_FOR_TEST = POPUP_ROW_HEIGHT

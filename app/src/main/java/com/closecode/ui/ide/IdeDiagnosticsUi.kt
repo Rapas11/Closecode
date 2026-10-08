@@ -1354,17 +1354,19 @@ fun BracketGuideLayer(
         )
     }
 }
-
 /**
- * An outline around the two braces of the block the caret is in.
+ * The block the caret is in, marked by a short line under each of its two braces.
  *
- * The boxes are measured off the renderer's own glyph boxes — the same source the squiggles and the
- * pill anchor use — so they wrap the brace itself at any font size or zoom, and a brace scrolled out
- * of the rendered slice has no box and is simply not drawn. Outline only, no fill: the pair has to
- * read as marked without hiding the character it is marking.
+ * A box around each brace said "these two are related" by enclosing them, which put a frame over
+ * two characters of the reader's code and competed with the squiggle underneath an error on the same
+ * row. A line under the brace says the same thing without touching the glyph: the brace's own bottom
+ * is where the mark belongs, so it sits on the row below the code rather than over it.
+ *
+ * Both braces are marked, not just the one the caret is beside, because the pair is the fact worth
+ * showing — the two ends of the block, on screen at once when both are visible.
  */
 @Composable
-fun MatchingBraceLayer(
+internal fun MatchingBraceLayer(
     active: Pair<Int, Int>?,
     layout: TextLayoutResult?,
     window: CodeWindow = CodeWindow.Full,
@@ -1372,28 +1374,37 @@ fun MatchingBraceLayer(
 ) {
     val c = LocalPageColors.current
     val density = androidx.compose.ui.platform.LocalDensity.current
-    val strokePx = with(density) { 1.dp.toPx() }
-    val padPx = with(density) { 2.dp.toPx() }
-    val radiusPx = with(density) { 3.dp.toPx() }
+    val strokePx = with(density) { BRACE_UNDERLINE_STROKE.toPx() }
+    val gapPx = with(density) { BRACE_UNDERLINE_GAP.toPx() }
+    val growPx = with(density) { BRACE_UNDERLINE_GROW.toPx() }
 
     androidx.compose.foundation.Canvas(modifier) {
         val brackets = active ?: return@Canvas
         val textLength = layout?.layoutInput?.text?.length ?: return@Canvas
         for (offset in intArrayOf(brackets.first, brackets.second)) {
             val box = braceBox(layout, offset, textLength, window) ?: continue
-            drawRoundRect(
+            val y = box.bottom + gapPx
+            drawLine(
                 color = c.amber,
-                topLeft = androidx.compose.ui.geometry.Offset(box.left - padPx, box.top - padPx),
-                size = androidx.compose.ui.geometry.Size(
-                    box.width + padPx * 2f,
-                    box.height + padPx * 2f,
-                ),
-                cornerRadius = androidx.compose.ui.geometry.CornerRadius(radiusPx, radiusPx),
-                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokePx),
+                start = androidx.compose.ui.geometry.Offset(box.left - growPx, y),
+                end = androidx.compose.ui.geometry.Offset(box.right + growPx, y),
+                strokeWidth = strokePx,
+                cap = androidx.compose.ui.graphics.StrokeCap.Round,
             )
         }
     }
 }
+
+/**
+ * The mark under a matching brace: stroke, gap and overhang.
+ *
+ * A 2 dp rule is the thickness of the tab's own underline and the scrollbar's own thumb, so the three
+ * marks along the edge of the editor read as one family. The 2 dp gap is the distance from the glyph's
+ * own bottom, which keeps the rule off the character itself at any font size.
+ */
+val BRACE_UNDERLINE_STROKE = 2.dp
+val BRACE_UNDERLINE_GAP = 2.dp
+val BRACE_UNDERLINE_GROW = 2.dp
 
 /**
  * A brace's own glyph box in the layer's coordinates, or null when it is not in the rendered slice.

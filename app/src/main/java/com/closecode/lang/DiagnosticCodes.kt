@@ -25,6 +25,9 @@ object DiagnosticCodes {
     const val W0202_TODO = "W0202"
     const val W0203_UNUSED_VARIABLE = "W0203"
 
+    /** An element left open, or a closing tag with no matching opener. */
+    const val HTML_UNCLOSED_TAG = "E0201"
+
     /** True when [code] is an error code. Drives pill, gutter dot and underline colour. */
     fun isError(code: String): Boolean = code.startsWith("E")
 
