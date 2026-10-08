@@ -43,6 +43,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -91,6 +92,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
@@ -2787,7 +2789,7 @@ contentAlignment = Alignment.Center,
                     // code line always share one top edge and one row height.
                     .padding(top = EditorTopPadding, bottom = 40.dp),
             ) {
-                Row(Modifier.horizontalScroll(codeHScroll)) {
+                Row(Modifier.horizontalScroll(codeHScroll).panOnHorizontalDrag(codeHScroll)) {
                     // The renderer only lays out the slice that can be on screen now, so the text is
                     // no longer what makes this column tall — the row model is. Pinning it here is
                     // what keeps the column, the gutter and the scroller agreeing on where the file
@@ -3346,6 +3348,15 @@ contentAlignment = Alignment.Center,
 private val SCROLLBAR_THICKNESS = 6.dp
 
 /**
+ * How much room around the visible bar a finger has to hit it.
+ *
+ * A 6 dp bar is a 6 dp target, and nothing that small is reliably tappable with a thumb. The extra
+ * room is transparent and sits outside the bar, so the editor looks exactly as it did — only the
+ * target is bigger.
+ */
+private val SCROLLBAR_TOUCH_SLOP = 28.dp
+
+/**
  * How far a pinch may take the editor away from the size the settings chose: far enough to read a
  * long line without scrolling sideways, not so far that a phone screen holds three characters.
  */
@@ -3403,6 +3414,56 @@ private fun Modifier.edgeSwipeToOpenDrawer(
  * with nobody pinching it is the same 13 the fixed constant used to hold.
  */
 internal fun zoomedFontSize(baseSp: Int, scale: Float): Int = (baseSp * scale).roundToInt()
+
+/**
+ * A one-finger horizontal drag pans the code column instead of selecting text.
+ *
+ * Why this has to exist: the code is drawn by a `Text` with a transparent `BasicTextField` laid over
+ * it, and that field is what actually takes focus and the IME. A horizontal drag inside it is
+ * claimed for *text selection*, so on a phone the one gesture that would let you pan along a long
+ * line did nothing at all — the line simply ran off the right edge and stayed there. Vertical drag
+ * and long-press still select; only the sideways pan is taken here.
+ *
+ * Three details are load bearing:
+ *
+ * - It listens on [PointerEventPass.Initial]. Pointer events reach ancestors before children on
+ *   that pass, so this sees the drag before the text field does and consuming there takes the pan
+ *   cleanly, instead of losing the race to a child that would already have consumed it.
+ * - It waits for horizontal slop before committing, so a vertical drag — which belongs to the
+ *   surrounding `verticalScroll` — is left entirely alone.
+ * - It abandons the gesture the moment a second pointer arrives, which is what keeps two-finger
+ *   pinch-zoom working: that handler is an ancestor of this one and only acts on two pointers, so
+ *   neither can starve the other.
+ */
+private fun Modifier.panOnHorizontalDrag(state: androidx.compose.foundation.ScrollState): Modifier =
+    pointerInput(state) {
+        awaitEachGesture {
+            // One pointer only, and unconsumed: a gesture some other handler has already claimed
+            // (a second finger for zoom, the editor's own drawer pull) is none of our business.
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val pointerId = down.id
+            val slop = viewConfiguration.touchSlop
+            var travelled = 0f
+            var panning = false
+            while (true) {
+                val event = awaitPointerEvent(PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == pointerId }
+                // Released, lifted, or a second finger joined: hand the gesture back.
+                if (change == null || !change.pressed || event.changes.count { it.pressed } > 1) break
+                val delta = change.positionChange()
+                if (!panning) {
+                    // Only sideways travel commits. A tap, and a drag that turns out to be vertical,
+                    // never get here with anything consumed, so the text field keeps both.
+                    travelled += delta.x
+                    if (kotlin.math.abs(travelled) > slop) panning = true
+                }
+                if (panning) {
+                    change.consume()
+                    state.dispatchRawDelta(-delta.x)
+                }
+            }
+        }
+    }
 
 /**
  * Pinching anywhere scales the editor's text. Two fingers only, and the event is read on the
@@ -3555,36 +3616,57 @@ private fun BoxScope.EditorScrollbar(
     val progress = state.value.toFloat() / state.maxValue
     val thumbDp = with(density) { thumbPx.toDp() }
     val track = if (horizontal) {
-        Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(SCROLLBAR_THICKNESS)
+        Modifier.align(Alignment.BottomCenter).fillMaxWidth()
     } else {
-        Modifier.align(Alignment.CenterEnd).width(SCROLLBAR_THICKNESS).fillMaxHeight()
+        Modifier.align(Alignment.CenterEnd).fillMaxHeight()
     }
+    val slop = if (horizontal) {
+        Modifier.height(SCROLLBAR_TOUCH_SLOP)
+    } else {
+        Modifier.width(SCROLLBAR_TOUCH_SLOP)
+    }
+    val bar = if (horizontal) {
+        Modifier.fillMaxWidth().height(SCROLLBAR_THICKNESS)
+    } else {
+        Modifier.fillMaxHeight().width(SCROLLBAR_THICKNESS)
+    }
+    // Two boxes, and the order matters. The outer one is only a hit area — sized so a finger can
+    // actually land on it — and the inner one is the bar the reader sees, still 6 dp, still
+    // rounded, still carrying the drag. Padding on a single box instead would have inflated the
+    // visible bar along with the target, because the thumb fills whatever box it is in.
     Box(
-        track
-            .clip(RoundedCornerShape(SCROLLBAR_THICKNESS / 2))
-            .pointerInput(horizontal, viewportPx, state.maxValue) {
-                detectDragGestures { change, dragAmount ->
-                    change.consume()
-                    val dragged = if (horizontal) dragAmount.x else dragAmount.y
-                    state.dispatchRawDelta(dragged * contentPx / viewportPx)
-                }
-            },
+        track.then(slop),
+        contentAlignment = if (horizontal) Alignment.BottomCenter else Alignment.CenterEnd,
     ) {
         Box(
-            Modifier
-                .then(
-                    if (horizontal) {
-                        Modifier.fillMaxHeight().width(thumbDp)
-                    } else {
-                        Modifier.fillMaxWidth().height(thumbDp)
-                    },
-                )
-                .offset {
-                    val along = (progress * travelPx).toInt()
-                    IntOffset(if (horizontal) along else 0, if (horizontal) 0 else along)
-                }
-                .background(c.tx.copy(alpha = 0.30f), RoundedCornerShape(SCROLLBAR_THICKNESS / 2)),
-        )
+            bar
+                .clip(RoundedCornerShape(SCROLLBAR_THICKNESS / 2))
+                .pointerInput(horizontal, viewportPx, state.maxValue) {
+                    detectDragGestures { change, dragAmount ->
+                        change.consume()
+                        val dragged = if (horizontal) dragAmount.x else dragAmount.y
+                        // One pixel of thumb to the same slice of the content, which is why the
+                        // enlarged target above does not also change the scroll's feel.
+                        state.dispatchRawDelta(dragged * contentPx / viewportPx)
+                    }
+                },
+        ) {
+            Box(
+                Modifier
+                    .then(
+                        if (horizontal) {
+                            Modifier.fillMaxHeight().width(thumbDp)
+                        } else {
+                            Modifier.fillMaxWidth().height(thumbDp)
+                        },
+                    )
+                    .offset {
+                        val along = (progress * travelPx).toInt()
+                        IntOffset(if (horizontal) along else 0, if (horizontal) 0 else along)
+                    }
+                    .background(c.tx.copy(alpha = 0.30f), RoundedCornerShape(SCROLLBAR_THICKNESS / 2)),
+            )
+        }
     }
 }
 
