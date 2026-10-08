@@ -5,6 +5,48 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 
 /**
+ * The sixteen colours a terminal program can ask for.
+ *
+ * These are not the editor's syntax colours, and are deliberately kept apart from them: a program
+ * that asks for "red" means the conventional terminal red, and borrowing the theme's error red would
+ * make an ordinary warning look like a build failure. One set per theme, chosen to stay legible on
+ * that theme's editor background — which is why the light theme's "black" is a mid grey, since a
+ * true black on a near-white editor is invisible and a terminal's darkest colour still has to read.
+ *
+ * Index order matches the ANSI numbering: 0 black, 1 red, 2 green, 3 yellow, 4 blue, 5 magenta,
+ * 6 cyan, 7 white. The bright half is the same eight at 90–97.
+ */
+@Immutable
+data class AnsiColors(
+    val normal: List<Color>,
+    val bright: List<Color>,
+) {
+    init {
+        require(normal.size == 8) { "the eight ANSI colours are not optional" }
+        require(bright.size == 8) { "the eight bright ANSI colours are not optional" }
+    }
+
+/** The colour an SGR code selects, taking 90–97 for the bright half and background codes too. */
+    fun at(code: Int): Color = when {
+        code in 30..37 -> normal[code - 30]
+        code in 90..97 -> bright[code - 90]
+        // A background code carries the same colour number as its foreground twin.
+        code in 40..47 -> normal[code - 40]
+        code in 100..107 -> bright[code - 100]
+        else -> normal[0]
+    }
+
+    /**
+     * The colour for an index already reduced to 0–7, the form the parser keeps it in.
+     *
+     * Bright and normal share one numbering here: index 1 is the same hue either way, and whether
+     * it draws as the bright variant is carried by the bold attribute rather than by a second set
+     * of indices, so `ls --color` and `grep --color` line up with each other.
+     */
+    fun colorOf(index: Int): Color = normal[index.coerceIn(0, 7)]
+}
+
+/**
  * Forge spec section 2. Every value below is taken from the spec table verbatim; 1 px in the
  * prototype is 1 dp here.
  *
@@ -56,6 +98,9 @@ data class PageColors(
     // annotating, which is the whole job of an annotation not to do.
     val guideRule: Color,
 
+    // -- Terminal ---------------------------------------------------------------
+    val ansi: AnsiColors,
+
     // -- Translucent overlays; identical in both themes because they sit on the editor
     val stackBadge: Color,   // multi-problem badge, rgba(128,128,128,.28)
     val javaIconBg: Color,
@@ -75,6 +120,60 @@ data class PageColors(
     val ab: Color,          // primary action background -> accent
     val af: Color,          // label drawn on top of an accent fill
     val glow: Color,        // faint accent wash for the page background
+)
+
+/**
+ * The sixteen terminal colours on the light editor background.
+ *
+ * "Black" is a mid grey and "white" is a slate: on a near-white editor the conventional extremes
+ * would give a program that asked for plain text an unreadable line, or a program that asked for
+ * white text no background to show it against.
+ */
+val LightAnsi = AnsiColors(
+    normal = listOf(
+        Color(0xFF3A4252), // black
+        Color(0xFFC62839), // red
+        Color(0xFF0F7A54), // green
+        Color(0xFF8A5A00), // yellow
+        Color(0xFF2457FF), // blue
+        Color(0xFF7A3FD1), // magenta
+        Color(0xFF0E7490), // cyan
+        Color(0xFF55607A), // white
+    ),
+    bright = listOf(
+        Color(0xFF7A8496), // bright black
+        Color(0xFFD1344B), // bright red
+        Color(0xFF12805C), // bright green
+        Color(0xFFA86A00), // bright yellow
+        Color(0xFF3B63D8), // bright blue
+        Color(0xFF9B6FE0), // bright magenta
+        Color(0xFF0E8FA8), // bright cyan
+        Color(0xFF101826), // bright white
+    ),
+)
+
+/** The sixteen terminal colours on the dark editor background. */
+val DarkAnsi = AnsiColors(
+    normal = listOf(
+        Color(0xFF3B4252), // black
+        Color(0xFFFF6B81), // red
+        Color(0xFF3ECF9B), // green
+        Color(0xFFF0B429), // yellow
+        Color(0xFF7B9BFF), // blue
+        Color(0xFFC08BFF), // magenta
+        Color(0xFF5FD3D3), // cyan
+        Color(0xFFD7DEEA), // white
+    ),
+    bright = listOf(
+        Color(0xFF6B7688), // bright black
+        Color(0xFFFF9AA7), // bright red
+        Color(0xFF6FE0B0), // bright green
+        Color(0xFFF5C26B), // bright yellow
+        Color(0xFFA6BEFF), // bright blue
+        Color(0xFFDCB0FF), // bright magenta
+        Color(0xFF8FE6E6), // bright cyan
+        Color(0xFFFFFFFF), // bright white
+    ),
 )
 
 val LightColors = PageColors(
@@ -113,6 +212,8 @@ val LightColors = PageColors(
 
     // The text colour at 15% alpha.
     guideRule = Color(0x26101826),
+
+    ansi = LightAnsi,
 
     stackBadge = Color(0x47808080),
     javaIconBg = Color(0x33D97706),
@@ -169,6 +270,8 @@ val DarkColors = PageColors(
 
     // The text colour at 15% alpha.
     guideRule = Color(0x26E7ECF5),
+
+    ansi = DarkAnsi,
 
     stackBadge = Color(0x47808080),
     javaIconBg = Color(0x33D97706),

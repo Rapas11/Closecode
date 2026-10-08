@@ -1,0 +1,287 @@
+package com.closecode.ui.ide
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * The ANSI parser, with no screen involved.
+ *
+ * A terminal program's colour is written as escape sequences. Shown raw they are noise, so the whole
+ * job of the parser is to remove them and keep the drawing intent — which is exactly the kind of
+ * thing that can be pinned by a test rather than by looking at a phone.
+ */
+class TerminalAnsiTest {
+
+    private fun esc(code: String): String = "$ESC[$code"
+    private fun sgr(code: String): String = esc(code + "m")
+
+    private fun runsOf(line: String) = parseAnsi(line).runs
+    private fun textOf(line: String) = parseAnsi(line).text
+
+    /**
+     * The style a set of SGR parameters produces.
+     *
+     * Taken straight from the transition function rather than from a line: a line that is nothing
+     * but escapes draws no runs at all, so there is nothing left to read a style back from — and
+     * re-parsing escapes here would only be testing a second copy of the parser.
+     */
+    private fun styleOf(vararg codes: Int) = applySgr(AnsiStyle.Plain, intArrayOf(*codes))
+
+    // -- Plain text ------------------------------------------------------------
+
+    @Test
+    fun textWithoutEscapesIsLeftAlone() {
+        assertEquals("hello", textOf("hello"))
+    }
+
+    @Test
+    fun plainTextIsASingleUnstyledRun() {
+        val runs = runsOf("hello")
+        assertEquals(1, runs.size)
+        assertEquals("hello", runs[0].text)
+        assertEquals(AnsiStyle.Plain, runs[0].style)
+    }
+
+    @Test
+    fun anEmptyLineHasNothingInIt() {
+        assertEquals("", textOf(""))
+        assertTrue(runsOf("").all { it.text.isEmpty() })
+    }
+
+    // -- Colour ----------------------------------------------------------------
+
+    @Test
+    fun aColourSequenceIsRemovedAndItsRunIsTinted() {
+        val line = sgr("31") + "error" + sgr("0")
+        assertEquals("error", textOf(line))
+        val runs = runsOf(line)
+        assertEquals(1, runs.size)
+        assertEquals(1, runs[0].style.fg)
+    }
+
+    @Test
+    fun aResetReturnsToTheDefaultColour() {
+        val runs = runsOf(sgr("32") + "ok" + sgr("0") + "plain")
+        assertEquals(2, runs.size)
+        assertEquals(2, runs[0].style.fg)
+        assertNull(runs[1].style.fg)
+    }
+
+    @Test
+    fun everyColourNumberResolvesToItsOwnIndex() {
+        for (index in 0..7) {
+            assertEquals(index, styleOf(30 + index).fg)
+        }
+    }
+
+    @Test
+    fun aBrightColourIsTheSameHueAsItsOrdinaryTwin() {
+        // Brightness is carried by bold, so 90–97 collapse onto the same eight indices and a run
+        // cannot come out a different colour from the one the program actually asked for.
+        for (index in 0..7) {
+            assertEquals(index, styleOf(90 + index).fg)
+        }
+    }
+
+    @Test
+    fun aBackgroundIsRecordedSeparatelyFromTheForeground() {
+        val style = styleOf(41)
+        assertEquals(1, style.bg)
+        assertNull(style.fg)
+    }
+
+    @Test
+    fun aBrightBackgroundIsRecordedToo() {
+        assertEquals(5, styleOf(105).bg)
+    }
+
+    @Test
+    fun twoColoursOnOneLineProduceTwoRuns() {
+        val runs = runsOf(sgr("31") + "a" + sgr("32") + "b")
+        assertEquals(listOf("a", "b"), runs.map { it.text })
+        assertEquals(listOf(1, 2), runs.map { it.style.fg })
+    }
+
+    @Test
+    fun aSequenceInTheMiddleDoesNotSplitTheTextAroundIt() {
+        assertEquals("abc", textOf("a" + sgr("1") + "b" + sgr("0") + "c"))
+    }
+
+    // -- Attributes ------------------------------------------------------------
+
+    @Test
+    fun theTextAttributesAreAllCarried() {
+        assertTrue(styleOf(1).bold)
+        assertTrue(styleOf(2).dim)
+        assertTrue(styleOf(3).italic)
+        assertTrue(styleOf(4).underline)
+        assertTrue(styleOf(7).inverse)
+    }
+
+    @Test
+    fun eachAttributeHasItsOwnWayOfBeingTurnedOff() {
+        val all = AnsiStyle(bold = true, dim = true, italic = true, underline = true, inverse = true)
+        assertEquals(all.copy(bold = false, dim = false), applySgr(all, intArrayOf(22)))
+        assertEquals(all.copy(italic = false), applySgr(all, intArrayOf(23)))
+        assertEquals(all.copy(underline = false), applySgr(all, intArrayOf(24)))
+        assertEquals(all.copy(inverse = false), applySgr(all, intArrayOf(27)))
+    }
+
+    @Test
+    fun aDefaultColourNumberForgetsTheColour() {
+        val loud = AnsiStyle(fg = 1, bg = 2)
+        assertNull(applySgr(loud, intArrayOf(39)).fg)
+        assertEquals(2, applySgr(loud, intArrayOf(39)).bg)
+        assertNull(applySgr(loud, intArrayOf(49)).bg)
+        assertEquals(1, applySgr(loud, intArrayOf(49)).fg)
+    }
+
+    @Test
+    fun aFullResetForgetsEverything() {
+        val loud = AnsiStyle(fg = 3, bg = 4, bold = true, italic = true, underline = true)
+        assertEquals(AnsiStyle.Plain, applySgr(loud, intArrayOf(0)))
+    }
+
+    @Test
+    fun anEmptySequenceMeansResetRatherThanNothingAtAll() {
+        // Some programs write ESC [ m where others write ESC [ 0 m. Reading the empty form as "no
+        // change" would leave the previous colour in force for the rest of the line.
+        assertEquals(AnsiStyle.Plain, styleOf(0))
+        assertEquals("reset", textOf(esc("m") + "reset"))
+    }
+
+    @Test
+    fun aSequenceIsOnlyAsLongAsItsFinalByte() {
+        // ESC [ is not a sequence on its own, and the byte after it decides what it was: here an "r",
+        // which is the restore-cursor command. Reading it that way is what keeps a stray bracket in
+        // a program output from swallowing the rest of the line.
+        assertEquals("eset", textOf(esc("r") + "eset"))
+    }
+
+    @Test
+    fun severalSequencesInOneSequenceAreAllApplied() {
+        val style = styleOf(1, 31, 4)
+        assertTrue(style.bold)
+        assertEquals(1, style.fg)
+        assertTrue(style.underline)
+    }
+
+    @Test
+    fun aColourIsKeptUntilSomethingElseReplacesIt() {
+        // No reset at the end of the line: a program that colours a run and forgets to close it
+        // should still have its colour, because the next line starts afresh anyway.
+        assertEquals(1, runsOf(sgr("31") + "red").last().style.fg)
+    }
+
+    // -- Sequences that are not about colour ------------------------------------
+
+    @Test
+    fun cursorMovementIsDroppedRatherThanPrinted() {
+        assertEquals("ab", textOf("a" + esc("2K") + "b"))
+    }
+
+    @Test
+    fun anEraseScreenIsDropped() {
+        assertEquals("text", textOf(esc("2J") + "text"))
+    }
+
+    @Test
+    fun anOperatingSystemCommandIsDropped() {
+        // ESC ] 0 ; title BEL sets the window title, which a list of lines has nowhere to show.
+        assertEquals("text", textOf(ESC + "]0;some title\u0007text"))
+    }
+
+    @Test
+    fun aTwoCharacterEscapeIsDropped() {
+        assertEquals("after", textOf(ESC + "c" + "after"))
+    }
+
+    @Test
+    fun aTruncatedEscapeAtTheEndOfALineDoesNotThrow() {
+        // A program killed mid-write can leave half a sequence behind. Dropping it is the only
+        // answer; throwing would take the whole terminal down with it.
+        assertEquals("text", textOf("text$ESC"))
+        assertEquals("text", textOf("text$ESC["))
+        assertEquals("text", textOf("text$ESC[3"))
+        assertEquals("text", textOf("text$ESC]"))
+    }
+
+    @Test
+    fun anUnterminatedControlCharacterIsDropped() {
+        // A bell or a form feed has no place in a list of lines, and letting it through can disturb
+        // the layout of the row it lands on.
+        assertEquals("ab", textOf("ab"))
+    }
+
+    // -- Tabs and carriage returns ---------------------------------------------
+
+    @Test
+    fun aTabBecomesSpacesUpToTheNextStop() {
+        // A literal tab has no tab stop of its own in a Compose string and would shove the rest of
+        // the line out of the column it started in, so it is expanded here instead.
+        assertEquals("a" + " ".repeat(TabStop - 1) + "b", textOf("a\tb"))
+        assertEquals(TabStop + 1, textOf("\tb").length)
+    }
+
+    @Test
+    fun aTabAdvancesToTheStopRatherThanAlwaysAddingEight() {
+        assertEquals("  " + " ".repeat(TabStop - 2) + "x", textOf("  \tx"))
+    }
+
+    @Test
+    fun aTabAfterExactlyOneStopStartsAFreshOne() {
+        // Eight spaces already fill one stop, so the tab opens the next one rather than topping the
+        // current one up: two stops of indent, plus the character after it.
+        assertEquals(TabStop * 2 + 1, textOf(" ".repeat(TabStop) + "\tx").length)
+    }
+
+    @Test
+    fun onlyTheLastPassOfAProgressLineSurvives() {
+        // The way a download or a build draws a progress bar: the same line printed over and over
+        // with a rising percentage. Everything before the final carriage return is a superseded
+        // pass, and the escapes that coloured it sit after the return, so the colour comes along.
+        val line = "10%\r20%\r" + sgr("32") + "done"
+        assertEquals("done", textOf(line))
+        assertEquals(2, runsOf(line).last().style.fg)
+    }
+
+    @Test
+    fun aLineWithNoCarriageReturnIsUntouched() {
+        assertEquals("plain", textOf("plain"))
+    }
+
+    // -- Extended colours ------------------------------------------------------
+
+    @Test
+    fun anEightBitPaletteIndexResolvesToOneOfTheSixteen() {
+        assertEquals(1, styleOf(38, 5, 1).fg)
+        assertEquals(7, styleOf(38, 5, 15).fg)
+    }
+
+    @Test
+    fun aTruecolorValueResolvesRatherThanBeingDropped() {
+        // Dropping it would leave the text with no colour at all, which reads as a bug rather than
+        // as a limitation. Collapsing to the nearest of the sixteen reads as the closest match.
+        assertEquals(7, styleOf(38, 2, 250, 250, 250).fg)
+        assertEquals(0, styleOf(38, 2, 10, 10, 10).fg)
+    }
+
+    @Test
+    fun anExtendedBackgroundIsRecordedAsABackground() {
+        assertEquals(2, styleOf(48, 5, 2).bg)
+    }
+
+    @Test
+    fun anExtendedColourLeavesTheForegroundAloneWhenItIsABackground() {
+        val style = AnsiStyle(fg = 4)
+        assertEquals(4, applySgr(style, intArrayOf(48, 5, 2)).fg)
+        assertEquals(2, applySgr(style, intArrayOf(48, 5, 2)).bg)
+    }
+
+    @Test
+    fun anUnrecognisedSequenceChangesNothing() {
+        assertEquals(AnsiStyle.Plain, styleOf(99))
+    }
+}

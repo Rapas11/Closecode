@@ -266,11 +266,14 @@ fun IdeTerminal(
                     .padding(horizontal = 12.dp),
             ) {
                 items(lines.size) { index ->
-                    Text(
-                        text = lines[index],
-                        color = c.tx,
-                        fontSize = 13.sp,
-                        fontFamily = Mono,
+                    val line = lines[index]
+                    // A line the user typed is echoed back at them, and it is never coloured: a
+                    // program cannot have coloured it. It is also the one line the reader recognises
+                    // as theirs, so it keeps the prompt's own accent rather than the output's.
+                    val echoed = line.startsWith("$ ")
+                    TerminalLine(
+                        line = line,
+                        color = if (echoed) c.ac else null,
                         modifier = Modifier.padding(vertical = 1.dp),
                     )
                 }
