@@ -33,7 +33,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -88,6 +90,16 @@ internal fun parseExitMarker(line: String): Int? {
  * whatever the user pasted, and a paste is exactly where a token shows up.
  */
 internal fun sanitizeCommand(raw: String): String = raw.lineSequence().first().trim()
+
+/**
+ * The prompt the app draws at the head of the input line and in front of every echoed command.
+ *
+ * Not printed by the shell, because a shell fed through a pipe does not print one: prompts belong to
+ * interactive shells, and this one is deliberately not interactive. Drawing it here is also what lets
+ * it carry the previous command's exit status, which is the one thing about a command a phone
+ * keyboard cannot otherwise report.
+ */
+internal const val PROMPT = "closecode $ "
 
 /**
  * Appends while enforcing [TERMINAL_MAX_LINES]. Same shape as the log's own cap: dropping the
@@ -160,6 +172,22 @@ internal class ShellProcess(
         }
     }
 
+    /**
+     * Kills the shell's current process, standing in for an interrupt.
+     *
+     * CTRL+C on a real terminal raises SIGINT against whatever is in the foreground. Here the shell
+     * is fed through a pipe, which cannot deliver a signal to the process behind it, and there is no
+     * foreground process to deliver one to anyway — the shell reads one line, runs it to completion
+     * and comes back for more. Killing it is the closest honest equivalent, and it is what makes
+     * CTRL+C stop a runaway command instead of sitting there looking busy.
+     */
+    fun killRunning() {
+        runCatching { process?.destroy() }
+        stdin?.close()
+        stdin = null
+        process = null
+    }
+
     fun close() {
         runCatching { stdin?.close() }
         runCatching { process?.destroy() }
@@ -175,19 +203,37 @@ internal class ShellProcess(
  * closed when it leaves. There is no git, no Gradle and no build tool in here on purpose — the
  * terminal runs what Android itself ships and nothing else, so it never offers a tool the app
  * cannot deliver.
+ *
+ * Because the process is fed through a pipe rather than a terminal, the shell has no line editor of
+ * its own: history, the caret, CTRL+A and the arrows are all provided here instead. That is not a
+ * substitute for a real terminal — job control and a program's own cursor handling still do not
+ * work — but it is what makes the shell usable on a phone rather than write-only.
  */
 @Composable
 fun IdeTerminal(
     projectRoot: File?,
+    projectSlug: String = "",
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
 ) {
     val c = LocalPageColors.current
     val output = remember(projectRoot) { Channel<String>(Channel.UNLIMITED) }
     val lines = remember(projectRoot) { mutableStateListOf<String>() }
-    var input by remember(projectRoot) { mutableStateOf("") }
+    var input by remember(projectRoot) { mutableStateOf(TextFieldValue("")) }
     var lastExit by remember(projectRoot) { mutableStateOf<Int?>(null) }
+    var ctrl by remember { mutableStateOf(ModifierLatch.OFF) }
+    var alt by remember { mutableStateOf(ModifierLatch.OFF) }
+    var history by remember { mutableStateOf(emptyList<String>()) }
+    var historyIndex by remember { mutableStateOf(0) }
+    var draft by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val historyStore = rememberTerminalHistory(projectSlug)
+
+    // Commands run before this screen is opened are still reachable, so the list is read once on
+    // arrival rather than starting empty every time the panel is opened.
+    LaunchedEffect(projectSlug) {
+        if (projectSlug.isNotEmpty()) history = historyStore.read(projectSlug)
+    }
 
     val shell = remember(projectRoot) {
         ShellProcess(directory = projectRoot, onLine = { line -> output.trySend(line) })
@@ -227,11 +273,130 @@ fun IdeTerminal(
     }
 
     fun send() {
-        val command = sanitizeCommand(input)
+        val command = sanitizeCommand(input.text)
         if (command.isEmpty()) return
-        lines.appendTerminalLine("$ $command")
+        // The prompt is drawn by the app rather than printed by the shell, which never would: a
+        // non-interactive shell does not draw one. It carries the exit status too, so the reader
+        // learns how the last command went without looking for a number.
+        lines.appendTerminalLine("$PROMPT$command")
         shell.run(command)
-        input = ""
+        history = addToHistory(history, command)
+        if (projectSlug.isNotEmpty()) historyStore.write(projectSlug, history)
+        historyIndex = history.size
+        draft = ""
+        input = TextFieldValue("")
+    }
+
+    /** A latched modifier gives up its hold after the one key it was armed for; a locked one holds. */
+    fun finishModifiers() {
+        if (modifierConsumes(ctrl)) ctrl = ModifierLatch.OFF
+        if (modifierConsumes(alt)) alt = ModifierLatch.OFF
+    }
+
+    fun insertAtCaret(text: String) {
+        if (text.isEmpty()) return
+        val at = input.selection.start.coerceIn(0, input.text.length)
+        input = TextFieldValue(
+            input.text.substring(0, at) + text + input.text.substring(at),
+            TextRange(at + text.length),
+        )
+    }
+
+    /** Sets the caret, as every arrow and every "go to the edge" shortcut amounts to. */
+    fun moveCaretTo(at: Int) {
+        input = input.copy(selection = TextRange(at.coerceIn(0, input.text.length)))
+    }
+
+    /**
+     * Applies one key-bar key.
+     *
+     * Every arrow and every CTRL letter is a line-editing act rather than a byte sent to the shell,
+     * because the shell has no line editor to receive one. CTRL+C is the exception in spirit only: it
+     * is the one that means "stop", and the only way to stop a process behind a pipe is to kill it.
+     */
+    fun onKeyBar(key: String) {
+        when (key) {
+            "↑" -> {
+                previousHistoryEntry(history, historyIndex, draft)?.let {
+                    if (historyIndex >= history.size) draft = input.text
+                    historyIndex = it.index
+                    input = TextFieldValue(it.text, TextRange(it.text.length))
+                }
+                return
+            }
+            "↓" -> {
+                nextHistoryEntry(history, historyIndex, draft)?.let {
+                    historyIndex = it.index
+                    input = TextFieldValue(it.text, TextRange(it.text.length))
+                }
+                return
+            }
+            "←" -> {
+                moveCaretTo(input.selection.start - 1)
+                return
+            }
+            "→" -> {
+                moveCaretTo(input.selection.start + 1)
+                return
+            }
+        }
+        if (modifierApplies(ctrl) || modifierApplies(alt)) {
+            val character = key.firstOrNull() ?: return
+            val ctrlHeld = modifierApplies(ctrl)
+            val altHeld = modifierApplies(alt)
+            if (ctrlHeld) {
+                when (controlActionFor(character)) {
+                    ControlAction.LINE_START -> {
+                        input = input.copy(selection = TextRange(0))
+                        finishModifiers()
+                        return
+                    }
+                    ControlAction.LINE_END -> {
+                        input = input.copy(selection = TextRange(input.text.length))
+                        finishModifiers()
+                        return
+                    }
+                    ControlAction.CLEAR_LINE -> {
+                        val (text, caret) = deleteToCaret(input.text, input.selection.start)
+                        input = TextFieldValue(text, TextRange(caret))
+                        finishModifiers()
+                        return
+                    }
+                    ControlAction.CLEAR_AFTER -> {
+                        val (text, caret) = deleteToEnd(input.text, input.selection.start)
+                        input = TextFieldValue(text, TextRange(caret))
+                        finishModifiers()
+                        return
+                    }
+                    ControlAction.DELETE_WORD -> {
+                        val (text, caret) = deleteWordBefore(input.text, input.selection.start)
+                        input = TextFieldValue(text, TextRange(caret))
+                        finishModifiers()
+                        return
+                    }
+                    ControlAction.CLEAR_SCREEN -> {
+                        lines.clear()
+                        finishModifiers()
+                        return
+                    }
+                    ControlAction.NONE -> {
+                        // ETX: on a real terminal this raises an interrupt. A pipe cannot deliver a
+                        // signal, so the process is killed instead — which is the same thing to the
+                        // person at the keyboard, minus the exit status.
+                        if (controlChar(character) == '') {
+                            shell.killRunning()
+                            lines.appendTerminalLine("^C")
+                            finishModifiers()
+                        }
+                        return
+                    }
+                }
+            }
+            insertAtCaret(keyBarCharacter(character, ctrlHeld, altHeld))
+            finishModifiers()
+            return
+        }
+        insertAtCaret(key)
     }
 
     Column(
@@ -270,7 +435,7 @@ fun IdeTerminal(
                     // A line the user typed is echoed back at them, and it is never coloured: a
                     // program cannot have coloured it. It is also the one line the reader recognises
                     // as theirs, so it keeps the prompt's own accent rather than the output's.
-                    val echoed = line.startsWith("$ ")
+                    val echoed = line.startsWith(PROMPT)
                     TerminalLine(
                         line = line,
                         color = if (echoed) c.ac else null,
@@ -280,6 +445,9 @@ fun IdeTerminal(
             }
         }
 
+// The prompt, then the line the reader is typing. Green once a command has succeeded, red
+        // once one has failed, which is the one thing about the previous command a phone keyboard
+        // cannot tell you.
         Row(
             Modifier
                 .fillMaxWidth()
@@ -288,13 +456,12 @@ fun IdeTerminal(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // The prompt doubles as the report: it turns red once a command has failed, which is
-            // the one thing a phone keyboard cannot tell you about the line just sent.
             Text(
-                text = "$",
-                color = if (lastExit == null || lastExit == 0) c.ac else c.red,
-                fontSize = 14.sp,
+                text = PROMPT,
+                color = if (lastExit == null) c.ac else if (lastExit == 0) c.success else c.red,
+                fontSize = 13.sp,
                 fontFamily = Mono,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
             )
             BasicTextField(
                 value = input,
@@ -317,5 +484,15 @@ fun IdeTerminal(
                 CcIcon(CcIcons.Chevron, Color.White, 16.dp)
             }
         }
+
+        // The key bar sits below the input rather than above it, so it lands directly on top of the
+        // soft keyboard with nothing between them — which is where a thumb already is.
+        TerminalKeyBar(
+            ctrl = ctrl,
+            alt = alt,
+            onCtrl = { ctrl = nextLatch(ctrl) },
+            onAlt = { alt = nextLatch(alt) },
+            onKey = { onKeyBar(it) },
+        )
     }
 }

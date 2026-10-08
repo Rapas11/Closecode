@@ -908,6 +908,9 @@ fun IdeScreen(
                 )
                 "Terminal" -> IdeTerminal(
                     projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                    // The slug is the history key: commands are remembered per project, and the
+                    // store needs something to tell one project's list from another's.
+                    projectSlug = slug,
                     onBack = { activePanel = panelBeforeTool },
                     modifier = Modifier.weight(1f),
                 )
