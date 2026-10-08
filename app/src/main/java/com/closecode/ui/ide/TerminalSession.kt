@@ -1,6 +1,8 @@
 package com.closecode.ui.ide
 
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -244,5 +246,63 @@ internal fun TerminalTabStrip(
         ) {
             Text("+", color = c.tx, fontSize = 15.sp, fontFamily = Mono)
         }
+    }
+}
+
+/**
+ * The shells, held above every screen that can be replaced.
+ *
+ * This exists because the sessions used to live in a `remember` inside the terminal panel, and the
+ * terminal panel is unmounted by anything that takes the editor's place — including the settings
+ * screen, which is a sibling branch of the IDE and not a dialog over it. So changing the terminal's
+ * colour killed the shell before the new colour was in force, and there was nothing left to recolour
+ * when the terminal came back: a fresh, empty shell. The reader saw a theme that appeared not to
+ * work, and the cause was a lifetime, not a colour.
+ *
+ * Holding the list here means the processes outlive every panel swap and the settings screen, and a
+ * theme change reaches a terminal that is already on screen with output in it.
+ */
+@Stable
+internal class TerminalSessions {
+    internal var sessions by mutableStateOf(listOf(TerminalSession(1)))
+        private set
+
+    var activeId by mutableIntStateOf(1)
+        private set
+
+    /** The shell on screen. Never null while there is at least one, which there always is. */
+    fun active(): TerminalSession =
+        sessions.firstOrNull { it.number == activeId } ?: sessions.first()
+
+    fun select(number: Int) {
+        if (sessions.any { it.number == number }) activeId = number
+    }
+
+    /** Opens another shell and switches to it. The new one starts empty; the others keep running. */
+    fun openNew(): Int {
+        val next = (sessions.maxOfOrNull { it.number } ?: 0) + 1
+        sessions = sessions + TerminalSession(next)
+        activeId = next
+        return next
+    }
+
+    /**
+     * Closes one shell, and only that one.
+     *
+     * The last one is never closed: there would be nothing left to type into, and a terminal with no
+     * tabs is not a state a reader can get out of.
+     */
+    fun close(number: Int) {
+        if (sessions.size <= 1) return
+        val target = sessions.firstOrNull { it.number == number } ?: return
+        target.close()
+        val remaining = sessions.filterNot { it.number == number }
+        sessions = remaining
+        if (activeId == number) activeId = remaining.first().number
+    }
+
+    /** Replaces the remembered commands on every shell, on arrival. */
+    fun applyHistory(commands: List<String>) {
+        sessions = sessions.map { it.apply { copyHistory(commands) } }
     }
 }

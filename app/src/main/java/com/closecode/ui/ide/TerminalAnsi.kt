@@ -248,11 +248,18 @@ internal fun applySgr(style: AnsiStyle, params: IntArray): AnsiStyle {
 }
 
 /** An SGR colour code as the 0–7 index [AnsiColors.at] expects, bright codes folded to the same. */
+/**
+ * Reduces an SGR colour code to an index into the palette: 0-7 ordinary, 8-15 bright.
+ *
+ * The two halves get separate numbers rather than sharing eight, because a shared numbering cannot
+ * express the thing the codes are for: 91 and 31 are both red but they are meant to be drawn
+ * differently, and folding them together made the bright half of every theme unreachable.
+ */
 private fun normalizeColorCode(code: Int): Int = when (code) {
     in 30..37 -> code - 30
-    in 90..97 -> code - 90
+    in 90..97 -> code - 90 + 8
     in 40..47 -> code - 40
-    in 100..107 -> code - 100
+    in 100..107 -> code - 100 + 8
     else -> 0
 }
 

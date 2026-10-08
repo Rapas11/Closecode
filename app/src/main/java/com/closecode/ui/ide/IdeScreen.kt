@@ -153,8 +153,10 @@ import com.closecode.ui.theme.Sans
 import java.io.File
 
 @Composable
-fun IdeScreen(
+internal fun IdeScreen(
     projectName: String,
+    // Held by MainActivity rather than created here, so the shells outlive the settings screen.
+    terminalSessions: TerminalSessions,
     templateName: String, // kept for the project record; the header shows the project name
     slug: String,
     repository: ProjectRepository,
@@ -920,6 +922,10 @@ fun IdeScreen(
                     // The slug is the history key: commands are remembered per project, and the
                     // store needs something to tell one project's list from another's.
                     projectSlug = slug,
+                    // The holder came from above the screen switch, so this panel owns the draw but
+                    // not the shells: leaving the terminal and coming back finds the same processes
+                    // with the same output, and so does opening Settings.
+                    sessions = terminalSessions,
                     // The project tree, so Tab completes paths from what the project actually
                     // holds rather than by listing a directory the shell may not even be in.
                     tree = diskTree,

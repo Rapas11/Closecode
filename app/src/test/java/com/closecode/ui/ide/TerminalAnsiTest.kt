@@ -77,12 +77,31 @@ class TerminalAnsiTest {
     }
 
     @Test
-    fun aBrightColourIsTheSameHueAsItsOrdinaryTwin() {
-        // Brightness is carried by bold, so 90–97 collapse onto the same eight indices and a run
-        // cannot come out a different colour from the one the program actually asked for.
+    fun aBrightColourGetsItsOwnHalfOfThePalette() {
+        // The bug this pins: every bright code collapsed onto its ordinary twin on the way in and
+        // only the ordinary half was read on the way out, so a program's bright yellow, red, green
+        // and blue all drew in their dimmer versions, and the bright half of every theme was dead.
         for (index in 0..7) {
-            assertEquals(index, styleOf(90 + index).fg)
+            assertEquals(index + 8, styleOf(90 + index).fg)
+            assertEquals(index + 8, styleOf(100 + index).bg)
         }
+    }
+
+    @Test
+    fun anOrdinaryColourIsUnchanged() {
+        for (index in 0..7) {
+            assertEquals(index, styleOf(30 + index).fg)
+            assertEquals(index, styleOf(40 + index).bg)
+        }
+    }
+
+    @Test
+    fun theBrightHalfOfThePaletteIsNotTheOrdinaryHalfAgain() {
+        // A theme whose bright half matched its ordinary half on every hue would be one where
+        // nothing has been chosen yet.
+        val dark = com.closecode.ui.theme.DarkColors.ansi
+        assertTrue(dark.bright[3] != dark.normal[3])
+        assertTrue(dark.bright[1] != dark.normal[1])
     }
 
     @Test
@@ -94,7 +113,10 @@ class TerminalAnsiTest {
 
     @Test
     fun aBrightBackgroundIsRecordedToo() {
-        assertEquals(5, styleOf(105).bg)
+        // 105 is bright magenta on a background, so index 13 rather than 5: the two halves of the
+        // palette are numbered separately, which is what lets the bright one be read at all.
+        assertEquals(13, styleOf(105).bg)
+        assertEquals(5, styleOf(45).bg)
     }
 
     @Test

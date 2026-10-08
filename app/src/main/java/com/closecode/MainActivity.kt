@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.key
+import com.closecode.ui.ide.TerminalSessions
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -60,6 +61,12 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(Unit) {
                     if (!settings.openLastProject) encoded = ""
                 }
+
+                // Above the screen switch on purpose. The settings screen replaces the IDE rather
+                // than sitting over it, so anything the IDE owns in a plain remember is destroyed
+                // the moment settings opens — which is how changing the terminal's colour could kill
+                // the shell and leave nothing to recolour.
+                val terminalSessions = remember(project?.slug) { TerminalSessions() }
 
                 CompositionLocalProvider(LocalSettings provides settings) {
                     when {
@@ -113,6 +120,7 @@ class MainActivity : ComponentActivity() {
                                     settingsOpen = true
                                 },
                                 onExit = { encoded = "" },
+                                terminalSessions = terminalSessions,
                                 // A clone already owns its directory and its record, so it carries
                                 // its own slug rather than deriving one from the name — and it
                                 // lands here, in the IDE, without the hero screen in between.

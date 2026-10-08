@@ -37,13 +37,19 @@ data class AnsiColors(
     }
 
     /**
-     * The colour for an index already reduced to 0–7, the form the parser keeps it in.
+     * The colour for an index in 0–15, the form the parser keeps it in: 0–7 for the ordinary eight,
+     * 8–15 for their bright twins.
      *
-     * Bright and normal share one numbering here: index 1 is the same hue either way, and whether
-     * it draws as the bright variant is carried by the bold attribute rather than by a second set
-     * of indices, so `ls --color` and `grep --color` line up with each other.
+     * The bright half used to be unreachable. Every bright index collapsed onto its ordinary twin on
+     * the way in and only the ordinary half was read on the way out, so a program's bright yellow,
+     * red, green and blue all drew in their dimmer versions and the `bright` half of every theme
+     * was dead weight. Splitting the numbering is what makes them draw at all, and it costs nothing:
+     * the two halves are already in the table, they were simply never reached.
      */
-    fun colorOf(index: Int): Color = normal[index.coerceIn(0, 7)]
+    fun colorOf(index: Int): Color = when {
+        index in 8..15 -> bright[index - 8]
+        else -> normal[index.coerceIn(0, 7)]
+    }
 }
 
 /**

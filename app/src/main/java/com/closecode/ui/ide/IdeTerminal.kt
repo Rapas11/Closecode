@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -218,9 +217,11 @@ internal class ShellProcess(
  * work — but it is what makes the shell usable on a phone rather than write-only.
  */
 @Composable
-fun IdeTerminal(
+internal fun IdeTerminal(
     projectRoot: File?,
     projectSlug: String = "",
+    // Held outside this panel on purpose — see TerminalSessions.
+    sessions: TerminalSessions = TerminalSessions(),
     tree: List<ProjectFile> = emptyList(),
     onOpenPath: (ProjectFile) -> Unit = {},
     onOpenSourceControl: () -> Unit = {},
@@ -235,8 +236,11 @@ fun IdeTerminal(
     var completionCandidates by remember { mutableStateOf(emptyList<Completion>()) }
     var completionCycle by remember { mutableStateOf(0) }
     var completionStart by remember { mutableStateOf(0) }
-    var sessions by remember(projectSlug) { mutableStateOf(listOf(TerminalSession(1))) }
-    var activeId by remember(projectSlug) { mutableIntStateOf(1) }
+    // The list and the selection belong to the holder, so what this panel reads is a projection of
+    // state that outlives the panel. Nothing below may reassign them.
+    val sessionList = sessions.sessions
+    val activeId = sessions.activeId
+    val session = sessions.active()
     val listState = rememberLazyListState()
     val historyStore = rememberTerminalHistory(projectSlug)
 
@@ -245,7 +249,7 @@ fun IdeTerminal(
     // the commands are the reader's, not one tab's.
     LaunchedEffect(projectSlug) {
         val remembered = if (projectSlug.isEmpty()) emptyList() else historyStore.read(projectSlug)
-        sessions = sessions.map { it.apply { copyHistory(remembered) } }
+        sessions.applyHistory(remembered)
     }
 
     // Every session is started and drained for as long as the panel is open, whether or not it is
@@ -253,7 +257,7 @@ fun IdeTerminal(
     // fill its pipe and wedge — the same hang that folding standard error into standard output was
     // there to prevent, arriving through a different door.
     LaunchedEffect(sessions) {
-        sessions.forEach { session ->
+        sessions.sessions.forEach { session ->
             launch {
                 withContext(Dispatchers.IO) { session.start(projectRoot) }
                 if (!session.isRunning) {
@@ -275,13 +279,19 @@ fun IdeTerminal(
         }
     }
 
-    // The session on screen. Everything below reads and writes this one, which is why a tab is a
-    // session rather than a different reading of one: two tabs cannot share a shell.
-    val session = sessions.firstOrNull { it.number == activeId } ?: sessions.first()
+    // The session on screen is read from the holder above, because it outlives this panel: two tabs
+    // are two shells rather than two readings of one.
 
-    DisposableEffect(sessions) {
-        onDispose { sessions.forEach { it.close() } }
-    }
+    // Keyed on the unit, deliberately: a DisposableEffect keyed on a value is disposed and recreated
+    // every time that value changes, and this one's cleanup closed *every* session. Adding or closing
+    // a shell tab therefore changed the key, ran the cleanup against the new list, and killed the
+    // server the reader had running in the first tab — without ever leaving the panel. Its own
+    // comment even said so, and the tests pinned the geometry rather than the lifetime.
+    // Nothing is torn down when this panel goes away, and that is the point: the shells belong to
+    // the holder now, so a screen swap finds the same processes and the same output.
+    //
+    // What this does still own is the reader thread. Draining stopped when the panel is unmounted,
+    // so the holder has to drain instead — see MainActivity.
 
 
     // Whether new output should pull the view down to it. A terminal that stops following output is a
@@ -517,7 +527,11 @@ fun IdeTerminal(
         modifier
             .fillMaxSize()
             .background(c.bg)
-            .imePadding(),
+            // No imePadding here. The activity already declares adjustResize, so the window is
+            // shrunk for the keyboard and this panel is laid out above it; adding padding as well
+            // counted the same keyboard twice and pushed the output and the key bar off the top of
+            // the screen. The editor works the same way — adjustResize alone, plus a reserved height
+            // for its tool row — and the two now agree.
     ) {
         PanelBackBar("Terminal", onBack)
 
@@ -525,21 +539,17 @@ fun IdeTerminal(
         // work goes on in the other. Above the output rather than below it, because which shell you
         // are typing into is the more important of the two facts.
         TerminalTabStrip(
-            sessions = sessions,
+            sessions = sessionList,
             activeId = activeId,
-            onSelect = { activeId = it },
-            onClose = { number ->
-                val closing = sessions.firstOrNull { it.number == number }
-                closing?.close()
-                val left = sessions.filterNot { it.number == number }
-                sessions = left.ifEmpty { listOf(TerminalSession(1)) }
-                if (activeId == number) activeId = sessions.first().number
-            },
-            onAdd = {
-                val next = (sessions.maxOfOrNull { it.number } ?: 0) + 1
-                sessions = sessions + TerminalSession(next)
-                activeId = next
-            },
+            onSelect = { sessions.select(it) },
+            // One shell closes, and only that one. The old code reassigned the list, which changed
+            // the key of the DisposableEffect that was responsible for killing every shell, so
+            // closing a tab killed the server in the next one along.
+            onClose = { sessions.close(it) },
+            // Adding a tab used to reassign the list, which disposed the effect whose cleanup
+            // closed every shell and then started them all again — so opening a second tab killed
+            // the first one's server without the reader ever leaving the panel.
+            onAdd = { sessions.openNew() },
         )
 
         if (session.lines.isEmpty()) {
