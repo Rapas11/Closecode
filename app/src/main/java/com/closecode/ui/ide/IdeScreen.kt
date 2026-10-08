@@ -290,9 +290,16 @@ internal fun IdeScreen(
     // Spec 6.2 and 6.8 both need to open problems from outside the editor, so the sheet's target
     // line lives here rather than inside IdeEditorArea.
     val problemSheet = remember { mutableStateOf<Int?>(null) }
-    // Spec 6.9: the status bar totals cover the project, not just the open file.
+    // Which set of problems the sheet is showing. The Run button blocks on the whole project, so a
+    // sheet opened from there has to show the whole project too — otherwise it says "No problems.
+    // Code is clean." immediately after the app has just said it cannot run.
+    var problemSheetScope by remember { mutableStateOf(ProblemScope.FILE) }
+    // The totals cover the project, not just the open file. The diagnostics themselves are kept too,
+    // because a count cannot answer the question a blocked Run raises: *which* file is broken.
     var projectErrors by remember { mutableStateOf(0) }
     var projectWarnings by remember { mutableStateOf(0) }
+    var projectErrorList by remember { mutableStateOf<List<ProjectDiagnostic>>(emptyList()) }
+    var projectWarningList by remember { mutableStateOf<List<ProjectDiagnostic>>(emptyList()) }
     // Build panel state: the sweep's own numbers, not a timer walking a list of task names.
     var buildProgress by remember { mutableFloatStateOf(0f) }
     var buildElapsedMs by remember { mutableStateOf(0L) }
@@ -703,6 +710,8 @@ internal fun IdeScreen(
             .take(PROJECT_ANALYSIS_MAX_FILES)
             .map { it.name to (liveBuffers[it.name] ?: diskContents[it.name].orEmpty()) }
         if (sources.isEmpty()) {
+            projectErrorList = emptyList()
+            projectWarningList = emptyList()
             projectErrors = 0
             projectWarnings = 0
             return@LaunchedEffect
@@ -713,22 +722,24 @@ internal fun IdeScreen(
             // Names declared anywhere in the project, so a type or function coming from another
             // file is not reported as missing in this one.
             val declared = KotlinAnalyzer.projectSymbols(sources.map { it.second })
-            var errors = 0
-            var warnings = 0
-            for ((_, text) in sources) {
+            val errors = ArrayList<ProjectDiagnostic>()
+            val warnings = ArrayList<ProjectDiagnostic>()
+            for ((name, text) in sources) {
                 if (text.isBlank() || text.length > MAX_ANALYZED_CHARS) continue
                 runCatching { KotlinAnalyzer.analyze(text, index, declared) }.getOrNull()?.diagnostics
                     ?.forEach { d ->
                         when (d.severity) {
-                            Severity.ERROR -> errors++
-                            Severity.WARNING -> warnings++
+                            Severity.ERROR -> errors += ProjectDiagnostic(name, d)
+                            Severity.WARNING -> warnings += ProjectDiagnostic(name, d)
                         }
                     }
             }
             Triple(errors, warnings, declared)
         }
-        projectErrors = totals.first
-        projectWarnings = totals.second
+        projectErrorList = totals.first
+        projectWarningList = totals.second
+        projectErrors = totals.first.size
+        projectWarnings = totals.second.size
         projectNames = totals.third
     }
 
@@ -879,8 +890,9 @@ internal fun IdeScreen(
                     // Spec 7: running is blocked while the project has compile errors, and jumps
                     // to the problem sheet instead.
                     if (projectErrors > 0) {
-                        toast = "Fix $projectErrors errors before running"
+                        toast = blockedByErrors(projectErrorList, "running")
                         problemSheet.value = problemSheet.value ?: 1
+                        problemSheetScope = ProblemScope.PROJECT
                         activePanel = "Code"
                     } else {
                         building = true
@@ -1080,6 +1092,11 @@ internal fun IdeScreen(
                                     activeKind = activeFile?.kind,
                                     formatRequest = formatRequest,
                                     formatSelectionRequest = formatSelectionRequest,
+                                    problemSheetScope = problemSheetScope,
+                                    projectDiagnostics = projectErrorList,
+                                    onOpenProjectFile = { name ->
+                                        diskTree.firstOrNull { it.name == name }?.let { openFile(it) }
+                                    },
                                     onSelectionFormat = { formatSelectionRequest++ },
                                     undoRequest = undoRequest,
                                     redoRequest = redoRequest,
@@ -1156,8 +1173,9 @@ internal fun IdeScreen(
                         PaletteCommand("Run app", "Ctrl R", {
                             // Spec 7: running is blocked while the project has errors.
                             if (projectErrors > 0) {
-                                toast = "Fix $projectErrors errors before running"
+                                toast = blockedByErrors(projectErrorList, "running")
                                 problemSheet.value = problemSheet.value ?: 1
+                                problemSheetScope = ProblemScope.PROJECT
                             } else {
                                 building = true
                             }
@@ -1167,8 +1185,9 @@ internal fun IdeScreen(
                     add(
                         PaletteCommand("Build debug APK", null, {
                             if (projectErrors > 0) {
-                                toast = "Fix $projectErrors errors before building"
+                                toast = blockedByErrors(projectErrorList, "building")
                                 problemSheet.value = problemSheet.value ?: 1
+                                problemSheetScope = ProblemScope.PROJECT
                             } else {
                                 building = true
                             }
@@ -2227,6 +2246,11 @@ private fun IdeEditorArea(
 formatRequest: Int = 0,
     // Raised by the selection bar's Format, which re-indents only the selected lines.
     formatSelectionRequest: Int = 0,
+    // Which set of problems the sheet shows, and the project-wide set when it does.
+    problemSheetScope: ProblemScope = ProblemScope.FILE,
+    projectDiagnostics: List<ProjectDiagnostic> = emptyList(),
+    // Opens another file by name, for a row in the project-wide list.
+    onOpenProjectFile: (String) -> Unit = {},
     // The parent owns the counter; the editor owns the buffer. The bar raises the parent's copy.
     onSelectionFormat: () -> Unit = {},
     undoRequest: Int = 0,
@@ -3355,11 +3379,23 @@ contentAlignment = Alignment.Center,
                     .padding(bottom = 8.dp),
             ) {
                 ProblemSheet(
-                    // The Problems tab was removed, so the sheet is the full list for this file.
-                    problems = problems.all,
+                    // Either the open file's own problems, or every one in the project — which is
+                    // what a reader who was just blocked from running needs to see.
+                    problems = if (problemSheetScope == ProblemScope.PROJECT) {
+                        projectDiagnostics
+                    } else {
+                        problems.all.map { ProjectDiagnostic(active, it) }
+                    },
+                    scope = problemSheetScope,
                     fileLabel = active,
-                    onSelect = { diagnostic ->
-                        val offset = offsetOfLineColumn(code, diagnostic.line, diagnostic.column)
+                    onSelect = { row ->
+                        // Tapping a row in project scope opens the file it came from, then puts the
+                        // caret on its line. Jumping to a line number in a file that is not open
+                        // would be a dead end.
+                        // A row from another file has to open that file first: jumping to a line
+                        // number in a file that is not open would be a dead end.
+                        if (row.fileName != active) onOpenProjectFile(row.fileName)
+                        val offset = offsetOfLineColumn(code, row.diagnostic.line, row.diagnostic.column)
                         commit(TextFieldValue(code, TextRange(offset)))
                         problemSheetLine.value = null
                     },

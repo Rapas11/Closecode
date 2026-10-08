@@ -1744,9 +1744,20 @@ fun buildQuickFixActions(
  * card puts the caret on that problem.
  */
 @Composable
-fun ProblemSheet(
-    problems: List<Diagnostic>,
-    onSelect: (Diagnostic) -> Unit,
+/**
+ * The problems sheet.
+ *
+ * It can show one file's problems or the whole project's, because the Run and Build blockers look at
+ * the whole project and the sheet is where they send the reader. Showing only the open file there is
+ * how "Fix 1 error" and "No problems. Code is clean." came to be true at the same moment.
+ *
+ * In project scope each row carries the file it came from, because a bare line number in a list of
+ * files that are not identified is not something a reader can act on.
+ */
+internal fun ProblemSheet(
+    problems: List<ProjectDiagnostic>,
+    scope: ProblemScope = ProblemScope.FILE,
+    onSelect: (ProjectDiagnostic) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     fileLabel: String? = null,
@@ -1755,7 +1766,7 @@ fun ProblemSheet(
 
     // Spec 7: errors sort above warnings; within a severity keep source order.
     val ordered = remember(problems) {
-        problems.sortedBy { if (it.severity == Severity.ERROR) 0 else 1 }
+        problems.sortedBy { if (it.diagnostic.severity == Severity.ERROR) 0 else 1 }
     }
 
     Column(
@@ -1773,7 +1784,7 @@ fun ProblemSheet(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Problems",
+                text = scope.heading(),
                 color = c.tx,
                 fontSize = 14.sp,
                 fontFamily = Sans,
@@ -1797,9 +1808,14 @@ fun ProblemSheet(
         }
 
         if (ordered.isEmpty()) {
-            // Spec 7 empty state.
+            // Spec 7 empty state. In project scope this means the project is clean, which is a
+            // different and much better fact than the open file being clean.
             Text(
-                text = "No problems. Code is clean.",
+                text = if (scope == ProblemScope.PROJECT) {
+                    "No errors anywhere in the project."
+                } else {
+                    "No problems. Code is clean."
+                },
                 color = c.mu,
                 fontSize = 13.sp,
                 fontFamily = Sans,
@@ -1814,7 +1830,8 @@ fun ProblemSheet(
         Column(
             Modifier.heightIn(max = 260.dp).verticalScroll(rememberScrollState()),
         ) {
-            for (diagnostic in ordered) {
+            for (row in ordered) {
+                val diagnostic = row.diagnostic
                 val isWarning = diagnostic.severity == Severity.WARNING
                 val tone = if (isWarning) c.warnPillTx else c.errorPillTx
                 val fill = if (isWarning) c.warnPillBg else c.errorPillBg
@@ -1825,7 +1842,7 @@ fun ProblemSheet(
                         .clip(RoundedCornerShape(10.dp))
                         .background(c.panel2)
                         .border(1.dp, c.ln, RoundedCornerShape(10.dp))
-                        .clickable { onSelect(diagnostic) }
+                        .clickable { onSelect(row) }
                         .padding(10.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
@@ -1864,9 +1881,12 @@ fun ProblemSheet(
                                     fontWeight = FontWeight.SemiBold,
                                 )
                             }
-                            if (fileLabel != null) {
+                            // In project scope the row's own file is the one worth naming; in file
+                            // scope there is only the one the sheet was opened on.
+                            val rowFile = if (scope == ProblemScope.PROJECT) row.fileName else fileLabel
+                            if (rowFile != null) {
                                 Text(
-                                    text = "$fileLabel:${diagnostic.line}",
+                                    text = "$rowFile:${diagnostic.line}",
                                     color = c.mu,
                                     fontSize = 11.sp,
                                     fontFamily = Mono,
@@ -2025,4 +2045,44 @@ internal fun SignatureHelpTooltip(
             overflow = TextOverflow.Ellipsis,
         )
     }
+}
+
+/** Which problems the sheet is showing. */
+internal enum class ProblemScope {
+    /** Only the file that is open. */
+    FILE,
+
+    /** Every Kotlin file in the project, which is what the Run and Build blockers look at. */
+    PROJECT,
+}
+
+/** One project-wide problem, carrying the file it came from. */
+internal data class ProjectDiagnostic(val fileName: String, val diagnostic: Diagnostic)
+
+/**
+ * What to say when the Run button will not let the reader through.
+ *
+ * The old message was a bare count — "Fix 1 errors", plural included — and the sheet it opened showed
+ * only the file that was open. So an error in another file blocked Run while the sheet it opened said
+ * the code was clean, and the reader had two true sentences that did not agree about the same project.
+ *
+ * Naming the file is what closes that gap: the message points at the file the sheet will now show.
+ * One file is named; several are counted, because listing every path in a toast would be unreadable
+ * and the sheet is one tap away.
+ */
+internal fun blockedByErrors(errors: List<ProjectDiagnostic>, doing: String): String {
+    val count = errors.size
+    val files = errors.map { it.fileName }.distinct()
+    val where = when (files.size) {
+        0 -> ""
+        1 -> " in ${files.first()}"
+        else -> " across ${files.size} files"
+    }
+    return "Fix ${pluralProblems(count, "error")}$where before $doing"
+}
+
+/** The sheet's copy when it is showing the whole project rather than one file. */
+internal fun ProblemScope.heading(): String = when (this) {
+    ProblemScope.FILE -> "Problems"
+    ProblemScope.PROJECT -> "Problems in project"
 }

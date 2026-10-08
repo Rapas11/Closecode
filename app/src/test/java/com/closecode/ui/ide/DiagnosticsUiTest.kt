@@ -7,6 +7,7 @@ import com.closecode.lang.AndroidApiIndex
 import com.closecode.lang.KotlinAnalyzer
 import com.closecode.lang.Severity
 import com.closecode.lang.SourceEdits
+import com.closecode.lang.Diagnostic
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -696,5 +697,76 @@ class GutterWindowTest {
             assertTrue("window $window misses line $lastOnScreen at $scrollTop", lastOnScreen in window)
             scrollTop += 37f
         }
+    }
+}
+
+/**
+ * What the Run button says when it will not let the reader through, and what the sheet it opens
+ * shows. The two disagreed: the blocker counted the whole project while the sheet listed one file,
+ * so "Fix 1 error" and "No problems. Code is clean." were both true and contradicted each other.
+ */
+class RunBlockerTest {
+
+    private fun errorIn(file: String, line: Int = 3) = ProjectDiagnostic(
+        fileName = file,
+        diagnostic = Diagnostic(
+            severity = com.closecode.lang.Severity.ERROR,
+            message = "Unresolved 'mod'",
+            offset = 0,
+            length = 1,
+            line = line,
+            column = 1,
+            code = "E0001",
+        ),
+    )
+
+    @Test
+    fun oneErrorNamesItsFile() {
+        val msg = blockedByErrors(listOf(errorIn("Theme.kt")), "running")
+        assertTrue(msg, msg.contains("Theme.kt"))
+        assertTrue(msg, msg.contains("1 error"))
+        assertTrue("it must not say \"1 errors\"", !msg.contains("1 errors"))
+    }
+
+    @Test
+    fun theVerbIsWhateverWasAttempted() {
+        assertTrue(blockedByErrors(listOf(errorIn("A.kt")), "building").contains("before building"))
+        assertTrue(blockedByErrors(listOf(errorIn("A.kt")), "running").contains("before running"))
+    }
+
+    @Test
+    fun severalFilesAreCountedRatherThanListed() {
+        // A toast has one line. Naming every path is unreadable, and the sheet is one tap away.
+        val msg = blockedByErrors(
+            listOf(errorIn("A.kt"), errorIn("B.kt"), errorIn("B.kt", line = 9)),
+            "running",
+        )
+        assertTrue(msg, msg.contains("3 errors"))
+        assertTrue(msg, msg.contains("2 files"))
+        assertTrue("it must not list every path", !msg.contains("B.kt"))
+    }
+
+    @Test
+    fun oneFileWithSeveralErrorsStillCountsTheFileOnce() {
+        val msg = blockedByErrors(
+            listOf(errorIn("A.kt"), errorIn("A.kt", line = 8), errorIn("A.kt", line = 12)),
+            "running",
+        )
+        assertTrue(msg, msg.contains("3 errors"))
+        assertTrue(msg, msg.contains("in A.kt"))
+        assertTrue("not \"across 3 files\"", !msg.contains("across"))
+    }
+
+    @Test
+    fun noErrorsStillProducesSomethingReadable() {
+        // Defensive only: the caller checks the count first. A crash here would be worse than a
+        // clumsy sentence.
+        assertEquals("Fix 0 errors before running", blockedByErrors(emptyList(), "running"))
+    }
+
+    @Test
+    fun theTwoScopesSayDifferentHeadings() {
+        assertEquals("Problems", ProblemScope.FILE.heading())
+        assertEquals("Problems in project", ProblemScope.PROJECT.heading())
     }
 }
