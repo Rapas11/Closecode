@@ -989,6 +989,60 @@ fun squiggleRange(
 }
 
 /**
+ * The innermost block that contains [offset], or null when the caret sits at the top level.
+ *
+ * "Innermost" is the largest opening offset among the blocks containing the caret, so nesting
+ * resolves to the tightest one and two sibling branches at the same indentation never fight over it.
+ * Every pair is walked rather than scanning backwards for a match, because that would make the
+ * answer depend on [pairs] arriving sorted — true today, and exactly the kind of invisible coupling
+ * that breaks the first time a caller builds the list some other way.
+ *
+ * The caret sitting on a closing brace counts as inside that block; sitting on the opening brace does
+ * not, because a caret immediately after `{` is the one that is genuinely inside it.
+ */
+internal fun enclosingPair(pairs: List<IntRange>, offset: Int): IntRange? {
+    var best: IntRange? = null
+    for (pair in pairs) {
+        if (pair.first < offset && offset <= pair.last) {
+            if (best == null || pair.first > best.first) best = pair
+        }
+    }
+    return best
+}
+
+/** The pair [braceOffset] is an end of, or null when it is not a brace of any complete block. */
+private fun pairOfBrace(pairs: List<IntRange>, braceOffset: Int): IntRange? =
+    pairs.firstOrNull { it.first == braceOffset || it.last == braceOffset }
+
+/**
+ * The two braces to outline for a caret at [offset], as their offsets in the buffer, or null when
+ * there is nothing honest to outline.
+ *
+ * A caret sitting right beside a brace wins over the block that contains it, because that is what a
+ * reader means: they have just typed the `{`, or tapped it, and they are looking at the pair that
+ * belongs to it. Any other caret gets the innermost block around it.
+ *
+ * A brace with no partner answers null rather than falling through to the enclosing block. The
+ * reader is next to a `{` that is not closed; there is no second box to draw, and highlighting some
+ * outer block instead would put the emphasis somewhere they are not looking.
+ */
+internal fun activeBraces(pairs: List<IntRange>, text: String, offset: Int): Pair<Int, Int>? {
+    if (offset > 0 && offset <= text.length) {
+        val before = text[offset - 1]
+        if (before == '{' || before == '}') {
+            return pairOfBrace(pairs, offset - 1)?.let { it.first to it.last }
+        }
+    }
+    if (offset >= 0 && offset < text.length) {
+        val after = text[offset]
+        if (after == '{' || after == '}') {
+            return pairOfBrace(pairs, offset)?.let { it.first to it.last }
+        }
+    }
+    return enclosingPair(pairs, offset)?.let { it.first to it.last }
+}
+
+/**
  * Every line's indent, in character columns.
  *
  * A tab advances to the next tab stop rather than counting as one column, so a file indented with
@@ -1055,6 +1109,11 @@ internal fun guideSpan(openLine: Int, closeLine: Int): IntRange? =
  * One vertical rule per `{ … }` that spans more than a single line, drawn down the column its own
  * contents are indented to.
  *
+ * [activePair] is the block the caret is in, and its rule is drawn a second time in the accent tone.
+ * Only that pair's own span is repainted, so a sibling `if`/`else` sharing the same column stays
+ * faint everywhere else on the screen — which is what makes the lit rule read as "this is the block
+ * you are in" rather than "these two rules happen to overlap".
+ *
  * The two ends come from the renderer's line metrics, so a pair whose lines fall outside the
  * rendered slice answers null from [lineTopPx] and is not drawn at all — which is the whole clipping
  * rule for free, and the reason a guide never appears at a position clamped to the edge of the
@@ -1069,12 +1128,16 @@ fun BracketGuideLayer(
     charWidthPx: Float,
     layout: TextLayoutResult?,
     lineHeightPx: Float,
+    activePair: IntRange? = null,
     window: CodeWindow = CodeWindow.Full,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
     val density = androidx.compose.ui.platform.LocalDensity.current
+    // Half a stroke, so the rule is *centred* on the column boundary rather than hanging off its
+    // left edge — the same sub-pixel placement an indent guide gets in a desktop editor.
     val strokePx = with(density) { 1.dp.toPx() }
+    val halfStroke = strokePx / 2f
 
     androidx.compose.foundation.Canvas(modifier) {
         // Without a measured character there is no honest way to turn a column into a position, and
@@ -1085,7 +1148,7 @@ fun BracketGuideLayer(
             val closeLine = lineOfOffset(source, pair.last)
             val span = guideSpan(openLine, closeLine) ?: continue
             val openIndent = indents.getOrElse(openLine - 1) { 0 }
-            val x = guideColumn(openIndent, tabSize) * charWidthPx
+            val x = guideColumn(openIndent, tabSize) * charWidthPx + halfStroke
             val top = lineTopPx(layout, source, span.first, window) ?: continue
             val bottom = lineTopPx(layout, source, span.last, window) ?: continue
             drawLine(
@@ -1095,7 +1158,79 @@ fun BracketGuideLayer(
                 strokeWidth = strokePx,
             )
         }
+        // The active rule, painted over the faint one above. Same geometry, so the lit segment sits
+        // exactly on top of the rule it replaces rather than beside it.
+        val active = activePair ?: return@Canvas
+        val openLine = lineOfOffset(source, active.first)
+        val closeLine = lineOfOffset(source, active.last)
+        val span = guideSpan(openLine, closeLine) ?: return@Canvas
+        val openIndent = indents.getOrElse(openLine - 1) { 0 }
+        val x = guideColumn(openIndent, tabSize) * charWidthPx + halfStroke
+        val top = lineTopPx(layout, source, span.first, window) ?: return@Canvas
+        val bottom = lineTopPx(layout, source, span.last, window) ?: return@Canvas
+        drawLine(
+            color = c.amber,
+            start = androidx.compose.ui.geometry.Offset(x, top),
+            end = androidx.compose.ui.geometry.Offset(x, bottom + lineHeightPx),
+            strokeWidth = strokePx,
+        )
     }
+}
+
+/**
+ * An outline around the two braces of the block the caret is in.
+ *
+ * The boxes are measured off the renderer's own glyph boxes — the same source the squiggles and the
+ * pill anchor use — so they wrap the brace itself at any font size or zoom, and a brace scrolled out
+ * of the rendered slice has no box and is simply not drawn. Outline only, no fill: the pair has to
+ * read as marked without hiding the character it is marking.
+ */
+@Composable
+fun MatchingBraceLayer(
+    active: Pair<Int, Int>?,
+    layout: TextLayoutResult?,
+    window: CodeWindow = CodeWindow.Full,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalPageColors.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val strokePx = with(density) { 1.dp.toPx() }
+    val padPx = with(density) { 2.dp.toPx() }
+    val radiusPx = with(density) { 3.dp.toPx() }
+
+    androidx.compose.foundation.Canvas(modifier) {
+        val brackets = active ?: return@Canvas
+        val textLength = layout?.layoutInput?.text?.length ?: return@Canvas
+        for (offset in intArrayOf(brackets.first, brackets.second)) {
+            val box = braceBox(layout, offset, textLength, window) ?: continue
+            drawRoundRect(
+                color = c.amber,
+                topLeft = androidx.compose.ui.geometry.Offset(box.left - padPx, box.top - padPx),
+                size = androidx.compose.ui.geometry.Size(
+                    box.width + padPx * 2f,
+                    box.height + padPx * 2f,
+                ),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(radiusPx, radiusPx),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokePx),
+            )
+        }
+    }
+}
+
+/**
+ * A brace's own glyph box in the layer's coordinates, or null when it is not in the rendered slice.
+ */
+private fun braceBox(
+    layout: TextLayoutResult?,
+    offset: Int,
+    textLength: Int,
+    window: CodeWindow,
+): androidx.compose.ui.geometry.Rect? {
+    if (layout == null) return null
+    if (offset < window.startOffset || offset > window.startOffset + textLength) return null
+    val sliceIndex = mapOffsetToSlice(offset, window.startOffset, textLength)
+    val box = runCatching { layout.getBoundingBox(sliceIndex) }.getOrNull() ?: return null
+    return box.translate(0f, window.topPx)
 }
 
 @Composable

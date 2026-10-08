@@ -181,4 +181,149 @@ class GuideGeometryTest {
         assertTrue(LightColors.guideRule.alpha < LightColors.tx.alpha)
         assertTrue(DarkColors.guideRule.alpha < DarkColors.tx.alpha)
     }
+
+    // -- Which block the caret is in -------------------------------------------
+    // A two-level file: `outer` opens on line 1, `inner` on line 2.
+    //
+    // Expectations are read off the pairs the parser actually produced rather than typed in as
+    // offsets: hand-counting characters in a fixture is how a test ends up asserting the author's
+    // arithmetic instead of the code's behaviour.
+    private val nested = "fun outer() {\n    if (x) {\n        y()\n    }\n}\n"
+    private val nestedPairs = bracePairs(nested)
+    private val outerPair = nestedPairs[0]
+    private val innerPair = nestedPairs[1]
+
+    @Test
+    fun aCaretInsideABlockFindsThatBlock() {
+        val caret = nested.indexOf("y()") + 1
+        assertEquals(innerPair.first, enclosingPair(nestedPairs, caret)?.first)
+    }
+
+    @Test
+    fun theInnermostBlockWinsOverTheOneAroundIt() {
+        // Between the outer brace and the inner one: inside `outer`, outside `inner`.
+        val caret = nested.indexOf("if (x)") + 1
+        assertEquals(outerPair.first, enclosingPair(nestedPairs, caret)?.first)
+    }
+
+    @Test
+    fun aCaretAtTheTopLevelBelongsToNoBlock() {
+        assertNull(enclosingPair(nestedPairs, 3))
+        assertNull(enclosingPair(nestedPairs, 0))
+    }
+
+    @Test
+    fun aCaretOnAClosingBraceIsStillInsideItsBlock() {
+        // The reader is looking at the `}` that closes the inner block; that block is the one lit.
+        assertEquals(
+            innerPair.first,
+            enclosingPair(nestedPairs, innerPair.last)?.first,
+        )
+    }
+
+    @Test
+    fun aCaretOnTheOpeningBraceIsNotYetInsideIt() {
+        // Immediately *before* the `{` is still outside; immediately after it is inside. That is the
+        // distinction a reader makes when typing a block open, and getting it wrong lights the wrong
+        // block for the first keystroke.
+        assertEquals(outerPair.first, enclosingPair(nestedPairs, innerPair.first)?.first)
+        assertEquals(innerPair.first, enclosingPair(nestedPairs, innerPair.first + 1)?.first)
+    }
+
+    @Test
+    fun theAnswerDoesNotDependOnTheOrderPairsArriveIn() {
+        // Reversed on purpose: a helper that scanned backwards for a match would get this wrong, and
+        // only on files whose pairs happen not to be sorted.
+        val caret = nested.indexOf("y()") + 1
+        assertEquals(innerPair.first, enclosingPair(nestedPairs.reversed(), caret)?.first)
+    }
+
+    @Test
+    fun twoBranchesAtTheSameIndentEachResolveToThemselves() {
+        // `if` and `else` sit at the same column, so only the offset tells them apart.
+        val source = "fun f() {\n    if (a) {\n        a()\n    } else {\n        b()\n    }\n}\n"
+        val pairs = bracePairs(source)
+        assertEquals(3, pairs.size)
+        val ifPair = pairs[1]
+        val elsePair = pairs[2]
+        assertEquals(ifPair.first, enclosingPair(pairs, source.indexOf("a()") + 1)?.first)
+        assertEquals(elsePair.first, enclosingPair(pairs, source.indexOf("b()") + 1)?.first)
+    }
+
+    // -- Which braces to box --------------------------------------------------
+
+    @Test
+    fun aCaretJustInsideAnOpeningBraceBoxesThatPair() {
+        // The case after typing one: the caret sits immediately after the `{`.
+        val source = "fun f() {\n    y()\n}\n"
+        val pair = bracePairs(source).single()
+        assertEquals(pair.first to pair.last, activeBraces(bracePairs(source), source, pair.first + 1))
+    }
+
+    @Test
+    fun aCaretSittingOnABraceBoxesThatPair() {
+        val source = "fun f() {\n    y()\n}\n"
+        val pairs = bracePairs(source)
+        val pair = pairs.single()
+        assertEquals(pair.first to pair.last, activeBraces(pairs, source, pair.first))
+        assertEquals(pair.first to pair.last, activeBraces(pairs, source, pair.last))
+    }
+
+    @Test
+    fun aCaretNextToAClosingBraceBoxesItsOwnPairRatherThanTheOuterOne() {
+        val source = "fun outer() {\n    fun f() {\n        y()\n    }\n}\n"
+        val pairs = bracePairs(source)
+        val inner = pairs[1]
+        // Immediately after the inner `}`, and still within the outer block. The inner pair wins,
+        // because the reader is beside that brace rather than merely somewhere inside the outer one.
+        assertEquals(inner.first to inner.last, activeBraces(pairs, source, inner.last + 1))
+    }
+
+    @Test
+    fun aCaretDeepInsideABlockBoxesItsBraces() {
+        val source = "fun f() {\n    val x = 1\n}\n"
+        val pairs = bracePairs(source)
+        val pair = pairs.single()
+        val caret = source.indexOf("val x") + 1
+        assertEquals(pair.first to pair.last, activeBraces(pairs, source, caret))
+    }
+
+    @Test
+    fun aBraceWithNoPartnerBoxesNothing() {
+        // The reader is beside a `{` that is not closed. There is no second box to draw, and lighting
+        // some outer block instead would put the emphasis where they are not looking.
+        val source = "fun f() {\n    val x = 1\n"
+        assertTrue(bracePairs(source).isEmpty())
+        assertNull(activeBraces(bracePairs(source), source, source.indexOf('{') + 1))
+    }
+
+    @Test
+    fun aCaretAtTheTopLevelBoxesNothing() {
+        val source = "val x = 1\nfun f() {\n    y()\n}\n"
+        assertNull(activeBraces(bracePairs(source), source, 3))
+    }
+
+    @Test
+    fun anOutOfRangeCaretAnswersNullWithoutThrowing() {
+        // Callers clamp, but a helper that indexes the buffer must not be the thing that crashes if
+        // one of them ever forgets.
+        val pairs = bracePairs(nested)
+        assertNull(activeBraces(pairs, nested, -1))
+        assertNull(activeBraces(pairs, nested, nested.length + 50))
+        // Both extremes are outside every block, and both are legitimate answers rather than errors.
+        assertNull(activeBraces(pairs, nested, 0))
+    }
+
+    @Test
+    fun theBoxesAndTheLitRuleAlwaysAgree() {
+        // Both features read this one answer, so the pair the rule lights is the pair the boxes
+        // wrap. There is no path where one says "you are here" and the other says otherwise.
+        val caret = nested.indexOf("y()") + 1
+        assertEquals(
+            activeBraces(nestedPairs, nested, caret),
+            enclosingPair(nestedPairs, caret)?.let { it.first to it.last },
+        )
+    }
+
+    private fun bracePairs(source: String): List<IntRange> = com.closecode.ui.ide.bracePairs(source)
 }

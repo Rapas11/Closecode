@@ -2328,6 +2328,12 @@ private fun IdeEditorArea(
     val indentColumns = remember(code, settings.tabSize) {
         indentColumnsOf(code, settings.tabSize)
     }
+    // The one pair the caret is in, resolved once and read by both the lit guide and the brace
+    // outlines. Sharing the answer is the point: a lit rule beside two unlit boxes would be saying
+    // two different things about where the reader is.
+    val activeBracePair = remember(braceGuides, code, cursor) {
+        activeBraces(braceGuides, code, cursor)
+    }
     var quickFixLine by remember { mutableStateOf<Int?>(null) }
     var quickFixIndex by remember { mutableStateOf(0) }
 
@@ -2816,6 +2822,17 @@ contentAlignment = Alignment.Center,
                             charWidthPx = charWidthPx(codeLayout) ?: 0f,
                             layout = codeLayout,
                             lineHeightPx = lineHeightPx,
+                            // The one block the caret is in, lit in the accent tone. The rules were
+                            // already drawn faint above; this repaints just that one span.
+                            activePair = activeBracePair?.let { it.first..it.second },
+                            window = codeWindow,
+                            modifier = Modifier.matchParentSize(),
+                        )
+                        // A box around each of the active pair's braces, drawn after the guides so
+                        // the outline sits on top of the glyph rather than under it.
+                        MatchingBraceLayer(
+                            active = activeBracePair,
+                            layout = codeLayout,
                             window = codeWindow,
                             modifier = Modifier.matchParentSize(),
                         )
