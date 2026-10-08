@@ -9,6 +9,7 @@ import com.closecode.ui.theme.PageColors
 data class Suggestion(
     val glyph: String,
     val name: String,
+    /** The type or signature, shown at the right of the row. */
     val detail: String,
     /** Package or fqn shown on a dimmer second line, when known. */
     val subtitle: String? = null,

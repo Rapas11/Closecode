@@ -99,6 +99,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.activity.compose.BackHandler
@@ -859,10 +860,10 @@ fun IdeScreen(
                 dirty = isDirtyTab(active),
                 canUndo = canUndo,
                 canRedo = canRedo,
+                onDrawer = { explorerOpen = !explorerOpen },
                 onSave = { saveActiveFile() },
                 onUndo = { undoRequest++ },
                 onRedo = { redoRequest++ },
-                onTerminal = { activePanel = "Terminal" },
                 onRun = {
                     // Spec 7: running is blocked while the project has compile errors, and jumps
                     // to the problem sheet instead.
@@ -876,7 +877,6 @@ fun IdeScreen(
                 },
                 onMore = { menuOpen = true },
                 menuActive = menuOpen,
-                terminalActive = activePanel == "Terminal",
             )
 
             when (activePanel) {
@@ -1219,6 +1219,10 @@ fun IdeScreen(
                 // the theme switch live in the bottom More sheet, so there is one home for each
                 // row rather than two menus that overlap.
                 actions = listOf(
+                    OverflowAction("Terminal", "▤") {
+                        activePanel = "Terminal"
+                        menuOpen = false
+                    },
                     OverflowAction("Search and commands", "⌕") {
                         searchOpen = true
                         menuOpen = false
@@ -1383,14 +1387,13 @@ private fun IdeTopBar(
     dirty: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
+    onDrawer: () -> Unit,
     onSave: () -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
-    onTerminal: () -> Unit,
     onRun: () -> Unit,
     onMore: () -> Unit,
     menuActive: Boolean,
-    terminalActive: Boolean,
 ) {
     val c = LocalPageColors.current
 
@@ -1421,6 +1424,16 @@ private fun IdeTopBar(
         ) {
             CcIcon(CcIcons.Logo, Color(0xFF12151C), 16.dp)
         }
+        // The drawer opens from here as well as from the tab strip's chevron. Two doors to one
+        // drawer is deliberate: this one sits where a thumb already is at the top of the screen,
+        // and the chevron stays where the eye already expects it beside the files.
+        HeaderIconButton(
+            icon = CcIcons.Drawer,
+            label = "Files",
+            tint = c.tx,
+            onClick = onDrawer,
+        )
+
         // The project name takes the slot the product word used to hold, 16 sp bold, and takes the
         // free width so the actions sit against the right edge.
         Text(
@@ -1456,13 +1469,6 @@ private fun IdeTopBar(
             tint = if (canRedo) c.mu else c.mu.copy(alpha = 0.35f),
             enabled = canRedo,
             onClick = onRedo,
-        )
-        HeaderIconButton(
-            icon = CcIcons.Terminal,
-            label = "Terminal",
-            tint = if (terminalActive) c.tx else c.mu,
-            background = if (terminalActive) c.panel2 else Color.Transparent,
-            onClick = onTerminal,
         )
         // Run is the one filled button in the header: the accent fill and the solid play glyph
         // carry it, so it needs no words and takes the same 34 x 34 slot as its neighbours.
@@ -3099,53 +3105,8 @@ contentAlignment = Alignment.Center,
                                     .fillMaxWidth(),
                             )
                         }
-                        // Shown whenever the caret line has a problem, including underneath the
-                        // autocomplete popup: the popup sits on the row below the caret and the bulb
-                        // on the row above it, so the two never fight. Opening the quick-fix card is
-                        // what hides it.
-                        val bulbDensity = androidx.compose.ui.platform.LocalDensity.current
-                        val bulbWidthPx = with(bulbDensity) { 38.dp.toPx() }
-                        // No layout yet means no honest place for the bulb; anchoring at zero would
-                        // park it over the start of the caret line. Otherwise it hangs past the end
-                        // of the caret line's own text — never on the caret itself, which would
-                        // cover every character to the right of the cursor, exactly where the user
-                        // is reading. The edge it has to stay inside of is the one the sideways
-                        // scroll has carried it out to, not the column's own width.
-                        val bulbAnchor = caretX(codeLayout, cursor, codeWindow)?.let { caretAt ->
-                            bulbAnchorX(
-                                caretXPx = caretAt,
-                                lineEndXPx = endOfLineX(codeLayout, code, caretLine, codeWindow) ?: caretAt,
-                                gapPx = twoCharGapPx,
-                                bulbWidthPx = bulbWidthPx,
-                                visibleRightPx = codeHScroll.value + pillViewportWidthPx,
-                            )
                         }
-                        if (
-                            problems.on(caretLine).isNotEmpty() &&
-                            quickFixLine == null &&
-                            bulbAnchor != null
-                        ) {
-                            val bulbHeightPx = with(bulbDensity) { 33.dp.toPx() }
-                            // Spec 6.6: the bulb hangs off the line above, anchored on the caret
-                            // line's real top from the layout.
-                            val caretTopContent = lineTopPx(codeLayout, code, caretLine, codeWindow)
-                                ?: pillTopPx(caretLine, lineHeightPx)
-                            LineBulb(
-                                top = bulbTopPx(
-                                    caretLineTopPx = caretTopContent,
-                                    lineHeightPx = lineHeightPx,
-                                    bulbHeightPx = bulbHeightPx,
-                                    minTopPx = with(bulbDensity) { 2.dp.toPx() },
-                                ),
-                                // The bulb follows the caret instead of sitting on a fixed inset, so
-                                // it stays next to the token it is offering to fix.
-                                anchorX = bulbAnchor,
-                                lineHeightPx = lineHeightPx,
-                                onTap = { openQuickFix(caretLine) },
-                            )
-                        }
-                    }
-                }
+            }
 
                 // Drawn last with an opaque background: code scrolled sideways passes underneath.
                 if (settings.lineNumbers) {
@@ -3162,6 +3123,17 @@ contentAlignment = Alignment.Center,
                         // Spec 6.3: the first import line gets the fold affordance.
                         foldLine = firstImportLine,
                         onFoldTap = { onToast("Code folding is not available yet") },
+                        // The bulb is drawn by the gutter now, so it needs no layout of its own and
+                        // cannot land on top of the caret line's text. It appears for the caret line
+                        // whenever that line has something to offer to fix and no card is open.
+                        bulbLine = if (
+                            problems.on(caretLine).isNotEmpty() && quickFixLine == null
+                        ) {
+                            caretLine
+                        } else {
+                            null
+                        },
+                        onBulbTap = { openQuickFix(caretLine) },
                         // Only the rows that can be on screen are composed. The scroll is read inside
                         // the layer, so scrolling it does not recompose the editor around it.
                         scrollState = codeScroll,
@@ -3281,6 +3253,59 @@ contentAlignment = Alignment.Center,
                 codeWidthPx = codeWidthPx,
                 insetPx = popupEdgePx,
             )
+            // The signature tooltip. It shares the suggestion popup's measurements but sits above
+            // the caret line instead of below it, because below is where the list of names goes —
+            // one box each side is the only way a reader can see both while typing an argument.
+            val signatureInfo = remember(code, cursor) {
+                signatureHelp(code, cursor, AndroidApiAssets.cached())
+            }
+            val signatureHeightPx = with(popupDensity) {
+                (SignatureRowHeight + SignatureDescriptionHeight + SignatureBoxVerticalPadding * 2)
+                    .toPx()
+            }
+            val signatureTop = signatureTopPx(
+                caretTopPx = caretTopViewport,
+                tooltipHeightPx = signatureHeightPx,
+                gapPx = popupGapPx,
+                viewportHeightPx = viewportHeightPx,
+                edgePx = popupEdgePx,
+            )?.takeIf { signatureInfo != null }
+            val signatureLeft = popupLeftPx(
+                wordX = xForOffset(codeLayout, cursor.coerceIn(0, code.length), codeWindow) ?: 0f,
+                columnStartPx = with(popupDensity) { columnStart.toPx() },
+                hScrollPx = codeHScroll.value,
+                popupWidthPx = popupWidthPx,
+                codeWidthPx = codeWidthPx,
+                insetPx = popupEdgePx,
+            )
+            val caretRowOnScreen = caretTopViewport + lineHeightPx > 0f &&
+                caretTopViewport < viewportHeightPx
+            androidx.compose.animation.AnimatedVisibility(
+                visible = signatureInfo != null &&
+                    signatureTop != null &&
+                    caretRowOnScreen &&
+                    quickFixLine == null &&
+                    fieldValue.selection.max == fieldValue.selection.min &&
+                    problemSheetLine.value == null,
+                enter = fadeIn(tween(120)),
+                exit = fadeOut(tween(120)),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset {
+                        androidx.compose.ui.unit.IntOffset(
+                            signatureLeft.toInt(),
+                            (signatureTop ?: 0f).toInt(),
+                        )
+                    },
+            ) {
+                signatureInfo?.let {
+                    SignatureHelpTooltip(
+                        info = it,
+                        modifier = Modifier.width(with(popupDensity) { popupWidthPx.toDp() }),
+                    )
+                }
+            }
+
             androidx.compose.animation.AnimatedVisibility(
                 visible = quickFixLine == null &&
                     shownSuggestions.isNotEmpty() &&
@@ -3786,7 +3811,8 @@ private fun SuggestionPopup(
     ) {
         itemsIndexed(suggestions) { index, item ->
             val isSel = index == selected
-            val secondary = item.subtitle?.takeIf { it.isNotBlank() } ?: item.detail
+            val package_ = item.subtitle?.takeIf { it.isNotBlank() }
+            val type = item.detail.takeIf { it.isNotBlank() }
             Column(
                 Modifier
                     .fillMaxWidth()
@@ -3836,15 +3862,36 @@ private fun SuggestionPopup(
                         fontSize = 14.sp,
                         fontFamily = Mono,
                         fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(start = 12.dp),
+                        modifier = Modifier
+                            .padding(start = 12.dp)
+                            .weight(1f, fill = false),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    // The type rides on the same row as the name, at the right. It used to be
+                    // dropped for Android members in favour of the package line, which is the one
+                    // fact about a member you can never act on — the type is what tells you whether
+                    // the call you are about to accept can compile.
+                    if (type != null) {
+                        Text(
+                            text = type,
+                            color = if (isSel) Color.White.copy(alpha = 0.75f) else c.mu,
+                            fontSize = 12.sp,
+                            fontFamily = Mono,
+                            textAlign = TextAlign.End,
+                            modifier = Modifier
+                                .padding(start = 10.dp)
+                                .weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                 }
-                if (!secondary.isNullOrBlank()) {
-                    // Spec 6.7: the package sits under the name, at 75% white on the selected row.
+                if (package_ != null) {
+                    // The package stays on its own dimmer line under the name, indented past the
+                    // badge so it reads as a continuation of the name rather than of the row.
                     Text(
-                        text = secondary,
+                        text = package_,
                         color = if (isSel) Color.White.copy(alpha = 0.75f) else c.mu,
                         fontSize = 12.sp,
                         fontFamily = Mono,
@@ -3941,8 +3988,12 @@ private const val PROJECT_ANALYSIS_MAX_FILES = 60
  */
 private const val MAX_REPORTED_BUILD_MS = 10_000L
 
-/** Spec 6.7: the popup shows at most five rows. */
-internal const val MAX_VISIBLE_SUGGESTIONS = 5
+/**
+ * The popup shows at most four rows. Four is what a thumb can cover on a phone — a fifth row sits
+ * under where the hand already is, and the list scrolls anyway, so a suggestion is never lost, only
+ * moved one swipe away.
+ */
+internal const val MAX_VISIBLE_SUGGESTIONS = 4
 
 /** Exposed for the geometry tests. */
 internal const val MAX_VISIBLE_SUGGESTIONS_FOR_TEST = MAX_VISIBLE_SUGGESTIONS
@@ -3962,23 +4013,23 @@ private val POPUP_GAP = 6.dp
  * left of the tab strip and a second entry point duplicated it.
  */
 enum class HeaderItem {
+    DRAWER,
     LOGO,
     PROJECT_NAME,
     SAVE,
     UNDO,
     REDO,
-    TERMINAL,
     RUN,
     OVERFLOW,
 }
 
 internal val HeaderItems: List<HeaderItem> = listOf(
+    HeaderItem.DRAWER,
     HeaderItem.LOGO,
     HeaderItem.PROJECT_NAME,
     HeaderItem.SAVE,
     HeaderItem.UNDO,
     HeaderItem.REDO,
-    HeaderItem.TERMINAL,
     HeaderItem.RUN,
     HeaderItem.OVERFLOW,
 )

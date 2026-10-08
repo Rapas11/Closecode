@@ -187,8 +187,10 @@ class ForgeUiSpecTest {
     // -- menus ---------------------------------------------------------------------
 
     @Test
-    fun theHeaderOverflowOffersOnlyTheRowsAboutTheOpenFile() {
-        assertEquals(listOf("Search and commands", "Format file"), OverflowLabels)
+    fun theHeaderOverflowOffersTheRowsAboutTheOpenFilePlusTheTerminal() {
+        // Terminal leads because it left the header and needed the one home it lost from. The other
+        // two act on the file that is open.
+        assertEquals(listOf("Terminal", "Search and commands", "Format file"), OverflowLabels)
     }
 
     @Test
@@ -403,38 +405,62 @@ class ForgeUiSpecTest {
     }
 
     @Test
-    fun theGutterIsSixtyTwoDpWide() {
-        assertEquals(62, GutterWidth.value.toInt())
+    fun theGutterHoldsTheMarksAtItsLeftEdge() {
+        // 74 dp is what the three marks plus a four-digit number plus the fold chevron need, with
+        // nothing touching. The bar hugs the edge, the bulb follows it, and both clear the number.
+        assertEquals(74, GutterWidth.value.toInt())
+        assertEquals(3, GutterBarWidth.value.toInt())
+        assertEquals(0, GutterBarLeft.value.toInt())
+        assertEquals(6, GutterBulbLeft.value.toInt())
+        assertEquals(15, GutterBulbWidth.value.toInt())
+        // A 15 dp glyph is not a finger, so what a finger may hit is 28 dp — the same slop the
+        // scrollbar already uses.
+        assertEquals(28, GutterBulbTouchSlop.value.toInt())
     }
 
     @Test
-    fun theGutterDotAndNumberPaddingMatchTheSpec() {
-        assertEquals(7, GutterDotSize.value.toInt())
-        assertEquals(11, GutterDotLeft.value.toInt())
-        assertEquals(7, GutterDotTop.value.toInt())
-        assertEquals(26, GutterNumberPadding.value.toInt())
+    fun theGutterBarAndBulbDoNotReachTheLineNumber() {
+        val numberWidth = GutterNumberPadding.value
+        // The widest number the spec allows is four digits. At the editor's 12 sp monospace that is
+        // about 28.8 dp, so a number can start no further left than this.
+        val widestNumber = numberWidth + 4 * 7.2
+        val bulbRight = GutterBulbLeft.value + GutterBulbWidth.value
+        assertTrue(
+            "the bulb ends at $bulbRight dp but a four-digit number starts at $widestNumber dp",
+            bulbRight <= widestNumber,
+        )
+        assertTrue(GutterBarLeft.value + GutterBarWidth.value <= GutterBulbLeft.value)
+    }
+
+    @Test
+    fun theNumberPaddingLeavesRoomForTheFoldChevron() {
+        // The number's right edge is GutterWidth - padding; the chevron sits at the far right. They
+        // only meet if the padding is smaller than the chevron's own slot.
+        assertTrue(GutterNumberPadding.value < GutterWidth.value - 8)
+        assertEquals(22, GutterNumberPadding.value.toInt())
     }
 
     @Test
     fun theCodeColumnStartsFourteenDpPastTheGutterDivider() {
         assertEquals(14, CodeLeftInset.value.toInt())
-        assertEquals(76, CodeColumnStart.value.toInt())
+        assertEquals(88, CodeColumnStart.value.toInt())
     }
 
     // -- Spec 4.1 header -----------------------------------------------------------------
 
     @Test
     fun theHeaderHoldsExactlyTheSpecItemsInOrder() {
-        // The explorer button is not here: the file drawer opens from the chevron at the left of the
-        // tab strip, which is the only way in on a phone.
+        // Two doors open the drawer: the header's own button, because a thumb already rests at the
+        // top of the screen, and the tab strip's chevron, because that is where the eye already
+        // expects it beside the files. The logo is not a button at all — it is decoration.
         assertEquals(
             listOf(
+                HeaderItem.DRAWER,
                 HeaderItem.LOGO,
                 HeaderItem.PROJECT_NAME,
                 HeaderItem.SAVE,
                 HeaderItem.UNDO,
                 HeaderItem.REDO,
-                HeaderItem.TERMINAL,
                 HeaderItem.RUN,
                 HeaderItem.OVERFLOW,
             ),
@@ -445,15 +471,20 @@ class ForgeUiSpecTest {
     @Test
     fun theHeaderHasNoMenuAndNoFormatButton() {
         // Spec 4.1: no menu button and no Format button in the header. Format lives in the command
-        // palette and the overflow menu instead, and the file drawer opens from the tab strip's
-        // chevron. Asserted as an exact list, so adding any button back fails here.
+        // palette and the overflow menu instead. Asserted as an exact list, so adding any button
+        // back fails here.
         assertEquals(8, HeaderItems.size)
         assertEquals(HeaderItems.distinct(), HeaderItems)
     }
 
     @Test
-    fun theTerminalOwnsTheSlotTheSearchButtonUsedToHold() {
-        assertTrue(HeaderItem.TERMINAL in HeaderItems)
+    fun theTerminalMovedFromTheHeaderToTheOverflow() {
+        // Terminal no longer holds a header button; it lives in the overflow, which is still at the
+        // top of the screen, so it stays one tap away.
+        // Terminal is no longer an enum constant at all, so the assertion is on the name: a header button
+        // coming back under that identity would have to add the constant, and this fails first.
+        assertTrue(HeaderItems.none { it.name == "TERMINAL" })
+        assertTrue("Terminal" in OverflowLabels)
         assertTrue("Terminal" in ToolPanels)
     }
 
@@ -474,38 +505,6 @@ class ForgeUiSpecTest {
         assertEquals(34, TAB_HEIGHT.value.toInt())
     }
 
-    // -- Spec 6.6 lightbulb placement ---------------------------------------------------
-
-    @Test
-    fun theBulbHangsOffTheLineAboveTheCaretLine() {
-        // Spec 6.6: the bulb's bottom edge sits at the vertical centre of the line above, which is
-        // lineTop - lineHeight/2, so the top is that minus the bulb's own height. With the caret on
-        // the sixth row its top is at 100 dp and the row above it is centred at 90 dp.
-        val top = bulbTopPx(caretLineTopPx = 100f, lineHeightPx = 20f, bulbHeightPx = 33f, minTopPx = 2f)
-        assertEquals(57f, top, 0.01f)
-        // Its bottom edge lands exactly on the centre of the row above.
-        assertEquals(90f, top + 33f, 0.01f)
-    }
-
-    @Test
-    fun theBulbNeverRisesAboveTheEditorTop() {
-        val top = bulbTopPx(caretLineTopPx = 0f, lineHeightPx = 20f, bulbHeightPx = 33f, minTopPx = 2f)
-        assertEquals(2f, top, 0.01f)
-        // Even a caret line close to the top is clamped, never negative.
-        val nearTop = bulbTopPx(caretLineTopPx = 30f, lineHeightPx = 20f, bulbHeightPx = 33f, minTopPx = 2f)
-        assertEquals(2f, nearTop, 0.01f)
-    }
-
-    @Test
-    fun theBulbScalesWithTheLineGrid() {
-        val atOneX = bulbTopPx(240f, 20f, 33f, 2f)
-        val atTwoX = bulbTopPx(480f, 40f, 33f, 2f)
-        // Zooming doubles the row height: the same line moves down 240 dp and the rule's own half
-        // row term grows by another 10 dp.
-        assertEquals(197f, atOneX, 0.01f)
-        assertEquals(427f, atTwoX, 0.01f)
-        assertEquals(230f, atTwoX - atOneX, 0.01f)
-    }
 
     @Test
     fun fileKindsThatGetTheirOwnIconTileAreDistinct() {

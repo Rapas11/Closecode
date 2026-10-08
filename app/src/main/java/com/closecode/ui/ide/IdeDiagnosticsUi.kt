@@ -26,7 +26,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -57,8 +60,15 @@ import com.closecode.ui.theme.Sans
 val CodeLineHeight = 20.sp
 val CodeFontSize = 13.sp
 
-/** Spec section 6.3: gutter width, including the 1 dp right border. */
-val GutterWidth = 62.dp
+/**
+ * Gutter width, including the 1 dp right border.
+ *
+ * Wide enough for the three marks that live at its left edge — the changed-line bar, the diagnostic
+ * bar and the quick-fix bulb — plus a four-digit line number and the fold chevron, without any of
+ * them touching each other. A narrower gutter could not hold them; a wider one would take code width
+ * away for space nothing draws in.
+ */
+val GutterWidth = 74.dp
 
 /**
  * Spec section 6.3: the editor's single top padding. The gutter and the code share it, because they
@@ -76,8 +86,8 @@ val GutterPadding = EditorTopPadding
  */
 val GutterTopInset = 0.dp
 
-/** Spec section 6.3: gutter numbers are right aligned with this much padding. */
-val GutterNumberPadding = 26.dp
+/** Gutter numbers are right aligned with this much padding. */
+val GutterNumberPadding = 22.dp
 
 /** Spec 6.3: the text area's own left inset, after the gutter divider. */
 val CodeLeftInset = 14.dp
@@ -85,10 +95,27 @@ val CodeLeftInset = 14.dp
 /** Left edge of the code column, measured from the left of the editor viewport. */
 val CodeColumnStart = GutterWidth + CodeLeftInset
 
-/** Spec section 6.3: status dot diameter, and its offsets inside the row. */
-val GutterDotSize = 7.dp
-val GutterDotLeft = 11.dp
-val GutterDotTop = 7.dp
+/**
+ * The marks stacked at the gutter's left edge, in the order they are drawn.
+ *
+ * [GutterBarWidth] is the diagnostic bar: a thin red or amber rule hugging the left edge of a line
+ * with a problem. It is a bar and not the round dot the prototype had because a dot in a column of
+ * line numbers reads as another digit at a glance, and a bar cannot be mistaken for anything.
+ */
+val GutterBarWidth = 3.dp
+val GutterBarLeft = 0.dp
+val GutterBarTop = 4.dp
+
+/**
+ * The quick-fix bulb's slot: [GutterBulbLeft]..+[GutterBulbWidth], vertically centred on its row.
+ *
+ * A 15 dp glyph is below the 48 dp touch target Android asks for, so [GutterBulbTouchSlop] widens
+ * what a finger has to hit without widening what the eye sees — the same trick the scrollbar uses.
+ */
+val GutterBulbWidth = 15.dp
+val GutterBulbHeight = 15.dp
+val GutterBulbLeft = 6.dp
+val GutterBulbTouchSlop = 28.dp
 
 /** Width reserved for the status dot and the line number. */
 val NumberColumnWidth = GutterWidth
@@ -440,6 +467,11 @@ fun LineNumberLayer(
     // Spec 6.3: the first import line carries a small "▸" affordance at the right of its row.
     foldLine: Int = 0,
     onFoldTap: () -> Unit = {},
+    // The one row whose quick-fix bulb is drawn, and what tapping it does. Null draws none. The bulb
+    // used to float over the code a row above the caret; it belongs in the margin, with the other
+    // marks that describe the line rather than on top of the line's text.
+    bulbLine: Int? = null,
+    onBulbTap: (() -> Unit)? = null,
     // Read here rather than at the call site on purpose: a scroll then recomposes only this layer,
     // not the whole editor around it. Null means the caller does not scroll, so compose every row.
     scrollState: ScrollState? = null,
@@ -497,17 +529,38 @@ fun LineNumberLayer(
                     .offset { androidx.compose.ui.unit.IntOffset(0, rowTop.roundToInt()) }
                     .fillMaxWidth()
                     .height(rowHeight),
-                contentAlignment = Alignment.Center,
             ) {
-                // Spec 6.3: a 7 dp solid dot at left 11, top 7 of the row. Error wins over warning.
+                // The diagnostic bar. Every mark below is placed with `align(TopStart)` and its own
+                // padding rather than `Modifier.offset` on a centred child, because an offset on a
+                // centred child is measured from where centring put it — which is why the old dot
+                // drifted onto the line number from line 100 up instead of sitting at the edge where
+                // it was asked to sit.
                 if (errored || warned) {
                     Box(
                         Modifier
-                            .offset(x = GutterDotLeft, y = GutterDotTop)
-                            .size(GutterDotSize)
-                            .clip(CircleShape)
+                            .align(Alignment.TopStart)
+                            .padding(start = GutterBarLeft, top = GutterBarTop)
+                            .width(GutterBarWidth)
+                            .height(with(density) { lineHeightPx.toDp() } - GutterBarTop * 2)
                             .background(if (errored) c.red else c.amber),
                     )
+                }
+                if (bulbLine == line && onBulbTap != null) {
+                    // The quick-fix bulb lives in the gutter, above nothing and beside nothing. The
+                    // touch area is wider than the glyph so a thumb can hit it, and the glyph is
+                    // centred in it, so the 28 dp is invisible until a finger is on it.
+                    Box(
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .padding(start = GutterBulbLeft - (GutterBulbTouchSlop - GutterBulbWidth) / 2)
+                            .width(GutterBulbTouchSlop)
+                            .height(with(density) { lineHeightPx.toDp() })
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(onClick = onBulbTap),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CcIcon(CcIcons.Bulb, c.bulbIcon, GutterBulbHeight)
+                    }
                 }
                 Text(
                     text = "$line",
@@ -1233,52 +1286,6 @@ private fun braceBox(
     return box.translate(0f, window.topPx)
 }
 
-@Composable
-fun LineBulb(
-    top: Float,
-    anchorX: Float,
-    lineHeightPx: Float,
-    onTap: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val c = LocalPageColors.current
-    val density = androidx.compose.ui.platform.LocalDensity.current
-
-    Box(
-        modifier
-            .offset { androidx.compose.ui.unit.IntOffset(anchorX.toInt(), top.toInt()) }
-            // Spec 6.6: 38 x 33 with a radius of 11, so the corners are about 30% of the height.
-            .width(38.dp)
-            .height(33.dp)
-            .clip(RoundedCornerShape(11.dp))
-            .background(c.bulbBg)
-            .border(1.5.dp, c.bulbBorder, RoundedCornerShape(11.dp))
-            .clickable(onClick = onTap),
-        contentAlignment = Alignment.Center,
-    ) {
-        // Spec 6.6: the prototype's own 19 dp bulb glyph, 2 dp stroke, in the amber tone.
-        CcIcon(CcIcons.Bulb, c.bulbIcon, 19.dp)
-    }
-}
-
-/**
- * Spec 6.6: vertical position of the quick-fix bulb.
- *
- * The bulb's bottom edge is aligned to the vertical centre of the line above the caret line, so it
- * hangs off the end of the previous line the way the reference screenshot shows. That is
- * `lineTop - lineHeight / 2 - bulbHeight`, clamped so it never rises above the editor top.
- *
- * The prose spec writes this as `caretLineIndex * 20 - 31`, but that number describes the same rule
- * only if the row above is treated as a point rather than a band: -31 leaves the bulb sitting above
- * the previous line's centre. The half-row term is the part that puts it on the line.
- */
-fun bulbTopPx(
-    caretLineTopPx: Float,
-    lineHeightPx: Float,
-    bulbHeightPx: Float,
-    minTopPx: Float,
-): Float =
-    (caretLineTopPx - lineHeightPx / 2f - bulbHeightPx).coerceAtLeast(minTopPx)
 
 /**
  * How much of the code column has to stay clear on either side of the caret before the view moves
@@ -1316,29 +1323,6 @@ fun targetHScroll(
         caretXPx > right -> caretXPx - viewportWidthPx + marginPx
         else -> currentPx
     }
-}
-
-/**
- * Horizontal position of the quick-fix bulb, in the code column's own content pixels.
- *
- * The bulb hangs past the *text* rather than on the caret: anchored at the caret it covered every
- * character to the right of the cursor, which is exactly where the user is reading. So it takes
- * whichever is further right — the end of the caret line's own text or the caret itself — plus the
- * same air the problem pills leave, and is then pulled back so its own box stays on screen.
- *
- * [visibleRightPx] must be the right edge the user can actually see, which is the sideways scroll
- * plus the viewport, not the viewport alone: measured from zero it clamped the bulb to a position
- * that was off the left of the window as soon as the column had been scrolled right.
- */
-fun bulbAnchorX(
-    caretXPx: Float,
-    lineEndXPx: Float,
-    gapPx: Float,
-    bulbWidthPx: Float,
-    visibleRightPx: Float,
-): Float {
-    val raw = maxOf(lineEndXPx, caretXPx) + gapPx.coerceAtLeast(0f)
-    return raw.coerceIn(0f, (visibleRightPx - bulbWidthPx).coerceAtLeast(0f))
 }
 
 /**
@@ -1811,5 +1795,98 @@ fun IdeActionCard(
                 Box(Modifier.fillMaxWidth().height(1.dp).background(c.ln.copy(alpha = 0.5f)))
             }
         }
+    }
+}
+/**
+ * Where the signature-help box goes, or null when there is nowhere to put it.
+ *
+ * Always above the caret line, never below, and never over it. Below is where the suggestion list
+ * goes — both follow the caret, so one above and one below is the only arrangement where a reader
+ * typing an argument can see the signature and the names that match it at the same time.
+ *
+ * When there is no room above, the honest answer is no box: putting it below would cover either the
+ * code being typed or the list being chosen from, and a tooltip that hides the argument is worse than
+ * no tooltip.
+ */
+fun signatureTopPx(
+    caretTopPx: Float,
+    tooltipHeightPx: Float,
+    gapPx: Float,
+    viewportHeightPx: Float,
+    edgePx: Float,
+): Float? {
+    if (tooltipHeightPx <= 0f || viewportHeightPx <= 0f) return null
+    val top = caretTopPx - gapPx - tooltipHeightPx
+    return if (top >= edgePx && top + tooltipHeightPx <= viewportHeightPx) top else null
+}
+
+/** The box's own height: one line of signature, then one of description, plus its padding. */
+val SignatureRowHeight = 20.dp
+val SignatureDescriptionHeight = 18.dp
+val SignatureBoxVerticalPadding = 8.dp
+
+/** The signature line with the caret's own argument picked out. */
+internal fun signatureText(info: SignatureInfo, activeBg: Color, activeTx: Color): AnnotatedString =
+    buildAnnotatedString {
+        append(info.name)
+        append('(')
+        info.params.forEachIndexed { index, param ->
+            if (index > 0) append(", ")
+            if (index == info.activeIndex) {
+                withStyle(SpanStyle(background = activeBg, color = activeTx)) {
+                    append(param.name)
+                    append(": ")
+                    append(param.type)
+                }
+            } else {
+                append(param.name)
+                append(": ")
+                append(param.type)
+            }
+        }
+        append(')')
+        info.returnType?.takeIf { it.isNotBlank() }?.let {
+            append(": ")
+            append(it)
+        }
+    }
+
+/**
+ * The floating parameter tooltip: the signature, the argument the caret is in picked out, and one
+ * line saying what that argument is for.
+ *
+ * The description line is always drawn, even when nothing is known about the parameter, because the
+ * box changing height as the caret crosses a comma would move the very line the reader is reading.
+ */
+@Composable
+internal fun SignatureHelpTooltip(
+    info: SignatureInfo,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalPageColors.current
+    Column(
+        modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(c.panel2)
+            .border(1.dp, c.ln, RoundedCornerShape(10.dp))
+            .padding(horizontal = 11.dp, vertical = SignatureBoxVerticalPadding),
+    ) {
+        Text(
+            text = signatureText(info, activeBg = c.selection, activeTx = c.tx),
+            color = c.mu,
+            fontSize = 12.sp,
+            fontFamily = Mono,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = info.params.getOrNull(info.activeIndex)?.let { describeParam(it.name) } ?: "",
+            color = c.mu.copy(alpha = 0.85f),
+            fontSize = 11.sp,
+            fontFamily = Sans,
+            modifier = Modifier.height(SignatureDescriptionHeight),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

@@ -28,6 +28,7 @@ data class ApiClass(
 class AndroidApiIndex(
     private val classesByFqn: Map<String, ApiClass>,
     private val fqnsBySimpleName: Map<String, List<String>>,
+    private val membersByName: Map<String, List<ApiMember>> = emptyMap(),
 ) {
     val classCount: Int get() = classesByFqn.size
 
@@ -78,15 +79,25 @@ class AndroidApiIndex(
 
     fun membersOf(simpleName: String, limit: Int = 3000): List<ApiMember> {
         val out = LinkedHashSet<ApiMember>()
-        for (c in classesNamed(simpleName)) {
-            out.addAll(membersOfFq(c.fqn, limit))
+        for (cls in classesNamed(simpleName)) {
+            out.addAll(membersOfFq(cls.fqn, limit))
             if (out.size >= limit) break
         }
         return out.take(limit)
     }
 
+    /**
+     * Members declared under [name], whichever class owns them.
+     *
+     * This is the lookup a signature tooltip needs: the reader has written a call, and the buffer
+     * says only the method's name. Android members are overloaded often enough that the call is a
+     * list, not a single answer, so the caller picks.
+     */
+    fun membersNamed(name: String, limit: Int = 12): List<ApiMember> =
+        membersByName[name].orEmpty().take(limit)
+
     companion object {
-        val EMPTY = AndroidApiIndex(emptyMap(), emptyMap())
+        val EMPTY = AndroidApiIndex(emptyMap(), emptyMap(), emptyMap())
 
         fun parse(text: String): AndroidApiIndex {
             val classes = LinkedHashMap<String, ApiClass>()
@@ -129,7 +140,22 @@ class AndroidApiIndex(
             val resolved = classes.mapValues { (fqn, cls) ->
                 cls.copy(members = members[fqn].orEmpty())
             }
-            return AndroidApiIndex(resolved, simple.mapValues { it.value.toList() })
+            // A second index keyed on the member's own name, because a call is written against a
+            // method name and nothing about `setText(` says which class owns it. Built from the same
+            // lists, so it cannot disagree with the per-class view.
+            val byMember = LinkedHashMap<String, MutableList<ApiMember>>()
+            for (list in members.values) {
+                for (m in list.orEmpty()) {
+                    byMember.getOrPut(m.name) { ArrayList() }.let {
+                        if (!it.contains(m)) it.add(m)
+                    }
+                }
+            }
+            return AndroidApiIndex(
+                resolved,
+                simple.mapValues { it.value.toList() },
+                byMember.mapValues { it.value.toList() },
+            )
         }
     }
 }

@@ -36,6 +36,10 @@ private fun icon(name: String, path: String, filled: Boolean = false): ImageVect
 
 object CcIcons {
     val Logo = icon("logo", "M8 8l-4 4 4 4M16 8l4 4-4 4")
+    // The drawer button. Three flat lines rather than the chevron the tab strip uses: two doors
+    // that open the same drawer must not look like the same control, or the reader cannot tell
+    // which one they are about to press.
+    val Drawer = icon("drawer", "M4 7h16M4 12h16M4 17h16")
     val Save = icon("save", "M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6")
     val Undo = icon("undo", "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3")
     val Redo = icon("redo", "M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3")

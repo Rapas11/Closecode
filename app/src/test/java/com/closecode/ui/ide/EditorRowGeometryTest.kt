@@ -155,8 +155,8 @@ class EditorRowGeometryTest {
     // -- popup metrics -------------------------------------------------------------------
 
     @Test
-    fun thePopupShowsAtMostFiveRows() {
-        assertEquals(5, MAX_VISIBLE_SUGGESTIONS_FOR_TEST)
+    fun thePopupShowsAtMostFourRows() {
+        assertEquals(4, MAX_VISIBLE_SUGGESTIONS_FOR_TEST)
     }
 
     @Test
