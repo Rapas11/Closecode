@@ -2323,6 +2323,11 @@ private fun IdeEditorArea(
     val braceGuides = remember(code, settings.bracketGuides) {
         if (settings.bracketGuides) bracePairs(code) else emptyList()
     }
+    // Every line's indent, read once per buffer. This is what places a guide: the column is
+    // arithmetic over these numbers, so the rule can never land on top of the code it annotates.
+    val indentColumns = remember(code, settings.tabSize) {
+        indentColumnsOf(code, settings.tabSize)
+    }
     var quickFixLine by remember { mutableStateOf<Int?>(null) }
     var quickFixIndex by remember { mutableStateOf(0) }
 
@@ -2804,6 +2809,11 @@ contentAlignment = Alignment.Center,
                         BracketGuideLayer(
                             pairs = braceGuides,
                             source = code,
+                            // One pass over the buffer, remembered with it, so changing the tab
+                            // size is the only thing that re-reads it.
+                            indents = indentColumns,
+                            tabSize = settings.tabSize,
+                            charWidthPx = charWidthPx(codeLayout) ?: 0f,
                             layout = codeLayout,
                             lineHeightPx = lineHeightPx,
                             window = codeWindow,

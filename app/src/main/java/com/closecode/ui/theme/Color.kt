@@ -50,6 +50,12 @@ data class PageColors(
     val bulbBg: Color,
     val bulbIcon: Color,
 
+    // -- Indentation guides ----------------------------------------------------
+    // About 15% of the text colour. A guide is a structural hint the reader looks *past*, not a
+    // rule in its own right: at the strength of a real divider it competed with the code it was
+    // annotating, which is the whole job of an annotation not to do.
+    val guideRule: Color,
+
     // -- Translucent overlays; identical in both themes because they sit on the editor
     val stackBadge: Color,   // multi-problem badge, rgba(128,128,128,.28)
     val javaIconBg: Color,
@@ -105,6 +111,9 @@ val LightColors = PageColors(
     bulbBg = Color(0xFFFFFFFF),
     bulbIcon = Color(0xFFC98A00),
 
+    // The text colour at 15% alpha.
+    guideRule = Color(0x26101826),
+
     stackBadge = Color(0x47808080),
     javaIconBg = Color(0x33D97706),
     javaIconTx = Color(0xFFE08A1E),
@@ -157,6 +166,9 @@ val DarkColors = PageColors(
     bulbBorder = Color(0xFF9C9CAB),
     bulbBg = Color(0xFF1F1F26),
     bulbIcon = Color(0xFFF5DC8A),
+
+    // The text colour at 15% alpha.
+    guideRule = Color(0x26E7ECF5),
 
     stackBadge = Color(0x47808080),
     javaIconBg = Color(0x33D97706),

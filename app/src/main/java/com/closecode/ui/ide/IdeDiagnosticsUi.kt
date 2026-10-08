@@ -989,20 +989,84 @@ fun squiggleRange(
 }
 
 /**
- * One vertical rule per `{ … }` that spans more than a single line: from the row the brace opens on
- * down to the row its pair closes on.
+ * Every line's indent, in character columns.
  *
- * A brace pair that stays on one line is not a block, and a rule down its own row would be a speck,
- * so those are skipped. The x comes from the brace's own bounding box and the two ends from the
- * renderer's line metrics, so the rule sits under the brace it belongs to at any font size, any
- * pinch zoom and any window of the file the screen is showing — and a pair whose ends fall outside
- * the rendered slice answers null from [lineTopPx] and is not drawn, which is the whole clipping
- * rule for free.
+ * A tab advances to the next tab stop rather than counting as one column, so a file indented with
+ * tabs and one indented with the same number of spaces report the same numbers. Without that, a
+ * tab-indented file would put every guide further right the deeper the block went, which is the
+ * same drifting these rules exist to prevent.
+ *
+ * Indent is only counted before a line's first real character: whitespace after code is not indent,
+ * and a line of nothing but spaces is a blank row, not a deeply indented one. A blank line between
+ * two blocks therefore reads as column 0 and no guide is drawn from it.
+ *
+ * The list always has one entry per line, including a final line that has no newline of its own.
+ */
+internal fun indentColumnsOf(source: String, tabSize: Int): IntArray {
+    val step = tabSize.coerceAtLeast(1)
+    val indents = ArrayList<Int>()
+    var column = 0
+    var hasContent = false
+    for (ch in source) {
+        when (ch) {
+            ' ' -> if (!hasContent) column++
+            '\t' -> if (!hasContent) column += step - (column % step)
+            '\n' -> {
+                // A line with nothing on it reports no indent however much whitespace it carries.
+                indents.add(if (hasContent) column else 0)
+                column = 0
+                hasContent = false
+            }
+            else -> hasContent = true
+        }
+    }
+    indents.add(if (hasContent) column else 0)
+    return indents.toIntArray()
+}
+
+/**
+ * The column a block's guide is drawn at: one tab past the indent of the line that opened it.
+ *
+ * This is the indent of the block's own contents, which is what makes the rule read as structure
+ * rather than as a stray vertical bar. The old anchor was the `{` glyph's own bounding box, and on
+ * a line like `setContent {` that sits at the far right end of the line — nowhere near the code
+ * underneath it, so the rule appeared to hang through the middle of everything nested inside.
+ *
+ * Multiplying by the measured character width is what turns this column back into a position: the
+ * column is computed here as arithmetic and the width is read off the rendered text, so exactly one
+ * number in the whole calculation comes from the renderer and a guide cannot drift away from the
+ * code when the font, the zoom level or the row height changes.
+ */
+internal fun guideColumn(openIndent: Int, tabSize: Int): Int =
+    openIndent.coerceAtLeast(0) + tabSize.coerceAtLeast(1)
+
+/**
+ * The lines a guide runs between: the line *after* the opening brace down to and including the
+ * closing brace's own line, or null when there is nothing to draw.
+ *
+ * Starting on the following line is what keeps the rule off the opener's text — drawn from the
+ * opener's row it would run across the `{` and everything after it on that line. A pair whose ends
+ * are on the same row, or a brace left open at the end of the file, has no span and draws nothing.
+ */
+internal fun guideSpan(openLine: Int, closeLine: Int): IntRange? =
+    if (closeLine <= openLine) null else (openLine + 1)..closeLine
+
+/**
+ * One vertical rule per `{ … }` that spans more than a single line, drawn down the column its own
+ * contents are indented to.
+ *
+ * The two ends come from the renderer's line metrics, so a pair whose lines fall outside the
+ * rendered slice answers null from [lineTopPx] and is not drawn at all — which is the whole clipping
+ * rule for free, and the reason a guide never appears at a position clamped to the edge of the
+ * window it is not in.
  */
 @Composable
 fun BracketGuideLayer(
     pairs: List<IntRange>,
     source: String,
+    indents: IntArray,
+    tabSize: Int,
+    charWidthPx: Float,
     layout: TextLayoutResult?,
     lineHeightPx: Float,
     window: CodeWindow = CodeWindow.Full,
@@ -1013,15 +1077,19 @@ fun BracketGuideLayer(
     val strokePx = with(density) { 1.dp.toPx() }
 
     androidx.compose.foundation.Canvas(modifier) {
+        // Without a measured character there is no honest way to turn a column into a position, and
+        // a rule at the wrong x is worse than no rule at all.
+        if (charWidthPx <= 0f) return@Canvas
         for (pair in pairs) {
             val openLine = lineOfOffset(source, pair.first)
             val closeLine = lineOfOffset(source, pair.last)
-            if (closeLine <= openLine) continue
-            val top = lineTopPx(layout, source, openLine, window) ?: continue
-            val bottom = lineTopPx(layout, source, closeLine, window) ?: continue
-            val x = xForOffset(layout, pair.first, window) ?: continue
+            val span = guideSpan(openLine, closeLine) ?: continue
+            val openIndent = indents.getOrElse(openLine - 1) { 0 }
+            val x = guideColumn(openIndent, tabSize) * charWidthPx
+            val top = lineTopPx(layout, source, span.first, window) ?: continue
+            val bottom = lineTopPx(layout, source, span.last, window) ?: continue
             drawLine(
-                color = c.ln,
+                color = c.guideRule,
                 start = androidx.compose.ui.geometry.Offset(x, top),
                 end = androidx.compose.ui.geometry.Offset(x, bottom + lineHeightPx),
                 strokeWidth = strokePx,
