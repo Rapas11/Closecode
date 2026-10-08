@@ -473,3 +473,67 @@ class TerminalFilesTest {
         assertTrue(pathsMentionedIn("app/Theme.kt", emptyList()).isEmpty())
     }
 }
+
+/**
+ * Tabs are shells, not views over one.
+ *
+ * Two tabs cannot share a process, so what these pin is that a tab keeps its own shell, its own
+ * working directory and its own scrollback — and that the numbers they are labelled with stay
+ * stable enough to tell them apart at a glance.
+ */
+class TerminalSessionTest {
+
+    @Test
+    fun aTabIsNumberedFromOne() {
+        assertEquals("Shell 1", sessionTitle(1, ""))
+    }
+
+    @Test
+    fun aTabSaysWhereItsShellWent() {
+        // The one thing a list of numbered labels would hide: which of them is in a directory.
+        assertEquals("Shell 2 · res", sessionTitle(2, "app/res"))
+    }
+
+    @Test
+    fun aTabAtTheProjectRootDoesNotRepeatIt() {
+        assertEquals("Shell 1", sessionTitle(1, ""))
+    }
+
+    @Test
+    fun aVeryLongPathIsShortenedButTheNumberSurvives() {
+        // Two tabs both called "…going" are worse than two tabs both called "Shell 1": the first
+        // loses the only thing that tells them apart.
+        val label = tabLabel(1, "a/very/deeply/nested/path/that/keeps/going")
+        assertTrue(label.length <= TAB_TITLE_MAX_CHARS)
+        assertTrue(label, label.startsWith("Shell 1"))
+        assertTrue(label, label.endsWith("going"))
+    }
+
+    @Test
+    fun aShortLabelIsLeftAlone() {
+        assertEquals("Shell 3", tabLabel(3, ""))
+        assertEquals("Shell 2 · res", tabLabel(2, "app/res"))
+    }
+
+    @Test
+    fun eachTabKeepsItsOwnWorkingDirectory() {
+        val one = TerminalSession(1)
+        val two = TerminalSession(2)
+        one.cwd = "app"
+        assertEquals("", two.cwd)
+    }
+
+    @Test
+    fun eachTabKeepsItsOwnOutput() {
+        val one = TerminalSession(1)
+        val two = TerminalSession(2)
+        one.lines.appendTerminalLine("only mine")
+        assertEquals(1, one.lines.size)
+        assertTrue(two.lines.isEmpty())
+    }
+
+    @Test
+    fun eachTabHasItsOwnNumber() {
+        assertTrue(TerminalSession(1).number != TerminalSession(2).number)
+    }
+}

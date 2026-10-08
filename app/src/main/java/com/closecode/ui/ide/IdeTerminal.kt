@@ -26,6 +26,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.snapshotFlow
@@ -49,6 +50,7 @@ import com.closecode.ui.theme.Mono
 import java.io.BufferedWriter
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.withContext
 
@@ -226,73 +228,64 @@ fun IdeTerminal(
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
-    val output = remember(projectRoot) { Channel<String>(Channel.UNLIMITED) }
-    val lines = remember(projectRoot) { mutableStateListOf<String>() }
-    var input by remember(projectRoot) { mutableStateOf(TextFieldValue("")) }
-    var lastExit by remember(projectRoot) { mutableStateOf<Int?>(null) }
     var ctrl by remember { mutableStateOf(ModifierLatch.OFF) }
     var alt by remember { mutableStateOf(ModifierLatch.OFF) }
-    var history by remember { mutableStateOf(emptyList<String>()) }
-    var historyIndex by remember { mutableStateOf(0) }
-    var draft by remember { mutableStateOf("") }
-    // The shell's working directory is invisible from out here, so the app follows `cd` itself.
-    // Project-relative, and "" for the root, because that is how completion addresses the tree.
-    var cwd by remember(projectSlug) { mutableStateOf("") }
     var completionCandidates by remember { mutableStateOf(emptyList<Completion>()) }
     var completionCycle by remember { mutableStateOf(0) }
     var completionStart by remember { mutableStateOf(0) }
+    var sessions by remember(projectSlug) { mutableStateOf(listOf(TerminalSession(1))) }
+    var activeId by remember(projectSlug) { mutableIntStateOf(1) }
     val listState = rememberLazyListState()
     val historyStore = rememberTerminalHistory(projectSlug)
 
-    fun dismissCompletion() {
-        completionCandidates = emptyList()
-        completionCycle = 0
-    }
-
     // Commands run before this screen is opened are still reachable, so the list is read once on
-    // arrival rather than starting empty every time the panel is opened.
+    // arrival rather than starting empty every time the panel is opened. Every tab starts with it:
+    // the commands are the reader's, not one tab's.
     LaunchedEffect(projectSlug) {
-        if (projectSlug.isNotEmpty()) history = historyStore.read(projectSlug)
+        val remembered = if (projectSlug.isEmpty()) emptyList() else historyStore.read(projectSlug)
+        sessions = sessions.map { it.apply { copyHistory(remembered) } }
     }
 
-    val shell = remember(projectRoot) {
-        ShellProcess(directory = projectRoot, onLine = { line -> output.trySend(line) })
-    }
-
-    LaunchedEffect(projectRoot) {
-        if (projectRoot != null) {
-            withContext(Dispatchers.IO) { shell.start() }
-        }
-        if (!shell.isRunning) {
-            lines.appendTerminalLine(
-                if (projectRoot == null) {
-                    "Open a project first: the shell starts in its folder."
-                } else {
-                    "This device has no shell to run."
-                },
-            )
-        }
-        // Drained here rather than on the reader thread: compose state is written on the thread
-        // that owns the composition, and the reader is not it.
-        for (line in output) {
-            val exit = parseExitMarker(line)
-            if (exit != null) {
-                lastExit = exit
-            } else {
-                lines.appendTerminalLine(line)
+    // Every session is started and drained for as long as the panel is open, whether or not it is
+    // the one on screen. A shell whose output stopped being read while it sat in another tab would
+    // fill its pipe and wedge — the same hang that folding standard error into standard output was
+    // there to prevent, arriving through a different door.
+    LaunchedEffect(sessions) {
+        sessions.forEach { session ->
+            launch {
+                withContext(Dispatchers.IO) { session.start(projectRoot) }
+                if (!session.isRunning) {
+                    session.lines.appendTerminalLine(
+                        if (projectRoot == null) {
+                            "Open a project first: the shell starts in its folder."
+                        } else {
+                            "This device has no shell to run."
+                        }
+                    )
+                }
+                // Drained here rather than on the reader thread: compose state is written on the
+                // thread that owns the composition, and the reader is not it.
+                for (line in session.output) {
+                    val exit = parseExitMarker(line)
+                    if (exit != null) session.lastExit = exit else session.lines.appendTerminalLine(line)
+                }
             }
         }
     }
 
-    DisposableEffect(projectRoot) {
-        onDispose { shell.close() }
+    // The session on screen. Everything below reads and writes this one, which is why a tab is a
+    // session rather than a different reading of one: two tabs cannot share a shell.
+    val session = sessions.firstOrNull { it.number == activeId } ?: sessions.first()
+
+    DisposableEffect(sessions) {
+        onDispose { sessions.forEach { it.close() } }
     }
+
 
     // Whether new output should pull the view down to it. A terminal that stops following output is a
     // terminal you have to chase; one that yanks you away while you are reading is worse. So it
     // follows until the reader scrolls back to look at something, and resumes the moment they return
     // to the bottom — which is where a real terminal's behaviour settles too.
-    var followOutput by remember(projectRoot) { mutableStateOf(true) }
 
     // Watched rather than written from the gesture: the reader can scroll with a fling, a keyboard,
     // or the scrollbar, and every one of those ends at the same place.
@@ -300,13 +293,13 @@ fun IdeTerminal(
         snapshotFlow {
             listState.firstVisibleItemIndex >= listState.layoutInfo.totalItemsCount - 1
         }.collect { atBottom ->
-            followOutput = atBottom
+            session.followOutput = atBottom
         }
     }
 
-    LaunchedEffect(lines.size, followOutput) {
-        if (!followOutput) return@LaunchedEffect
-        if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
+    LaunchedEffect(session.lines.size, session.followOutput) {
+        if (!session.followOutput) return@LaunchedEffect
+        if (session.lines.isNotEmpty()) listState.animateScrollToItem(session.lines.lastIndex)
     }
 
     /** Remembers, runs and clears the line, which a chip and the send button both need. */
@@ -316,45 +309,31 @@ fun IdeTerminal(
         // The prompt is drawn by the app rather than printed by the shell, which never would: a
         // non-interactive shell does not draw one. It carries the exit status too, so the reader
         // learns how the last command went without looking for a number.
-        lines.appendTerminalLine("$PROMPT$command")
+        session.lines.appendTerminalLine("$PROMPT$command")
 
         // `code` is not a program and never runs. It is the app's own way of saying "show me this
         // file", and it is handled before the shell sees it so that `code` followed by a name opens
         // the editor rather than reporting a command that does not exist.
         val target = codeTarget(command)
         if (target != null) {
-            val file = codeTargetFile(tree, cwd, target)
-            if (file != null) {
-                onOpenPath(file)
-                lines.appendTerminalLine("Opened ${file.path} in the editor")
-            } else {
-                lines.appendTerminalLine("No file called $target in this project")
-            }
-            history = addToHistory(history, command)
-            if (projectSlug.isNotEmpty()) historyStore.write(projectSlug, history)
-            historyIndex = history.size
-            draft = ""
-            input = TextFieldValue("")
+            val file = codeTargetFile(tree, session.cwd, target)
+            if (file != null) onOpenPath(file)
+            session.recordAppCommand(command, tree, projectSlug, historyStore, opened = file)
             return
         }
 
-        shell.run(command)
         // The drawer follows the terminal: a file made or removed here is a file the reader expects
         // to see listed, and the alternative is a list that is quietly wrong until something else
         // happens to refresh it.
-        if (refreshesFiles(command)) onFilesChanged()
-        // The app tracks the working directory because the shell will not tell it. Anything that
-        // changes directory behind the app's back desyncs completion, and there is no way to ask
-        // without running a command in it.
-        cwdAfterCommand(cwd, "", command)?.let { cwd = it }
-        history = addToHistory(history, command)
-        if (projectSlug.isNotEmpty()) historyStore.write(projectSlug, history)
-        historyIndex = history.size
-        draft = ""
-        input = TextFieldValue("")
+        if (session.submit(command, projectSlug, historyStore)) onFilesChanged()
     }
 
-    fun send() = submit(input.text)
+    fun send() = submit(session.input.text)
+
+    fun dismissCompletion() {
+        completionCandidates = emptyList()
+        completionCycle = 0
+    }
 
     /** A latched modifier gives up its hold after the one key it was armed for; a locked one holds. */
     fun finishModifiers() {
@@ -367,16 +346,16 @@ fun IdeTerminal(
         // that no longer exists, and leaving them up would offer names that do not fit it.
         dismissCompletion()
         if (text.isEmpty()) return
-        val at = input.selection.start.coerceIn(0, input.text.length)
-        input = TextFieldValue(
-            input.text.substring(0, at) + text + input.text.substring(at),
+        val at = session.input.selection.start.coerceIn(0, session.input.text.length)
+        session.input = TextFieldValue(
+            session.input.text.substring(0, at) + text + session.input.text.substring(at),
             TextRange(at + text.length),
         )
     }
 
     /** Sets the caret, as every arrow and every "go to the edge" shortcut amounts to. */
     fun moveCaretTo(at: Int) {
-        input = input.copy(selection = TextRange(at.coerceIn(0, input.text.length)))
+        session.input = session.input.copy(selection = TextRange(at.coerceIn(0, session.input.text.length)))
     }
 
     /**
@@ -388,18 +367,18 @@ fun IdeTerminal(
      * freshly-ordered list and appear to pick a different name each time.
      */
     fun complete() {
-        val (start, token) = wordAt(input.text, input.selection.start)
+        val (start, token) = wordAt(session.input.text, session.input.selection.start)
         if (completionCandidates.isEmpty()) {
             val (dirPart, namePart) = splitPath(token)
             completionCandidates = completionCandidates(
-                dir = resolvePath(cwd, dirPart.ifEmpty { "" }),
+                dir = resolvePath(session.cwd, dirPart.ifEmpty { "" }),
                 namePart = namePart,
                 tree = tree,
             )
             completionStart = start
             completionCycle = 0
         }
-        val (dirPart, namePart) = splitPath(wordAt(input.text, input.selection.start).second)
+        val (dirPart, namePart) = splitPath(wordAt(session.input.text, session.input.selection.start).second)
         val chosen = nextCompletion(namePart, completionCandidates, completionCycle)
         if (chosen == null) {
             // Nothing to add and nothing chosen: show the list and wait for another press.
@@ -408,19 +387,19 @@ fun IdeTerminal(
         }
         completionCycle += 1
         val replacement = dirPart + chosen
-        input = TextFieldValue(
-            input.text.substring(0, completionStart) + replacement + input.text.substring(input.selection.start),
+        session.input = TextFieldValue(
+            session.input.text.substring(0, completionStart) + replacement + session.input.text.substring(session.input.selection.start),
             TextRange(completionStart + replacement.length),
         )
     }
 
     /** Takes one of the candidates from the popup, rather than pressing Tab to reach it. */
     fun pickCompletion(candidate: Completion) {
-        val (dirPart, _) = splitPath(wordAt(input.text, input.selection.start).second)
+        val (dirPart, _) = splitPath(wordAt(session.input.text, session.input.selection.start).second)
         val replacement = dirPart + if (candidate.isFolder) "${candidate.name}/" else candidate.name
-        input = TextFieldValue(
-            input.text.substring(0, completionStart) + replacement +
-                input.text.substring(input.selection.start),
+        session.input = TextFieldValue(
+            session.input.text.substring(0, completionStart) + replacement +
+                session.input.text.substring(session.input.selection.start),
             TextRange(completionStart + replacement.length),
         )
         dismissCompletion()
@@ -441,29 +420,29 @@ fun IdeTerminal(
             }
             "↑" -> {
                 dismissCompletion()
-                previousHistoryEntry(history, historyIndex, draft)?.let {
-                    if (historyIndex >= history.size) draft = input.text
-                    historyIndex = it.index
-                    input = TextFieldValue(it.text, TextRange(it.text.length))
+                previousHistoryEntry(session.history, session.historyIndex, session.draft)?.let {
+                    if (session.historyIndex >= session.history.size) session.draft = session.input.text
+                    session.historyIndex = it.index
+                    session.input = TextFieldValue(it.text, TextRange(it.text.length))
                 }
                 return
             }
             "↓" -> {
                 dismissCompletion()
-                nextHistoryEntry(history, historyIndex, draft)?.let {
-                    historyIndex = it.index
-                    input = TextFieldValue(it.text, TextRange(it.text.length))
+                nextHistoryEntry(session.history, session.historyIndex, session.draft)?.let {
+                    session.historyIndex = it.index
+                    session.input = TextFieldValue(it.text, TextRange(it.text.length))
                 }
                 return
             }
             "←" -> {
                 dismissCompletion()
-                moveCaretTo(input.selection.start - 1)
+                moveCaretTo(session.input.selection.start - 1)
                 return
             }
             "→" -> {
                 dismissCompletion()
-                moveCaretTo(input.selection.start + 1)
+                moveCaretTo(session.input.selection.start + 1)
                 return
             }
         }
@@ -474,41 +453,41 @@ fun IdeTerminal(
             if (ctrlHeld) {
                 when (controlActionFor(character)) {
                     ControlAction.LINE_START -> {
-                        input = input.copy(selection = TextRange(0))
+                        session.input = session.input.copy(selection = TextRange(0))
                         finishModifiers()
                         return
                     }
                     ControlAction.LINE_END -> {
-                        input = input.copy(selection = TextRange(input.text.length))
+                        session.input = session.input.copy(selection = TextRange(session.input.text.length))
                         finishModifiers()
                         return
                     }
                     ControlAction.CLEAR_LINE -> {
-                        val (text, caret) = deleteToCaret(input.text, input.selection.start)
-                        input = TextFieldValue(text, TextRange(caret))
+                        val (text, caret) = deleteToCaret(session.input.text, session.input.selection.start)
+                        session.input = TextFieldValue(text, TextRange(caret))
                         finishModifiers()
                         return
                     }
                     ControlAction.CLEAR_AFTER -> {
-                        val (text, caret) = deleteToEnd(input.text, input.selection.start)
-                        input = TextFieldValue(text, TextRange(caret))
+                        val (text, caret) = deleteToEnd(session.input.text, session.input.selection.start)
+                        session.input = TextFieldValue(text, TextRange(caret))
                         finishModifiers()
                         return
                     }
                     ControlAction.DELETE_WORD -> {
-                        val (text, caret) = deleteWordBefore(input.text, input.selection.start)
-                        input = TextFieldValue(text, TextRange(caret))
+                        val (text, caret) = deleteWordBefore(session.input.text, session.input.selection.start)
+                        session.input = TextFieldValue(text, TextRange(caret))
                         finishModifiers()
                         return
                     }
                     ControlAction.CLEAR_SCREEN -> {
-                        lines.clear()
+                        session.lines.clear()
                         finishModifiers()
                         return
                     }
                     ControlAction.DELETE_FORWARD -> {
-                        val (text, caret) = deleteForward(input.text, input.selection.start)
-                        input = TextFieldValue(text, TextRange(caret))
+                        val (text, caret) = deleteForward(session.input.text, session.input.selection.start)
+                        session.input = TextFieldValue(text, TextRange(caret))
                         finishModifiers()
                         return
                     }
@@ -517,8 +496,8 @@ fun IdeTerminal(
                         // signal, so the process is killed instead — which is the same thing to the
                         // person at the keyboard, minus the exit status.
                         if (controlChar(character) == '') {
-                            shell.killRunning()
-                            lines.appendTerminalLine("^C")
+                            session.killRunning()
+                            session.lines.appendTerminalLine("^C")
                             finishModifiers()
                         }
                         return
@@ -540,7 +519,28 @@ fun IdeTerminal(
     ) {
         PanelBackBar("Terminal", onBack)
 
-        if (lines.isEmpty()) {
+        // The tab strip, so two shells can exist at once — a server left running in one while Git
+        // work goes on in the other. Above the output rather than below it, because which shell you
+        // are typing into is the more important of the two facts.
+        TerminalTabStrip(
+            sessions = sessions,
+            activeId = activeId,
+            onSelect = { activeId = it },
+            onClose = { number ->
+                val closing = sessions.firstOrNull { it.number == number }
+                closing?.close()
+                val left = sessions.filterNot { it.number == number }
+                sessions = left.ifEmpty { listOf(TerminalSession(1)) }
+                if (activeId == number) activeId = sessions.first().number
+            },
+            onAdd = {
+                val next = (sessions.maxOfOrNull { it.number } ?: 0) + 1
+                sessions = sessions + TerminalSession(next)
+                activeId = next
+            },
+        )
+
+        if (session.lines.isEmpty()) {
             Box(
                 Modifier
                     .weight(1f)
@@ -573,8 +573,8 @@ fun IdeTerminal(
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp),
             ) {
-                        items(lines.size) { index ->
-                            val line = lines[index]
+                        items(session.lines.size) { index ->
+                            val line = session.lines[index]
                             // A line the user typed is echoed back at them, and it is never
                             // coloured: a program cannot have coloured it. It is also the one line
                             // the reader recognises as theirs, so it keeps the prompt's accent
@@ -616,14 +616,14 @@ fun IdeTerminal(
         ) {
             Text(
                 text = PROMPT,
-                color = if (lastExit == null) c.ac else if (lastExit == 0) c.success else c.red,
+                color = if (session.lastExit == null) c.ac else if (session.lastExit == 0) c.success else c.red,
                 fontSize = 13.sp,
                 fontFamily = Mono,
                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
             )
             BasicTextField(
-                value = input,
-                onValueChange = { input = it },
+                value = session.input,
+                onValueChange = { session.input = it },
                 textStyle = TextStyle(color = c.tx, fontFamily = Mono, fontSize = 13.sp),
                 cursorBrush = SolidColor(c.ac),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
@@ -667,17 +667,17 @@ fun IdeTerminal(
             onKey = { onKeyBar(it) },
             onAction = { action ->
                 when (action) {
-                    TerminalAction.CLEAR -> lines.clear()
+                    TerminalAction.CLEAR -> session.lines.clear()
                     TerminalAction.CANCEL -> {
-                        shell.killRunning()
-                        lines.appendTerminalLine("^C")
+                        session.killRunning()
+                        session.lines.appendTerminalLine("^C")
                     }
                     // Not a real end-of-file: a button that closed the shell would leave the terminal
                     // dead until it was left and reopened, and the key it stands in for is far more
                     // useful here as the one thing a phone keyboard has no other way to do.
                     TerminalAction.EOF -> {
-                        val (text, caret) = deleteForward(input.text, input.selection.start)
-                        input = TextFieldValue(text, TextRange(caret))
+                        val (text, caret) = deleteForward(session.input.text, session.input.selection.start)
+                        session.input = TextFieldValue(text, TextRange(caret))
                     }
                 }
             },
