@@ -1,7 +1,11 @@
 package com.closecode.ui.settings
 
+import com.closecode.ui.ide.SearchMode
+import com.closecode.ui.ide.findInSources
+import com.closecode.ui.ide.lineMatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -232,5 +236,76 @@ class SettingsStoreTest {
         assertEquals(settings, settings.withOption(OptionSetting.THEME, "Neon"))
         assertEquals(settings, settings.withOption(OptionSetting.FONT_SIZE, "14"))
         assertEquals(settings, settings.withOption(OptionSetting.TAB_SIZE, "5"))
+    }
+}
+
+class SearchModeTest {
+
+    private val sources = listOf(
+        com.closecode.ui.model.ProjectFile(
+            "a.kt",
+            com.closecode.ui.model.FileKind.Kotlin,
+            "Kotlin",
+            0,
+        ) to "val Name = 1\nval name = 2",
+    )
+
+    @Test
+    fun aPlainSearchFoldsCaseAsItAlwaysDid() {
+        assertEquals(2, findInSources("name", sources).size)
+    }
+
+    @Test
+    fun matchingCapitalisationNarrowsItToTheOneThatMeetsIt() {
+        // The reason the switch exists: a query for a class name used to match its own lowercase
+        // mentions, and there was no way to ask for the exact one.
+        assertEquals(1, findInSources("Name", sources, caseSensitive = true).size)
+    }
+
+    @Test
+    fun aPatternMatchesWhatAPlainStringCannotSay() {
+        val pair = listOf(
+            com.closecode.ui.model.ProjectFile(
+                "b.kt",
+                com.closecode.ui.model.FileKind.Kotlin,
+                "Kotlin",
+                0,
+            ) to "val a = 1\nval b = 22\nval c = 333",
+        )
+        assertEquals(3, findInSources("val [a-c] = [0-9]+", pair, regex = true).size)
+        // The same text as a plain string matches nothing at all, which is what made patterns worth
+        // adding rather than folding into the existing behaviour.
+        assertEquals(0, findInSources("val [a-c] = [0-9]+", pair).size)
+    }
+
+    @Test
+    fun aPatternObeysTheCaseSwitchToo() {
+        val pair = listOf(
+            com.closecode.ui.model.ProjectFile(
+                "c.kt",
+                com.closecode.ui.model.FileKind.Kotlin,
+                "Kotlin",
+                0,
+            ) to "val ABC = 1\nval abc = 2",
+        )
+        // Folds case by default, exactly as a plain search does, so the switch means the same thing
+        // either way — and asking for the case you meant is one tap away.
+        assertEquals(2, findInSources("abc", pair, regex = true).size)
+        assertEquals(1, findInSources("abc", pair, regex = true, caseSensitive = true).size)
+    }
+
+    @Test
+    fun aBrokenPatternIsNoPatternRatherThanNoMatches() {
+        // "You typed it wrong" and "there is none of it here" are different answers, and a search
+        // that returns an empty list for a broken pattern sends the reader looking for something that
+        // was never there.
+        assertEquals(null, lineMatcher(SearchMode("val (", regex = true)))
+        assertEquals(null, lineMatcher(SearchMode("  ", regex = false)))
+        assertNotNull(lineMatcher(SearchMode("a", regex = true)))
+    }
+
+    @Test
+    fun aBrokenPatternFindsNothingRatherThanEverything() {
+        assertEquals(0, findInSources("val (", sources, regex = true).size)
     }
 }

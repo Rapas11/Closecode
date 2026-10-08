@@ -32,6 +32,103 @@ object SourceEdits {
 
     private fun eolOf(source: String): String = if (source.contains("\r\n")) "\r\n" else "\n"
 
+
+    /**
+     * Re-indents only the lines a selection touches, leaving the rest of the file exactly as it was.
+     *
+     * The whole-file formatter cannot be pointed at a selection: it rebuilds the file from brace depth,
+     * so running it on part of one would re-indent every line outside the selection too — which is the
+     * opposite of what a reader who selected three lines asked for, and impossible to undo one keystroke
+     * at a time on a phone.
+     *
+     * The depth comes from the braces *before* the selection, so a block selected in the middle of a
+     * function keeps the function's own level rather than jumping to the margin. The selection's own
+     * braces are then read as they are re-indented, which is what makes a selected block's body come out
+     * right rather than flat.
+     */
+    fun formatRange(source: String, from: Int, to: Int, tabSize: Int = 2): String {
+        if (source.isEmpty() || from >= to) return source
+        val eol = eolOf(source)
+        val lines = source.split(eol).toMutableList()
+        val startLine = source.substring(0, from.coerceIn(0, source.length)).count { it == '\n' }
+        val endOffset = to.coerceIn(0, source.length)
+        val endLine = source.substring(0, endOffset).count { it == '\n' }
+        if (startLine >= lines.size) return source
+
+        // Depth the selection starts at: the braces already closed before it.
+        var depth = 0
+        for (i in 0 until startLine) {
+            depth += braceDelta(lines[i])
+        }
+        // A selection that starts on a line whose closing brace it includes should begin one level out.
+        if (lines[startLine].trimStart().startsWith("}")) depth = (depth - 1).coerceAtLeast(0)
+
+        val step = tabSize.coerceAtLeast(1)
+        for (i in startLine..minOf(endLine, lines.size - 1)) {
+            val raw = lines[i]
+            val trimmed = raw.trimStart()
+            val ownDelta = braceDelta(raw)
+            // A closing brace at the start of a line belongs to the level it closes, not the one it opens.
+            val lineDepth = if (trimmed.startsWith("}") || trimmed.startsWith(")") || trimmed.startsWith("]")) {
+                (depth - 1).coerceAtLeast(0)
+            } else {
+                depth
+            }
+            lines[i] = if (trimmed.isEmpty()) {
+                raw.trimEnd()
+            } else {
+                " ".repeat(step * lineDepth) + trimmed.trimEnd()
+            }
+            depth = (depth + ownDelta).coerceAtLeast(0)
+        }
+        return lines.joinToString(eol)
+    }
+
+    /**
+     * How many blocks a line opens minus the ones it closes.
+     *
+     * Braces only, not parentheses. A `(` never starts a line of code on its own, so counting it
+     * added a level for every call and for every `if (` condition — which is how `if (a > 0) {` came
+     * to indent its own body two levels deeper than the brace it opened.
+     *
+     * Strings and comments are skipped for the same reason: a brace inside either is a character,
+     * and counting it walks every following line one level to the right.
+     */
+    private fun braceDelta(line: String): Int {
+        var delta = 0
+        var i = 0
+        var inString = false
+        var quote = ' '
+        var inLineComment = false
+        var blockDepth = 0
+        while (i < line.length) {
+            val ch = line[i]
+            when {
+                inLineComment -> {
+                    inLineComment = false
+                }
+                blockDepth > 0 -> {
+                    if (ch == '/' && i + 1 < line.length && line[i + 1] == '*') blockDepth++
+                    if (ch == '*' && i + 1 < line.length && line[i + 1] == '/') blockDepth--
+                }
+                inString -> {
+                    if (ch == '\\') i++
+                    else if (ch == quote) inString = false
+                }
+                ch == '/' && i + 1 < line.length && line[i + 1] == '/' -> inLineComment = true
+                ch == '/' && i + 1 < line.length && line[i + 1] == '*' -> blockDepth++
+                ch == '"' || ch == '\'' -> {
+                    inString = true
+                    quote = ch
+                }
+                ch == '{' -> delta++
+                ch == '}' -> delta--
+            }
+            i++
+        }
+        return delta
+    }
+
     /**
      * Inserts `import fqn`, or returns [source] untouched when that name is already bound.
      *

@@ -27,6 +27,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,21 +62,64 @@ data class SearchHit(
  * the results are stable while the user types. Blank lines and folders are skipped, and the run
  * stops at [limit] so a broad query still answers instantly.
  */
+/**
+ * How a query is matched against a line.
+ *
+ * A plain substring is the default because it is the one that cannot go wrong: no pattern to
+ * mistype, nothing to escape. Case and patterns are the reader's choice.
+ */
+internal data class SearchMode(
+    val pattern: String,
+    val caseSensitive: Boolean = false,
+    val regex: Boolean = false,
+)
+
+/**
+ * Compiles a query into something that can test a line, or null when the pattern is not valid.
+ *
+ * Null rather than an empty result, because those are very different answers — "you typed it wrong"
+ * against "there is none of it here" — and a search that cannot tell them apart sends the reader
+ * looking for something that was never there.
+ */
+internal fun lineMatcher(mode: SearchMode): ((String) -> Boolean)? {
+    val needle = mode.pattern.trim()
+    if (needle.isEmpty()) return null
+    if (!mode.regex) {
+        return if (mode.caseSensitive) {
+            { line -> line.contains(needle) }
+        } else {
+            { line -> line.contains(needle, ignoreCase = true) }
+        }
+    }
+    val options = if (mode.caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
+    val compiled = runCatching { Regex(needle, options) }.getOrNull() ?: return null
+    return { line -> compiled.containsMatchIn(line) }
+}
+
+/**
+ * Search over the whole project, in file order and then line order so the results are stable while
+ * the reader types. Blank lines and folders are skipped, and the run stops at [limit] so a broad
+ * query still answers instantly.
+ *
+ * The search always folded case before, which is defensible right up until the day a query for a
+ * class name matches the documentation that mentions it, and there was no way to ask for anything a
+ * plain string cannot say.
+ */
 fun findInSources(
     query: String,
     sources: List<Pair<ProjectFile, String>>,
     limit: Int = MAX_SEARCH_HITS,
+    caseSensitive: Boolean = false,
+    regex: Boolean = false,
 ): List<SearchHit> {
-    val needle = query.trim()
-    if (needle.isEmpty()) return emptyList()
-    val lower = needle.lowercase()
+    val matches = lineMatcher(SearchMode(query, caseSensitive, regex)) ?: return emptyList()
     val hits = ArrayList<SearchHit>()
     for ((file, text) in sources) {
         if (file.kind == FileKind.Folder) continue
         val lines = text.split('\n')
         var index = 0
         while (index < lines.size) {
-            if (lines[index].lowercase().contains(lower)) {
+            if (matches(lines[index])) {
                 hits.add(SearchHit(file.name, file.path, index + 1, lines[index].trim()))
                 if (hits.size >= limit) return hits
             }
@@ -218,6 +265,10 @@ fun IdeSearchSheet(
     hits: List<SearchHit>,
     onOpen: (SearchHit) -> Unit,
     onDismiss: () -> Unit,
+    caseSensitive: Boolean = false,
+    regex: Boolean = false,
+    onCaseSensitiveChange: (Boolean) -> Unit = {},
+    onRegexChange: (Boolean) -> Unit = {},
 ) {
     val c = LocalPageColors.current
     IdeBottomSheet(onDismiss = onDismiss) {
@@ -258,6 +309,41 @@ fun IdeSearchSheet(
                     color = c.mu,
                     fontSize = 12.sp,
                     fontFamily = Mono,
+                    maxLines = 1,
+                )
+            }
+        }
+        // The two switches sit under the query and beside the count, which is where a reader's eye
+        // already is after typing. Letters rather than a glyph font: Aa and .* are the marks every
+        // search box has carried for thirty years.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SearchToggle(
+                label = "Aa",
+                spoken = "Match capitalisation",
+                on = caseSensitive,
+                onToggle = onCaseSensitiveChange,
+            )
+            SearchToggle(
+                label = ".*",
+                spoken = "Treat the query as a pattern",
+                on = regex,
+                onToggle = onRegexChange,
+            )
+            Spacer(Modifier.weight(1f))
+            val patternBroken = regex && query.isNotBlank() &&
+                lineMatcher(SearchMode(query, caseSensitive, regex)) == null
+            if (patternBroken) {
+                Text(
+                    text = "Not a valid pattern",
+                    color = c.amber,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
                     maxLines = 1,
                 )
             }
@@ -582,6 +668,41 @@ private fun RowScope.SheetButton(
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
+        )
+    }
+}
+
+/**
+ * One of the search sheet's two switches.
+ *
+ * Outlined rather than filled when off and filled when on, which is the same pair of states the rest
+ * of the app's switches use, so the mark reads the same way here as anywhere else.
+ */
+@Composable
+private fun SearchToggle(
+    label: String,
+    spoken: String,
+    on: Boolean,
+    onToggle: (Boolean) -> Unit,
+) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .height(30.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (on) c.selection else Color.Transparent)
+            .border(1.dp, if (on) c.ac else c.ln, RoundedCornerShape(8.dp))
+            .clickable { onToggle(!on) }
+            .semantics { contentDescription = spoken }
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = if (on) c.tx else c.mu,
+            fontSize = 12.sp,
+            fontFamily = Mono,
+            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
         )
     }
 }

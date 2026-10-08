@@ -233,6 +233,10 @@ fun IdeScreen(
     var githubTokenEpoch by remember { mutableStateOf(0) }
     var query by remember { mutableStateOf("") }
     var findQuery by remember { mutableStateOf("") }
+    // The search sheet's two switches. They hold while the sheet is open so a pattern survives a
+    // detour to look at a result and back.
+    var findCaseSensitive by remember { mutableStateOf(false) }
+    var findRegex by remember { mutableStateOf(false) }
     var explorerFilter by remember { mutableStateOf("") }
     var toast by remember { mutableStateOf<String?>(null) }
     var building by remember { mutableStateOf(false) }
@@ -300,6 +304,9 @@ fun IdeScreen(
     // Format requests are a counter because the editor owns the text field. The editor formats
     // the live buffer when this changes; the parent only asks for a format.
     var formatRequest by remember { mutableStateOf(0) }
+    // Same counter shape as formatRequest, for the selection-scoped formatter. A closure cannot cross
+    // here because the buffer the formatter edits lives in the editor, not in this composable.
+    var formatSelectionRequest by remember { mutableStateOf(0) }
     // Web preview reloads when this changes. It is bumped only after a file has actually been
     // written, so switching panels or typing does not restart the page by itself.
     var previewRefresh by remember { mutableStateOf(0) }
@@ -1066,6 +1073,8 @@ fun IdeScreen(
                                     problemSheetLine = problemSheet,
                                     activeKind = activeFile?.kind,
                                     formatRequest = formatRequest,
+                                    formatSelectionRequest = formatSelectionRequest,
+                                    onSelectionFormat = { formatSelectionRequest++ },
                                     undoRequest = undoRequest,
                                     redoRequest = redoRequest,
                                     sourceRevision = sourceRevision,
@@ -1263,12 +1272,21 @@ fun IdeScreen(
                 }
             }
             val hits = remember(findQuery, searchSources) {
-                findInSources(findQuery, searchSources)
+                findInSources(
+            findQuery,
+            searchSources,
+            caseSensitive = findCaseSensitive,
+            regex = findRegex,
+        )
             }
             IdeSearchSheet(
                 query = findQuery,
                 onQueryChange = { findQuery = it },
                 hits = hits,
+                caseSensitive = findCaseSensitive,
+                regex = findRegex,
+                onCaseSensitiveChange = { findCaseSensitive = it },
+                onRegexChange = { findRegex = it },
                 onOpen = { hit ->
                     diskTree.firstOrNull { it.path == hit.path }?.let { openFile(it) }
                     activePanel = "Code"
@@ -2200,7 +2218,11 @@ private fun IdeEditorArea(
     // Hoisted so the path bar can open the sheet too, not just taps inside the editor.
     problemSheetLine: MutableState<Int?> = remember { mutableStateOf(null) },
     activeKind: FileKind? = null,
-    formatRequest: Int = 0,
+formatRequest: Int = 0,
+    // Raised by the selection bar's Format, which re-indents only the selected lines.
+    formatSelectionRequest: Int = 0,
+    // The parent owns the counter; the editor owns the buffer. The bar raises the parent's copy.
+    onSelectionFormat: () -> Unit = {},
     undoRequest: Int = 0,
     redoRequest: Int = 0,
     // Bumped when the buffer was rewritten from outside — the block editor moves whole line ranges
@@ -2726,6 +2748,30 @@ val applySuggestion: (Int) -> Unit = { index ->
         commit(TextFieldValue(text, TextRange(caret)))
     }
 
+    /**
+ * Re-indents only the lines the reader has selected, and says so when there is nothing to do.
+ *
+ * Separate from the whole-file formatter because that one rebuilds the file from brace depth: run on
+ * part of a file it would re-indent every line outside the selection too, which is the opposite of
+ * what selecting three lines asked for.
+ */
+fun formatSelection() {
+        val live = fieldValue
+        val from = live.selection.min
+        val to = live.selection.max
+        if (from >= to) {
+            onToast("Select the lines to format")
+            return
+        }
+        val formatted = SourceEdits.formatRange(live.text, from, to, settings.tabSize)
+        if (formatted == live.text) {
+            onToast("Already formatted")
+            return
+        }
+        commit(TextFieldValue(formatted, TextRange(from)))
+        onToast("Formatted ${to - from} chars")
+    }
+
     /** Copies the selection, or the caret's whole line when nothing is selected. */
     fun copySelectionOrLine() {
         val live = fieldValue
@@ -2783,6 +2829,10 @@ val applySuggestion: (Int) -> Unit = { index ->
 
     // Header and palette format requests land here because only the editor owns the text field.
     // Formatting keeps the same line and column when possible; the line count never changes.
+    LaunchedEffect(formatSelectionRequest) {
+        if (formatSelectionRequest != 0) formatSelection()
+    }
+
     LaunchedEffect(formatRequest) {
         if (formatRequest == 0) return@LaunchedEffect
         val formatted = if (activeKind == FileKind.Kotlin || active.endsWith(".kt", true)) {
@@ -3488,6 +3538,18 @@ contentAlignment = Alignment.Center,
                         },
                 ) {
                     SelectionBar(
+                        onCut = {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(selectedText))
+                            commit(
+                                TextFieldValue(
+                                    text = fieldValue.text.substring(0, selectedRange.min) +
+                                        fieldValue.text.substring(selectedRange.max),
+                                    selection = TextRange(selectedRange.min),
+                                ),
+                            )
+                            onToast("Cut ${selectedText.length} chars")
+                        },
+                        onFormat = onSelectionFormat,
                         onPaste = {
                             val pasted = clipboard.getText()?.text
                             if (pasted.isNullOrEmpty()) {
@@ -3733,12 +3795,28 @@ private val SELECTION_BAR_HEIGHT = 40.dp
  * suggestion popup makes.
  */
 @Composable
+/**
+ * The bar that appears over selected text.
+ *
+ * Five actions in the order a reader reaches for them: Cut, Copy, Paste, Comment, Format. Cut and
+ * Copy used to sit inside a `⋯` menu with Duplicate, which made the two actions every text editor
+ * puts first the two hardest to reach — and there was no Cut at all, so the only way to remove
+ * selected text was to copy it and hold backspace, which is a poor answer on a phone where the
+ * backspace key is small.
+ *
+ * Format is last and in the accent colour because it is the one here that changes more than the
+ * text: it is not undone by a second tap, and most selections do not want it. Select all, the
+ * selection's own measurements and Duplicate stay in the overflow, where a deliberate reach finds
+ * them.
+ */
 private fun SelectionBar(
+    onCut: () -> Unit,
+    onCopy: () -> Unit,
     onPaste: () -> Unit,
+    onComment: () -> Unit,
+    onFormat: () -> Unit,
     onSelectAll: () -> Unit,
     onInfo: () -> Unit,
-    onCopy: () -> Unit,
-    onComment: () -> Unit,
     onDuplicate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -3754,9 +3832,11 @@ private fun SelectionBar(
                 .border(1.dp, c.ln, RoundedCornerShape(10.dp)),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            SelectionBarLabel("Cut", Modifier.weight(1f), onCut)
+            SelectionBarLabel("Copy", Modifier.weight(1f), onCopy)
             SelectionBarLabel("Paste", Modifier.weight(1f), onPaste)
-            SelectionBarLabel("Select all", Modifier.weight(1f), onSelectAll)
-            SelectionBarGlyph("ⓘ", "Selection details", onInfo)
+            SelectionBarLabel("Comment", Modifier.weight(1f), onComment)
+            SelectionBarLabel("Format", Modifier.weight(1f), onFormat, accent = true)
             SelectionBarGlyph("⋯", "More actions") { menuOpen = true }
         }
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
@@ -3777,7 +3857,12 @@ private fun SelectionBar(
 }
 
 @Composable
-private fun RowScope.SelectionBarLabel(label: String, modifier: Modifier, onClick: () -> Unit) {
+private fun RowScope.SelectionBarLabel(
+    label: String,
+    modifier: Modifier,
+    onClick: () -> Unit,
+    accent: Boolean = false,
+) {
     val c = LocalPageColors.current
     Box(
         modifier
@@ -3787,12 +3872,13 @@ private fun RowScope.SelectionBarLabel(label: String, modifier: Modifier, onClic
     ) {
         Text(
             text = label,
-            color = c.tx,
+            color = if (accent) c.ac else c.tx,
             fontSize = 13.sp,
             fontFamily = Sans,
+            fontWeight = if (accent) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 10.dp),
+            modifier = Modifier.padding(horizontal = 8.dp),
         )
     }
 }

@@ -266,3 +266,68 @@ class SourceEditsTest {
         assertEquals("line one\n\tline two\n\n", SourceEdits.normalizeTrailingWhitespace(src))
     }
 }
+/** Re-indenting only what a selection covers. */
+class FormatRangeTest {
+
+    private val file = """
+        fun main() {
+        val a = 1
+        if (a > 0) {
+        println(a)
+        }
+        val b = 2
+        }
+    """.trimIndent()
+
+    @Test
+    fun onlyTheSelectedLinesMove() {
+        val from = file.indexOf("val a")
+        val to = file.indexOf("println")
+        val out = SourceEdits.formatRange(file, from, to)
+        assertTrue("the line above must not move", out.startsWith("fun main() {\n  val a = 1"))
+        // Line 5 is outside the selection, so it is not touched at all — including its indentation,
+        // which is wrong in this fixture on purpose.
+        assertTrue("the line below must not move", out.contains("\nval b = 2\n}"))
+    }
+
+    @Test
+    fun theSelectionKeepsTheLevelItWasWrittenAt() {
+        // Selected inside a function, not at the margin: the block's own indentation is part of
+        // where it lives, and dropping it to column zero would move code away from its block.
+        val from = file.indexOf("val b")
+        val out = SourceEdits.formatRange(file, from, file.length)
+        assertTrue(out.contains("\n  val b = 2"))
+    }
+
+    @Test
+    fun aWholeBlockComesOutRight() {
+        val from = file.indexOf("if (a > 0)")
+        val to = file.indexOf("}", from) + 1
+        val out = SourceEdits.formatRange(file, from, to)
+        assertTrue(out.contains("\n  if (a > 0) {\n    println(a)\n  }"))
+    }
+
+    @Test
+    fun theReadersOwnIndentSizeIsUsed() {
+        val from = file.indexOf("val a")
+        val two = SourceEdits.formatRange(file, from, file.indexOf("println"), tabSize = 2)
+        assertTrue(two.contains("\n  val a = 1"))
+        val four = SourceEdits.formatRange(file, from, file.indexOf("println"), tabSize = 4)
+        assertTrue(four.contains("\n    val a = 1"))
+    }
+
+    @Test
+    fun aBraceInsideAStringDoesNotChangeTheLevel() {
+        val src = "fun a() {\nval s = \"{\"\nval b = 1\n}"
+        val out = SourceEdits.formatRange(src, src.indexOf("val b"), src.length)
+        // One level of braces is open: the brace inside the string is a character, not a block.
+        assertTrue(out.contains("\n  val b = 1"))
+    }
+
+    @Test
+    fun aSelectionThatIsNotThereChangesNothing() {
+        assertEquals(file, SourceEdits.formatRange(file, 5, 5))
+        assertEquals(file, SourceEdits.formatRange(file, 400, 500))
+        assertEquals("", SourceEdits.formatRange("", 0, 0))
+    }
+}
