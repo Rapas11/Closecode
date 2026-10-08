@@ -221,6 +221,7 @@ fun IdeTerminal(
     tree: List<ProjectFile> = emptyList(),
     onOpenPath: (ProjectFile) -> Unit = {},
     onOpenSourceControl: () -> Unit = {},
+    onFilesChanged: () -> Unit = {},
     onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -338,6 +339,10 @@ fun IdeTerminal(
         }
 
         shell.run(command)
+        // The drawer follows the terminal: a file made or removed here is a file the reader expects
+        // to see listed, and the alternative is a list that is quietly wrong until something else
+        // happens to refresh it.
+        if (refreshesFiles(command)) onFilesChanged()
         // The app tracks the working directory because the shell will not tell it. Anything that
         // changes directory behind the app's back desyncs completion, and there is no way to ask
         // without running a command in it.
@@ -575,10 +580,23 @@ fun IdeTerminal(
                             // the reader recognises as theirs, so it keeps the prompt's accent
                             // rather than the output's.
                             val echoed = line.startsWith(PROMPT)
+                            // A line that names a file of this project becomes a tap on that file.
+                            // The match is made against the tree, so this is the file and not a
+                            // guess at something that looks like one.
+                            val opens = pathsMentionedIn(line, tree)
                             TerminalLine(
                                 line = line,
                                 color = if (echoed) c.ac else null,
-                                modifier = Modifier.padding(vertical = 1.dp),
+                                modifier = if (opens.isEmpty()) {
+                                    Modifier.padding(vertical = 1.dp)
+                                } else {
+                                    Modifier
+                                        .padding(vertical = 1.dp)
+                                        .clickable { onOpenPath(opens.first()) }
+                                        .semantics {
+                                            contentDescription = "Open ${opens.first().path}"
+                                        }
+                                },
                             )
                         }
                     }

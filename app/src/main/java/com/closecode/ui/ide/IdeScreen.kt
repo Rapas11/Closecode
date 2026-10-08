@@ -924,6 +924,9 @@ fun IdeScreen(
                         explorerTab = SourceControlTab
                         explorerOpen = true
                     },
+                    // A file made or removed in the terminal is a file the drawer should list,
+                    // rather than one that quietly stays wrong until something else refreshes it.
+                    onFilesChanged = { refreshTree() },
                     onBack = { activePanel = panelBeforeTool },
                     modifier = Modifier.weight(1f),
                 )

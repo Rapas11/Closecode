@@ -343,3 +343,133 @@ class TerminalKeysTest {
         assertTrue(store.values.keys.single().startsWith("terminal.history."))
     }
 }
+/**
+ * The terminal and the file drawer, and the paths in between.
+ *
+ * Both halves are matching against the tree the app already holds rather than against the shape of
+ * the text, which is what keeps the drawer from refreshing on every `ls` and a tap from appearing on
+ * every sentence that happens to contain a dot.
+ */
+class TerminalFilesTest {
+
+    private fun file(name: String, path: String = name) =
+        com.closecode.ui.model.ProjectFile(
+            name = name,
+            kind = com.closecode.ui.model.FileKind.Kotlin,
+            language = "Kotlin",
+            depth = path.count { it == '/' },
+            path = path,
+        )
+
+    private fun folder(name: String, path: String = name) =
+        com.closecode.ui.model.ProjectFile(
+            name = name,
+            kind = com.closecode.ui.model.FileKind.Folder,
+            language = "",
+            depth = path.count { it == '/' },
+            path = path,
+        )
+
+    private val tree = listOf(
+        folder("app", "app"),
+        file("Theme.kt", "app/Theme.kt"),
+        file("MainActivity.kt", "app/MainActivity.kt"),
+        file("build.gradle.kts"),
+    )
+
+    // -- Refreshing the drawer -------------------------------------------------
+
+    @Test
+    fun aCommandThatChangesFilesIsRecognised() {
+        for (command in listOf("touch a.kt", "mkdir x", "rm a.kt", "mv a b", "cp a b", "clear")) {
+            assertTrue(command, refreshesFiles(command))
+        }
+    }
+
+    @Test
+    fun aCommandThatOnlyLooksIsNot() {
+        for (command in listOf("ls", "ls -la", "pwd", "cat a.kt", "grep x y")) {
+            assertFalse(command, refreshesFiles(command))
+        }
+    }
+
+    @Test
+    fun onlyTheHeadOfEachStageIsConsidered() {
+        // `ls | wc -l` changes nothing, and `mkdir a && ls` has to be recognised by its first
+        // stage alone.
+        assertFalse(refreshesFiles("ls | wc -l"))
+        assertTrue(refreshesFiles("mkdir a && ls"))
+        assertTrue(refreshesFiles("rm a.kt ; ls"))
+    }
+
+    @Test
+    fun aPathToTheCommandDoesNotHideWhatItDoes() {
+        assertTrue(refreshesFiles("/system/bin/mkdir newdir"))
+        assertFalse(refreshesFiles("/system/bin/ls"))
+    }
+
+    // -- Finding paths in output ----------------------------------------------
+
+    @Test
+    fun aFullPathIsFound() {
+        val found = pathsMentionedIn("error in app/Theme.kt:12", tree)
+        assertEquals(listOf("app/Theme.kt"), found.map { it.path })
+    }
+
+    @Test
+    fun aBareFileNameIsFoundWhenItLooksLikeOne() {
+        // Output rarely prints the whole path, so a name on its own has to count.
+        assertEquals(
+            listOf("app/Theme.kt"),
+            pathsMentionedIn("error in Theme.kt:12", tree).map { it.path },
+        )
+    }
+
+    @Test
+    fun proseIsNotMistakenForAFile() {
+        // The whole reason the match is made against the tree: half the words in a stack trace
+        // contain a slash or a dot, and a tap on each would be worse than no tap at all.
+        assertTrue(pathsMentionedIn("sh: 1: not found", tree).isEmpty())
+        assertTrue(pathsMentionedIn("BUILD FAILED 3 errors", tree).isEmpty())
+        assertTrue(pathsMentionedIn("no such file or directory", tree).isEmpty())
+    }
+
+    @Test
+    fun aFolderIsNotSomethingToOpen() {
+        assertTrue(pathsMentionedIn("entering app", tree).isEmpty())
+    }
+
+    @Test
+    fun aNameThatIsNotInTheProjectIsNotOffered() {
+        assertTrue(pathsMentionedIn("error in other/Thing.kt:1", tree).isEmpty())
+        assertTrue(pathsMentionedIn("missing.kt", tree).isEmpty())
+    }
+
+    @Test
+    fun punctuationAroundAPathDoesNotStopItBeingFound() {
+        assertEquals(
+            listOf("app/Theme.kt"),
+            pathsMentionedIn("(app/Theme.kt)", tree).map { it.path },
+        )
+        assertEquals(
+            listOf("app/Theme.kt"),
+            pathsMentionedIn("see app/Theme.kt:12:9", tree).map { it.path },
+        )
+    }
+
+    @Test
+    fun severalPathsOnOneLineAreAllFound() {
+        val found = pathsMentionedIn("app/Theme.kt and build.gradle.kts differ", tree)
+        assertEquals(listOf("app/Theme.kt", "build.gradle.kts"), found.map { it.path })
+    }
+
+    @Test
+    fun theSameFileTwiceIsOfferedOnce() {
+        assertEquals(1, pathsMentionedIn("app/Theme.kt vs app/Theme.kt", tree).size)
+    }
+
+    @Test
+    fun anEmptyTreeOffersNothing() {
+        assertTrue(pathsMentionedIn("app/Theme.kt", emptyList()).isEmpty())
+    }
+}
