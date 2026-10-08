@@ -900,7 +900,19 @@ fun IdeScreen(
                             modifier = Modifier.weight(1f),
                         )
 
-                        else -> Box(Modifier.weight(1f)) {
+                        // Spec: the drawer and the editor share one row, with the tap-outside scrim
+                        // sitting over whatever the editor does not use.
+                        //
+                        // `fillMaxWidth` is load bearing, not decoration. Both children below ask to
+                        // `matchParentSize`, and a Compose child that does that is deliberately
+                        // *excluded* from helping decide how big its parent is — it matches the
+                        // parent rather than measuring it. `weight` only fills the main axis, which
+                        // in a Column is the height. So without this one word the Box had nothing
+                        // telling it a width, collapsed to zero, and took the tab strip, the line
+                        // numbers, the code and the drawer with it: the editor area went black while
+                        // the bars above and below it carried on drawing, because those sit outside
+                        // this Box. Deleting this line puts that back exactly as it was.
+                        else -> Box(Modifier.weight(1f).fillMaxWidth()) {
                             Row(Modifier.matchParentSize()) {
                                 IdeExplorer(
                                     expanded = explorerOpen,
