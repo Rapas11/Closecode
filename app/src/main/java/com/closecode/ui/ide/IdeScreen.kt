@@ -911,6 +911,9 @@ fun IdeScreen(
                     // The slug is the history key: commands are remembered per project, and the
                     // store needs something to tell one project's list from another's.
                     projectSlug = slug,
+                    // The project tree, so Tab completes paths from what the project actually
+                    // holds rather than by listing a directory the shell may not even be in.
+                    tree = diskTree,
                     onBack = { activePanel = panelBeforeTool },
                     modifier = Modifier.weight(1f),
                 )

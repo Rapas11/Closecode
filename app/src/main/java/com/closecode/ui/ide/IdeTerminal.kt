@@ -3,6 +3,8 @@ package com.closecode.ui.ide
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,6 +41,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import java.io.BufferedWriter
@@ -213,6 +216,7 @@ internal class ShellProcess(
 fun IdeTerminal(
     projectRoot: File?,
     projectSlug: String = "",
+    tree: List<ProjectFile> = emptyList(),
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
 ) {
@@ -226,8 +230,19 @@ fun IdeTerminal(
     var history by remember { mutableStateOf(emptyList<String>()) }
     var historyIndex by remember { mutableStateOf(0) }
     var draft by remember { mutableStateOf("") }
+    // The shell's working directory is invisible from out here, so the app follows `cd` itself.
+    // Project-relative, and "" for the root, because that is how completion addresses the tree.
+    var cwd by remember(projectSlug) { mutableStateOf("") }
+    var completionCandidates by remember { mutableStateOf(emptyList<Completion>()) }
+    var completionCycle by remember { mutableStateOf(0) }
+    var completionStart by remember { mutableStateOf(0) }
     val listState = rememberLazyListState()
     val historyStore = rememberTerminalHistory(projectSlug)
+
+    fun dismissCompletion() {
+        completionCandidates = emptyList()
+        completionCycle = 0
+    }
 
     // Commands run before this screen is opened are still reachable, so the list is read once on
     // arrival rather than starting empty every time the panel is opened.
@@ -280,6 +295,10 @@ fun IdeTerminal(
         // learns how the last command went without looking for a number.
         lines.appendTerminalLine("$PROMPT$command")
         shell.run(command)
+        // The app tracks the working directory because the shell will not tell it. Anything that
+        // changes directory behind the app's back desyncs completion, and there is no way to ask
+        // without running a command in it.
+        cwdAfterCommand(cwd, "", command)?.let { cwd = it }
         history = addToHistory(history, command)
         if (projectSlug.isNotEmpty()) historyStore.write(projectSlug, history)
         historyIndex = history.size
@@ -294,6 +313,9 @@ fun IdeTerminal(
     }
 
     fun insertAtCaret(text: String) {
+        // Anything typed by hand closes the list: the candidates were worked out against a word
+        // that no longer exists, and leaving them up would offer names that do not fit it.
+        dismissCompletion()
         if (text.isEmpty()) return
         val at = input.selection.start.coerceIn(0, input.text.length)
         input = TextFieldValue(
@@ -308,6 +330,53 @@ fun IdeTerminal(
     }
 
     /**
+     * One press of Tab.
+     *
+     * The first press adds whatever the candidates have in common, or puts the list up when there is
+     * nothing more to add; a later press cycles through them. The candidates are worked out once and
+     * kept, because recomputing them on every press would make the second Tab cycle through a
+     * freshly-ordered list and appear to pick a different name each time.
+     */
+    fun complete() {
+        val (start, token) = wordAt(input.text, input.selection.start)
+        if (completionCandidates.isEmpty()) {
+            val (dirPart, namePart) = splitPath(token)
+            completionCandidates = completionCandidates(
+                dir = resolvePath(cwd, dirPart.ifEmpty { "" }),
+                namePart = namePart,
+                tree = tree,
+            )
+            completionStart = start
+            completionCycle = 0
+        }
+        val (dirPart, namePart) = splitPath(wordAt(input.text, input.selection.start).second)
+        val chosen = nextCompletion(namePart, completionCandidates, completionCycle)
+        if (chosen == null) {
+            // Nothing to add and nothing chosen: show the list and wait for another press.
+            if (completionCandidates.isNotEmpty()) completionCycle = 1
+            return
+        }
+        completionCycle += 1
+        val replacement = dirPart + chosen
+        input = TextFieldValue(
+            input.text.substring(0, completionStart) + replacement + input.text.substring(input.selection.start),
+            TextRange(completionStart + replacement.length),
+        )
+    }
+
+    /** Takes one of the candidates from the popup, rather than pressing Tab to reach it. */
+    fun pickCompletion(candidate: Completion) {
+        val (dirPart, _) = splitPath(wordAt(input.text, input.selection.start).second)
+        val replacement = dirPart + if (candidate.isFolder) "${candidate.name}/" else candidate.name
+        input = TextFieldValue(
+            input.text.substring(0, completionStart) + replacement +
+                input.text.substring(input.selection.start),
+            TextRange(completionStart + replacement.length),
+        )
+        dismissCompletion()
+    }
+
+    /**
      * Applies one key-bar key.
      *
      * Every arrow and every CTRL letter is a line-editing act rather than a byte sent to the shell,
@@ -316,7 +385,12 @@ fun IdeTerminal(
      */
     fun onKeyBar(key: String) {
         when (key) {
+            "\t" -> {
+                complete()
+                return
+            }
             "↑" -> {
+                dismissCompletion()
                 previousHistoryEntry(history, historyIndex, draft)?.let {
                     if (historyIndex >= history.size) draft = input.text
                     historyIndex = it.index
@@ -325,6 +399,7 @@ fun IdeTerminal(
                 return
             }
             "↓" -> {
+                dismissCompletion()
                 nextHistoryEntry(history, historyIndex, draft)?.let {
                     historyIndex = it.index
                     input = TextFieldValue(it.text, TextRange(it.text.length))
@@ -332,10 +407,12 @@ fun IdeTerminal(
                 return
             }
             "←" -> {
+                dismissCompletion()
                 moveCaretTo(input.selection.start - 1)
                 return
             }
             "→" -> {
+                dismissCompletion()
                 moveCaretTo(input.selection.start + 1)
                 return
             }
@@ -494,5 +571,55 @@ fun IdeTerminal(
             onAlt = { alt = nextLatch(alt) },
             onKey = { onKeyBar(it) },
         )
+
+        // Whatever Tab was unsure about, shown rather than guessed at. Above the key bar because it
+        // is about the line being typed, and the line is the thing just above it.
+        if (completionCandidates.isNotEmpty()) {
+            TerminalCompletionPopup(
+                candidates = completionCandidates,
+                onPick = { pickCompletion(it) },
+            )
+        }
+    }
+}
+
+/**
+ * The candidates Tab found, as a strip of names.
+ *
+ * A strip rather than a list, because it belongs to a single line of input and a full-height panel
+ * between the line and the keyboard would hide the very thing being completed. Folders are labelled
+ * with a trailing slash so it is visible there is more inside, and one tap takes the name — which is
+ * the point of showing it rather than only cycling through it.
+ */
+@Composable
+private fun TerminalCompletionPopup(
+    candidates: List<Completion>,
+    onPick: (Completion) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalPageColors.current
+    Row(
+        modifier
+            .fillMaxWidth()
+            .background(c.panel2)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        candidates.forEach { candidate ->
+            val label = if (candidate.isFolder) "${candidate.name}/" else candidate.name
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(c.panel)
+                    .clickable { onPick(candidate) }
+                    .padding(horizontal = 9.dp, vertical = 5.dp)
+                    .semantics { contentDescription = label },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = label, color = c.tx, fontSize = 12.sp, fontFamily = Mono)
+            }
+        }
     }
 }
