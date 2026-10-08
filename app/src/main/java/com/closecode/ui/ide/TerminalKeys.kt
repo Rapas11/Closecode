@@ -39,7 +39,9 @@ internal fun hasControlChar(ch: Char): Boolean = controlChar(ch) != null
  * CTRL+C is deliberately absent: in a real terminal it raises an interrupt, which a pipe cannot
  * deliver. It is handled by killing the process instead, which is the same effect.
  */
-internal enum class ControlAction { NONE, LINE_START, LINE_END, CLEAR_LINE, CLEAR_AFTER, DELETE_WORD, CLEAR_SCREEN }
+internal enum class ControlAction {
+    NONE, LINE_START, LINE_END, CLEAR_LINE, CLEAR_AFTER, DELETE_WORD, DELETE_FORWARD, CLEAR_SCREEN
+}
 
 /** What CTRL plus [ch] means on the command line. */
 internal fun controlActionFor(ch: Char): ControlAction = when (controlChar(ch)) {
@@ -51,8 +53,16 @@ internal fun controlActionFor(ch: Char): ControlAction = when (controlChar(ch)) 
     '\u0015' -> ControlAction.CLEAR_LINE
     '\u0017' -> ControlAction.DELETE_WORD
     '\u000C' -> ControlAction.CLEAR_SCREEN
+    '\u0004' -> ControlAction.DELETE_FORWARD
     '\u0003' -> ControlAction.NONE // interrupt, which the process kill stands in for
     else -> ControlAction.NONE
+}
+
+/** The text and caret left after deleting the character just after the caret. */
+internal fun deleteForward(text: String, caret: Int): Pair<String, Int> {
+    val at = caret.coerceIn(0, text.length)
+    if (at >= text.length) return text to at
+    return text.substring(0, at) + text.substring(at + 1) to at
 }
 
 /**

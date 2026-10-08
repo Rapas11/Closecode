@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Text
@@ -27,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -283,7 +285,24 @@ fun IdeTerminal(
         onDispose { shell.close() }
     }
 
-    LaunchedEffect(lines.size) {
+    // Whether new output should pull the view down to it. A terminal that stops following output is a
+    // terminal you have to chase; one that yanks you away while you are reading is worse. So it
+    // follows until the reader scrolls back to look at something, and resumes the moment they return
+    // to the bottom — which is where a real terminal's behaviour settles too.
+    var followOutput by remember(projectRoot) { mutableStateOf(true) }
+
+    // Watched rather than written from the gesture: the reader can scroll with a fling, a keyboard,
+    // or the scrollbar, and every one of those ends at the same place.
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            listState.firstVisibleItemIndex >= listState.layoutInfo.totalItemsCount - 1
+        }.collect { atBottom ->
+            followOutput = atBottom
+        }
+    }
+
+    LaunchedEffect(lines.size, followOutput) {
+        if (!followOutput) return@LaunchedEffect
         if (lines.isNotEmpty()) listState.animateScrollToItem(lines.lastIndex)
     }
 
@@ -456,6 +475,12 @@ fun IdeTerminal(
                         finishModifiers()
                         return
                     }
+                    ControlAction.DELETE_FORWARD -> {
+                        val (text, caret) = deleteForward(input.text, input.selection.start)
+                        input = TextFieldValue(text, TextRange(caret))
+                        finishModifiers()
+                        return
+                    }
                     ControlAction.NONE -> {
                         // ETX: on a real terminal this raises an interrupt. A pipe cannot deliver a
                         // signal, so the process is killed instead — which is the same thing to the
@@ -500,27 +525,39 @@ fun IdeTerminal(
                 )
             }
         } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp),
+            // One selection container over the whole output, so a long press starts a real selection
+            // with handles and the system's own copy action rather than a bespoke one. It is the
+            // only way to get at a stack trace or a URL word by word, and the only way to copy it at
+            // all on a phone.
+            //
+            // A selection cannot reach past what is on screen, because the list is virtualised — a
+            // copy of a thousand lines is not something this can assemble without holding all of it
+            // in one string, which is the thing virtualisation exists to avoid. What is on screen can
+            // be selected; what has scrolled away has to be scrolled back to.
+            SelectionContainer {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
             ) {
-                items(lines.size) { index ->
-                    val line = lines[index]
-                    // A line the user typed is echoed back at them, and it is never coloured: a
-                    // program cannot have coloured it. It is also the one line the reader recognises
-                    // as theirs, so it keeps the prompt's own accent rather than the output's.
-                    val echoed = line.startsWith(PROMPT)
-                    TerminalLine(
-                        line = line,
-                        color = if (echoed) c.ac else null,
-                        modifier = Modifier.padding(vertical = 1.dp),
-                    )
+                        items(lines.size) { index ->
+                            val line = lines[index]
+                            // A line the user typed is echoed back at them, and it is never
+                            // coloured: a program cannot have coloured it. It is also the one line
+                            // the reader recognises as theirs, so it keeps the prompt's accent
+                            // rather than the output's.
+                            val echoed = line.startsWith(PROMPT)
+                            TerminalLine(
+                                line = line,
+                                color = if (echoed) c.ac else null,
+                                modifier = Modifier.padding(vertical = 1.dp),
+                            )
+                        }
+                    }
                 }
             }
-        }
 
 // The prompt, then the line the reader is typing. Green once a command has succeeded, red
         // once one has failed, which is the one thing about the previous command a phone keyboard
@@ -570,6 +607,25 @@ fun IdeTerminal(
             onCtrl = { ctrl = nextLatch(ctrl) },
             onAlt = { alt = nextLatch(alt) },
             onKey = { onKeyBar(it) },
+            onAction = { action ->
+                when (action) {
+                    TerminalAction.CLEAR -> lines.clear()
+                    TerminalAction.CANCEL -> {
+                        shell.killRunning()
+                        lines.appendTerminalLine("^C")
+                    }
+                    // Not a real end-of-file: a button that closed the shell would leave the terminal
+                    // dead until it was left and reopened, and the key it stands in for is far more
+                    // useful here as the one thing a phone keyboard has no other way to do.
+                    TerminalAction.EOF -> {
+                        val (text, caret) = deleteForward(input.text, input.selection.start)
+                        input = TextFieldValue(text, TextRange(caret))
+                    }
+                }
+            },
+            onHistory = { direction ->
+                if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
+            },
         )
 
         // Whatever Tab was unsure about, shown rather than guessed at. Above the key bar because it

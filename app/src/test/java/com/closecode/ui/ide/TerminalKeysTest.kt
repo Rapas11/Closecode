@@ -63,7 +63,32 @@ class TerminalKeysTest {
         assertEquals(ControlAction.CLEAR_AFTER, controlActionFor('k'))
         assertEquals(ControlAction.CLEAR_LINE, controlActionFor('u'))
         assertEquals(ControlAction.DELETE_WORD, controlActionFor('w'))
+        assertEquals(ControlAction.DELETE_FORWARD, controlActionFor('d'))
         assertEquals(ControlAction.CLEAR_SCREEN, controlActionFor('l'))
+    }
+
+    @Test
+    fun deleteForwardTakesTheCharacterAfterTheCaret() {
+        // Forward is the whole point: the caret stays where it is and the character to its right goes.
+        assertEquals("ac" to 1, deleteForward("abc", 1))
+        assertEquals("bc" to 0, deleteForward("abc", 0))
+    }
+
+    @Test
+    fun deleteForwardAtTheEndOfTheLineChangesNothing() {
+        // The caret sits at the end after almost every edit on a phone, so this is the common case and
+        // must be a no-op rather than an exception.
+        assertEquals("abc" to 3, deleteForward("abc", 3))
+    }
+
+    @Test
+    fun deleteForwardOnAnEmptyLineChangesNothing() {
+        assertEquals("" to 0, deleteForward("", 0))
+    }
+
+    @Test
+    fun deleteForwardKeepsTheTextBeforeTheCaret() {
+        assertEquals("ab" to 2, deleteForward("abc", 2))
     }
 
     @Test
