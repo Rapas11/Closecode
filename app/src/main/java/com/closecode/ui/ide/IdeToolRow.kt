@@ -39,6 +39,9 @@ enum class ToolAction {
     CLOSE_PAREN,
     SEMICOLON,
     EQUALS,
+    QUOTE,
+    OPEN_ANGLE,
+    CLOSE_ANGLE,
 }
 
 /**
@@ -104,6 +107,12 @@ fun IdeToolRow(
         ToolButton(")", Mono) { onAction(ToolAction.CLOSE_PAREN) }
         ToolButton(";", Mono) { onAction(ToolAction.SEMICOLON) }
         ToolButton("=", Mono) { onAction(ToolAction.EQUALS) }
+        // The quote and the two angles were claimed by this row’s own comment and by no button. The
+        // quote is the commonest character a string needs and the angles are the only way to open a
+        // tag on a phone, so a reader writing HTML had no way to start one at all.
+        ToolButton("\"", Mono) { onAction(ToolAction.QUOTE) }
+        ToolButton("<", Mono) { onAction(ToolAction.OPEN_ANGLE) }
+        ToolButton(">", Mono) { onAction(ToolAction.CLOSE_ANGLE) }
     }
 }
 
@@ -163,6 +172,9 @@ val ToolRowOrder: List<ToolAction> = listOf(
     ToolAction.CLOSE_PAREN,
     ToolAction.SEMICOLON,
     ToolAction.EQUALS,
+    ToolAction.QUOTE,
+    ToolAction.OPEN_ANGLE,
+    ToolAction.CLOSE_ANGLE,
 )
 
 /** The character each insert button types, for the actions that are just text. */
@@ -173,4 +185,7 @@ val ToolRowInserts: Map<ToolAction, String> = mapOf(
     ToolAction.CLOSE_PAREN to ")",
     ToolAction.SEMICOLON to ";",
     ToolAction.EQUALS to "=",
+    ToolAction.QUOTE to "\"",
+    ToolAction.OPEN_ANGLE to "<",
+    ToolAction.CLOSE_ANGLE to ">",
 )

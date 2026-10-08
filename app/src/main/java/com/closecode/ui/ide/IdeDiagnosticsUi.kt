@@ -223,54 +223,120 @@ data class ProblemsByLine(
         }
     }
 }
+/** What one Enter should insert at the caret, and where in it the caret lands. */
+internal data class EnterIndent(val text: String, val caret: Int)
+
 /**
- * Indentation a new row inherits: the line's own leading whitespace, plus one more level when it
- * ends with `{` or `(`.
+ * The indentation one press of Enter should give the new line.
+ *
+ * Three rules, in this order, all measured off the line being split rather than off any setting:
+ *
+ *  - a line that **ends with a closing brace** steps back out one level, because the block it was
+ *    inside has just ended and code typed after it belongs outside that block
+ *  - a line that **ends with an opener** — `{`, `(`, `[`, or Kotlin's `:` and `->` — steps in one
+ *  - anything else keeps the indentation it already has
+ *
+ * The step is the reader's own indent size, so the one number that governs the Tab key governs this
+ * too. It used to be two spaces hard-coded, which meant a file set to four spaces got two.
+ *
+ * When [nextChar] is the closer the app paired with the opener being split, that closer is pushed
+ * down onto a line of its own at the opener's indentation. Leaving it where it was put the `}` after
+ * the new line's padding, so every closing brace crept rightward.
  */
-private fun carriedIndent(lineSoFar: String): String {
+internal fun enterIndent(lineSoFar: String, nextChar: Char?, tabSize: Int): EnterIndent {
+    val step = tabSize.coerceAtLeast(1)
+    val base = lineSoFar.takeWhile { it == ' ' || it == '\t' }
     val trimmed = lineSoFar.trimEnd()
-    val extra = if (trimmed.endsWith("{") || trimmed.endsWith("(")) "  " else ""
-    return lineSoFar.takeWhile { it == ' ' || it == '\t' } + extra
+
+    val closes = trimmed.endsWith("}") || trimmed.endsWith(")") || trimmed.endsWith("]")
+    val opens = trimmed.endsWith("{") || trimmed.endsWith("(") || trimmed.endsWith("[") ||
+        trimmed.endsWith(":") || trimmed.endsWith("->")
+
+    val pad = when {
+        closes -> dedentColumns(base, step)
+        opens -> base + " ".repeat(step)
+        else -> base
+    }
+
+    val pairedCloser = opens && nextChar == '}'
+    val inserted = if (pairedCloser) "\n$pad\n$base" else "\n$pad"
+    return EnterIndent(inserted, 1 + pad.length)
 }
 
 /**
- * Spec 6.3: Enter keeps the current indentation and adds two more spaces when the line ends with
- * `{` or `(`.
+ * Removes up to [step] columns from the end of an indent.
  *
- * This runs as a transform on the text the IME handed back, not by intercepting the key, so Enter
- * still inserts a newline when the autocomplete popup is open and only Tab or a tap accepts a
- * suggestion. Returns the new text and caret, or null when the edit was not a plain Enter.
+ * A tab counts as a whole step rather than as one character: a tab-indented file must come back out
+ * one tab, and treating it as one column would shave four spaces off a two-space indent and land the
+ * caret at the margin.
  */
-fun autoIndentAfterEnter(oldText: String, newText: String, caret: Int): Pair<String, Int>? {
+internal fun dedentColumns(base: String, step: Int): String {
+    if (base.isEmpty()) return base
+    var keep = base.length
+    var removed = 0
+    while (keep > 0 && removed < step) {
+        removed += if (base[keep - 1] == '\t') step else 1
+        keep--
+    }
+    return base.substring(0, keep)
+}
+
+/**
+ * A typed Enter, read as a transform on the text the IME handed back rather than by intercepting the
+ * key — so Enter still inserts a newline when the autocomplete popup is open, and only Tab or a tap
+ * accepts a suggestion.
+ *
+ * Returns the new text and caret, or null when the edit was not a plain Enter.
+ */
+fun autoIndentAfterEnter(oldText: String, newText: String, caret: Int, tabSize: Int): Pair<String, Int>? {
     // A typed Enter is the only edit that grows the text by exactly one character and leaves the
     // caret straight after a newline. Anything else passes through untouched.
     if (newText.length != oldText.length + 1) return null
     if (caret <= 0 || caret > newText.length) return null
     if (newText[caret - 1] != '\n') return null
     val lineStart = newText.lastIndexOf('\n', caret - 2) + 1
-    val pad = carriedIndent(newText.substring(lineStart, caret - 1))
-    if (pad.isEmpty()) return null
-    return (newText.substring(0, caret) + pad + newText.substring(caret)) to (caret + pad.length)
+    val ins = enterIndent(
+        lineSoFar = newText.substring(lineStart, caret - 1),
+        nextChar = newText.getOrNull(caret),
+        tabSize = tabSize,
+    )
+    if (ins.text == "\n") return null
+    val next = newText.substring(0, caret - 1) + ins.text + newText.substring(caret)
+    return next to (caret - 1 + ins.caret)
 }
 
 /**
- * Spec 6.3: exactly one newline per press of Enter.
+ * Exactly one newline per press of Enter, written here rather than left to the IME.
  *
- * The newline is written here rather than left to the IME. Soft keyboards cannot be trusted to hand
- * back one row per press — some insert the key's newline and the composing editor's on top of it —
- * and an editor that drops the caret two rows down for one press cannot be undone by pressing
- * harder. The selection, if there is one, is replaced the way every editor replaces it.
+ * Soft keyboards cannot be trusted to hand back one row per press — some insert the key's newline
+ * and the composing editor's on top of it — and an editor that drops the caret two rows down for one
+ * press cannot be undone by pressing harder. The selection, if there is one, is replaced the way
+ * every editor replaces it.
+ *
+ * [indent] is false when the reader has switched auto-indent off, which is the only difference
+ * between this and a plain newline. The setting used to be read on the soft-keyboard path alone, so
+ * turning it off did nothing at all on a hardware keyboard.
  *
  * Returns the new text and the caret's new offset.
  */
-fun enterEdit(text: String, selectionStart: Int, selectionEnd: Int): Pair<String, Int> {
+fun enterEdit(
+    text: String,
+    selectionStart: Int,
+    selectionEnd: Int,
+    tabSize: Int,
+    indent: Boolean = true,
+): Pair<String, Int> {
     val start = selectionStart.coerceIn(0, text.length)
     val end = selectionEnd.coerceIn(start, text.length)
     val previousNewline = if (start <= 0) -1 else text.lastIndexOf('\n', start - 1)
     val lineStart = previousNewline + 1
-    val pad = carriedIndent(text.substring(lineStart, start))
-    val next = text.substring(0, start) + '\n' + pad + text.substring(end)
-    return next to (start + 1 + pad.length)
+    val ins = if (indent) {
+        enterIndent(text.substring(lineStart, start), text.getOrNull(start), tabSize)
+    } else {
+        EnterIndent("\n", 1)
+    }
+    val next = text.substring(0, start) + ins.text + text.substring(end)
+    return next to (start + ins.caret)
 }
 
 /**
@@ -894,6 +960,64 @@ fun endOfLineAnchorOffset(source: String, line: Int): Int {
  * character at the end of the line for its box answered with the wrong edge and the label started
  * over the code instead of after it.
  */
+/**
+ * The last rendered row belonging to the one that starts at [firstRow].
+ *
+ * Word wrap is the only thing that makes a document line occupy more than one row, and it changes
+ * exactly one thing for the overlays: the *end* of the line. The first row of a document line is
+ * always at its own slice index, so tops needed no change — but a pill anchored to the right edge
+ * of the first row would sit halfway along a wrapped line, and a guide stopping at the bottom of the
+ * first row would end above the code it belongs to.
+ *
+ * A row continues the one before it when no newline separates their text, which is read off the
+ * renderer rather than guessed from a width, so it stays right at any font size, zoom or gutter.
+ */
+@OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+fun lastRowForLine(layout: TextLayoutResult, firstRow: Int): Int {
+    val text = layout.layoutInput.text
+    var last = firstRow
+    var i = firstRow
+    while (i + 1 < layout.lineCount) {
+        val start = runCatching { layout.getLineStart(i) }.getOrNull() ?: break
+        val next = runCatching { layout.getLineStart(i + 1) }.getOrNull() ?: break
+        if (next <= start) break
+        if (text.substring(start, next).indexOf('\n') >= 0) break
+        last = i + 1
+        i++
+    }
+    return last
+}
+
+/** How many rendered rows a document line occupies, at least one. */
+fun rowsForLine(layout: TextLayoutResult?, line: Int, window: CodeWindow = CodeWindow.Full): Int {
+    val index = sliceIndexForLine(line, window.firstLine)
+    if (layout == null || index < 0 || index >= layout.lineCount) return 1
+    return lastRowForLine(layout, index) - index + 1
+}
+
+/**
+ * The bottom edge of a document line, which with word wrap is below its last row rather than below
+ * its first.
+ */
+fun lineBottomPx(
+    layout: TextLayoutResult?,
+    source: String,
+    line: Int,
+    lineHeightPx: Float,
+    window: CodeWindow = CodeWindow.Full,
+): Float {
+    val top = lineTopPx(layout, source, line, window) ?: return line * lineHeightPx
+    return top + rowsForLine(layout, line, window).coerceAtLeast(1) * lineHeightPx
+}
+
+/**
+ * Right edge of [line]'s text, i.e. where its label should begin.
+ *
+ * Read from the renderer's line metrics: the newline has no width of its own, so asking the
+ * character at the end of the line for its box answered with the wrong edge and the label started
+ * over the code instead of after it. With word wrap on it is the *last* row of the line that ends
+ * the text, not the first.
+ */
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
 fun endOfLineX(
     layout: TextLayoutResult?,
@@ -904,7 +1028,8 @@ fun endOfLineX(
     if (layout == null || line < 1) return null
     val index = sliceIndexForLine(line, window.firstLine)
     if (index < 0 || index >= layout.lineCount) return null
-    runCatching { layout.getLineRight(index) }.getOrNull()?.let { return it }
+    // The last row of the line, not its first: a wrapped line's text ends on the row below.
+    runCatching { layout.getLineRight(lastRowForLine(layout, index)) }.getOrNull()?.let { return it }
     val anchor = mapOffsetToSlice(
         endOfLineAnchorOffset(source, line),
         window.startOffset,
@@ -1203,7 +1328,7 @@ fun BracketGuideLayer(
             val openIndent = indents.getOrElse(openLine - 1) { 0 }
             val x = guideColumn(openIndent, tabSize) * charWidthPx + halfStroke
             val top = lineTopPx(layout, source, span.first, window) ?: continue
-            val bottom = lineTopPx(layout, source, span.last, window) ?: continue
+            val bottom = lineBottomPx(layout, source, span.last, lineHeightPx, window) - lineHeightPx
             drawLine(
                 color = c.guideRule,
                 start = androidx.compose.ui.geometry.Offset(x, top),
@@ -1220,7 +1345,7 @@ fun BracketGuideLayer(
         val openIndent = indents.getOrElse(openLine - 1) { 0 }
         val x = guideColumn(openIndent, tabSize) * charWidthPx + halfStroke
         val top = lineTopPx(layout, source, span.first, window) ?: return@Canvas
-        val bottom = lineTopPx(layout, source, span.last, window) ?: return@Canvas
+        val bottom = lineBottomPx(layout, source, span.last, lineHeightPx, window) - lineHeightPx
         drawLine(
             color = c.amber,
             start = androidx.compose.ui.geometry.Offset(x, top),

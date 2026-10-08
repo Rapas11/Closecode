@@ -191,7 +191,7 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                         TabSizeChoices,
                     ),
                     Row.Toggle("Line numbers", "Show the number gutter.", BoolSetting.LINE_NUMBERS),
-                    Row.Toggle("Word wrap", "Wrap long lines instead of scrolling sideways.", default = false),
+                    Row.Toggle("Word wrap", "Wrap long lines instead of scrolling sideways.", BoolSetting.WORD_WRAP),
                     Row.Toggle("Code folding", "Collapse a block behind its first line.", default = true),
                     Row.Toggle("Bracket guides", "Draw a faint rule down each block's own indent level.", BoolSetting.BRACKET_GUIDES),
                 ),

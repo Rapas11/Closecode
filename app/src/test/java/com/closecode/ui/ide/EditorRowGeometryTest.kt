@@ -377,89 +377,169 @@ class EditorRowGeometryTest {
         assertEquals(0f, lineTopFromLayout(null, -2, 20f), 0.001f)
     }
 
-    // -- Enter keeps the indentation (spec 6.3) -----------------------------------------
+    // -- Enter indents the way the file is already written ----------------------------
+
+    /**
+     * The reference indent for these tests. Every old expectation used two spaces because the extra
+     * level was hard-coded to two; now it is the reader own setting, so these pin a four-space file.
+     */
+    private val four = 4
 
     @Test
     fun enterCarriesTheCurrentIndentationToTheNextLine() {
         val old = "    val x = 1"
         val new = "    val x = 1\n"
-        val (text, caret) = autoIndentAfterEnter(old, new, new.length)!!
+        val (text, caret) = autoIndentAfterEnter(old, new, new.length, four)!!
         assertEquals("    val x = 1\n    ", text)
         assertEquals(new.length + 4, caret)
     }
 
     @Test
-    fun enterIndentsOneMoreLevelAfterAnOpenBrace() {
-        val old = "fun main() {"
-        val new = "fun main() {\n"
-        val (text, _) = autoIndentAfterEnter(old, new, new.length)!!
-        assertEquals("fun main() {\n  ", text)
+    fun theExtraLevelIsTheReadersIndentSizeNotATwo() {
+        // The bug this pins: a file set to four spaces got two, so every brace crept out of step with
+        // the Tab key by one level per line.
+        val src = "fun main() {"
+        // Spaces, not a tab character: the Tab key inserts a run of spaces too, and nothing in the
+        // app yet says a file should indent with tabs instead.
+        assertEquals("fun main() {\n    ", autoIndentAfterEnter(src, "$src\n", src.length + 1, 4)!!.first)
+        assertEquals("fun main() {\n  ", autoIndentAfterEnter(src, "$src\n", src.length + 1, 2)!!.first)
+        assertEquals("fun main() {\n        ", autoIndentAfterEnter(src, "$src\n", src.length + 1, 8)!!.first)
     }
 
     @Test
-    fun enterIndentsOneMoreLevelAfterAnOpenParen() {
-        val old = "  foo("
-        val new = "  foo(\n"
-        val (text, _) = autoIndentAfterEnter(old, new, new.length)!!
-        assertEquals("  foo(\n    ", text)
+    fun enterStepsInAfterAnOpener() {
+        // Each case keeps whatever indentation the line already had and adds one level to it.
+        for (opener in listOf("fun main() {", "  foo(", "val a = listOf(", "when (x) {", "val a = [")) {
+            val base = opener.takeWhile { it == ' ' }
+            val (text, _) = autoIndentAfterEnter(opener, "$opener\n", opener.length + 1, four)!!
+            assertEquals(opener + "\n" + base + " ".repeat(four), text)
+        }
     }
 
     @Test
-    fun enterDoesNotIndentExtraAfterAClosingBrace() {
+    fun enterStepsInAfterKoltinsColonAndArrow() {
+        val colon = "class A:"
+        assertEquals("$colon\n    ", autoIndentAfterEnter(colon, "$colon\n", colon.length + 1, four)!!.first)
+        val arrow = "    val f = { x ->"
+        assertEquals("$arrow\n        ", autoIndentAfterEnter(arrow, "$arrow\n", arrow.length + 1, four)!!.first)
+    }
+
+    @Test
+    fun enterStepsBackOutAfterAClosingBrace() {
+        // Without this, code drifts rightward: every block closed and the next line stayed inside it.
+        val text = "    }"
+        val (next, caret) = enterEdit(text, text.length, text.length, four)
+        assertEquals("    }\n", next)
+        assertEquals(text.length + 1, caret)
+    }
+
+    @Test
+    fun theImePathAgreesWithTheStepOut() {
+        // The IME already left the caret at the margin here, so there is nothing left to rewrite and
+        // the transform stands down rather than reporting an empty indent as a change.
         val old = "    }"
         val new = "    }\n"
-        val (text, _) = autoIndentAfterEnter(old, new, new.length)!!
-        assertEquals("    }\n    ", text)
+        assertNull(autoIndentAfterEnter(old, new, new.length, four))
+    }
+
+    @Test
+    fun steppingOutIsOneLevelAndNeverPastTheMargin() {
+        assertEquals("  ", dedentColumns("      ", 4))
+        assertEquals("", dedentColumns("    ", 4))
+        assertEquals("", dedentColumns("", 4))
+        // A deeper indent loses one level, not all of it.
+        assertEquals("        ", dedentColumns("            ", 4))
+    }
+
+    @Test
+    fun aTabComesBackOutAsOneTabNotOneColumn() {
+        // Treating a tab as one column would shave four spaces off a two-space indent and land the
+        // caret at the margin.
+        assertEquals("\t", dedentColumns("\t\t", 4))
+        assertEquals("\t\t", dedentColumns("\t\t\t", 4))
+    }
+
+    @Test
+    fun theAutoInsertedCloserDropsToItsOwnLine() {
+        // Typing { puts a } straight after the caret, so Enter splits the line between the two. The
+        // IME path sees that as: old text already ending in } with the caret before it, new text with
+        // the newline dropped into that same gap.
+        val old = "fun main() {}"
+        val new = "fun main() {\n}"
+        // The caret lands straight after the newline, which is before the }, not at the end.
+        val (text, caret) = autoIndentAfterEnter(old, new, new.indexOf('\n') + 1, four)!!
+        assertEquals("fun main() {\n    \n}", text)
+        assertEquals("fun main() {\n    ".length, caret)
+    }
+
+    @Test
+    fun theKeyPathPushesTheAutoInsertedCloserDownToo() {
+        val text = "fun main() {}"
+        val (next, caret) = enterEdit(text, 12, 12, four)
+        assertEquals("fun main() {\n    \n}", next)
+        assertEquals("fun main() {\n    ".length, caret)
+    }
+
+    @Test
+    fun theAutoInsertedCloserGoesToTheOpenersOwnIndent() {
+        val text = "    fun a() {}"
+        val (next, _) = enterEdit(text, text.length - 1, text.length - 1, four)
+        assertEquals("    fun a() {\n        \n    }", next)
+    }
+
+    @Test
+    fun aCloserNotFromPairingIsLeftWhereItIs() {
+        // The line already ends in }, so this Enter is a step-out; the brace after the caret belongs
+        // to a block that already closed and has no business moving.
+        val text = "    }}"
+        val (next, _) = enterEdit(text, 5, 5, four)
+        assertEquals("    }\n}", next)
     }
 
     @Test
     fun enterWithNoIndentationLeavesTheTextAlone() {
         val old = "val x = 1"
         val new = "val x = 1\n"
-        assertEquals(null, autoIndentAfterEnter(old, new, new.length))
+        assertEquals(null, autoIndentAfterEnter(old, new, new.length, four))
     }
 
     @Test
     fun typingAnythingOtherThanEnterIsNotTouched() {
         val old = "val "
-        // A normal character: one character longer, but not a newline.
-        assertEquals(null, autoIndentAfterEnter(old, "val x", 5))
-        // A paste of several characters is not a typed Enter either.
-        assertEquals(null, autoIndentAfterEnter(old, "val foo\nbar", 11))
-        // Deleting text is not a typed Enter.
-        assertEquals(null, autoIndentAfterEnter("val x", "val ", 4))
+        assertEquals(null, autoIndentAfterEnter(old, "val x", 5, four))
+        assertEquals(null, autoIndentAfterEnter(old, "val foo\nbar", 11, four))
+        assertEquals(null, autoIndentAfterEnter("val x", "val ", 4, four))
     }
 
     @Test
     fun enterInTheMiddleOfALineOnlyPadsTheTail() {
         val old = "  a\n  b"
         val new = "  a\n  b\n"
-        val (text, caret) = autoIndentAfterEnter(old, new, new.length)!!
+        val (text, caret) = autoIndentAfterEnter(old, new, new.length, four)!!
         assertEquals("  a\n  b\n  ", text)
         assertEquals(caret, text.length)
     }
 
     @Test
     fun enterAtTheVeryStartOfTheFileIsHandled() {
-        // There is no indent to carry, so the text is passed through untouched rather than padded.
-        assertEquals(null, autoIndentAfterEnter("", "\n", 1))
+        assertEquals(null, autoIndentAfterEnter("", "\n", 1, four))
     }
 
     @Test
     fun tabsArePreservedAsIndentation() {
         val old = "\tval x = 1"
         val new = "\tval x = 1\n"
-        val (text, _) = autoIndentAfterEnter(old, new, new.length)!!
+        val (text, _) = autoIndentAfterEnter(old, new, new.length, four)!!
         assertEquals("\tval x = 1\n\t", text)
     }
 
-    // -- one press of Enter is exactly one row (spec 6.3) ---------------------------------
+    // -- one press of Enter is exactly one row ---------------------------------------------
 
     @Test
     fun onePressOfEnterAddsExactlyOneNewline() {
         val source = "package com.example\n\nimport android.os.Bundle"
         val endOfLineOne = source.indexOf('\n')
-        val (text, caret) = enterEdit(source, endOfLineOne, endOfLineOne)
+        val (text, caret) = enterEdit(source, endOfLineOne, endOfLineOne, four)
         // No pad is carried from a line with no indentation, so the growth is one character.
         assertEquals(1, text.length - source.length)
         assertEquals(endOfLineOne + 1, caret)
@@ -473,7 +553,7 @@ class EditorRowGeometryTest {
         var caret = text.indexOf('\n')
         var line = text.substring(0, caret).count { it == '\n' } + 1
         repeat(5) { press ->
-            val (next, nextCaret) = enterEdit(text, caret, caret)
+            val (next, nextCaret) = enterEdit(text, caret, caret, four)
             val nextLine = next.substring(0, nextCaret).count { it == '\n' } + 1
             assertEquals("press $press", line + 1, nextLine)
             // The text grows by exactly as much as the caret moves, so nothing is added twice.
@@ -486,19 +566,37 @@ class EditorRowGeometryTest {
 
     @Test
     fun enterReplacesTheSelectionRatherThanLeavingItBehind() {
-        val (text, caret) = enterEdit("one TWO three", 4, 7)
+        val (text, caret) = enterEdit("one TWO three", 4, 7, four)
         assertEquals("one \n three", text)
         assertEquals(5, caret)
+    }
+
+    @Test
+    fun switchingAutoIndentOffGivesAPlainNewlineOnBothPaths() {
+        // The bug this pins: the setting was read on the soft-keyboard path alone, so switching it
+        // off did nothing at all on a hardware keyboard.
+        val src = "fun main() {"
+        val plain = enterEdit(src, src.length, src.length, four, indent = false)
+        assertEquals("$src\n", plain.first)
+        assertEquals(src.length + 1, plain.second)
     }
 
     @Test
     fun theKeyPathAndTheImePathIndentTheSameWay() {
         // The key handler and the IME fallback must agree, or Enter behaves differently on a soft
         // keyboard than it does on a hardware one.
-        for (source in listOf("    val x = 1", "fun main() {", "  foo(", "    }", "\tval y")) {
+        for (source in listOf(
+            "    val x = 1",
+            "fun main() {",
+            "fun main() {}",
+            "  foo(",
+            "    }",
+            "\tval y",
+            "class A:",
+        )) {
             val end = source.length
-            val (keyText, keyCaret) = enterEdit(source, end, end)
-            val ime = autoIndentAfterEnter(source, source + "\n", end + 1)
+            val (keyText, keyCaret) = enterEdit(source, end, end, four)
+            val ime = autoIndentAfterEnter(source, source + "\n", end + 1, four)
             assertEquals(source, ime?.first ?: source + "\n", keyText)
             assertEquals(source, ime?.second ?: end + 1, keyCaret)
         }
@@ -506,7 +604,7 @@ class EditorRowGeometryTest {
 
     @Test
     fun enterOnAnEmptyFileStillMakesOneRow() {
-        val (text, caret) = enterEdit("", 0, 0)
+        val (text, caret) = enterEdit("", 0, 0, four)
         assertEquals("\n", text)
         assertEquals(1, caret)
     }

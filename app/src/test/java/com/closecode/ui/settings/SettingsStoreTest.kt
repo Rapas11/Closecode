@@ -165,14 +165,19 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun anUnwiredRowCarriesItsOwnDefaultAndNoKey() {
+    fun theWordWrapSwitchNowReachesTheEditor() {
+        // It used to be a switch with nothing behind it. Now the row carries the key, the store
+        // carries the field, and the editor reads it.
         val wordWrap = sections(SettingsLive())
             .flatMap { section -> section.groups.flatMap { it.rows } }
             .filterIsInstance<Row.Toggle>()
             .first { it.name == "Word wrap" }
 
-        assertEquals(null, wordWrap.key)
+        assertEquals(BoolSetting.WORD_WRAP, wordWrap.key)
         assertFalse(wordWrap.default)
+        // The default is off, which is the honest starting point for a switch that wraps nothing
+        // until it is asked to.
+        assertFalse(Settings().wordWrap)
     }
 
     @Test
@@ -192,7 +197,8 @@ class SettingsStoreTest {
         assertEquals(BoolSetting.AUTOCOMPLETE, toggles["Autocomplete"])
         assertEquals(BoolSetting.DIAGNOSTICS, toggles["Diagnostics"])
         assertEquals(BoolSetting.BRACKET_GUIDES, toggles["Bracket guides"])
-        assertEquals(9, toggles.values.filterNotNull().size)
+        assertEquals(BoolSetting.WORD_WRAP, toggles["Word wrap"])
+        assertEquals(10, toggles.values.filterNotNull().size)
 
         val options = sections(SettingsLive())
             .flatMap { section -> section.groups.flatMap { it.rows } }

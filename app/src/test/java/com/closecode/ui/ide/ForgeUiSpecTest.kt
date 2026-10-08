@@ -147,6 +147,9 @@ class ForgeUiSpecTest {
                 ToolAction.CLOSE_PAREN,
                 ToolAction.SEMICOLON,
                 ToolAction.EQUALS,
+                ToolAction.QUOTE,
+                ToolAction.OPEN_ANGLE,
+                ToolAction.CLOSE_ANGLE,
             ),
             ToolRowOrder,
         )
@@ -160,6 +163,9 @@ class ForgeUiSpecTest {
         assertEquals(")", ToolRowInserts[ToolAction.CLOSE_PAREN])
         assertEquals(";", ToolRowInserts[ToolAction.SEMICOLON])
         assertEquals("=", ToolRowInserts[ToolAction.EQUALS])
+        assertEquals("\"", ToolRowInserts[ToolAction.QUOTE])
+        assertEquals("<", ToolRowInserts[ToolAction.OPEN_ANGLE])
+        assertEquals(">", ToolRowInserts[ToolAction.CLOSE_ANGLE])
     }
 
     @Test

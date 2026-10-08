@@ -2947,7 +2947,8 @@ contentAlignment = Alignment.Center,
                                     ),
                                 ),
                                 fontFamily = Mono,
-                                softWrap = false,
+                                softWrap = settings.wordWrap,
+                                maxLines = if (settings.wordWrap) Int.MAX_VALUE else 1,
                             )
                         }
                         Text(
@@ -2964,7 +2965,8 @@ contentAlignment = Alignment.Center,
                                 ),
                             ),
                             fontFamily = Mono,
-                            softWrap = false,
+                            softWrap = settings.wordWrap,
+                            maxLines = if (settings.wordWrap) Int.MAX_VALUE else 1,
                             // The slice is drawn at the absolute row it starts on, so every line in
                             // it lands on the same y it had when the whole file was one Text — and
                             // the transparent field, the gutter and the overlays all still agree.
@@ -2984,7 +2986,12 @@ contentAlignment = Alignment.Center,
                                 // handling is left alone, so Enter still works with the popup open.
                                 val caret = incoming.selection.start.coerceIn(0, incoming.text.length)
                                 val indented = if (settings.autoIndent) {
-                                    autoIndentAfterEnter(fieldValue.text, incoming.text, caret)
+                                    autoIndentAfterEnter(
+                                        fieldValue.text,
+                                        incoming.text,
+                                        caret,
+                                        settings.tabSize,
+                                    )
                                 } else {
                                     null
                                 }
@@ -3051,6 +3058,8 @@ contentAlignment = Alignment.Center,
                                                 current.text,
                                                 minOf(current.selection.start, current.selection.end),
                                                 maxOf(current.selection.start, current.selection.end),
+                                                settings.tabSize,
+                                                settings.autoIndent,
                                             )
                                             commit(TextFieldValue(next, TextRange(caret)))
                                             true

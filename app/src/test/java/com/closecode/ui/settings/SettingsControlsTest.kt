@@ -1,6 +1,7 @@
 package com.closecode.ui.settings
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -33,15 +34,15 @@ class SettingsControlsTest {
 
     @Test
     fun everyToggleStillHasSomewhereToSayItsState() {
-        // Nine of the eighteen toggles have no key yet, so they hold their own default and answer
-        // to nothing in the store. They still draw a switch, and a switch still says On or Off —
-        // the label does not depend on the row having been wired up.
+        // Word wrap used to be one of the rows with no key behind it: a switch that drew, and said
+        // On or Off, and changed nothing at all. It is wired now, so one fewer row is a placeholder.
         val toggles = sections(SettingsLive())
             .flatMap { section -> section.groups.flatMap { it.rows } }
             .filterIsInstance<Row.Toggle>()
 
         assertEquals(18, toggles.size)
-        assertEquals(9, toggles.count { it.key == null })
+        assertEquals(8, toggles.count { it.key == null })
+        assertTrue(toggles.any { it.name == "Word wrap" && it.key == BoolSetting.WORD_WRAP })
         assertEquals("On", toggleStateLabel(true))
         assertEquals("Off", toggleStateLabel(false))
     }
