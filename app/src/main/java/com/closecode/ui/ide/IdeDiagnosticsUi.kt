@@ -1186,7 +1186,7 @@ fun SquiggleLayer(
 
     androidx.compose.foundation.Canvas(modifier) {
         for (diagnostic in problems.all) {
-            val tone = if (diagnostic.severity == Severity.WARNING) c.warnUnderline else c.errorUnderline
+            val tone = if (diagnostic.severity == Severity.WARNING) c.warnText else c.error
             val range = squiggleRange(layout, diagnostic, minWidthPx, window) ?: continue
             val left = range.first
             val right = range.second
@@ -1271,32 +1271,52 @@ internal fun enclosingPair(pairs: List<IntRange>, offset: Int): IntRange? {
 private fun pairOfBrace(pairs: List<IntRange>, braceOffset: Int): IntRange? =
     pairs.firstOrNull { it.first == braceOffset || it.last == braceOffset }
 
+/** Every bracket character the underline can mark, of any of the three kinds. */
+private val BRACKET_CHARS = setOf('{', '}', '(', ')', '[', ']')
+
 /**
  * The two braces to outline for a caret at [offset], as their offsets in the buffer, or null when
  * there is nothing honest to outline.
  *
- * A caret sitting right beside a brace wins over the block that contains it, because that is what a
+ * A caret sitting right beside a bracket wins over the block that contains it, because that is what a
  * reader means: they have just typed the `{`, or tapped it, and they are looking at the pair that
  * belongs to it. Any other caret gets the innermost block around it.
  *
- * A brace with no partner answers null rather than falling through to the enclosing block. The
+ * A bracket with no partner answers null rather than falling through to the enclosing block. The
  * reader is next to a `{` that is not closed; there is no second box to draw, and highlighting some
- * outer block instead would put the emphasis somewhere they are not looking.
+ * outer block instead would put the emphasis somewhere they are not looking. [unmatchedBracketAt]
+ * finds that lone bracket so it can be underlined in red instead.
  */
 internal fun activeBraces(pairs: List<IntRange>, text: String, offset: Int): Pair<Int, Int>? {
     if (offset > 0 && offset <= text.length) {
         val before = text[offset - 1]
-        if (before == '{' || before == '}') {
+        if (before in BRACKET_CHARS) {
             return pairOfBrace(pairs, offset - 1)?.let { it.first to it.last }
         }
     }
     if (offset >= 0 && offset < text.length) {
         val after = text[offset]
-        if (after == '{' || after == '}') {
+        if (after in BRACKET_CHARS) {
             return pairOfBrace(pairs, offset)?.let { it.first to it.last }
         }
     }
     return enclosingPair(pairs, offset)?.let { it.first to it.last }
+}
+
+/**
+ * The offset of the lone bracket the caret sits beside, or null when there is none.
+ *
+ * "Lone" means a bracket character with no pair in [pairs]: a closer whose opener never came, or an
+ * opener nothing has closed yet. The reader is looking at exactly this character — they just typed
+ * it or tapped it — so it gets underlined in red rather than leaving them to guess why its partner
+ * never lit up. The before-caret position wins, mirroring [activeBraces].
+ */
+internal fun unmatchedBracketAt(text: String, offset: Int, pairs: List<IntRange>): Int? {
+    val before = (offset - 1).takeIf { it >= 0 && it < text.length }?.takeIf { text[it] in BRACKET_CHARS }
+    if (before != null && pairs.none { it.first == before || it.last == before }) return before
+    val after = offset.takeIf { it >= 0 && it < text.length }?.takeIf { text[it] in BRACKET_CHARS }
+    if (after != null && pairs.none { it.first == after || it.last == after }) return after
+    return null
 }
 
 /**
@@ -1366,10 +1386,8 @@ internal fun guideSpan(openLine: Int, closeLine: Int): IntRange? =
  * One vertical rule per `{ … }` that spans more than a single line, drawn down the column its own
  * contents are indented to.
  *
- * [activePair] is the block the caret is in, and its rule is drawn a second time in the accent tone.
- * Only that pair's own span is repainted, so a sibling `if`/`else` sharing the same column stays
- * faint everywhere else on the screen — which is what makes the lit rule read as "this is the block
- * you are in" rather than "these two rules happen to overlap".
+ * Every rule uses the same colour. A brighter rule on the caret's block would be a second cursor, and
+ * the cursor is already drawn; the brace underline below is what says where the reader is.
  *
  * The two ends come from the renderer's line metrics, so a pair whose lines fall outside the
  * rendered slice answers null from [lineTopPx] and is not drawn at all — which is the whole clipping
@@ -1385,7 +1403,6 @@ fun BracketGuideLayer(
     charWidthPx: Float,
     layout: TextLayoutResult?,
     lineHeightPx: Float,
-    activePair: IntRange? = null,
     window: CodeWindow = CodeWindow.Full,
     modifier: Modifier = Modifier,
 ) {
@@ -1409,28 +1426,12 @@ fun BracketGuideLayer(
             val top = lineTopPx(layout, source, span.first, window) ?: continue
             val bottom = lineBottomPx(layout, source, span.last, lineHeightPx, window) - lineHeightPx
             drawLine(
-                color = c.guideRule,
+                color = c.indentGuide,
                 start = androidx.compose.ui.geometry.Offset(x, top),
                 end = androidx.compose.ui.geometry.Offset(x, bottom + lineHeightPx),
                 strokeWidth = strokePx,
             )
         }
-        // The active rule, painted over the faint one above. Same geometry, so the lit segment sits
-        // exactly on top of the rule it replaces rather than beside it.
-        val active = activePair ?: return@Canvas
-        val openLine = lineOfOffset(source, active.first)
-        val closeLine = lineOfOffset(source, active.last)
-        val span = guideSpan(openLine, closeLine) ?: return@Canvas
-        val openIndent = indents.getOrElse(openLine - 1) { 0 }
-        val x = guideColumn(openIndent, tabSize) * charWidthPx + halfStroke
-        val top = lineTopPx(layout, source, span.first, window) ?: return@Canvas
-        val bottom = lineBottomPx(layout, source, span.last, lineHeightPx, window) - lineHeightPx
-        drawLine(
-            color = c.amber,
-            start = androidx.compose.ui.geometry.Offset(x, top),
-            end = androidx.compose.ui.geometry.Offset(x, bottom + lineHeightPx),
-            strokeWidth = strokePx,
-        )
     }
 }
 /**
@@ -1450,6 +1451,9 @@ internal fun MatchingBraceLayer(
     layout: TextLayoutResult?,
     window: CodeWindow = CodeWindow.Full,
     modifier: Modifier = Modifier,
+    // A lone bracket with no partner, underlined in red. Null means every bracket the caret sits
+    // beside has its match, so there is nothing to warn about.
+    unmatched: Int? = null,
 ) {
     val c = LocalPageColors.current
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -1458,18 +1462,33 @@ internal fun MatchingBraceLayer(
     val growPx = with(density) { BRACE_UNDERLINE_GROW.toPx() }
 
     androidx.compose.foundation.Canvas(modifier) {
-        val brackets = active ?: return@Canvas
         val textLength = layout?.layoutInput?.text?.length ?: return@Canvas
-        for (offset in intArrayOf(brackets.first, brackets.second)) {
-            val box = braceBox(layout, offset, textLength, window) ?: continue
-            val y = box.bottom + gapPx
-            drawLine(
-                color = c.amber,
-                start = androidx.compose.ui.geometry.Offset(box.left - growPx, y),
-                end = androidx.compose.ui.geometry.Offset(box.right + growPx, y),
-                strokeWidth = strokePx,
-                cap = androidx.compose.ui.graphics.StrokeCap.Round,
-            )
+        val brackets = active
+        if (brackets != null) {
+            for (offset in intArrayOf(brackets.first, brackets.second)) {
+                val box = braceBox(layout, offset, textLength, window) ?: continue
+                val y = box.bottom + gapPx
+                drawLine(
+                    color = c.accent,
+                    start = androidx.compose.ui.geometry.Offset(box.left - growPx, y),
+                    end = androidx.compose.ui.geometry.Offset(box.right + growPx, y),
+                    strokeWidth = strokePx,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                )
+            }
+        }
+        if (unmatched != null) {
+            val box = braceBox(layout, unmatched, textLength, window)
+            if (box != null) {
+                val y = box.bottom + gapPx
+                drawLine(
+                    color = c.error,
+                    start = androidx.compose.ui.geometry.Offset(box.left - growPx, y),
+                    end = androidx.compose.ui.geometry.Offset(box.right + growPx, y),
+                    strokeWidth = strokePx,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                )
+            }
         }
     }
 }

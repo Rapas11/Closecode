@@ -157,13 +157,13 @@ private fun highlightProgramCode(
     bracketCycle: List<Color>,
     initialDepth: Int,
 ): AnnotatedString {
-    val commentStyle = SpanStyle(color = c.comment, fontStyle = FontStyle.Italic)
-    val stringStyle = SpanStyle(color = c.string)
-    val annotationStyle = SpanStyle(color = c.annotation)
-    val keywordStyle = SpanStyle(color = c.keyword, fontWeight = FontWeight.Medium)
-    val functionStyle = SpanStyle(color = c.fn)
-    val typeStyle = SpanStyle(color = c.type)
-    val numberStyle = SpanStyle(color = c.number)
+    val commentStyle = SpanStyle(color = c.text, fontStyle = FontStyle.Italic)
+    val stringStyle = SpanStyle(color = c.codeString)
+    val annotationStyle = SpanStyle(color = c.text)
+    val keywordStyle = SpanStyle(color = c.codeKeyword, fontWeight = FontWeight.Medium)
+    val functionStyle = SpanStyle(color = c.codeFunction)
+    val typeStyle = SpanStyle(color = c.codeType)
+    val numberStyle = SpanStyle(color = c.text)
 
     // Depth carries across lines, because a block does. A counter reset per line gave every line's
     // first bracket the same colour no matter how deep in the file it sat, which is the one thing the
@@ -317,6 +317,54 @@ internal fun bracePairs(source: String): List<IntRange> {
     return pairs.sortedBy { it.first }
 }
 
+/**
+ * Every matched bracket pair in a whole source file — `{ }`, `( )` and `[ ]` — as absolute offset
+ * ranges, sorted by where each pair opens.
+ *
+ * The same scan as [bracePairs] with the same skipping, extended to all three kinds with one stack
+ * of (bracket, offset). A closer only pairs when the innermost open bracket is its own kind, so
+ * `([)]` pairs nothing rather than crossing: a crossed pair would underline two brackets that do
+ * not belong together. This feeds the brace underline only; the indent guides keep reading
+ * [bracePairs], because a guide belongs to a block's indent level, not to a parenthesis.
+ */
+internal fun allBracketPairs(source: String): List<IntRange> {
+    val opens = mutableListOf<Pair<Char, Int>>()
+    val pairs = mutableListOf<IntRange>()
+    var i = 0
+    while (i < source.length) {
+        when (source[i]) {
+            '/' -> when {
+                source.getOrNull(i + 1) == '/' -> {
+                    val end = source.indexOf('\n', i)
+                    i = if (end < 0) source.length else end
+                }
+                source.getOrNull(i + 1) == '*' -> i = endOfBlockComment(source, i)
+                else -> i++
+            }
+            '"' -> i = endOfString(source, i)
+            '\'' -> i = endOfCharLiteral(source, i)
+            '{', '(', '[' -> {
+                opens += source[i] to i
+                i++
+            }
+            '}', ')', ']' -> {
+                val want = when (source[i]) {
+                    '}' -> '{'
+                    ')' -> '('
+                    else -> '['
+                }
+                if (opens.lastOrNull()?.first == want) {
+                    val start = opens.removeAt(opens.size - 1).second
+                    pairs += start..i
+                }
+                i++
+            }
+            else -> i++
+        }
+    }
+    return pairs.sortedBy { it.first }
+}
+
 /** Index just past the block comment opening at [start], or the end of the file if it never closes. */
 private fun endOfBlockComment(source: String, start: Int): Int {
     var i = start + 2
@@ -371,10 +419,10 @@ private fun endOfCharLiteral(source: String, start: Int): Int {
  * comment colour and the tag never closed on screen.
  */
 internal fun highlightMarkup(text: String, c: PageColors): AnnotatedString {
-    val commentStyle = SpanStyle(color = c.comment, fontStyle = FontStyle.Italic)
-    val stringStyle = SpanStyle(color = c.string)
-    val tagStyle = SpanStyle(color = c.keyword, fontWeight = FontWeight.Medium)
-    val attrStyle = SpanStyle(color = c.type)
+    val commentStyle = SpanStyle(color = c.text, fontStyle = FontStyle.Italic)
+    val stringStyle = SpanStyle(color = c.codeString)
+    val tagStyle = SpanStyle(color = c.codeKeyword, fontWeight = FontWeight.Medium)
+    val attrStyle = SpanStyle(color = c.codeType)
     val punctuationStyle = SpanStyle(color = c.mu)
 
     return buildAnnotatedString {
@@ -456,11 +504,11 @@ private fun AnnotatedString.Builder.appendMarkupTag(
  * same class of bug the `//` case above caused.
  */
 internal fun highlightStylesheet(text: String, c: PageColors): AnnotatedString {
-    val commentStyle = SpanStyle(color = c.comment, fontStyle = FontStyle.Italic)
-    val keywordStyle = SpanStyle(color = c.keyword, fontWeight = FontWeight.Medium)
-    val propStyle = SpanStyle(color = c.type)
-    val valueStyle = SpanStyle(color = c.string)
-    val numberStyle = SpanStyle(color = c.number)
+    val commentStyle = SpanStyle(color = c.text, fontStyle = FontStyle.Italic)
+    val keywordStyle = SpanStyle(color = c.codeKeyword, fontWeight = FontWeight.Medium)
+    val propStyle = SpanStyle(color = c.codeType)
+    val valueStyle = SpanStyle(color = c.codeString)
+    val numberStyle = SpanStyle(color = c.text)
 
     return buildAnnotatedString {
         var inComment = false

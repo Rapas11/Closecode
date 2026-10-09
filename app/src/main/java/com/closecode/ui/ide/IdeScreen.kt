@@ -2553,11 +2553,15 @@ formatRequest: Int = 0,
     val indentColumns = remember(code, settings.tabSize) {
         indentColumnsOf(code, settings.tabSize)
     }
-    // The one pair the caret is in, resolved once and read by both the lit guide and the brace
-    // outlines. Sharing the answer is the point: a lit rule beside two unlit boxes would be saying
-    // two different things about where the reader is.
-    val activeBracePair = remember(braceGuides, code, cursor) {
-        activeBraces(braceGuides, code, cursor)
+    // The one pair the caret is in, resolved once and read by the brace underline. Any of the
+    // three bracket kinds counts, and a lone bracket with no partner is reported separately so it
+    // can be underlined in red.
+    val bracketPairsAll = remember(code) { allBracketPairs(code) }
+    val activeBracketPair = remember(bracketPairsAll, code, cursor) {
+        activeBraces(bracketPairsAll, code, cursor)
+    }
+    val unmatchedBracket = remember(bracketPairsAll, code, cursor) {
+        unmatchedBracketAt(code, cursor, bracketPairsAll)
     }
     var quickFixLine by remember { mutableStateOf<Int?>(null) }
     var quickFixIndex by remember { mutableStateOf(0) }
@@ -3205,19 +3209,18 @@ fun formatSelection() {
                             charWidthPx = charWidthPx(codeLayout) ?: 0f,
                             layout = codeLayout,
                             lineHeightPx = lineHeightPx,
-                            // The one block the caret is in, lit in the accent tone. The rules were
-                            // already drawn faint above; this repaints just that one span.
-                            activePair = activeBracePair?.let { it.first..it.second },
                             window = codeWindow,
                             modifier = Modifier.matchParentSize(),
                         )
-                        // A box around each of the active pair's braces, drawn after the guides so
-                        // the outline sits on top of the glyph rather than under it.
+                        // A line under each of the active pair's braces, drawn after the guides so
+                        // it sits on top of the glyph rather than under it — plus a red one under a
+                        // lone bracket, so an unclosed opener says so where it stands.
                         MatchingBraceLayer(
-                            active = activeBracePair,
+                            active = activeBracketPair,
                             layout = codeLayout,
                             window = codeWindow,
                             modifier = Modifier.matchParentSize(),
+                            unmatched = unmatchedBracket,
                         )
                         // One grey line where the file's first line would be, for a buffer with
                         // nothing in it — a new file, a file we cannot read, or the editor with no
@@ -4193,7 +4196,7 @@ private fun BoxScope.EditorScrollbar(
                             .width(ERROR_TICK_WIDTH)
                             .height(ERROR_TICK_HEIGHT)
                             .offset { IntOffset(0, at.toInt()) }
-                            .background(c.red, RoundedCornerShape(1.dp)),
+                            .background(c.error, RoundedCornerShape(1.dp)),
                     )
                 }
             }

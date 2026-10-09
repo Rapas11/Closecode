@@ -315,14 +315,70 @@ class GuideGeometryTest {
     }
 
     @Test
-    fun theBoxesAndTheLitRuleAlwaysAgree() {
-        // Both features read this one answer, so the pair the rule lights is the pair the boxes
-        // wrap. There is no path where one says "you are here" and the other says otherwise.
-        val caret = nested.indexOf("y()") + 1
+    fun theUnderlineAndTheEnclosingBlockAgree() {
+        // The underline reads the same answer nothing else reads anymore: the guides are one
+        // colour now, so the pair the underline marks is the pair the caret is beside or inside.
+        // Fed the full pair set, as production does — a brace-only list with a paren-adjacent
+        // caret cannot occur outside this test.
+        val source = "fun f() {\n    g(x)\n}\n"
+        val pairs = allBracketPairs(source)
+        val caret = source.indexOf('x')
         assertEquals(
-            activeBraces(nestedPairs, nested, caret),
-            enclosingPair(nestedPairs, caret)?.let { it.first to it.last },
+            activeBraces(pairs, source, caret),
+            enclosingPair(pairs, caret)?.let { it.first to it.last },
         )
+    }
+
+    @Test
+    fun aCaretInsideParenthesesUnderlinesTheParentheses() {
+        // The pair is the innermost of all three kinds, not just braces: the reader is inside the
+        // call, not merely inside the function around it.
+        val source = "fun f() {\n    g(x)\n}\n"
+        val pairs = allBracketPairs(source)
+        val caret = source.indexOf('x')
+        val paren = pairs.first { it.first < caret && caret <= it.last && source[it.first] == '(' }
+        assertEquals(paren.first to paren.last, activeBraces(pairs, source, caret))
+    }
+
+    @Test
+    fun aCaretBesideAClosingParenUnderlinesItsPair() {
+        val source = "val x = f(a)\n"
+        val pairs = allBracketPairs(source)
+        val paren = pairs.single()
+        assertEquals(paren.first to paren.last, activeBraces(pairs, source, paren.last + 1))
+    }
+
+    @Test
+    fun aLoneOpenerIsReportedUnmatched() {
+        // No partner, so the underline has nothing to join — the red mark goes on this offset.
+        val source = "fun f() {\n    val x = 1\n"
+        val pairs = allBracketPairs(source)
+        val lone = source.indexOf('{')
+        assertEquals(lone, unmatchedBracketAt(source, lone + 1, pairs))
+    }
+
+    @Test
+    fun aLoneCloserIsReportedUnmatched() {
+        val source = "val x = 1)\n"
+        val pairs = allBracketPairs(source)
+        assertTrue(pairs.isEmpty())
+        assertEquals(source.indexOf(')'), unmatchedBracketAt(source, source.indexOf(')'), pairs))
+    }
+
+    @Test
+    fun aMatchedBracketIsNeverReportedUnmatched() {
+        val source = "fun f() {\n    y()\n}\n"
+        val pairs = allBracketPairs(source)
+        val brace = source.indexOf('{')
+        assertNull(unmatchedBracketAt(source, brace + 1, pairs))
+        assertNull(unmatchedBracketAt(source, brace, pairs))
+    }
+
+    @Test
+    fun aCaretBesideNoBracketReportsNothingUnmatched() {
+        val source = "fun f() {\n    y()\n}\n"
+        val pairs = allBracketPairs(source)
+        assertNull(unmatchedBracketAt(source, source.indexOf('y'), pairs))
     }
 
     private fun bracePairs(source: String): List<IntRange> = com.closecode.ui.ide.bracePairs(source)
