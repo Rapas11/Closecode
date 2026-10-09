@@ -890,6 +890,7 @@ internal fun IdeScreen(
                 onSave = { saveActiveFile() },
                 onUndo = { undoRequest++ },
                 onRedo = { redoRequest++ },
+                onTerminal = { activePanel = "Terminal" },
                 onRun = {
                     // Spec 7: running is blocked while the project has compile errors, and jumps
                     // to the problem sheet instead.
@@ -1068,8 +1069,6 @@ internal fun IdeScreen(
                                 )
 
                                 IdeEditorArea(
-                                    explorerOpen = explorerOpen,
-                                    onToggleExplorer = { explorerOpen = !explorerOpen },
                                     modifier = Modifier.weight(1f),
                                     tabs = tabs,
                                     active = active,
@@ -1085,6 +1084,18 @@ internal fun IdeScreen(
                                             active = tabs.lastOrNull()?.name.orEmpty()
                                             selectedPath = tabs.lastOrNull()?.path
                                         }
+                                    },
+                                    onCloseOthers = { name ->
+                                        tabs = tabs.filter { it.name == name }
+                                        if (active != name) {
+                                            active = name
+                                            selectedPath = tabs.firstOrNull()?.path
+                                        }
+                                    },
+                                    onCloseAll = {
+                                        tabs = emptyList()
+                                        active = ""
+                                        selectedPath = null
                                     },
                                     onBufferChange = { text ->
                                         liveBuffers[active] = text
@@ -1259,10 +1270,6 @@ internal fun IdeScreen(
                 // the theme switch live in the bottom More sheet, so there is one home for each
                 // row rather than two menus that overlap.
                 actions = listOf(
-                    OverflowAction("Terminal", "▤") {
-                        activePanel = "Terminal"
-                        menuOpen = false
-                    },
                     OverflowAction("Search and commands", "⌕") {
                         searchOpen = true
                         menuOpen = false
@@ -1440,6 +1447,7 @@ private fun IdeTopBar(
     onSave: () -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
+    onTerminal: () -> Unit,
     onRun: () -> Unit,
     onMore: () -> Unit,
     menuActive: Boolean,
@@ -1449,93 +1457,102 @@ private fun IdeTopBar(
     Row(
         Modifier
             .fillMaxWidth()
+            .height(52.dp)
             .background(c.panel)
             .drawBehind {
                 drawLine(
-                    color = c.ln,
+                    color = c.divider,
                     start = androidx.compose.ui.geometry.Offset(0f, size.height - 0.5f),
                     end = androidx.compose.ui.geometry.Offset(size.width, size.height - 0.5f),
                     strokeWidth = 1f,
                 )
             }
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        // Spec 4.1 logo tile: 28 x 28, radius 8, light fill with a 1 dp border and a dark `</>`.
-        Box(
-            Modifier
-                .size(28.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(8.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            CcIcon(CcIcons.Logo, Color(0xFF12151C), 16.dp)
-        }
-        // The drawer opens from here as well as from the tab strip's chevron. Two doors to one
-        // drawer is deliberate: this one sits where a thumb already is at the top of the screen,
-        // and the chevron stays where the eye already expects it beside the files.
+        // The one door into the drawer. No logo tile beside it: the bar shows the project name,
+        // never the file name and never a file path, and nothing else competes for the left edge.
         HeaderIconButton(
             icon = CcIcons.Drawer,
-            label = "Files",
-            tint = c.tx,
+            label = "Menu",
+            tint = c.iconTint,
             onClick = onDrawer,
         )
 
-        // The project name takes the slot the product word used to hold, 16 sp bold, and takes the
-        // free width so the actions sit against the right edge.
+        // The project name fills the free width so the actions sit against the right edge.
         Text(
             text = projectName,
-            color = c.tx,
-            fontSize = 16.sp,
+            color = c.brightText,
+            fontSize = 14.sp,
             fontFamily = Sans,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.32).sp,
+            fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
 
-        // Spec 4.1: Save shows accent-soft with an accent icon while the file has unsaved changes.
-        HeaderIconButton(
-            icon = CcIcons.Save,
-            label = "Save",
-            tint = if (dirty) c.ac else c.mu,
-            background = if (dirty) c.selection else Color.Transparent,
-            onClick = onSave,
-        )
         HeaderIconButton(
             icon = CcIcons.Undo,
             label = "Undo",
-            tint = if (canUndo) c.mu else c.mu.copy(alpha = 0.35f),
+            tint = if (canUndo) c.iconTint else c.iconTint.copy(alpha = 0.35f),
             enabled = canUndo,
             onClick = onUndo,
         )
         HeaderIconButton(
             icon = CcIcons.Redo,
             label = "Redo",
-            tint = if (canRedo) c.mu else c.mu.copy(alpha = 0.35f),
+            tint = if (canRedo) c.iconTint else c.iconTint.copy(alpha = 0.35f),
             enabled = canRedo,
             onClick = onRedo,
         )
-        // Run is the one filled button in the header: the accent fill and the solid play glyph
-        // carry it, so it needs no words and takes the same 34 x 34 slot as its neighbours.
+        // Save carries no tint change: a yellow dot at its top right says unsaved, and nothing
+        // else on the button moves.
+        Box(
+            Modifier.size(34.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            HeaderIconButton(
+                icon = CcIcons.Save,
+                label = "Save",
+                tint = c.iconTint,
+                onClick = onSave,
+            )
+            if (dirty) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 4.dp, end = 4.dp)
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(c.warnText),
+                )
+            }
+        }
+        HeaderIconButton(
+            icon = CcIcons.Terminal,
+            label = "Terminal",
+            tint = c.iconTint,
+            onClick = onTerminal,
+        )
+        // Run is the one filled button in the header: a blue fill with a white play glyph.
         Box(
             Modifier
                 .size(34.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(c.ac)
+                .clip(RoundedCornerShape(8.dp))
+                .background(c.runFill)
                 .clickable(onClick = onRun)
                 .androidxSemantics("Run"),
             contentAlignment = Alignment.Center,
         ) {
-            CcIcon(CcIcons.Play, c.af, 18.dp)
+            // White by spec, not a token: the run fill is the same blue on both themes, so the
+            // label that reads on it is the same white on both.
+            CcIcon(CcIcons.Play, Color.White, 19.dp)
         }
         HeaderIconButton(
             icon = CcIcons.More,
             label = "More",
-            tint = if (menuActive) c.tx else c.mu,
+            tint = if (menuActive) c.tx else c.iconTint,
             background = if (menuActive) c.panel2 else Color.Transparent,
             onClick = onMore,
         )
@@ -1543,7 +1560,7 @@ private fun IdeTopBar(
 }
 
 /**
- * One 34 x 34 header button holding an 18 dp icon. [keepFocusClick] is not used here because the
+ * One 34 x 34 header button holding a 19 dp icon. [keepFocusClick] is not used here because the
  * header sits outside the editor, but the icons come from [CcIcons] so they match the prototype's
  * shapes exactly instead of depending on font glyphs.
  */
@@ -1565,7 +1582,7 @@ private fun HeaderIconButton(
             .androidxSemantics(label),
         contentAlignment = Alignment.Center,
     ) {
-        CcIcon(icon, tint, 18.dp)
+        CcIcon(icon, tint, 19.dp)
     }
 }
 
@@ -2057,44 +2074,9 @@ private fun RowScope.ExplorerTab(label: String, selected: Boolean, onClick: () -
 }
 
 /**
- * Spec 6.1 file icon tile: 22 x 22, radius 7, an 11 sp bold mono letter. Java is "J", Kotlin "K"
- * and XML "<>", each on its own tint from the spec's icon colours.
+ * Section labels elsewhere in the UI still use file-kind tiles; the tab strip no longer does.
+ * Tabs are plain text with an unsaved dot, so there is nothing here to keep in sync with them.
  */
-@Composable
-private fun FileKindTile(kind: FileKind) {
-    val c = LocalPageColors.current
-    val glyph = when (kind) {
-        FileKind.Kotlin -> "K"
-        FileKind.Xml -> "<>"
-        else -> kindGlyph(kind).ifBlank { "·" }
-    }
-    val background = when (kind) {
-        FileKind.Kotlin -> c.kotlinIconBg
-        FileKind.Xml -> c.xmlIconBg
-        else -> c.stackBadge
-    }
-    val foreground = when (kind) {
-        FileKind.Kotlin -> c.kotlinIconTx
-        FileKind.Xml -> c.xmlIconTx
-        else -> c.mu
-    }
-    Box(
-        Modifier
-            .size(22.dp)
-            .clip(RoundedCornerShape(7.dp))
-            .background(background),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = glyph,
-            color = foreground,
-            fontSize = 11.sp,
-            fontFamily = Mono,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-        )
-    }
-}
 
 @Composable
 internal fun SectionLabel(text: String) {
@@ -2223,16 +2205,19 @@ private fun TreeRow(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun IdeEditorArea(
     tabs: List<ProjectFile>,
     active: String,
     language: String,
     contentFor: (String) -> String,
-    explorerOpen: Boolean,
-    onToggleExplorer: () -> Unit,
     onSelectTab: (String) -> Unit,
     onCloseTab: (String) -> Unit,
+    // A tab's long-press menu closes more than one file at a time, so these live beside the
+    // single close rather than inside it.
+    onCloseOthers: (String) -> Unit = {},
+    onCloseAll: () -> Unit = {},
     onSuggestionsOpen: (Boolean) -> Unit = {},
     // Whether the tool row is on screen. It is the only way to reach tab, brace, quote and
     // comment on a soft keyboard, so it follows the keyboard rather than a timer.
@@ -2289,17 +2274,25 @@ formatRequest: Int = 0,
     // file the user never edited. The editor used to seed one and let `LaunchedEffect(active)`
     // below throw it away a frame later, which is why an empty file flickered a Kotlin header.
     val fromDisk = remember(active, contentFor) { contentFor(active) }
+    // Where each file was left: caret offset and both scroll positions, keyed by file name in
+    // plain maps. Plain, because reading them seeds the field below during composition, and
+    // mutating snapshot state mid-composition would schedule another one.
+    val caretByFile = remember { mutableMapOf<String, Int>() }
+    val scrollByFile = remember { mutableMapOf<String, Pair<Int, Int>>() }
     var fieldValue by remember(active, language, sourceRevision) {
         mutableStateOf(
             TextFieldValue(
                 text = fromDisk,
-                // Opens on the last line that has code, not on the empty line a trailing newline
-                // leaves behind, so the first thing typed lands on the line the user can see —
-                // unless a caller asked for a specific spot, which only a block insert does.
-                selection = if (caretRequest >= 0) {
-                    TextRange(caretRequest.coerceIn(0, fromDisk.length))
-                } else {
-                    TextRange(caretOffsetAtEndOfCode(fromDisk))
+                // Opens where the file was left, when it was left somewhere: tapping back and
+                // forth between two files no longer drops the caret at the end of the code each
+                // time. Otherwise the last line with code, unless a caller asked for a spot.
+                selection = run {
+                    val saved = caretByFile.remove(active)
+                    when {
+                        saved != null -> TextRange(saved.coerceIn(0, fromDisk.length))
+                        caretRequest >= 0 -> TextRange(caretRequest.coerceIn(0, fromDisk.length))
+                        else -> TextRange(caretOffsetAtEndOfCode(fromDisk))
+                    }
                 },
             ),
         )
@@ -2373,6 +2366,33 @@ formatRequest: Int = 0,
     }
     val code = fieldValue.text
     val cursor = fieldValue.selection.start.coerceIn(0, code.length)
+    // Leaving a tab records where it was left; coming back restores caret and both scrolls, so
+    // tapping between two files keeps each file's place. The drawer opening a file does not go
+    // through here — that path never had a place to keep, and still doesn't.
+    val tabListState = rememberLazyListState()
+    var tabMenuFor by remember { mutableStateOf<String?>(null) }
+    fun forgetPlace(name: String) {
+        caretByFile.remove(name)
+        scrollByFile.remove(name)
+    }
+    val selectTabKeepingPlace = { name: String ->
+        caretByFile[active] = cursor
+        scrollByFile[active] = codeScroll.value to codeHScroll.value
+        onSelectTab(name)
+    }
+    LaunchedEffect(active, tabs.size) {
+        // The active tab scrolls into view; a file opened off the right edge would otherwise sit
+        // there selected with no visible mark of it.
+        val index = tabs.indexOfFirst { it.name == active }
+        if (index >= 0) tabListState.animateScrollToItem(index)
+        // Scroll comes back a frame after the caret because it needs the laid-out column, while
+        // the caret is seeded into the field above before first draw.
+        val saved = scrollByFile.remove(active)
+        if (saved != null) {
+            codeScroll.scrollTo(saved.first)
+            codeHScroll.scrollTo(saved.second)
+        }
+    }
     // Report the buffer for every mutation path, not just typing: quick fixes, suggestion
     // acceptance and tab switches all rewrite the field without going through onValueChange.
     // The parent needs this to save before Preview and to count diagnostics project wide.
@@ -2952,21 +2972,21 @@ fun formatSelection() {
             }
         }
 
-        // Spec 6.1: the file explorer button sits at the left of the strip, outside the scrolling tabs,
-        // so it never scrolls away with them and stays the one way into the drawer on a phone.
+        // The tab strip holds only tabs. The drawer opens from the top bar's Menu, so the
+        // chevron cell that used to sit here duplicated that door and ate 44 dp of file names.
         Row(
             Modifier
                 .fillMaxWidth()
                 // The strip needs a bounded height. A Row inside a Column hands its children the
-                // height that is still free, so the chevron's fillMaxHeight would otherwise stretch
-                // this strip over the whole editor and squeeze the code area out of existence.
+                // height that is still free, so an unbounded child would otherwise stretch this
+                // strip over the whole editor and squeeze the code area out of existence.
                 .height(TAB_STRIP_HEIGHT)
-                .background(c.panel)
+                .background(c.editorBg)
                 // A single 1 dp bottom border. The strip is not a box, and the tabs are not boxes.
                 .drawBehind {
                     val y = size.height - 0.5f
                     drawLine(
-                        color = c.ln,
+                        color = c.divider,
                         start = androidx.compose.ui.geometry.Offset(0f, y),
                         end = androidx.compose.ui.geometry.Offset(size.width, y),
                         strokeWidth = 1f,
@@ -2974,30 +2994,6 @@ fun formatSelection() {
                 },
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                Modifier
-                    .width(44.dp)
-                    .fillMaxHeight()
-                    .drawBehind {
-                        val x = size.width - 0.5f
-                        drawLine(
-                            color = c.ln,
-                            start = androidx.compose.ui.geometry.Offset(x, 0f),
-                            end = androidx.compose.ui.geometry.Offset(x, size.height),
-                            strokeWidth = 1f,
-                        )
-                    }
-                    .clickable(onClick = onToggleExplorer),
-contentAlignment = Alignment.Center,
-            ) {
-                CcIcon(
-                    CcIcons.Chevron,
-                    c.mu,
-                    18.dp,
-                    // Spec 6.1: the chevron turns around while the drawer is open.
-                    Modifier.graphicsLayer { rotationZ = if (explorerOpen) 180f else 0f },
-                )
-            }
             LazyRow(
                 Modifier
                     .weight(1f)
@@ -3008,8 +3004,8 @@ contentAlignment = Alignment.Center,
                     .drawWithCache {
                         val fadeWidth = minOf(TAB_EDGE_FADE_WIDTH.toPx(), size.width)
                         val brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
-                            0f to c.bg.copy(alpha = 0f),
-                            1f to c.bg,
+                            0f to c.editorBg.copy(alpha = 0f),
+                            1f to c.editorBg,
                             startX = size.width - fadeWidth,
                             endX = size.width,
                         )
@@ -3022,79 +3018,92 @@ contentAlignment = Alignment.Center,
                             )
                         }
                     },
-                // Spec 6.1: 8 dp around the tabs, 8 dp between them.
+                state = tabListState,
+                // Tabs breathe: 12 dp on each side, nothing above or below, in a 34 dp strip.
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    start = 10.dp,
-                    end = 10.dp,
-                    top = 8.dp,
-                    bottom = 8.dp,
+                    start = 12.dp,
+                    end = 12.dp,
                 ),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 itemsIndexed(tabs, key = { _, t -> "tab-${t.name}" }) { _, tab ->
                     val isActive = tab.name == active
-                    // Spec 6.1: the unsaved dot shows only while the buffer differs from last saved.
+                    // The unsaved dot shows only while the buffer differs from last saved.
                     val dirty = dirtyOf(tab.name)
                     val tabDensity = androidx.compose.ui.platform.LocalDensity.current
-                    Row(
-                        Modifier
-                            .height(TAB_HEIGHT)
-                            // The active tab is marked by a rule under its own name rather than by a
-                            // filled pill behind it. A pill is a second block on a row that already
-                            // has a border under it, and it moved the name off the baseline the rest
-                            // of the strip uses; a rule reads as "this one" from the shape alone and
-                            // agrees with the one under the open file's editor.
-                            .drawBehind {
-                                if (!isActive) return@drawBehind
-                                val y = size.height - 1f
-                                drawLine(
-                                    color = c.ac,
-                                    start = androidx.compose.ui.geometry.Offset(0f, y),
-                                    end = androidx.compose.ui.geometry.Offset(size.width, y),
-                                    strokeWidth = with(tabDensity) { TAB_UNDERLINE_THICKNESS.toPx() },
+                    Box {
+                        Row(
+                            Modifier
+                                .height(TAB_HEIGHT)
+                                .drawBehind {
+                                    if (!isActive) return@drawBehind
+                                    val y = size.height - 1f
+                                    drawLine(
+                                        color = c.accent,
+                                        start = androidx.compose.ui.geometry.Offset(0f, y),
+                                        end = androidx.compose.ui.geometry.Offset(size.width, y),
+                                        strokeWidth = with(tabDensity) { TAB_UNDERLINE_THICKNESS.toPx() },
+                                    )
+                                }
+                                .combinedClickable(
+                                    onClick = { selectTabKeepingPlace(tab.name) },
+                                    onLongClick = { tabMenuFor = tab.name },
+                                )
+                                .padding(horizontal = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            // The dot comes first: it marks the tab, and a mark reads before a name.
+                            if (dirty) {
+                                Box(
+                                    Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(c.warnText),
                                 )
                             }
-                            .clickable { onSelectTab(tab.name) }
-                            .padding(horizontal = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        FileKindTile(tab.kind)
-                        Text(
-                            text = tab.name,
-                            color = if (isActive) c.tx else c.mu,
-                            fontSize = 14.sp,
-                            fontFamily = Sans,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.widthIn(max = 150.dp),
-                        )
-                        if (dirty) {
-                            Box(
-                                Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(c.red),
+                            Text(
+                                text = tab.name,
+                                color = if (isActive) c.brightText else c.hintText,
+                                fontSize = 12.sp,
+                                fontFamily = Sans,
+                                fontWeight = FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 150.dp),
                             )
                         }
-                        // Spec 6.1: the last remaining tab cannot be closed.
-                        if (tabs.size > 1) {
-                            Box(
-                                Modifier
-                                    .size(22.dp)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable { onCloseTab(tab.name) },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text = "×",
-                                    color = c.mu,
-                                    fontSize = 15.sp,
-                                    fontFamily = Sans,
-                                )
-                            }
+                        // No close button on the tab itself. A long press is the deliberate gesture;
+                        // a visible × is a mis-tap away from closing the file being read.
+                        DropdownMenu(
+                            expanded = tabMenuFor == tab.name,
+                            onDismissRequest = { tabMenuFor = null },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text("Close", fontFamily = Sans) },
+                                onClick = {
+                                    tabMenuFor = null
+                                    forgetPlace(tab.name)
+                                    onCloseTab(tab.name)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Close others", fontFamily = Sans) },
+                                onClick = {
+                                    tabMenuFor = null
+                                    tabs.forEach { forgetPlace(it.name) }
+                                    onCloseOthers(tab.name)
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Close all", fontFamily = Sans) },
+                                onClick = {
+                                    tabMenuFor = null
+                                    tabs.forEach { forgetPlace(it.name) }
+                                    onCloseAll()
+                                },
+                            )
                         }
                     }
                 }
@@ -4442,23 +4451,23 @@ private val POPUP_GAP = 6.dp
  * left of the tab strip and a second entry point duplicated it.
  */
 enum class HeaderItem {
-    DRAWER,
-    LOGO,
+    MENU,
     PROJECT_NAME,
-    SAVE,
     UNDO,
     REDO,
+    SAVE,
+    TERMINAL,
     RUN,
     OVERFLOW,
 }
 
 internal val HeaderItems: List<HeaderItem> = listOf(
-    HeaderItem.DRAWER,
-    HeaderItem.LOGO,
+    HeaderItem.MENU,
     HeaderItem.PROJECT_NAME,
-    HeaderItem.SAVE,
     HeaderItem.UNDO,
     HeaderItem.REDO,
+    HeaderItem.SAVE,
+    HeaderItem.TERMINAL,
     HeaderItem.RUN,
     HeaderItem.OVERFLOW,
 )
@@ -4493,11 +4502,12 @@ private const val UNDO_HISTORY_LIMIT = 100
 internal const val TreeListHeaderItems = 2
 
 /**
- * Height of the file tab strip. It has to be stated rather than wrapped around the tabs, because
- * the explorer cell stretches to the full strip height and a Row in a Column would otherwise hand
- * it every pixel the editor had left.
+ * Height of the file tab strip, 34 dp. It has to be stated rather than wrapped around the tabs,
+ * because a Row inside a Column hands its children the height that is still free, so an unbounded
+ * child would otherwise stretch this strip over the whole editor and squeeze the code area out of
+ * existence.
  */
-internal val TAB_STRIP_HEIGHT = 50.dp
+internal val TAB_STRIP_HEIGHT = 34.dp
 
 /** Spec 6.1: the tab's own height inside the strip. */
 internal val TAB_HEIGHT = 34.dp
@@ -4512,13 +4522,13 @@ internal val TAB_HEIGHT = 34.dp
 internal val TAB_UNDERLINE_THICKNESS = 2.dp
 
 /**
- * How wide the fade over the tab strip's overflowing edge is.
+ * How wide the fade over the tab strip's overflowing edge is, 36 dp.
  *
  * Tabs used to stop dead at the panel's edge, so a file name was cut in half mid-letter with nothing
  * to say there was more. A fade says "there is more over there" without a scrollbar or a chevron to
  * take the eye, and costs nothing to draw.
  */
-internal val TAB_EDGE_FADE_WIDTH = 44.dp
+internal val TAB_EDGE_FADE_WIDTH = 36.dp
 
 /** Exposed for the geometry tests: the spec's 53 dp row, not the 46 dp that clipped the package. */
 internal val POPUP_ROW_HEIGHT_FOR_TEST = POPUP_ROW_HEIGHT

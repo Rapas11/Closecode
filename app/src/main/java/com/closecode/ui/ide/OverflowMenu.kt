@@ -33,13 +33,12 @@ data class OverflowAction(
  * The rows the header's overflow draws, in order. Kept as data so a unit test can pin them without
  * rendering anything.
  *
- * Terminal leads because it used to hold a header button and now needs the one home it lost it
- * from; the remaining two act on the file that is open, which is why they sit under the file's own
- * header. The rows that leave the editor — settings, the theme switch — live in the bottom More
- * sheet instead, so every row has exactly one home rather than two menus that overlap.
+ * Both rows act on the file that is open, which is why they sit under the file's own header. Search
+ * moved here off the top bar, and the rows that leave the editor — settings, the theme switch —
+ * live in the bottom More sheet instead, so every row has exactly one home rather than two menus
+ * that overlap.
  */
 internal val OverflowLabels = listOf(
-    "Terminal",
     "Search and commands",
     "Format file",
 )

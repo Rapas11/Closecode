@@ -193,10 +193,10 @@ class ForgeUiSpecTest {
     // -- menus ---------------------------------------------------------------------
 
     @Test
-    fun theHeaderOverflowOffersTheRowsAboutTheOpenFilePlusTheTerminal() {
-        // Terminal leads because it left the header and needed the one home it lost from. The other
-        // two act on the file that is open.
-        assertEquals(listOf("Terminal", "Search and commands", "Format file"), OverflowLabels)
+    fun theHeaderOverflowOffersOnlyTheRowsAboutTheOpenFile() {
+        // Terminal holds a header button again, so the overflow keeps only the two rows that act
+        // on the file that is open.
+        assertEquals(listOf("Search and commands", "Format file"), OverflowLabels)
     }
 
     @Test
@@ -471,17 +471,17 @@ class ForgeUiSpecTest {
 
     @Test
     fun theHeaderHoldsExactlyTheSpecItemsInOrder() {
-        // Two doors open the drawer: the header's own button, because a thumb already rests at the
-        // top of the screen, and the tab strip's chevron, because that is where the eye already
-        // expects it beside the files. The logo is not a button at all — it is decoration.
+        // The bar shows the project name and eight items, nothing else: the logo tile is gone, and
+        // the terminal is back between Save and Run. Asserted as an exact list, so adding any
+        // button back fails here.
         assertEquals(
             listOf(
-                HeaderItem.DRAWER,
-                HeaderItem.LOGO,
+                HeaderItem.MENU,
                 HeaderItem.PROJECT_NAME,
-                HeaderItem.SAVE,
                 HeaderItem.UNDO,
                 HeaderItem.REDO,
+                HeaderItem.SAVE,
+                HeaderItem.TERMINAL,
                 HeaderItem.RUN,
                 HeaderItem.OVERFLOW,
             ),
@@ -490,22 +490,19 @@ class ForgeUiSpecTest {
     }
 
     @Test
-    fun theHeaderHasNoMenuAndNoFormatButton() {
-        // Spec 4.1: no menu button and no Format button in the header. Format lives in the command
-        // palette and the overflow menu instead. Asserted as an exact list, so adding any button
-        // back fails here.
+    fun theHeaderHasNoFormatButton() {
+        // No Format button in the header. Format lives in the command palette, the overflow menu
+        // and the selection toolbar instead. Asserted as an exact list, so adding any button back
+        // fails here.
         assertEquals(8, HeaderItems.size)
         assertEquals(HeaderItems.distinct(), HeaderItems)
     }
 
     @Test
-    fun theTerminalMovedFromTheHeaderToTheOverflow() {
-        // Terminal no longer holds a header button; it lives in the overflow, which is still at the
-        // top of the screen, so it stays one tap away.
-        // Terminal is no longer an enum constant at all, so the assertion is on the name: a header button
-        // coming back under that identity would have to add the constant, and this fails first.
-        assertTrue(HeaderItems.none { it.name == "TERMINAL" })
-        assertTrue("Terminal" in OverflowLabels)
+    fun theTerminalHoldsAHeaderButtonAgain() {
+        // Terminal is back in the top bar between Save and Run, so it leaves the overflow alone.
+        assertTrue(HeaderItems.contains(HeaderItem.TERMINAL))
+        assertTrue("Terminal" !in OverflowLabels)
         assertTrue("Terminal" in ToolPanels)
     }
 
@@ -519,11 +516,12 @@ class ForgeUiSpecTest {
 
     @Test
     fun theTabStripHasABoundedHeight() {
-        // The explorer cell stretches to the full strip height. A Row in a Column hands its children
-        // all the height left over, so without a stated strip height that cell swallowed the editor:
+        // A Row inside a Column hands its children the height that is still free, so without a
+        // stated strip height an unbounded child would stretch this strip over the whole editor:
         // the code area collapsed and the tabs floated in the middle of the screen.
-        assertEquals(50, TAB_STRIP_HEIGHT.value.toInt())
+        assertEquals(34, TAB_STRIP_HEIGHT.value.toInt())
         assertEquals(34, TAB_HEIGHT.value.toInt())
+        assertEquals(36, TAB_EDGE_FADE_WIDTH.value.toInt())
     }
 
 
