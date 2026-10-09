@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -25,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
@@ -95,26 +97,46 @@ val CodeLeftInset = 0.dp
 val CodeColumnStart = GutterWidth + CodeLeftInset
 
 /**
- * The marks stacked at the gutter's left edge, in the order they are drawn.
- *
- * [GutterBarWidth] is the diagnostic bar: a thin red or amber rule hugging the left edge of a line
- * with a problem. It is a bar and not the round dot the prototype had because a dot in a column of
- * line numbers reads as another digit at a glance, and a bar cannot be mistaken for anything.
+ * What a version-control comparison says about one line. The comparison itself arrives in a later
+ * phase; this type is the shape the gutter already draws, so that phase feeds data rather than
+ * redesigning the row.
  */
-val GutterBarWidth = 3.dp
-val GutterBarLeft = 0.dp
-val GutterBarTop = 4.dp
+enum class GitMark {
+    Added,
+    Modified,
+    Deleted,
+}
 
 /**
- * The quick-fix bulb's slot: [GutterBulbLeft]..+[GutterBulbWidth], vertically centred on its row.
+ * The marks stacked at the gutter's left edge, in the order they are drawn.
  *
- * A 15 dp glyph is below the 48 dp touch target Android asks for, so [GutterBulbTouchSlop] widens
- * what a finger has to hit without widening what the eye sees — the same trick the scrollbar uses.
+ * [GutterBarWidth] is the diagnostic bar: a 2 dp red rule on lines with an error, next to the git
+ * marker and never over it. It is a bar and not a dot because a dot in a column of line numbers
+ * reads as another digit at a glance, and a bar cannot be mistaken for anything.
  */
-val GutterBulbWidth = 15.dp
-val GutterBulbHeight = 15.dp
+val GutterBarWidth = 2.dp
+val GutterBarLeft = 4.dp
+
+/**
+ * The quick-fix bulb's slot: 6 to 24 dp, an 18 dp tile with a 14 dp glyph on it.
+ *
+ * The tile is smaller than a finger, so the tap area is 36 by 20 dp centred on the slot — the same
+ * trick the scrollbar uses, where what the eye sees stays small and what a thumb may hit does not.
+ */
+val GutterBulbSize = 18.dp
 val GutterBulbLeft = 6.dp
-val GutterBulbTouchSlop = 28.dp
+val GutterBulbIcon = 14.dp
+val GutterBulbTapWidth = 36.dp
+val GutterBulbTapHeight = 20.dp
+
+/** The git marker's slot: 0 to 3 dp, with a 1 dp inset top and bottom. */
+val GutterGitWidth = 3.dp
+val GutterGitInset = 1.dp
+
+/** The fold arrow's slot: 41 to 53 dp. The tap area is 32 dp wide and the full row tall. */
+val GutterFoldLeft = 41.dp
+val GutterFoldSize = 12.dp
+val GutterFoldTapWidth = 32.dp
 
 /** Width reserved for the status dot and the line number. */
 val NumberColumnWidth = GutterWidth
@@ -531,12 +553,20 @@ fun LineNumberLayer(
     layout: TextLayoutResult? = null,
     // Spec 6.3: the first import line carries a small "▸" affordance at the right of its row.
     foldLine: Int = 0,
-    onFoldTap: () -> Unit = {},
+    // Every line that shows a fold chevron, and the subset currently folded. The behaviour arrives
+    // in a later phase; the slot, the glyph and the tap area are drawn now.
+    foldableLines: Set<Int> = emptySet(),
+    foldedLines: Set<Int> = emptySet(),
+    onFoldTap: (Int) -> Unit = {},
     // The one row whose quick-fix bulb is drawn, and what tapping it does. Null draws none. The bulb
     // used to float over the code a row above the caret; it belongs in the margin, with the other
     // marks that describe the line rather than on top of the line's text.
     bulbLine: Int? = null,
     onBulbTap: (() -> Unit)? = null,
+    // The version-control marks for this file, by 1-based line. Empty until the comparison
+    // that computes them arrives; the gutter draws whatever it is given, so that phase feeds data
+    // rather than redesigning the row.
+    gitMarks: Map<Int, GitMark> = emptyMap(),
     // Read here rather than at the call site on purpose: a scroll then recomposes only this layer,
     // not the whole editor around it. Null means the caller does not scroll, so compose every row.
     scrollState: ScrollState? = null,
@@ -589,48 +619,97 @@ fun LineNumberLayer(
                     // the same row, so the highlight reads as one band from x = 0.
                     .background(if (onCaret) c.activeLineBg else Color.Transparent),
             ) {
-                // The diagnostic bar. Every mark below is placed with `align(TopStart)` and its own
-                // padding rather than `Modifier.offset` on a centred child, because an offset on a
-                // centred child is measured from where centring put it — which is why the old dot
-                // drifted onto the line number from line 100 up instead of sitting at the edge where
-                // it was asked to sit.
-                if (errored || warned) {
+                // Every mark below is placed with `align(TopStart)` and its own padding rather than
+                // `Modifier.offset` on a centred child, because an offset on a centred child is
+                // measured from where centring put it — which is why the old dot drifted onto the
+                // line number from line 100 up instead of sitting at the edge where it was asked
+                // to sit. Each owns a fixed slot, so numbers never shift when an icon appears.
+                when (gitMarks[line]) {
+                    GitMark.Added -> Box(
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .padding(start = 0.dp, top = GutterGitInset, bottom = GutterGitInset)
+                            .width(GutterGitWidth)
+                            .fillMaxHeight()
+                            .clip(
+                                RoundedCornerShape(
+                                    topEnd = 2.dp,
+                                    bottomEnd = 2.dp,
+                                ),
+                            )
+                            .background(c.gitAdded),
+                    )
+                    GitMark.Modified -> Box(
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .padding(start = 0.dp, top = GutterGitInset, bottom = GutterGitInset)
+                            .width(GutterGitWidth)
+                            .fillMaxHeight()
+                            .clip(
+                                RoundedCornerShape(
+                                    topEnd = 2.dp,
+                                    bottomEnd = 2.dp,
+                                ),
+                            )
+                            .background(c.gitModified),
+                    )
+                    // A deletion has no line of its own, so the mark goes on the line that follows
+                    // the deleted ones: a small triangle pointing at the gap, on the left edge.
+                    GitMark.Deleted -> Box(
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .size(GutterFoldTapWidth.coerceAtMost(6.dp), 8.dp)
+                            .drawBehind {
+                                val path = androidx.compose.ui.graphics.Path().apply {
+                                    moveTo(0f, 0f)
+                                    lineTo(size.width, size.height / 2f)
+                                    lineTo(0f, size.height)
+                                    close()
+                                }
+                                drawPath(path, c.gitDeleted)
+                            },
+                    )
+                    null -> Unit
+                }
+                // The error bar. Only error lines get one: the bar already shows it, so the number
+                // stays quiet. Warnings keep their squiggle and nothing else.
+                if (errored) {
                     Box(
                         Modifier
                             .align(Alignment.TopStart)
-                            .padding(start = GutterBarLeft, top = GutterBarTop)
+                            .padding(start = GutterBarLeft)
                             .width(GutterBarWidth)
-                            .height(with(density) { lineHeightPx.toDp() } - GutterBarTop * 2)
-                            .background(if (errored) c.red else c.amber),
+                            .fillMaxHeight()
+                            .background(c.error),
                     )
                 }
                 if (bulbLine == line && onBulbTap != null) {
-                    // The quick-fix bulb lives in the gutter, above nothing and beside nothing. The
-                    // touch area is wider than the glyph so a thumb can hit it, and the glyph is
-                    // centred in it, so the 28 dp is invisible until a finger is on it.
+                    // The tile is 18 dp; the tap area is 36 by 20 centred on the slot, so a thumb
+                    // can hit it without the eye paying for it.
                     Box(
                         Modifier
                             .align(Alignment.TopStart)
-                            .padding(start = GutterBulbLeft - (GutterBulbTouchSlop - GutterBulbWidth) / 2)
-                            .width(GutterBulbTouchSlop)
-                            .height(with(density) { lineHeightPx.toDp() })
-                            .clip(RoundedCornerShape(6.dp))
+                            .padding(start = GutterBulbLeft - (GutterBulbTapWidth - GutterBulbSize) / 2)
+                            .width(GutterBulbTapWidth)
+                            .height(GutterBulbTapHeight)
                             .clickable(onClick = onBulbTap),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CcIcon(CcIcons.Bulb, c.bulbIcon, GutterBulbHeight)
+                        Box(
+                            Modifier
+                                .size(GutterBulbSize)
+                                .clip(RoundedCornerShape(5.dp))
+                                .background(c.bulbTileBg),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CcIcon(CcIcons.Bulb, c.bulbGlyph, GutterBulbIcon)
+                        }
                     }
                 }
                 Text(
                     text = "$line",
-                    color = when {
-                        errored -> c.red
-                        warned -> c.amber
-                        // The prototype dims plain numbers with the comment colour, and brightens
-                        // only the row the caret is on.
-                        else -> c.comment.copy(alpha = if (onCaret) 1f else 0.75f)
-                    },
-                    fontSize = 12.sp,
+                    color = if (onCaret) c.lineNumberActive else c.lineNumber,
+                    fontSize = 11.sp,
                     style = androidx.compose.ui.text.TextStyle(
                         // The row's own height as the number's line height, centred the way the code
                         // is, so the two baselines coincide.
@@ -641,26 +720,33 @@ fun LineNumberLayer(
                         ),
                     ),
                     fontFamily = Mono,
-                    fontWeight = if (errored || warned) FontWeight.Bold else FontWeight.Normal,
+                    fontWeight = FontWeight.Normal,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(end = GutterNumberPadding),
                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
                 )
-                // Spec 6.3: a 10 sp muted chevron at right 8 on the first import line. Real code
-                // folding needs approval, so tapping it only says so.
-                if (line == foldLine) {
+                // The fold chevron lives in its own slot at 41 to 53 dp, vertically centred. Down
+                // means the block is open, right means it is folded; the tap area is 32 dp wide
+                // and the full row tall, so it never needs precision.
+                if (line == foldLine || line in foldableLines) {
+                    val folded = line in foldedLines
                     Box(
                         Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(end = 8.dp)
-                            .clickable(onClick = onFoldTap),
+                            .align(Alignment.TopStart)
+                            .padding(start = GutterFoldLeft - (GutterFoldTapWidth - GutterFoldSize) / 2)
+                            .width(GutterFoldTapWidth)
+                            .fillMaxHeight()
+                            .clickable { onFoldTap(line) },
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            text = "▸",
-                            color = c.mu,
-                            fontSize = 10.sp,
-                            fontFamily = Sans,
+                        CcIcon(
+                            CcIcons.Chevron,
+                            c.foldArrow,
+                            GutterFoldSize,
+                            Modifier.graphicsLayer {
+                                rotationZ = if (folded) 0f else 90f
+                            },
                         )
                     }
                 }

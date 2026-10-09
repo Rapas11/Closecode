@@ -3418,7 +3418,7 @@ contentAlignment = Alignment.Center,
                         window = codeWindow,
                         // Spec 6.3: the first import line gets the fold affordance.
                         foldLine = firstImportLine,
-                        onFoldTap = { onToast("Code folding is not available yet") },
+                        onFoldTap = { _ -> onToast("Code folding is not available yet") },
                         // The bulb is drawn by the gutter now, so it needs no layout of its own and
                         // cannot land on top of the caret line's text. It appears for the caret line
                         // whenever that line has something to offer to fix and no card is open.

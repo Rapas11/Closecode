@@ -412,26 +412,38 @@ class ForgeUiSpecTest {
 
     @Test
     fun theGutterHoldsTheMarksAtItsLeftEdge() {
-        // 56 dp is what the spec gives the gutter: the marks, a four-digit number and the fold
-        // chevron each own a fixed slot, with nothing touching. The bar hugs the edge, the bulb
-        // follows it, and both clear the number.
+        // 56 dp, five fixed slots from the spec: git marker 0–3, error bar 4–6, bulb tile 6–24,
+        // numbers ending at 38, fold arrow 41–53. Nothing touching, nothing shifting.
         assertEquals(56, GutterWidth.value.toInt())
-        assertEquals(3, GutterBarWidth.value.toInt())
-        assertEquals(0, GutterBarLeft.value.toInt())
+        assertEquals(3, GutterGitWidth.value.toInt())
+        assertEquals(2, GutterBarWidth.value.toInt())
+        assertEquals(4, GutterBarLeft.value.toInt())
         assertEquals(6, GutterBulbLeft.value.toInt())
-        assertEquals(15, GutterBulbWidth.value.toInt())
-        // A 15 dp glyph is not a finger, so what a finger may hit is 28 dp — the same slop the
-        // scrollbar already uses.
-        assertEquals(28, GutterBulbTouchSlop.value.toInt())
+        assertEquals(18, GutterBulbSize.value.toInt())
+        assertEquals(14, GutterBulbIcon.value.toInt())
+        // The tile is smaller than a finger, so the tap area is 36 by 20 centred on the slot.
+        assertEquals(36, GutterBulbTapWidth.value.toInt())
+        assertEquals(20, GutterBulbTapHeight.value.toInt())
+        assertEquals(41, GutterFoldLeft.value.toInt())
+        assertEquals(12, GutterFoldSize.value.toInt())
+    }
+
+    @Test
+    fun theGutterSlotsDoNotOverlap() {
+        // Each slot ends where the next begins, in spec order.
+        assertTrue(GutterGitWidth.value <= GutterBarLeft.value)
+        assertTrue(GutterBarLeft.value + GutterBarWidth.value <= GutterBulbLeft.value)
+        assertTrue(GutterBulbLeft.value + GutterBulbSize.value <= 38)
+        assertTrue(GutterFoldLeft.value + GutterFoldSize.value <= GutterWidth.value)
     }
 
     @Test
     fun theGutterBarAndBulbDoNotReachTheLineNumber() {
         val numberWidth = GutterNumberPadding.value
-        // The widest number the spec allows is four digits. At the editor's 12 sp monospace that is
-        // about 28.8 dp, so a number can start no further left than this.
-        val widestNumber = numberWidth + 4 * 7.2
-        val bulbRight = GutterBulbLeft.value + GutterBulbWidth.value
+        // The widest number the spec allows is four digits. At the editor's 11 sp monospace that is
+        // about 26.4 dp, so a number can start no further left than this.
+        val widestNumber = numberWidth + 4 * 6.6
+        val bulbRight = GutterBulbLeft.value + GutterBulbSize.value
         assertTrue(
             "the bulb ends at $bulbRight dp but a four-digit number starts at $widestNumber dp",
             bulbRight <= widestNumber,
