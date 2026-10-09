@@ -2407,17 +2407,6 @@ formatRequest: Int = 0,
     // the markup check below has to know it is looking at a page and not at code.
     val codeLanguage = remember(code) { codeLanguageFor(languageOf(active)) }
 
-    // Rainbow brackets are a setting, and the cycle is theme data, so it is read here rather than
-    // inside the highlighter — a global mutable list would be read by every file's colouring pass and
-    // would not recompose when the theme changed.
-    LaunchedEffect(c, settings.rainbowBrackets) {
-        RainbowBracketColors = if (settings.rainbowBrackets) {
-            listOf(c.bracket1, c.bracket2, c.bracket3, c.bracket4, c.bracket5)
-        } else {
-            emptyList()
-        }
-    }
-
     // Spec 6.3: the first import line carries the fold affordance. Zero means there is none.
     val firstImportLine = remember(code) {
         codeLines.indexOfFirst { it.trimStart().startsWith("import ") } + 1
@@ -2503,9 +2492,31 @@ formatRequest: Int = 0,
     // The language is the file's, not the slice's. A slice begins wherever the reader has scrolled
     // to, so a page scrolled to its middle has no doctype and no tag in the first line to guess
     // from — and a reader who scrolled down a page expects a tag to stay a tag.
-    val highlighted = remember(codeRange, code, c, codeLanguage) {
-        highlightCode(sliceOfLines(codeLines, codeRange), c, codeLanguage)
+    //
+    // Rainbow brackets are a setting and the cycle is theme data. Both are passed into the colour
+    // pass and both are remember keys, so switching the setting recolours immediately. Getting this
+    // wrong once meant the cycle lived in a global written from an effect, which cannot invalidate
+    // the remember that reads it: the setting toggled and nothing happened at all.
+    //
+    // And the slice starts wherever the reader has scrolled to, so the block depth it starts from is
+    // measured from everything above it. Without that, every window coloured from zero no matter how
+    // deep in the file it was — the one thing the feature exists to prevent.
+    val bracketCycle = if (settings.rainbowBrackets) {
+        listOf(c.bracket1, c.bracket2, c.bracket3, c.bracket4, c.bracket5)
+    } else {
+        emptyList()
     }
+    val highlighted = remember(codeRange, code, c, codeLanguage, bracketCycle) {
+        val above = code.substring(0, codeWindow.startOffset.coerceIn(0, code.length))
+        highlightCode(
+            sliceOfLines(codeLines, codeRange),
+            c,
+            codeLanguage,
+            bracketCycle,
+            openBlockDepth(above),
+        )
+    }
+
     // Pairs are found in the whole buffer rather than the window, because a block can open above
     // the slice the renderer is holding; the layer decides for each pair whether either end is on
     // screen. The setting is read here so switching it off stops the scan, not just the drawing.
@@ -3707,7 +3718,11 @@ contentAlignment = Alignment.Center,
                     errorLines = problems.linesWithErrors,
                     lineCount = codeLines.size,
                     visibleTop = codeWindow.firstLine + 1,
-                    visibleBottom = codeWindow.firstLine + codeLines.size,
+                    // How many rows are actually on screen. This was the whole file's line count,
+                    // which on a long file put the bottom of the window below every error in it, so
+                    // no error was ever judged "off screen" and no tick was ever drawn.
+                    visibleBottom = codeWindow.firstLine +
+                        (codeRange.last - codeRange.first + 1),
                 ),
             )
         }

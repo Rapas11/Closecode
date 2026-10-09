@@ -36,6 +36,33 @@ private val KeywordTokens = setOf(
 fun highlightCode(text: String, c: PageColors): AnnotatedString =
     highlightCode(text, c, codeLanguageOf(text))
 
+/**
+ * Colours a buffer.
+ *
+ * [bracketCycle] is the rainbow-bracket palette and [initialDepth] is how many blocks were already
+ * open above this text. Both are arguments rather than global state, and both are load-bearing:
+ *
+ * A global written from an effect cannot invalidate the `remember` that reads it, so switching the
+ * setting on would recolour nothing at all — the setting was written after the frame was drawn and
+ * the colour pass never ran again.
+ *
+ * And the renderer only ever sees the visible slice of the file, so a depth counter starting at
+ * zero gave every window the shallowest colours no matter how deep in the file the reader had
+ * scrolled. That is the one thing the feature exists to prevent.
+ */
+internal fun highlightCode(
+    text: String,
+    c: PageColors,
+    language: CodeLanguage,
+    bracketCycle: List<Color> = emptyList(),
+    initialDepth: Int = 0,
+): AnnotatedString =
+    when (language) {
+        CodeLanguage.PROGRAMMING -> highlightProgramCode(text, c, bracketCycle, initialDepth)
+        CodeLanguage.MARKUP -> highlightMarkup(text, c)
+        CodeLanguage.STYLESHEET -> highlightStylesheet(text, c)
+    }
+
 /** Which rules a buffer is coloured by, decided from the text itself. */
 internal enum class CodeLanguage {
     /** Braces, semicolons, keywords: the general programming rules. */
@@ -71,38 +98,65 @@ internal fun codeLanguageOf(text: String): CodeLanguage {
 }
 
 /**
- * Colours a buffer for the language it is in.
+ * How deep the bracket nesting is at the end of [prefix], so colouring a *slice* can start from
+ * where the slice is.
  *
- * The markup and stylesheet rules are separate rather than extra cases bolted onto the general one,
- * because they disagree about what a slash means: `//` starts a comment in code and in CSS, and in
- * markup it is the end of a closing tag. Applying the code rules to a page swallowed the rest of any
- * line holding a `http://` in it.
+ * The renderer only ever sees the visible window, so a depth counter starting at zero gave every
+ * window the shallowest colours no matter how deep in the file the reader had scrolled — which is the
+ * one thing the feature exists to prevent.
+ *
+ * All three bracket kinds count, exactly as the colour pass counts them: a slice that starts inside
+ * `foo(bar,` is one level deep even though no brace is open. Strings and comments are skipped: a
+ * bracket inside either is a character, and counting it would walk every following line one level
+ * out of step with the code.
  */
-internal fun highlightCode(text: String, c: PageColors, language: CodeLanguage): AnnotatedString =
-    when (language) {
-        CodeLanguage.PROGRAMMING -> highlightProgramCode(text, c)
-        CodeLanguage.MARKUP -> highlightMarkup(text, c)
-        CodeLanguage.STYLESHEET -> highlightStylesheet(text, c)
+internal fun openBlockDepth(prefix: String): Int {
+    var depth = 0
+    var inString = false
+    var quote = ' '
+    var inLineComment = false
+    var blockComment = 0
+    var i = 0
+    while (i < prefix.length) {
+        val ch = prefix[i]
+        when {
+            inLineComment -> if (ch == '\n') inLineComment = false
+            blockComment > 0 -> {
+                if (ch == '/' && i + 1 < prefix.length && prefix[i + 1] == '*') blockComment++
+                else if (ch == '*' && i + 1 < prefix.length && prefix[i + 1] == '/') blockComment--
+            }
+            inString -> {
+                if (ch == '\\') i++
+                else if (ch == quote) inString = false
+            }
+            ch == '/' && i + 1 < prefix.length && prefix[i + 1] == '/' -> inLineComment = true
+            ch == '/' && i + 1 < prefix.length && prefix[i + 1] == '*' -> blockComment++
+            ch == '"' || ch == '\'' -> {
+                inString = true
+                quote = ch
+            }
+            ch == '{' || ch == '(' || ch == '[' -> depth++
+            ch == '}' || ch == ')' || ch == ']' -> depth = (depth - 1).coerceAtLeast(0)
+        }
+        i++
     }
-
-/** The general programming rules: braces, keywords, strings, comments. */
-/**
- * The colours nested brackets cycle through, or empty when the reader has not asked for any.
- *
- * Populated from the theme rather than hard-coded, because a bracket colour that reads on the dark
- * editor does not read on the light one, and a second palette for five swatches is not worth the
- * maintenance. Empty means off, which is the honest way to say "colour nothing".
- */
-internal var RainbowBracketColors: List<Color> = emptyList()
-
-/** Which colour a bracket at this nesting depth gets, or null when the feature is off. */
-internal fun rainbowBracketColor(depth: Int): Color? {
-    val cycle = RainbowBracketColors
-    if (cycle.isEmpty()) return null
-    return cycle[depth.coerceAtLeast(0) % cycle.size]
+    return depth
 }
 
-private fun highlightProgramCode(text: String, c: PageColors): AnnotatedString {
+/** Which colour a bracket at this nesting depth gets, or null when the feature is off. */
+internal fun rainbowBracketColor(depth: Int, cycle: List<Color>): Color? {
+    if (cycle.isEmpty()) return null
+    // Floored, not truncated: a stray closer at depth -1 wraps to the last colour instead of
+    // crashing or clamping to the first, so every depth has exactly one colour.
+    return cycle[depth.mod(cycle.size)]
+}
+
+private fun highlightProgramCode(
+    text: String,
+    c: PageColors,
+    bracketCycle: List<Color>,
+    initialDepth: Int,
+): AnnotatedString {
     val commentStyle = SpanStyle(color = c.comment, fontStyle = FontStyle.Italic)
     val stringStyle = SpanStyle(color = c.string)
     val annotationStyle = SpanStyle(color = c.annotation)
@@ -114,7 +168,8 @@ private fun highlightProgramCode(text: String, c: PageColors): AnnotatedString {
     // Depth carries across lines, because a block does. A counter reset per line gave every line's
     // first bracket the same colour no matter how deep in the file it sat, which is the one thing the
     // feature is for.
-    var bracketDepth = 0
+    // Depth carries across lines *and* across windows: a block spans both.
+    var bracketDepth = initialDepth
     return buildAnnotatedString {
         text.lines().forEachIndexed { index, raw ->
             if (index > 0) append('\n')
@@ -198,9 +253,16 @@ private fun highlightProgramCode(text: String, c: PageColors): AnnotatedString {
                     ch == '{' || ch == '(' || ch == '[' || ch == '}' || ch == ')' || ch == ']' -> {
                         val opening = ch == '{' || ch == '(' || ch == '['
                         val depth = if (opening) bracketDepth else bracketDepth - 1
-                        val style = rainbowBracketColor(depth)?.let { SpanStyle(color = it) }
+                        val style = rainbowBracketColor(depth, bracketCycle)?.let { SpanStyle(color = it) }
                         if (style == null) append(ch) else withStyle(style) { append(ch) }
-                        if (opening) bracketDepth++
+                        // A pair shares its colour: the opener climbs one level, the closer draws at
+                        // the level it closes and then climbs back down. Without the way back down,
+                        // depth only ever rose, and a closer ended up deeper than its own opener.
+                        bracketDepth = if (opening) {
+                            bracketDepth + 1
+                        } else {
+                            (bracketDepth - 1).coerceAtLeast(0)
+                        }
                         i++
                     }
 
