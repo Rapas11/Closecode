@@ -58,24 +58,23 @@ import com.closecode.ui.theme.Sans
  * a different value. Pinch zoom multiplies it rather than replacing it.
  */
 val CodeLineHeight = 20.sp
-val CodeFontSize = 13.sp
+val CodeFontSize = 12.sp
 
 /**
- * Gutter width, including the 1 dp right border.
+ * Gutter width, exactly 56 dp with no border.
  *
- * Wide enough for the three marks that live at its left edge — the changed-line bar, the diagnostic
- * bar and the quick-fix bulb — plus a four-digit line number and the fold chevron, without any of
- * them touching each other. A narrower gutter could not hold them; a wider one would take code width
- * away for space nothing draws in.
+ * Each item owns a fixed slot measured from the left edge — git marker 0–3, error bar 4–6,
+ * lightbulb 6–24, line numbers ending at 38, fold arrow 41–53 — so numbers never shift when an
+ * icon appears. There is no divider line and no gap after it: the code starts at x = 56 dp.
  */
-val GutterWidth = 74.dp
+val GutterWidth = 56.dp
 
 /**
- * Spec section 6.3: the editor's single top padding. The gutter and the code share it, because they
+ * The editor's single top padding, 4 dp. The gutter and the code share it, because they
  * are siblings inside one scroll container. Adding a second pad to the gutter is what used to drop
  * every line number and status dot half a line below its own code.
  */
-val EditorTopPadding = 12.dp
+val EditorTopPadding = 4.dp
 
 /** Alias kept for callers that read the gutter's padding by name; it is the editor's, not its own. */
 val GutterPadding = EditorTopPadding
@@ -86,11 +85,11 @@ val GutterPadding = EditorTopPadding
  */
 val GutterTopInset = 0.dp
 
-/** Gutter numbers are right aligned with this much padding. */
-val GutterNumberPadding = 22.dp
+/** Gutter numbers are right aligned to end at 38 dp from the gutter's left edge. */
+val GutterNumberPadding = 18.dp
 
-/** Spec 6.3: the text area's own left inset, after the gutter divider. */
-val CodeLeftInset = 14.dp
+/** No inset between gutter and code: the code area starts at exactly x = 56 dp. */
+val CodeLeftInset = 0.dp
 
 /** Left edge of the code column, measured from the left of the editor viewport. */
 val CodeColumnStart = GutterWidth + CodeLeftInset
@@ -564,17 +563,7 @@ fun LineNumberLayer(
             .width(GutterWidth)
             .height(gutterHeight)
             .background(c.editor)
-            .padding(top = GutterTopInset)
-            // Thin rule between the numbers and the code, as in the reference editor.
-            .drawBehind {
-                val x = size.width - with(density) { 0.5.dp.toPx() }
-                drawLine(
-                    color = c.ln,
-                    start = androidx.compose.ui.geometry.Offset(x, 0f),
-                    end = androidx.compose.ui.geometry.Offset(x, size.height),
-                    strokeWidth = with(density) { 1.dp.toPx() },
-                )
-            },
+            .padding(top = GutterTopInset),
     ) {
         val rows = if (scrollState == null) {
             0 until lineCount
@@ -594,7 +583,11 @@ fun LineNumberLayer(
                 Modifier
                     .offset { androidx.compose.ui.unit.IntOffset(0, rowTop.roundToInt()) }
                     .fillMaxWidth()
-                    .height(rowHeight),
+                    .height(rowHeight)
+                    // The cursor row's half of the full-width active line. The code side is a
+                    // sibling box behind the scrolling column; this paints the gutter's 56 dp of
+                    // the same row, so the highlight reads as one band from x = 0.
+                    .background(if (onCaret) c.activeLineBg else Color.Transparent),
             ) {
                 // The diagnostic bar. Every mark below is placed with `align(TopStart)` and its own
                 // padding rather than `Modifier.offset` on a centred child, because an offset on a

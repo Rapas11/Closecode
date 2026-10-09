@@ -32,7 +32,7 @@ class SettingsStoreTest {
         assertTrue(settings.diagnostics)
         assertTrue(settings.bracketGuides)
         assertEquals("System", settings.theme)
-        assertEquals(13, settings.fontSize)
+        assertEquals(12, settings.fontSize)
         assertEquals(2, settings.tabSize)
     }
 
@@ -98,7 +98,7 @@ class SettingsStoreTest {
     @Test
     fun textThatIsNotANumberFallsBackRatherThanThrowing() {
         val store = SettingsStore(InMemoryKeyValueStore(mapOf("font_size" to "big")))
-        assertEquals(13, store.read().fontSize)
+        assertEquals(12, store.read().fontSize)
     }
 
     @Test
@@ -125,7 +125,7 @@ class SettingsStoreTest {
         kv.remove("font_size")
 
         val read = store.read()
-        assertEquals(13, read.fontSize)
+        assertEquals(12, read.fontSize)
         assertFalse(read.diagnostics)
     }
 

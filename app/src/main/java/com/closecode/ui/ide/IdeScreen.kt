@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -68,13 +69,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
@@ -2274,7 +2278,8 @@ formatRequest: Int = 0,
     val c = LocalPageColors.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val settings = LocalSettings.current
-    // The gutter is 62 dp of line numbers; with the setting off the code moves all the way left
+    val editScope = rememberCoroutineScope()
+    // The gutter is 56 dp of line numbers; with the setting off the code moves all the way left
     // instead of sitting behind a blank strip, and every overlay below reads this same value so
     // nothing lands in a column the code is no longer drawn in.
     val columnStart = if (settings.lineNumbers) CodeColumnStart else CodeLeftInset
@@ -3106,6 +3111,21 @@ contentAlignment = Alignment.Center,
         ) {
             // One vertical scroll for the whole editor. The line numbers and the code are both
             // children of this box, so they share a coordinate space and cannot drift apart.
+            // A press can land between characters, so the offset settles onto whole
+            // characters when the finger leaves: the spec clips the code exactly at the gutter
+            // edge, and a half-character offset would put half a glyph under that clip.
+            fun snapHScroll() {
+                val w = charWidthPx(codeLayout) ?: return
+                val target = snapScrollToCharacter(codeHScroll.value.toFloat(), w)
+                if (target != codeHScroll.value) {
+                    editScope.launch { codeHScroll.scrollTo(target) }
+                }
+            }
+            LaunchedEffect(codeHScroll.isScrollInProgress) {
+                // Flings and programmatic scrolls end here; finger pans report through onRelease
+                // below, because raw deltas never mark the state in progress.
+                if (!codeHScroll.isScrollInProgress) snapHScroll()
+            }
             Box(
                 Modifier
                     .fillMaxSize()
@@ -3115,7 +3135,33 @@ contentAlignment = Alignment.Center,
                     // code line always share one top edge and one row height.
                     .padding(top = EditorTopPadding, bottom = 40.dp),
             ) {
-                Row(Modifier.horizontalScroll(codeHScroll).panOnHorizontalDrag(codeHScroll)) {
+                // The cursor row, full width from x = 0 including the gutter. Drawn first so it
+                // sits behind everything; the gutter paints its own 56 dp of the same row over it,
+                // which is what makes the band read as one.
+                val caretRowTop =
+                    lineTopPx(codeLayout, code, caretLine, codeWindow)
+                        ?: ((caretLine - 1).coerceAtLeast(0) * lineHeightPx)
+                Box(
+                    Modifier
+                        .offset { IntOffset(0, (topPaddingPx + caretRowTop).roundToInt()) }
+                        .fillMaxWidth()
+                        .height(with(autoDensity) { lineHeightPx.toDp() })
+                        .background(c.activeLineBg),
+                )
+                Row(
+                    Modifier
+                        .horizontalScroll(codeHScroll)
+                        .panOnHorizontalDrag(codeHScroll, onRelease = ::snapHScroll)
+                        // The code is clipped exactly at the gutter edge, so it never shows under
+                        // the gutter or gets cut halfway through a character at the left edge.
+                        .drawWithContent {
+                            clipRect(
+                                left = with(autoDensity) { GutterWidth.toPx() },
+                            ) {
+                                this@drawWithContent.drawContent()
+                            }
+                        },
+                ) {
                     // The renderer only lays out the slice that can be on screen now, so the text is
                     // no longer what makes this column tall — the row model is. Pinning it here is
                     // what keeps the column, the gutter and the scroller agreeing on where the file
@@ -3707,7 +3753,12 @@ contentAlignment = Alignment.Center,
             // The scrollbars are children of the same box that owns both scrollers, so they float
             // over the code instead of costing it a column of width, and they line up with the
             // axis they report on.
-            EditorScrollbar(codeHScroll, viewportWidthPx, horizontal = true)
+            EditorScrollbar(
+                codeHScroll,
+                viewportWidthPx,
+                horizontal = true,
+                onRelease = { snapHScroll() },
+            )
             EditorScrollbar(
                 codeScroll,
                 viewportHeightPx,
@@ -3746,12 +3797,12 @@ contentAlignment = Alignment.Center,
 }
 
 
-private val SCROLLBAR_THICKNESS = 6.dp
+private val SCROLLBAR_THICKNESS = 3.dp
 
 /**
  * How much room around the visible bar a finger has to hit it.
  *
- * A 6 dp bar is a 6 dp target, and nothing that small is reliably tappable with a thumb. The extra
+ * A 3 dp bar is a 3 dp target, and nothing that small is reliably tappable with a thumb. The extra
  * room is transparent and sits outside the bar, so the editor looks exactly as it did — only the
  * target is bigger.
  */
@@ -3760,8 +3811,8 @@ private val SCROLLBAR_TOUCH_SLOP = 28.dp
 /** The pinned declaration's own row, small enough that it never looks like another tab strip. */
 private val SCOPE_HEADER_HEIGHT = 24.dp
 
-/** The error mark on the scrollbar: wide enough to see, short enough not to read as a thumb. */
-private val ERROR_TICK_WIDTH = 6.dp
+/** The error mark on the scrollbar: the bar's own width, short enough not to read as a thumb. */
+private val ERROR_TICK_WIDTH = 3.dp
 private val ERROR_TICK_HEIGHT = 3.dp
 
 /**
@@ -3843,7 +3894,23 @@ internal fun zoomedFontSize(baseSp: Int, scale: Float): Int = (baseSp * scale).r
  *   pinch-zoom working: that handler is an ancestor of this one and only acts on two pointers, so
  *   neither can starve the other.
  */
-private fun Modifier.panOnHorizontalDrag(state: androidx.compose.foundation.ScrollState): Modifier =
+/**
+ * Which horizontal offset a press settles on: the nearest whole character.
+ *
+ * A press can land between characters, and the code is clipped exactly at the gutter edge — a
+ * half-character offset would put half a glyph under that clip. Rounding, not flooring: the offset
+ * the finger chose is the honest answer, and the nearest character is the closest honest rendering
+ * of it. A non-positive character width means nothing measured yet, so the offset stands.
+ */
+internal fun snapScrollToCharacter(valuePx: Float, charWidthPx: Float): Int {
+    if (charWidthPx <= 0f) return valuePx.roundToInt()
+    return ((valuePx / charWidthPx).roundToInt() * charWidthPx).roundToInt()
+}
+
+private fun Modifier.panOnHorizontalDrag(
+    state: androidx.compose.foundation.ScrollState,
+    onRelease: () -> Unit = {},
+): Modifier =
     pointerInput(state) {
         awaitEachGesture {
             // One pointer only, and unconsumed: a gesture some other handler has already claimed
@@ -3870,6 +3937,8 @@ private fun Modifier.panOnHorizontalDrag(state: androidx.compose.foundation.Scro
                     state.dispatchRawDelta(-delta.x)
                 }
             }
+            // The finger left while panning: the scroll settles here, so this is where it snaps.
+            if (panning) onRelease()
         }
     }
 
@@ -4041,6 +4110,9 @@ private fun BoxScope.EditorScrollbar(
     // Pixel offsets down the vertical track where a mark belongs. Nothing is marked on the
     // horizontal bar: it reports sideways position, and sideways position has no errors of its own.
     ticks: List<Float> = emptyList(),
+    // Called when a scrollbar drag ends, so the caller can settle the offset — the horizontal bar
+    // snaps to whole characters.
+    onRelease: () -> Unit = {},
 ) {
     if (state.maxValue <= 0 || viewportPx <= 1f) return
     val c = LocalPageColors.current
@@ -4050,6 +4122,22 @@ private fun BoxScope.EditorScrollbar(
     val travelPx = (viewportPx - thumbPx).coerceAtLeast(0f)
     val progress = state.value.toFloat() / state.maxValue
     val thumbDp = with(density) { thumbPx.toDp() }
+    // The thumb shows only while scrolling, then fades. A permanent bar is chrome the reader
+    // never asked about; the drag target underneath stays, so nothing about dragging changes.
+    var thumbVisible by remember(horizontal) { mutableStateOf(false) }
+    LaunchedEffect(state.isScrollInProgress, state.value) {
+        if (state.isScrollInProgress) {
+            thumbVisible = true
+        } else {
+            delay(900)
+            thumbVisible = false
+        }
+    }
+    val thumbAlpha by animateFloatAsState(
+        targetValue = if (thumbVisible) 1f else 0f,
+        animationSpec = tween(200),
+        label = "scrollbar-fade",
+    )
     val track = if (horizontal) {
         Modifier.align(Alignment.BottomCenter).fillMaxWidth()
     } else {
@@ -4073,8 +4161,11 @@ private fun BoxScope.EditorScrollbar(
         Box(
             bar
                 .clip(RoundedCornerShape(SCROLLBAR_THICKNESS / 2))
+                .alpha(thumbAlpha)
                 .pointerInput(horizontal, viewportPx, state.maxValue) {
-                    detectDragGestures { change, dragAmount ->
+                    detectDragGestures(
+                        onDragEnd = { onRelease() },
+                    ) { change, dragAmount ->
                         change.consume()
                         val dragged = if (horizontal) dragAmount.x else dragAmount.y
                         // One pixel of thumb to the same slice of the content, which is why the
@@ -4090,7 +4181,6 @@ private fun BoxScope.EditorScrollbar(
                     Box(
                         Modifier
                             .align(Alignment.TopEnd)
-                            .padding(end = SCROLLBAR_THICKNESS / 2)
                             .width(ERROR_TICK_WIDTH)
                             .height(ERROR_TICK_HEIGHT)
                             .offset { IntOffset(0, at.toInt()) }
@@ -4111,7 +4201,7 @@ private fun BoxScope.EditorScrollbar(
                         val along = (progress * travelPx).toInt()
                         IntOffset(if (horizontal) along else 0, if (horizontal) 0 else along)
                     }
-                    .background(c.tx.copy(alpha = 0.30f), RoundedCornerShape(SCROLLBAR_THICKNESS / 2)),
+                    .background(c.scrollThumb, RoundedCornerShape(SCROLLBAR_THICKNESS / 2)),
             )
         }
     }

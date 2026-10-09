@@ -44,7 +44,7 @@ class EditorRowGeometryTest {
         // The editor has exactly one top padding. A second one inside the gutter is what put every
         // line number and status dot half a line below the code it labels.
         assertEquals(0f, GutterTopInset.value, 0.001f)
-        assertEquals(12f, EditorTopPadding.value, 0.001f)
+        assertEquals(4f, EditorTopPadding.value, 0.001f)
         assertEquals(EditorTopPadding.value, GutterPadding.value, 0.001f)
     }
 
@@ -623,5 +623,34 @@ class EditorRowGeometryTest {
         assertEquals("0 warnings", pluralProblems(0, "warning"))
         assertEquals("1 warning", pluralProblems(1, "warning"))
         assertEquals("7 warnings", pluralProblems(7, "warning"))
+    }
+}
+class SnapScrollTest {
+
+    @Test
+    fun settlesOnTheNearestWholeCharacter() {
+        // A 10 px character: 24 px is nearer to 20 than to 30, so it comes back.
+        assertEquals(20, snapScrollToCharacter(24f, 10f))
+        assertEquals(30, snapScrollToCharacter(26f, 10f))
+        assertEquals(0, snapScrollToCharacter(0f, 10f))
+    }
+
+    @Test
+    fun anExactCharacterStaysPut() {
+        assertEquals(40, snapScrollToCharacter(40f, 10f))
+    }
+
+    @Test
+    fun nothingMeasuredMeansNothingMoves() {
+        // No layout yet, no honest pitch to snap to: moving would be a guess.
+        assertEquals(17, snapScrollToCharacter(17f, 0f))
+        assertEquals(17, snapScrollToCharacter(17f, -4f))
+    }
+
+    @Test
+    fun fractionalWidthsRoundFairly() {
+        // A 7.2 px JetBrains Mono advance: the third character starts at 21.6 px.
+        assertEquals(22, snapScrollToCharacter(21f, 7.2f))
+        assertEquals(22, snapScrollToCharacter(22f, 7.2f))
     }
 }

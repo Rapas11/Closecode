@@ -412,9 +412,10 @@ class ForgeUiSpecTest {
 
     @Test
     fun theGutterHoldsTheMarksAtItsLeftEdge() {
-        // 74 dp is what the three marks plus a four-digit number plus the fold chevron need, with
-        // nothing touching. The bar hugs the edge, the bulb follows it, and both clear the number.
-        assertEquals(74, GutterWidth.value.toInt())
+        // 56 dp is what the spec gives the gutter: the marks, a four-digit number and the fold
+        // chevron each own a fixed slot, with nothing touching. The bar hugs the edge, the bulb
+        // follows it, and both clear the number.
+        assertEquals(56, GutterWidth.value.toInt())
         assertEquals(3, GutterBarWidth.value.toInt())
         assertEquals(0, GutterBarLeft.value.toInt())
         assertEquals(6, GutterBulbLeft.value.toInt())
@@ -443,13 +444,15 @@ class ForgeUiSpecTest {
         // The number's right edge is GutterWidth - padding; the chevron sits at the far right. They
         // only meet if the padding is smaller than the chevron's own slot.
         assertTrue(GutterNumberPadding.value < GutterWidth.value - 8)
-        assertEquals(22, GutterNumberPadding.value.toInt())
+        assertEquals(18, GutterNumberPadding.value.toInt())
     }
 
     @Test
-    fun theCodeColumnStartsFourteenDpPastTheGutterDivider() {
-        assertEquals(14, CodeLeftInset.value.toInt())
-        assertEquals(88, CodeColumnStart.value.toInt())
+    fun theCodeColumnStartsExactlyAtTheGutterEdge() {
+        // No gap and no divider: the code starts at x = 56 dp.
+        assertEquals(0, CodeLeftInset.value.toInt())
+        assertEquals(56, CodeColumnStart.value.toInt())
+        assertEquals(GutterWidth, CodeColumnStart)
     }
 
     // -- Spec 4.1 header -----------------------------------------------------------------

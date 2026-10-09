@@ -9,13 +9,13 @@ import androidx.compose.ui.unit.sp
 import com.closecode.R
 
 /**
- * Code font. Fira Code 13 sp with a line height of exactly 20 dp: the gutter, underlines,
+ * Code font. JetBrains Mono 12 sp with a line height of exactly 20 dp: the gutter, underlines,
  * pills and the lightbulb are all positioned against that number, so it must not drift.
  */
 val Mono = FontFamily(
-    Font(R.font.fira_code_regular, FontWeight.Normal),
-    Font(R.font.fira_code_medium, FontWeight.Medium),
-    Font(R.font.fira_code_bold, FontWeight.Bold),
+    Font(R.font.jetbrains_mono_regular, FontWeight.Normal),
+    Font(R.font.jetbrains_mono_medium, FontWeight.Medium),
+    Font(R.font.jetbrains_mono_bold, FontWeight.Bold),
 )
 
 /**

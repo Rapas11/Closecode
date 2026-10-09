@@ -68,7 +68,7 @@ data class Settings(
     val wordWrap: Boolean = false,
     val rainbowBrackets: Boolean = false,
     val theme: String = "System",
-    val fontSize: Int = 13,
+    val fontSize: Int = 12,
     val tabSize: Int = 2,
     val terminalTheme: String = "Closecode",
     val terminalFontSize: Int = 13,
