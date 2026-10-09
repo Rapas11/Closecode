@@ -136,6 +136,57 @@ data class PageColors(
     val ab: Color,          // primary action background -> accent
     val af: Color,          // label drawn on top of an accent fill
     val glow: Color,        // faint accent wash for the page background
+
+    // -- Code editor design spec tokens --------------------------------------------
+    // One named token per row of the spec's Colors and fonts table. Values below never repeat a
+    // hex: the table is the single source of truth, and anything that needs one of these colors
+    // reads it here. Names follow the spec except where the historic palette already owns the
+    // name with a different value (keyword/type/string/selection/bulbBg/bulbIcon), in which case
+    // the editor token takes a code-/tile-/glyph-qualified name and the comment says which spec
+    // row it is.
+    val editorBg: Color,
+    val activeLineBg: Color,
+    val divider: Color,
+    val text: Color,
+    val lineNumber: Color,
+    val lineNumberActive: Color,
+    val indentGuide: Color,
+    val accent: Color,
+    val error: Color,
+    val codeKeyword: Color,   // spec: keyword
+    val codeType: Color,      // spec: type
+    val codeFunction: Color,  // spec: function
+    val codeString: Color,    // spec: string
+    val popupBg: Color,
+    val popupBorder: Color,
+    val popupSelected: Color,
+    val popupText: Color,
+    val popupMuted: Color,
+    val textSelection: Color, // spec: selection (text-selection background)
+    val toolbarBg: Color,
+    val toolbarBorder: Color,
+    val toolbarAccent: Color,
+    val bulbTileBg: Color,    // spec: bulbBg (the 18 dp tile, not the old floating card)
+    val bulbGlyph: Color,     // spec: bulbIcon
+    val pillBg: Color,
+    val pillBorder: Color,
+    val pillText: Color,
+    val gitAdded: Color,
+    val gitModified: Color,
+    val gitDeleted: Color,
+    val foldArrow: Color,
+    // Hexes the spec gives inline outside the token table:
+    val brightText: Color,    // #E6E8EE project name, active tab, selected-tab text
+    val hintText: Color,      // #6B7385 tab text, signature description
+    val iconTint: Color,       // #9AA3B5 top-bar icons, signature text
+    val runFill: Color,        // #2F6FED run button
+    val tabActiveBg: Color,    // #131722 active tab background
+    val foldChipBg: Color,     // #1A1F2B folded-block ellipsis chip
+    val scrollThumb: Color,    // #3A4256 scrollbar thumb
+    val badgeP: Color,         // #7A5AF0 property / parameter badge
+    val badgeF: Color,         // #2F9E7A function badge
+    val badgeM: Color,         // #C28A2C member / variable badge
+    val warnText: Color,       // #E5C07B warning squiggle, tab/save dots
 )
 
 /**
@@ -253,6 +304,52 @@ val LightColors = PageColors(
     ab = Color(0xFF2457FF),
     af = Color(0xFFFFFFFF),
     glow = Color(0x1F2457FF),
+
+    // Code editor design spec tokens, adapted for a light editor: same hues as the dark table,
+    // moved toward values that read on a near-white background. Where the existing light palette
+    // already holds the right value the token reuses it, so the two themes cannot drift apart.
+    editorBg = Color(0xFFFBFCFE),
+    activeLineBg = Color(0xFFEFF2F8),
+    divider = Color(0xFFDDE2EA),
+    text = Color(0xFF101826),
+    lineNumber = Color(0xFF8A94A6),
+    lineNumberActive = Color(0xFF101826),
+    indentGuide = Color(0x26101826),
+    accent = Color(0xFF2F6FED),
+    error = Color(0xFFD1344B),
+    codeKeyword = Color(0xFF7B3FE4),
+    codeType = Color(0xFF946200),
+    codeFunction = Color(0xFF2457FF),
+    codeString = Color(0xFF0D7A55),
+    popupBg = Color(0xFFFFFFFF),
+    popupBorder = Color(0xFFDDE2EA),
+    popupSelected = Color(0xFFE3EAFF),
+    popupText = Color(0xFF101826),
+    popupMuted = Color(0xFF66728A),
+    textSelection = Color(0xFFE3EAFF),
+    toolbarBg = Color(0xFFFFFFFF),
+    toolbarBorder = Color(0xFFDDE2EA),
+    toolbarAccent = Color(0xFF2457FF),
+    bulbTileBg = Color(0xFFFFF4D6),
+    bulbGlyph = Color(0xFF8A5A00),
+    pillBg = Color(0xFFFDE3E6),
+    pillBorder = Color(0xFFE8AAB2),
+    pillText = Color(0xFFA1232F),
+    gitAdded = Color(0xFF12805C),
+    gitModified = Color(0xFF2457FF),
+    gitDeleted = Color(0xFFD1344B),
+    foldArrow = Color(0xFF8A93A6),
+    brightText = Color(0xFF101826),
+    hintText = Color(0xFF66728A),
+    iconTint = Color(0xFF66728A),
+    runFill = Color(0xFF2F6FED),
+    tabActiveBg = Color(0xFFFFFFFF),
+    foldChipBg = Color(0xFFEFF2F7),
+    scrollThumb = Color(0xFFC3CAD6),
+    badgeP = Color(0xFF7A5AF0),
+    badgeF = Color(0xFF2F9E7A),
+    badgeM = Color(0xFFC28A2C),
+    warnText = Color(0xFF8A5A00),
 )
 
 val DarkColors = PageColors(
@@ -318,6 +415,50 @@ val DarkColors = PageColors(
     // white label would sit near 2.3:1 against it; this near-black keeps the button legible.
     af = Color(0xFF0B0F16),
     glow = Color(0x1F7B9BFF),
+
+    // Code editor design spec tokens, dark values verbatim from the spec table.
+    editorBg = Color(0xFF0F1117),
+    activeLineBg = Color(0xFF141925),
+    divider = Color(0xFF1C212C),
+    text = Color(0xFFD4D7DE),
+    lineNumber = Color(0xFF444C5E),
+    lineNumberActive = Color(0xFFC5CAD6),
+    indentGuide = Color(0xFF232938),
+    accent = Color(0xFF4C8DFF),
+    error = Color(0xFFEF5B5B),
+    codeKeyword = Color(0xFFC792EA),
+    codeType = Color(0xFFE5C07B),
+    codeFunction = Color(0xFF61AFEF),
+    codeString = Color(0xFF98C379),
+    popupBg = Color(0xFF181D29),
+    popupBorder = Color(0xFF2A3142),
+    popupSelected = Color(0xFF243055),
+    popupText = Color(0xFFC5CAD6),
+    popupMuted = Color(0xFF7D869A),
+    textSelection = Color(0xFF2A4380),
+    toolbarBg = Color(0xFF1F2533),
+    toolbarBorder = Color(0xFF2F3749),
+    toolbarAccent = Color(0xFF7FB0FF),
+    bulbTileBg = Color(0xFF2A2615),
+    bulbGlyph = Color(0xFFE5C07B),
+    pillBg = Color(0xFF34191E),
+    pillBorder = Color(0xFF5C2A31),
+    pillText = Color(0xFFF2A0A0),
+    gitAdded = Color(0xFF3FB97A),
+    gitModified = Color(0xFF4C8DFF),
+    gitDeleted = Color(0xFFEF5B5B),
+    foldArrow = Color(0xFF566078),
+    brightText = Color(0xFFE6E8EE),
+    hintText = Color(0xFF6B7385),
+    iconTint = Color(0xFF9AA3B5),
+    runFill = Color(0xFF2F6FED),
+    tabActiveBg = Color(0xFF131722),
+    foldChipBg = Color(0xFF1A1F2B),
+    scrollThumb = Color(0xFF3A4256),
+    badgeP = Color(0xFF7A5AF0),
+    badgeF = Color(0xFF2F9E7A),
+    badgeM = Color(0xFFC28A2C),
+    warnText = Color(0xFFE5C07B),
 )
 
 val LocalPageColors = staticCompositionLocalOf { LightColors }
