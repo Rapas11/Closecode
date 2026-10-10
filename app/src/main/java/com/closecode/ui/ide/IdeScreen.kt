@@ -1088,6 +1088,18 @@ internal fun IdeScreen(
                             refreshToken = previewRefresh,
                             onRefresh = { previewRefresh++ },
                             projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                            // A console source link closes the preview and lands the caret on
+                            // its line, through the same reseed every other jump uses.
+                            onOpenFile = { path, line ->
+                                diskTree.firstOrNull { it.path == path }?.let { file ->
+                                    openFile(file)
+                                    val text = liveBuffers[file.name]
+                                        ?: diskContents[file.name].orEmpty()
+                                    caretRequest = offsetOfLine(text, line)
+                                    sourceRevision++
+                                    activePanel = "Code"
+                                }
+                            },
                             modifier = Modifier.weight(1f),
                         )
 

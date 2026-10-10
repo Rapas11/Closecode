@@ -102,6 +102,20 @@ object CcIcons {
     // Not in the prototype: the search sheets and the command palette still need a magnifier, even
     // though the button that used to open them from the header is gone.
     val Search = icon("search", "M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14zM16 16l4 4")
+    // Preview console: a beetle for logs, a can for clearing, devices for widths.
+    val Bug = icon(
+        "bug",
+        "M8 8h8v8a4 4 0 0 1-8 0zM12 8V4M9 5l3 3 3-3M4 12h2M18 12h2M6 17l-2 2M18 17l2 2",
+    )
+    val Trash = icon(
+        "trash",
+        "M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" +
+            "M10 11v6M14 11v6",
+    )
+    val Phone = icon("phone", "M7 2h10v20H7zM11 18h.01")
+    val Tablet = icon("tablet", "M4 2h16v20H4zM12 18h.01")
+    val Monitor = icon("monitor", "M8 21h8M12 17v4M3 4h18v12H3z")
+    val ChevronUp = icon("chevron-up", "M18 15l-6-6-6 6")
 
     // The terminal, in the slot the magnifier used to hold: a `>_` inside a window, because a
     // `>_` on its own reads as text rather than as a button.

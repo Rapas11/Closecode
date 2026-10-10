@@ -2,19 +2,23 @@ package com.closecode.ui.ide
 
 import android.annotation.SuppressLint
 import android.graphics.BitmapFactory
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,12 +48,17 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.text.style.TextOverflow
@@ -593,6 +602,8 @@ fun IdePreviewPanel(
     refreshToken: Int = 0,
     onRefresh: () -> Unit = {},
     projectRoot: java.io.File? = null,
+    // Tapping a console source link lands here with the project path and 1-based line.
+    onOpenFile: (String, Int) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -603,31 +614,58 @@ fun IdePreviewPanel(
     // Hoisted out of WebPreview so the toolbar can hand the live page to the device's browser.
     var webUrl by remember(webEntry) { mutableStateOf<String?>(null) }
     val startingWeb = webEntry != null && projectRoot != null && webUrl == null
+    // The console belongs to the page, so it resets with it — but the open state survives a
+    // reload, because a reload the reader asked for must not slam their log shut.
+    val consoleLines = remember(webEntry) { mutableStateOf(emptyList<ConsoleLine>()) }
+    val preserveLog = remember(webEntry) { mutableStateOf(false) }
+    var consoleOpen by remember(webEntry) { mutableStateOf(false) }
+    val errorCount = consoleLines.value.count { it.level == ConsoleLevel.Error }
 
     Column(
         modifier
             .fillMaxSize().background(c.bg)) {
-        PreviewToolbar(
-            loading = startingWeb,
-            canOpenInBrowser = webUrl != null,
-            onRefresh = onRefresh,
-            onOpenInBrowser = {
-                webUrl?.let { url ->
-                    runCatching {
-                        context.startActivity(
-                            android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)),
-                        )
-                    }
-                }
-            },
-        )
-
         val route = previewRoute(
             webEntry = webEntry,
             projectRootPresent = projectRoot != null,
             fileName = fileName,
             fileKind = fileKind,
         )
+        if (route == PreviewRoute.Web) {
+            WebToolbar(
+                fileName = webEntry?.substringAfterLast('/') ?: fileName,
+                address = webUrl?.substringAfter("://") ?: "localhost",
+                errorCount = errorCount,
+                loading = startingWeb,
+                canOpenInBrowser = webUrl != null,
+                onRefresh = onRefresh,
+                onOpenInBrowser = {
+                    webUrl?.let { url ->
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)),
+                            )
+                        }
+                    }
+                },
+                onConsole = { consoleOpen = !consoleOpen },
+            )
+        } else {
+            PreviewToolbar(
+                loading = startingWeb,
+                canOpenInBrowser = webUrl != null,
+                onRefresh = onRefresh,
+                onOpenInBrowser = {
+                    webUrl?.let { url ->
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url)),
+                            )
+                        }
+                    }
+                },
+            )
+        }
+
         when (route) {
             PreviewRoute.WebUnavailable -> PreviewMessage("Preview is unavailable for this project.")
 
@@ -642,6 +680,12 @@ fun IdePreviewPanel(
                         entryPath = entry,
                         refreshToken = refreshToken,
                         onUrl = { webUrl = it },
+                        linesState = consoleLines,
+                        preserveState = preserveLog,
+                        consoleOpen = consoleOpen,
+                        onConsoleOpen = { consoleOpen = it },
+                        onClearLines = { consoleLines.value = emptyList() },
+                        onOpenFile = onOpenFile,
                     )
                 }
             }
@@ -668,6 +712,36 @@ fun IdePreviewPanel(
     }
 }
 
+/**
+ * The bridge the page's own errors cross on. Console messages (log/warn/error) arrive through
+ * the native [WebChromeClient] instead — wiring both would print every console.error twice —
+ * so this carries only what nothing else can: uncaught exceptions, installed per page load.
+ */
+private class ConsoleBridge(private val onError: (String, String, Int) -> Unit) {
+    @android.webkit.JavascriptInterface
+    fun postError(message: String, source: String, line: Int) {
+        onError(message, source, line)
+    }
+}
+
+private const val ERROR_HOOK =
+    "(function(){if(window.__ccDone)return;window.__ccDone=true;" +
+        "window.onerror=function(m,s,l){__ccBridge.postError(String(m),String(s||''),l|0);};})();"
+
+private const val DESKTOP_UA =
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+        "Chrome/120.0 Safari/537.36"
+
+/** A loading failure in plain words, with the file that failed first when it is known. */
+private fun pageErrorText(url: String?, code: Int): String {
+    val name = url?.substringAfterLast('/')?.substringBefore('?')?.ifBlank { null }
+    return if (name == null) {
+        "This page failed to load ($code)."
+    } else {
+        "This page failed to load ($code): $name."
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun ColumnScope.WebPreview(
@@ -675,10 +749,29 @@ private fun ColumnScope.WebPreview(
     entryPath: String,
     refreshToken: Int,
     onUrl: (String) -> Unit,
+    linesState: androidx.compose.runtime.MutableState<List<ConsoleLine>>,
+    preserveState: androidx.compose.runtime.MutableState<Boolean>,
+    consoleOpen: Boolean,
+    onConsoleOpen: (Boolean) -> Unit,
+    onClearLines: () -> Unit,
+    onOpenFile: (String, Int) -> Unit,
 ) {
+    val c = LocalPageColors.current
+    var device by remember(entryPath) { mutableStateOf(PreviewDevice.Phone) }
     var previewUrl by remember(projectRoot, entryPath) { mutableStateOf<String?>(null) }
     var loadedToken by remember(projectRoot, entryPath) { mutableStateOf<Int?>(null) }
+    var loadStart by remember(projectRoot, entryPath) { mutableStateOf(0L) }
+    var pendingScroll by remember(projectRoot, entryPath) { mutableStateOf<Pair<Int, Int>?>(null) }
+    var pageError by remember(projectRoot, entryPath) { mutableStateOf<String?>(null) }
+    var loading by remember(projectRoot, entryPath) { mutableStateOf(true) }
+    var localToken by remember(projectRoot, entryPath) { mutableStateOf(0) }
     val scope = rememberCoroutineScope()
+
+    // The state objects are stable, so the clients below — created once per WebView — always
+    // read and write the current log rather than the one from the first frame.
+    fun append(line: ConsoleLine) {
+        linesState.value = appendConsole(linesState.value, line)
+    }
 
     DisposableEffect(projectRoot, entryPath) {
         var server: PreviewServer? = null
@@ -703,32 +796,224 @@ private fun ColumnScope.WebPreview(
         return
     }
     LaunchedEffect(url) { onUrl(url) }
-    AndroidView(
-        factory = { context ->
-            WebView(context).apply {
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.loadWithOverviewMode = true
-                settings.useWideViewPort = true
-                webViewClient = WebViewClient()
-                loadUrl(url)
-            }
-        },
-        update = { view ->
-            if (view.url?.substringBefore('#') != url) {
-                view.clearCache(true)
-                view.loadUrl(url)
-                loadedToken = refreshToken
-            } else if (loadedToken != refreshToken) {
-                view.clearCache(true)
-                view.reload()
-                loadedToken = refreshToken
-            }
-        },
-        modifier = Modifier
-            .weight(1f)
-            .fillMaxWidth(),
+    DeviceRow(
+        device = device,
+        onDevice = { device = it },
     )
+    BoxWithConstraints(
+        Modifier
+            .then(if (consoleOpen) Modifier.height(150.dp).fillMaxWidth() else Modifier.weight(1f))
+            .background(c.fieldBg),
+    ) {
+        val viewportDp = maxWidth
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            // Desktop lays out 1280 wide and scales the drawing to fit: layouts with
+            // breakpoints behave correctly, and rotation rescales without a reload because
+            // the scale is draw-time, not a setting. (WebSettings.setInitialScale is gone
+            // from current compile stubs, which is just as well.)
+            val desktopScale = (viewportDp.value / 1280f).coerceIn(0.1f, 1f)
+            val contentMod = when (device) {
+                PreviewDevice.Phone -> Modifier.fillMaxSize()
+                PreviewDevice.Tablet -> Modifier.fillMaxWidth(0.78f).fillMaxHeight()
+                PreviewDevice.Desktop -> Modifier
+                    .width(1280.dp)
+                    .fillMaxHeight()
+                    .graphicsLayer(
+                        scaleX = desktopScale,
+                        scaleY = desktopScale,
+                        transformOrigin = TransformOrigin(0.5f, 0f),
+                    )
+            }
+            // A device switch rebuilds the view: it is an explicit tap, and a fresh view is
+            // the only honest way to apply a new user agent and viewport scale.
+            androidx.compose.runtime.key(device) {
+                AndroidView(
+                    factory = { context ->
+                        WebView(context).apply {
+                            settings.javaScriptEnabled = true
+                            settings.domStorageEnabled = true
+                            settings.useWideViewPort = true
+                            settings.loadWithOverviewMode = true
+                            applyDeviceSettings(this, device)
+                            addJavascriptInterface(
+                                ConsoleBridge { message, source, line ->
+                                    append(
+                                        ConsoleLine(
+                                            ConsoleLevel.Error,
+                                            message.ifBlank { "Uncaught error" },
+                                            relativeSource(source).ifBlank { null },
+                                            line,
+                                        ),
+                                    )
+                                },
+                                "__ccBridge",
+                            )
+                            webViewClient = object : WebViewClient() {
+                                override fun onPageStarted(
+                                    view: WebView?,
+                                    url: String?,
+                                    favicon: android.graphics.Bitmap?,
+                                ) {
+                                    loadStart = System.currentTimeMillis()
+                                    loading = true
+                                    pageError = null
+                                    if (!preserveState.value) {
+                                        linesState.value = emptyList()
+                                    }
+                                }
+
+                                override fun onPageFinished(view: WebView?, url: String?) {
+                                    val web = view ?: return
+                                    web.evaluateJavascript(ERROR_HOOK, null)
+                                    pendingScroll?.let { (x, y) ->
+                                        web.scrollTo(x, y)
+                                        pendingScroll = null
+                                    }
+                                    append(loadStampLine(System.currentTimeMillis() - loadStart))
+                                    loading = false
+                                }
+
+                                override fun onReceivedError(
+                                    view: WebView?,
+                                    request: android.webkit.WebResourceRequest?,
+                                    error: android.webkit.WebResourceError?,
+                                ) {
+                                    if (request?.isForMainFrame == true) {
+                                        pageError = pageErrorText(url, error?.errorCode ?: -1)
+                                        loading = false
+                                    }
+                                }
+
+                                override fun onReceivedHttpError(
+                                    view: WebView?,
+                                    request: android.webkit.WebResourceRequest?,
+                                    errorResponse: android.webkit.WebResourceResponse?,
+                                ) {
+                                    val code = errorResponse?.statusCode ?: 0
+                                    val failed = request?.url?.lastPathSegment
+                                    if (request?.isForMainFrame == true && code >= 400) {
+                                        pageError = pageErrorText(url, code)
+                                        loading = false
+                                    } else if (failed != null) {
+                                        // The page lived; one of its files did not. The source
+                                        // link points at the page: its line is unknowable here,
+                                        // so the link opens the file rather than a line in it.
+                                        append(
+                                            ConsoleLine(
+                                                ConsoleLevel.Error,
+                                                "Failed to load $failed ($code)",
+                                                entryPath,
+                                                0,
+                                            ),
+                                        )
+                                    }
+                                }
+                            }
+                            webChromeClient = object : android.webkit.WebChromeClient() {
+                                override fun onConsoleMessage(
+                                    message: android.webkit.ConsoleMessage?,
+                                ): Boolean {
+                                    val level = when (message?.messageLevel()) {
+                                        android.webkit.ConsoleMessage.MessageLevel.ERROR -> ConsoleLevel.Error
+                                        android.webkit.ConsoleMessage.MessageLevel.WARNING -> ConsoleLevel.Warning
+                                        else -> ConsoleLevel.Log
+                                    }
+                                    append(
+                                        ConsoleLine(
+                                            level,
+                                            message?.message().orEmpty(),
+                                            relativeSource(message?.sourceId()).ifBlank { null },
+                                            message?.lineNumber() ?: 0,
+                                        ),
+                                    )
+                                    return true
+                                }
+
+                                override fun onProgressChanged(view: WebView?, progress: Int) {
+                                    loading = progress < 100
+                                }
+                            }
+                            loadStart = System.currentTimeMillis()
+                            loadUrl(url)
+                        }
+                    },
+                    update = { view ->
+                        if (view.url?.substringBefore('#') != url) {
+                            pendingScroll = view.scrollX to view.scrollY
+                            view.clearCache(true)
+                            view.loadUrl(url)
+                            loadedToken = refreshToken + localToken
+                        } else if (loadedToken != refreshToken + localToken) {
+                            pendingScroll = view.scrollX to view.scrollY
+                            view.clearCache(true)
+                            view.reload()
+                            loadedToken = refreshToken + localToken
+                        }
+                    },
+                    modifier = contentMod,
+                )
+            }
+        }
+        // The 2 dp accent line runs along the top of the stage while loading.
+        if (loading && pageError == null) {
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .fillMaxWidth()
+                    .height(2.dp)
+                    .background(c.accent),
+            )
+        }
+        if (pageError != null) {
+            Column(
+                Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 32.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = pageError.orEmpty(),
+                    color = c.text,
+                    fontSize = 13.sp,
+                    fontFamily = Sans,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+                Spacer(Modifier.height(12.dp))
+                com.closecode.ui.components.OutlineButton(
+                    label = "Try again",
+                    onClick = {
+                        pageError = null
+                        localToken++
+                    },
+                )
+            }
+        }
+    }
+    ConsoleBar(
+        errorCount = linesState.value.count { it.level == ConsoleLevel.Error },
+        open = consoleOpen,
+        onToggle = { onConsoleOpen(!consoleOpen) },
+    )
+    if (consoleOpen) {
+        ConsolePanel(
+            lines = linesState.value,
+            preserveState = preserveState,
+            onClear = onClearLines,
+            onOpenFile = onOpenFile,
+            onClose = { onConsoleOpen(false) },
+        )
+    }
+}
+
+/** The user agent the page thinks it is on. The width does the rest: with overview mode
+ * the breakpoints follow the layout width, so the stock agent is the honest one everywhere
+ * except desktop, which names itself. */
+private fun applyDeviceSettings(view: WebView, device: PreviewDevice) {
+    view.settings.userAgentString = when (device) {
+        PreviewDevice.Desktop -> DESKTOP_UA
+        PreviewDevice.Phone, PreviewDevice.Tablet ->
+            WebSettings.getDefaultUserAgent(view.context)
+    }
 }
 
 @Composable
@@ -1361,4 +1646,490 @@ fun parseCsv(source: String): List<List<String>> {
     row.add(cell.toString())
     if (row.any { it.isNotBlank() }) rows.add(row)
     return rows
+}
+/** What the website printed, in three severities. Errors badge the toolbar. */
+internal enum class ConsoleLevel { Log, Warning, Error }
+
+/** One console row: what was printed, and where a tap should land. */
+internal data class ConsoleLine(
+    val level: ConsoleLevel,
+    val text: String,
+    val source: String? = null,
+    val line: Int = 0,
+)
+
+/** The console never grows past this; the oldest rows leave first. */
+internal const val CONSOLE_MAX_LINES = 500
+
+/** Appends one row, dropping the oldest past the cap. Skips blank text: noise, not signal. */
+internal fun appendConsole(lines: List<ConsoleLine>, line: ConsoleLine): List<ConsoleLine> {
+    if (line.text.isBlank()) return lines
+    val grown = lines + line
+    return if (grown.size > CONSOLE_MAX_LINES) grown.drop(grown.size - CONSOLE_MAX_LINES) else grown
+}
+
+/** Errors, warnings and everything, in that order: the badge and the filter chips read these. */
+internal fun consoleCounts(lines: List<ConsoleLine>): Triple<Int, Int, Int> {
+    var errors = 0
+    var warnings = 0
+    for (line in lines) {
+        when (line.level) {
+            ConsoleLevel.Error -> errors++
+            ConsoleLevel.Warning -> warnings++
+            ConsoleLevel.Log -> Unit
+        }
+    }
+    return Triple(errors, warnings, lines.size)
+}
+
+/** The line stamped after every load, so a quiet page still answers. */
+internal fun loadStampLine(millis: Long): ConsoleLine =
+    ConsoleLine(ConsoleLevel.Log, "Page loaded in $millis ms")
+
+/** Preview widths: full, three quarters, and a desktop laid out wide then scaled to fit. */
+internal enum class PreviewDevice(val label: String, val size: String) {
+    Phone("Phone", "375 × 812"),
+    Tablet("Tablet", "768 × 1024"),
+    Desktop("Desktop", "1280 × 800"),
+}
+
+/**
+ * Offset of the first character of 1-based [line]. Past-the-end lines clamp to the text end,
+ * so a link to a line that no longer exists still lands somewhere honest.
+ */
+internal fun offsetOfLine(text: String, line: Int): Int {
+    if (line <= 1) return 0
+    var offset = 0
+    var current = 1
+    while (offset < text.length && current < line) {
+        if (text[offset] == '\n') current++
+        offset++
+    }
+    return offset.coerceIn(0, text.length)
+}
+
+/**
+ * A page URL back to its project path: the console's source links tap through to the file,
+ * not to the local server address. Pure, so the mapping itself is tested.
+ */
+internal fun relativeSource(url: String?): String {
+    if (url.isNullOrBlank()) return ""
+    val noScheme = url.substringAfter("://", url)
+    return noScheme.substringAfter('/', "").substringBefore('?').substringBefore('#')
+}
+
+/**
+ * The website toolbar: the address pill, refresh, open-in-browser and the console button
+ * with its error badge. The pill names the file and the local address on one line.
+ */
+@Composable
+private fun WebToolbar(
+    fileName: String,
+    address: String,
+    errorCount: Int,
+    loading: Boolean,
+    canOpenInBrowser: Boolean,
+    onRefresh: () -> Unit,
+    onOpenInBrowser: () -> Unit,
+    onConsole: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(c.panel)
+            .padding(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier
+                    .weight(1f)
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(17.dp))
+                    .background(c.chipBg)
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(7.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(c.success),
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = buildAnnotatedString {
+                        pushStyle(
+                            androidx.compose.ui.text.SpanStyle(
+                                color = c.text,
+                                fontSize = 12.sp,
+                            ),
+                        )
+                        append(fileName)
+                        pop()
+                        pushStyle(
+                            androidx.compose.ui.text.SpanStyle(
+                                color = c.textFaint,
+                                fontSize = 11.sp,
+                            ),
+                        )
+                        append("  $address")
+                    },
+                    fontFamily = Sans,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.width(4.dp))
+            PreviewAction(CcIcons.Refresh, "Refresh preview", onClick = onRefresh)
+            if (canOpenInBrowser) {
+                PreviewAction(CcIcons.External, "Open in browser", onClick = onOpenInBrowser)
+            }
+            // The bug button: no badge with no errors, a red count the moment there are.
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onConsole)
+                    .semantics { contentDescription = "Open console" },
+                contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(CcIcons.Bug, c.textMuted, 18.dp)
+                if (errorCount > 0) {
+                    Box(
+                        Modifier
+                            .align(Alignment.TopEnd)
+                            .height(15.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(c.error)
+                            .padding(horizontal = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = if (errorCount > 99) "99+" else errorCount.toString(),
+                            color = androidx.compose.ui.graphics.Color.White,
+                            fontSize = 9.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+        if (loading) PreviewLoadingBar()
+    }
+}
+
+/** Phone, Tablet, Desktop: the widths the page thinks it has, and the size it renders at. */
+@Composable
+private fun DeviceRow(device: PreviewDevice, onDevice: (PreviewDevice) -> Unit) {
+    val c = LocalPageColors.current
+    val current = PreviewDevice.entries
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(c.panel)
+            .border(1.dp, c.divider, RoundedCornerShape(0.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        current.forEach { option ->
+            val on = option == device
+            Box(
+                Modifier
+                    .height(26.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (on) c.popupSelected else androidx.compose.ui.graphics.Color.Transparent)
+                    .clickable { onDevice(option) }
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CcIcon(
+                        when (option) {
+                            PreviewDevice.Phone -> CcIcons.Phone
+                            PreviewDevice.Tablet -> CcIcons.Tablet
+                            PreviewDevice.Desktop -> CcIcons.Monitor
+                        },
+                        if (on) c.text else c.textMuted,
+                        13.dp,
+                    )
+                    Spacer(Modifier.width(5.dp))
+                    Text(
+                        text = option.label,
+                        color = if (on) c.text else c.textMuted,
+                        fontSize = 11.sp,
+                        fontFamily = Sans,
+                        fontWeight = if (on) FontWeight.Medium else FontWeight.Normal,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = device.size,
+            color = c.textFaint,
+            fontSize = 11.sp,
+            fontFamily = Mono,
+        )
+    }
+}
+
+/** The 40 dp strip that opens the console: icon, word, red count, chevron. */
+@Composable
+private fun ConsoleBar(errorCount: Int, open: Boolean, onToggle: () -> Unit) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(40.dp)
+            .background(c.panel)
+            .border(1.dp, c.divider, RoundedCornerShape(0.dp))
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CcIcon(CcIcons.Terminal, c.textMuted, 15.dp)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "Console",
+            color = c.text,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.Medium,
+        )
+        if (errorCount > 0) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = errorCount.toString(),
+                color = c.error,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        CcIcon(
+            if (open) CcIcons.ChevronUp else CcIcons.Down,
+            c.textMuted,
+            15.dp,
+        )
+    }
+}
+
+private enum class ConsoleFilter { All, Errors, Warnings, Logs }
+
+/**
+ * The console itself: 230 dp that resize by their handle, filter chips with a trash can,
+ * and rows a long press can select. A new error never opens it — the badge and the red
+ * count say enough while it stays shut.
+ */
+@Composable
+private fun ConsolePanel(
+    lines: List<ConsoleLine>,
+    preserveState: androidx.compose.runtime.MutableState<Boolean>,
+    onClear: () -> Unit,
+    onOpenFile: (String, Int) -> Unit,
+    onClose: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    var filter by remember { mutableStateOf(ConsoleFilter.All) }
+    var panelH by remember { mutableStateOf(230.dp) }
+    var menuOpen by remember { mutableStateOf(false) }
+    val shown = remember(lines, filter) {
+        when (filter) {
+            ConsoleFilter.All -> lines
+            ConsoleFilter.Errors -> lines.filter { it.level == ConsoleLevel.Error }
+            ConsoleFilter.Warnings -> lines.filter { it.level == ConsoleLevel.Warning }
+            ConsoleFilter.Logs -> lines.filter { it.level == ConsoleLevel.Log }
+        }
+    }
+    val (errors, warnings, _) = consoleCounts(lines)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .height(panelH)
+            .background(c.fieldBg)
+            .border(1.dp, c.divider, RoundedCornerShape(0.dp)),
+    ) {
+        // The drag handle resizes between a readable minimum and a usable maximum; dragged
+        // past the minimum it closes instead, which is the swipe-down gesture for free.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(20.dp)
+                .pointerInput(Unit) {
+                    detectVerticalDragGestures { _, dy ->
+                        val next = panelH - with(density) { dy.toDp() }
+                        if (next < 120.dp && dy > 0) {
+                            onClose()
+                        } else {
+                            panelH = next.coerceIn(120.dp, 480.dp)
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier
+                    .width(40.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(c.divider),
+            )
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ConsoleFilterChip("All", null, filter == ConsoleFilter.All) {
+                filter = ConsoleFilter.All
+            }
+            ConsoleFilterChip("Errors", errors, filter == ConsoleFilter.Errors, error = true) {
+                filter = ConsoleFilter.Errors
+            }
+            ConsoleFilterChip("Warnings", warnings, filter == ConsoleFilter.Warnings) {
+                filter = ConsoleFilter.Warnings
+            }
+            ConsoleFilterChip("Logs", null, filter == ConsoleFilter.Logs) {
+                filter = ConsoleFilter.Logs
+            }
+            Spacer(Modifier.weight(1f))
+            Box(
+                Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onClear)
+                    .semantics { contentDescription = "Clear console" },
+                contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(CcIcons.Trash, c.textMuted, 15.dp)
+            }
+            Box {
+                Box(
+                    Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { menuOpen = true }
+                        .semantics { contentDescription = "Console options" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(CcIcons.More, c.textMuted, 15.dp)
+                }
+                androidx.compose.material3.DropdownMenu(
+                    expanded = menuOpen,
+                    onDismissRequest = { menuOpen = false },
+                ) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = if (preserveState.value) "✓ Preserve log" else "Preserve log",
+                                fontFamily = Sans,
+                            )
+                        },
+                        onClick = {
+                            menuOpen = false
+                            preserveState.value = !preserveState.value
+                        },
+                    )
+                }
+            }
+        }
+        androidx.compose.foundation.text.selection.SelectionContainer {
+            androidx.compose.foundation.lazy.LazyColumn(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+            ) {
+                items(shown.size) { index ->
+                    ConsoleRow(shown[index], onOpenFile)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConsoleFilterChip(
+    label: String,
+    count: Int?,
+    selected: Boolean,
+    error: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .height(24.dp)
+            .clip(RoundedCornerShape(7.dp))
+            .background(if (selected) c.popupSelected else androidx.compose.ui.graphics.Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = if (count != null && count > 0) "$label $count" else label,
+            color = when {
+                error && (count ?: 0) > 0 -> c.error
+                selected -> c.text
+                else -> c.textMuted
+            },
+            fontSize = 11.sp,
+            fontFamily = Sans,
+            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+        )
+    }
+}
+
+@Composable
+private fun ConsoleRow(line: ConsoleLine, onOpenFile: (String, Int) -> Unit) {
+    val c = LocalPageColors.current
+    // Console-only colors, stated here because they belong to no shared surface: a dark red
+    // wash for errors, a dark amber one for warnings, plain text for logs.
+    val bg = when (line.level) {
+        ConsoleLevel.Error -> Color(0xFF1D1215)
+        ConsoleLevel.Warning -> Color(0xFF1D1A10)
+        ConsoleLevel.Log -> androidx.compose.ui.graphics.Color.Transparent
+    }
+    val fg = when (line.level) {
+        ConsoleLevel.Error -> Color(0xFFF2A0A0)
+        ConsoleLevel.Warning -> c.warning
+        ConsoleLevel.Log -> c.popupText
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(bg)
+            .border(1.dp, Color(0xFF12161F), RoundedCornerShape(0.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        Text(
+            text = line.text,
+            color = fg,
+            fontSize = 11.sp,
+            fontFamily = Mono,
+            lineHeight = 17.sp,
+        )
+        if (line.source != null) {
+            val name = line.source.substringAfterLast('/')
+            val label = if (line.line > 0) {
+                "$name:${line.line} · tap to open"
+            } else {
+                "$name · tap to open"
+            }
+            Text(
+                text = label,
+                color = c.link,
+                fontSize = 10.5.sp,
+                fontFamily = Sans,
+                modifier = Modifier
+                    .padding(top = 2.dp)
+                    .clickable { onOpenFile(line.source, line.line.coerceAtLeast(1)) },
+            )
+        }
+    }
 }
