@@ -706,15 +706,24 @@ internal fun IdeTerminal(
         // copy of a thousand lines is not something this can assemble without holding all of it
         // in one string, which is the thing virtualisation exists to avoid. What is on screen can
         // be selected; what has scrolled away has to be scrolled back to.
-        SelectionContainer {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .background(c.fieldBg)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-            ) {
+        //
+        // The weight lives on this Box, not on the list: weight only means anything to the
+        // Column that holds it, and inside the selection container it was silently ignored —
+        // which left the list wrapped around its content and the key row stranded mid-screen
+        // with dead space below it.
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .background(c.fieldBg),
+        ) {
+            SelectionContainer {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
                 // The empty state is one line, not a paragraph: the shell's folder, and then
                 // the prompt below it, which is where the typing happens.
                 if (session.lines.isEmpty()) {
@@ -762,6 +771,8 @@ internal fun IdeTerminal(
                     }
                 }
             }
+        }
+
         }
 
         // The prompt is part of the output: path, dollar, and the line being typed, ending in
