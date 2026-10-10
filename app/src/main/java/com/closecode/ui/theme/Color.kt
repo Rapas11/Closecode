@@ -208,6 +208,7 @@ data class PageColors(
     // App screens, hexes the spec gives inline:
     val fileRowActive: Color,   // open file's row background (#1B2850)
     val htmlIcon: Color,        // HTML file icon
+    val keyRowBg: Color,        // terminal key row background (#12151D)
 )
 
 /**
@@ -387,6 +388,7 @@ val LightColors = PageColors(
     statusDeletedBg = Color(0xFFFDE3E6),
     fileRowActive = Color(0xFFE3EAFF),
     htmlIcon = Color(0xFFC25A2E),
+    keyRowBg = Color(0xFFE8ECF3),
 )
 
 val DarkColors = PageColors(
@@ -513,6 +515,7 @@ val DarkColors = PageColors(
     statusDeletedBg = Color(0xFF3A1A1F),
     fileRowActive = Color(0xFF1B2850),
     htmlIcon = Color(0xFFE5784A),
+    keyRowBg = Color(0xFF12151D),
 )
 
 val LocalPageColors = staticCompositionLocalOf { LightColors }

@@ -1029,6 +1029,7 @@ internal fun IdeScreen(
                     // The slug is the history key: commands are remembered per project, and the
                     // store needs something to tell one project's list from another's.
                     projectSlug = slug,
+                    projectName = projectName,
                     // The holder came from above the screen switch, so this panel owns the draw but
                     // not the shells: leaving the terminal and coming back finds the same processes
                     // with the same output, and so does opening Settings.
@@ -1036,15 +1037,11 @@ internal fun IdeScreen(
                     // The project tree, so Tab completes paths from what the project actually
                     // holds rather than by listing a directory the shell may not even be in.
                     tree = diskTree,
-                    // `code <file>` and the two Git chips both end somewhere the terminal cannot
-                    // reach on its own: the editor, and the drawer's source control.
+                    // `code <file>` ends somewhere the terminal cannot reach on its own:
+                    // the editor.
                     onOpenPath = { file ->
                         openFile(file)
                         activePanel = "Code"
-                    },
-                    onOpenSourceControl = {
-                        explorerTab = SourceControlTab
-                        explorerOpen = true
                     },
                     // A file made or removed in the terminal is a file the drawer should list,
                     // rather than one that quietly stays wrong until something else refreshes it.

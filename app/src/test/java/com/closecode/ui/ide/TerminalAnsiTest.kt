@@ -58,21 +58,21 @@ class TerminalAnsiTest {
         assertEquals("error", textOf(line))
         val runs = runsOf(line)
         assertEquals(1, runs.size)
-        assertEquals(1, runs[0].style.fg)
+        assertEquals(AnsiColor.Palette(1), runs[0].style.fg)
     }
 
     @Test
     fun aResetReturnsToTheDefaultColour() {
         val runs = runsOf(sgr("32") + "ok" + sgr("0") + "plain")
         assertEquals(2, runs.size)
-        assertEquals(2, runs[0].style.fg)
+        assertEquals(AnsiColor.Palette(2), runs[0].style.fg)
         assertNull(runs[1].style.fg)
     }
 
     @Test
     fun everyColourNumberResolvesToItsOwnIndex() {
         for (index in 0..7) {
-            assertEquals(index, styleOf(30 + index).fg)
+            assertEquals(AnsiColor.Palette(index), styleOf(30 + index).fg)
         }
     }
 
@@ -82,16 +82,16 @@ class TerminalAnsiTest {
         // only the ordinary half was read on the way out, so a program's bright yellow, red, green
         // and blue all drew in their dimmer versions, and the bright half of every theme was dead.
         for (index in 0..7) {
-            assertEquals(index + 8, styleOf(90 + index).fg)
-            assertEquals(index + 8, styleOf(100 + index).bg)
+            assertEquals(AnsiColor.Palette(index + 8), styleOf(90 + index).fg)
+            assertEquals(AnsiColor.Palette(index + 8), styleOf(100 + index).bg)
         }
     }
 
     @Test
     fun anOrdinaryColourIsUnchanged() {
         for (index in 0..7) {
-            assertEquals(index, styleOf(30 + index).fg)
-            assertEquals(index, styleOf(40 + index).bg)
+            assertEquals(AnsiColor.Palette(index), styleOf(30 + index).fg)
+            assertEquals(AnsiColor.Palette(index), styleOf(40 + index).bg)
         }
     }
 
@@ -107,7 +107,7 @@ class TerminalAnsiTest {
     @Test
     fun aBackgroundIsRecordedSeparatelyFromTheForeground() {
         val style = styleOf(41)
-        assertEquals(1, style.bg)
+        assertEquals(AnsiColor.Palette(1), style.bg)
         assertNull(style.fg)
     }
 
@@ -115,15 +115,15 @@ class TerminalAnsiTest {
     fun aBrightBackgroundIsRecordedToo() {
         // 105 is bright magenta on a background, so index 13 rather than 5: the two halves of the
         // palette are numbered separately, which is what lets the bright one be read at all.
-        assertEquals(13, styleOf(105).bg)
-        assertEquals(5, styleOf(45).bg)
+        assertEquals(AnsiColor.Palette(13), styleOf(105).bg)
+        assertEquals(AnsiColor.Palette(5), styleOf(45).bg)
     }
 
     @Test
     fun twoColoursOnOneLineProduceTwoRuns() {
         val runs = runsOf(sgr("31") + "a" + sgr("32") + "b")
         assertEquals(listOf("a", "b"), runs.map { it.text })
-        assertEquals(listOf(1, 2), runs.map { it.style.fg })
+        assertEquals(listOf(AnsiColor.Palette(1), AnsiColor.Palette(2)), runs.map { it.style.fg })
     }
 
     @Test
@@ -153,16 +153,16 @@ class TerminalAnsiTest {
 
     @Test
     fun aDefaultColourNumberForgetsTheColour() {
-        val loud = AnsiStyle(fg = 1, bg = 2)
+        val loud = AnsiStyle(fg = AnsiColor.Palette(1), bg = AnsiColor.Palette(2))
         assertNull(applySgr(loud, intArrayOf(39)).fg)
-        assertEquals(2, applySgr(loud, intArrayOf(39)).bg)
+        assertEquals(AnsiColor.Palette(2), applySgr(loud, intArrayOf(39)).bg)
         assertNull(applySgr(loud, intArrayOf(49)).bg)
-        assertEquals(1, applySgr(loud, intArrayOf(49)).fg)
+        assertEquals(AnsiColor.Palette(1), applySgr(loud, intArrayOf(49)).fg)
     }
 
     @Test
     fun aFullResetForgetsEverything() {
-        val loud = AnsiStyle(fg = 3, bg = 4, bold = true, italic = true, underline = true)
+        val loud = AnsiStyle(fg = AnsiColor.Palette(3), bg = AnsiColor.Palette(4), bold = true, italic = true, underline = true)
         assertEquals(AnsiStyle.Plain, applySgr(loud, intArrayOf(0)))
     }
 
@@ -186,7 +186,7 @@ class TerminalAnsiTest {
     fun severalSequencesInOneSequenceAreAllApplied() {
         val style = styleOf(1, 31, 4)
         assertTrue(style.bold)
-        assertEquals(1, style.fg)
+        assertEquals(AnsiColor.Palette(1), style.fg)
         assertTrue(style.underline)
     }
 
@@ -194,7 +194,7 @@ class TerminalAnsiTest {
     fun aColourIsKeptUntilSomethingElseReplacesIt() {
         // No reset at the end of the line: a program that colours a run and forgets to close it
         // should still have its colour, because the next line starts afresh anyway.
-        assertEquals(1, runsOf(sgr("31") + "red").last().style.fg)
+        assertEquals(AnsiColor.Palette(1), runsOf(sgr("31") + "red").last().style.fg)
     }
 
     // -- Sequences that are not about colour ------------------------------------
@@ -266,7 +266,7 @@ class TerminalAnsiTest {
         // pass, and the escapes that coloured it sit after the return, so the colour comes along.
         val line = "10%\r20%\r" + sgr("32") + "done"
         assertEquals("done", textOf(line))
-        assertEquals(2, runsOf(line).last().style.fg)
+        assertEquals(AnsiColor.Palette(2), runsOf(line).last().style.fg)
     }
 
     @Test
@@ -277,29 +277,44 @@ class TerminalAnsiTest {
     // -- Extended colours ------------------------------------------------------
 
     @Test
-    fun anEightBitPaletteIndexResolvesToOneOfTheSixteen() {
-        assertEquals(1, styleOf(38, 5, 1).fg)
-        assertEquals(7, styleOf(38, 5, 15).fg)
+    fun anEightBitPaletteIndexKeepsItsNumber() {
+        assertEquals(AnsiColor.Palette(1), styleOf(38, 5, 1).fg)
+        assertEquals(AnsiColor.Palette(15), styleOf(38, 5, 15).fg)
     }
 
     @Test
-    fun aTruecolorValueResolvesRatherThanBeingDropped() {
-        // Dropping it would leave the text with no colour at all, which reads as a bug rather than
-        // as a limitation. Collapsing to the nearest of the sixteen reads as the closest match.
-        assertEquals(7, styleOf(38, 2, 250, 250, 250).fg)
-        assertEquals(0, styleOf(38, 2, 10, 10, 10).fg)
+    fun aTruecolorValuePassesThroughUntouched() {
+        // Collapsing it onto black or white is how every 256-color program drew wrong.
+        assertEquals(AnsiColor.Rgb(0xFAFAFA), styleOf(38, 2, 250, 250, 250).fg)
+        assertEquals(AnsiColor.Rgb(0x0A0A0A), styleOf(38, 2, 10, 10, 10).fg)
+        assertEquals(AnsiColor.Rgb(0x123456), styleOf(48, 2, 0x12, 0x34, 0x56).bg)
+    }
+
+    @Test
+    fun theCubeMapsToRealSteps() {
+        // 196 is full red: (5, 0, 0) on steps of 0, 95, 135, 175, 215, 255.
+        assertEquals(AnsiColor.Rgb(0xFF0000), styleOf(38, 5, 196).fg)
+        // 16 is the cube's black.
+        assertEquals(AnsiColor.Rgb(0x000000), styleOf(38, 5, 16).fg)
+    }
+
+    @Test
+    fun theGraysClimbInTensFromEight() {
+        assertEquals(AnsiColor.Rgb(0x080808), styleOf(38, 5, 232).fg)
+        // 240 is eight steps up: 8 + 10 * 8 = 88 = 0x58.
+        assertEquals(AnsiColor.Rgb(0x585858), styleOf(38, 5, 240).fg)
     }
 
     @Test
     fun anExtendedBackgroundIsRecordedAsABackground() {
-        assertEquals(2, styleOf(48, 5, 2).bg)
+        assertEquals(AnsiColor.Palette(2), styleOf(48, 5, 2).bg)
     }
 
     @Test
     fun anExtendedColourLeavesTheForegroundAloneWhenItIsABackground() {
-        val style = AnsiStyle(fg = 4)
-        assertEquals(4, applySgr(style, intArrayOf(48, 5, 2)).fg)
-        assertEquals(2, applySgr(style, intArrayOf(48, 5, 2)).bg)
+        val style = AnsiStyle(fg = AnsiColor.Palette(4))
+        assertEquals(AnsiColor.Palette(4), applySgr(style, intArrayOf(48, 5, 2)).fg)
+        assertEquals(AnsiColor.Palette(2), applySgr(style, intArrayOf(48, 5, 2)).bg)
     }
 
     @Test

@@ -5,23 +5,31 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.closecode.ui.model.ProjectFile
 import java.io.File
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -56,6 +64,10 @@ internal class TerminalSession(val number: Int) {
     var input by mutableStateOf(TextFieldValue(""))
     var lastExit by mutableStateOf<Int?>(null)
     var cwd by mutableStateOf("")
+    /** A reader-given name from a long press. Null means the numbered label. */
+    var customName by mutableStateOf<String?>(null)
+    /** True between sending a command and reading its exit marker. Drives the Stop button. */
+    var commandRunning by mutableStateOf(false)
     var history by mutableStateOf(emptyList<String>())
     var historyIndex by mutableStateOf(0)
     var draft by mutableStateOf("")
@@ -81,6 +93,7 @@ internal class TerminalSession(val number: Int) {
 
     fun killRunning() {
         shell?.killRunning()
+        commandRunning = false
     }
 
     fun close() {
@@ -99,13 +112,20 @@ internal class TerminalSession(val number: Int) {
      * disk so the drawer can follow.
      *
      * The caller deals with `code`, which never reaches here because it is not a program; everything
-     * else goes to the shell.
+     * else goes to the shell. [prompt] is the prompt as drawn (directory, dollar, space), echoed
+     * back in front of the command so the scrollback reads as one transcript.
      */
-    fun submit(command: String, projectSlug: String, historyStore: TerminalHistoryStore): Boolean {
+    fun submit(
+        command: String,
+        projectSlug: String,
+        historyStore: TerminalHistoryStore,
+        prompt: String,
+    ): Boolean {
         val text = sanitizeCommand(command)
         if (text.isEmpty()) return false
-        lines.appendTerminalLine("$PROMPT$text")
+        lines.appendTerminalLine("$prompt$text")
         run(text)
+        commandRunning = true
         cwdAfterCommand(cwd, "", text)?.let { cwd = it }
         history = addToHistory(history, text)
         if (projectSlug.isNotEmpty()) historyStore.write(projectSlug, history)
@@ -141,6 +161,45 @@ internal class TerminalSession(val number: Int) {
 }
 
 /**
+ * The directory the prompt names: the project under the home mark, with the shell's
+ * project-relative folder after it. `~/Landing page`, or `~/Landing page/assets` once it has
+ * moved down.
+ */
+internal fun displayDir(projectName: String, cwd: String): String {
+    val base = "~/${projectName.ifBlank { "project" }}"
+    return if (cwd.isBlank()) base else "$base/$cwd"
+}
+
+/** The prompt as drawn and echoed: directory, dollar, space. */
+internal fun promptPrefix(displayDir: String): String = "$displayDir $ "
+
+/**
+ * An echoed command line back into its prompt directory and its command, or null for ordinary
+ * output. Echoes start under the home mark and carry " $ " between the two halves; output only
+ * matches by accident, and then only its head is tinted.
+ */
+internal fun splitPrompt(line: String): Pair<String, String>? {
+    if (!line.startsWith("~/")) return null
+    val cut = line.indexOf(" $ ")
+    if (cut < 0) return null
+    return line.substring(0, cut) to line.substring(cut + 3)
+}
+
+/** The commands the Commands sheet offers out of the box, in the order they earn their place. */
+internal val DefaultTerminalCommands = listOf(
+    "ls -la", "pwd", "ps", "clear", "kill", "git status", "git diff",
+)
+
+/** Saved commands, joined for the store. Histories split on newlines, so these split on a unit separator a command cannot practically contain. */
+internal fun encodeCommands(commands: List<String>): String = commands.joinToString("\u001F")
+
+internal fun decodeCommands(raw: String?): List<String> =
+    raw.orEmpty().split('\u001F').map { it.trim() }.filter { it.isNotEmpty() }
+
+/** Preference key for the Commands sheet shelf. Global, not per project: tools are tools. */
+internal const val TERMINAL_COMMANDS_KEY = "terminal.commands"
+
+/**
  * What a tab is called.
  *
  * The number is the identity — it is what makes one tab distinguishable from another at a glance —
@@ -158,11 +217,15 @@ internal const val TAB_TITLE_MAX_CHARS = 22
 /**
  * A tab label that fits the strip.
  *
- * The number is never trimmed away, whatever the path looks like: two tabs both called "…going"
- * are worse than two tabs both called "Shell 1", because the first loses the only thing that
- * distinguishes them. So the path is shortened and the head is kept.
+ * A reader-given name wins outright: renaming is the reader saying what the tab is for, and a
+ * generated label on top of it would argue. Otherwise the number is never trimmed away, whatever
+ * the path looks like: two tabs both called "…going" are worse than two tabs both called
+ * "Shell 1", because the first loses the only thing that distinguishes them. So the path is
+ * shortened and the head is kept.
  */
-internal fun tabLabel(number: Int, cwd: String): String {
+internal fun tabLabel(number: Int, cwd: String, custom: String? = null): String {
+    val named = custom?.takeIf { it.isNotBlank() }
+    if (named != null) return named
     val head = "Shell $number"
     if (cwd.isEmpty()) return head
     val leaf = cwd.substringAfterLast('/').ifBlank { cwd }
@@ -174,13 +237,10 @@ internal fun tabLabel(number: Int, cwd: String): String {
     return "$head · …${leaf.takeLast(room)}"
 }
 /**
- * The row of terminal tabs.
- *
- * A tab is labelled by its number, with the directory appended only once the shell has left the
- * project root — the one thing about a tab that a list of numbered labels would hide. The last tab
- * cannot be closed, for the same reason the last editor tab cannot: there has to be somewhere to
- * type.
+ * The row of terminal tabs: 26 dp chips, monospace labels, the active one in white with a
+ * 2 dp accent line under it, and a plus chip for another shell. Long press renames or closes.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun TerminalTabStrip(
     sessions: List<TerminalSession>,
@@ -188,63 +248,88 @@ internal fun TerminalTabStrip(
     onSelect: (Int) -> Unit,
     onClose: (Int) -> Unit,
     onAdd: () -> Unit,
+    onRename: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
+    var menuFor by remember { mutableStateOf<Int?>(null) }
     Row(
         modifier
             .fillMaxWidth()
             .background(c.panel)
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 6.dp, vertical = 5.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         sessions.forEach { session ->
             val active = session.number == activeId
-            Row(
-                Modifier
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(if (active) c.panel2 else Color.Transparent)
-                    .border(1.dp, if (active) c.ac else c.ln, RoundedCornerShape(7.dp))
-                    .clickable { onSelect(session.number) }
-                    .padding(start = 9.dp, end = if (sessions.size > 1) 4.dp else 9.dp, top = 5.dp, bottom = 5.dp)
-                    .semantics { contentDescription = tabLabel(session.number, session.cwd) },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text = tabLabel(session.number, session.cwd),
-                    color = if (active) c.tx else c.mu,
-                    fontSize = 11.sp,
-                    fontFamily = Mono,
-                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                    maxLines = 1,
-                )
-                if (sessions.size > 1) {
+            val label = tabLabel(session.number, session.cwd, session.customName)
+            Box {
+                Column(
+                    Modifier
+                        .height(26.dp)
+                        .clip(RoundedCornerShape(7.dp))
+                        .background(if (active) c.chipBg else Color.Transparent)
+                        .combinedClickable(
+                            onClick = { onSelect(session.number) },
+                            onLongClick = { menuFor = session.number },
+                        )
+                        .padding(horizontal = 12.dp)
+                        .semantics { contentDescription = label },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = label,
+                        color = if (active) Color.White else c.textMuted,
+                        fontSize = 12.sp,
+                        fontFamily = Mono,
+                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+                        maxLines = 1,
+                    )
+                    // The accent line under the active chip. Inside the chip rather than below
+                    // it, so the strip stays 26 dp and the line never takes its own row.
                     Box(
                         Modifier
-                            .size(16.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .clickable { onClose(session.number) }
-                            .semantics { contentDescription = "Close this shell" },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("×", color = c.mu, fontSize = 12.sp)
-                    }
+                            .width(20.dp)
+                            .height(2.dp)
+                            .clip(RoundedCornerShape(1.dp))
+                            .background(if (active) c.accent else Color.Transparent),
+                    )
+                }
+                DropdownMenu(
+                    expanded = menuFor == session.number,
+                    onDismissRequest = { menuFor = null },
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Rename", fontFamily = Mono) },
+                        onClick = {
+                            menuFor = null
+                            onRename(session.number)
+                        },
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Close shell", fontFamily = Mono) },
+                        enabled = sessions.size > 1,
+                        onClick = {
+                            menuFor = null
+                            onClose(session.number)
+                        },
+                    )
                 }
             }
         }
         Box(
             Modifier
-                .size(28.dp)
+                .size(26.dp)
                 .clip(RoundedCornerShape(7.dp))
-                .border(1.dp, c.ln, RoundedCornerShape(7.dp))
+                .border(1.dp, c.fieldBorder, RoundedCornerShape(7.dp))
                 .clickable { onAdd() }
                 .semantics { contentDescription = "New shell" },
             contentAlignment = Alignment.Center,
         ) {
-            Text("+", color = c.tx, fontSize = 15.sp, fontFamily = Mono)
+            Text("+", color = c.text, fontSize = 14.sp, fontFamily = Mono)
         }
     }
 }
@@ -304,5 +389,11 @@ internal class TerminalSessions {
     /** Replaces the remembered commands on every shell, on arrival. */
     fun applyHistory(commands: List<String>) {
         sessions = sessions.map { it.apply { copyHistory(commands) } }
+    }
+
+    /** Names one shell from a long press. Blank clears back to the numbered label. */
+    fun rename(number: Int, name: String) {
+        sessions.firstOrNull { it.number == number }?.customName =
+            name.takeIf { it.isNotBlank() }
     }
 }

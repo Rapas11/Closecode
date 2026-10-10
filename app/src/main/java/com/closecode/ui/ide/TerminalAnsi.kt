@@ -26,6 +26,21 @@ internal const val ESC = ''
 internal const val TabStop = 8
 
 /**
+ * A terminal color: one of the sixteen palette entries, or an exact RGB triple.
+ *
+ * Extended colors (256-palette and truecolor) keep their exact value instead of collapsing onto
+ * the sixteen: collapsing drew every program color as black or white, which is how `git diff`
+ * lost all of its reds and greens.
+ */
+internal sealed interface AnsiColor {
+    /** One of the sixteen, 0–7 ordinary and 8–15 bright. */
+    data class Palette(val index: Int) : AnsiColor
+
+    /** An exact color, packed 0xRRGGBB. */
+    data class Rgb(val rgb: Int) : AnsiColor
+}
+
+/**
  * How one run of characters is drawn.
  *
  * A value, not a mutation: the parser carries one of these as it walks a line and emits a new one
@@ -33,8 +48,8 @@ internal const val TabStop = 8
  * default" is just the empty style again rather than an inverse of whatever came before.
  */
 internal data class AnsiStyle(
-    val fg: Int? = null,
-    val bg: Int? = null,
+    val fg: AnsiColor? = null,
+    val bg: AnsiColor? = null,
     val bold: Boolean = false,
     val dim: Boolean = false,
     val italic: Boolean = false,
@@ -247,56 +262,53 @@ internal fun applySgr(style: AnsiStyle, params: IntArray): AnsiStyle {
     return next
 }
 
-/** An SGR colour code as the 0–7 index [AnsiColors.at] expects, bright codes folded to the same. */
-/**
- * Reduces an SGR colour code to an index into the palette: 0-7 ordinary, 8-15 bright.
- *
- * The two halves get separate numbers rather than sharing eight, because a shared numbering cannot
- * express the thing the codes are for: 91 and 31 are both red but they are meant to be drawn
- * differently, and folding them together made the bright half of every theme unreachable.
- */
-private fun normalizeColorCode(code: Int): Int = when (code) {
-    in 30..37 -> code - 30
-    in 90..97 -> code - 90 + 8
-    in 40..47 -> code - 40
-    in 100..107 -> code - 100 + 8
-    else -> 0
+/** An SGR colour code as a palette entry: 0-7 ordinary, 8-15 bright. */
+private fun normalizeColorCode(code: Int): AnsiColor.Palette = when (code) {
+    in 30..37 -> AnsiColor.Palette(code - 30)
+    in 90..97 -> AnsiColor.Palette(code - 90 + 8)
+    in 40..47 -> AnsiColor.Palette(code - 40)
+    in 100..107 -> AnsiColor.Palette(code - 100 + 8)
+    else -> AnsiColor.Palette(0)
 }
 
 /**
- * Resolves an extended colour to the nearest of the sixteen the theme has, and says how many
- * parameters it used.
+ * Resolves an extended colour to its exact value, and says how many parameters it used.
  *
- * An 8-bit palette index is collapsed by which third of the range it falls in, which is the same
- * approximation every 16-colour terminal has made for thirty years. Truecolor is averaged into the
- * nearest of the eight, because a 24-bit value cannot be drawn on a 16-colour terminal and
- * pretending otherwise would mean showing the wrong colour.
+ * The 256 palette's cube and grays map to their real RGB (steps of 0, 95, 135, 175, 215, 255;
+ * grays at 8 + 10 per step), and truecolor passes through untouched. Both used to collapse
+ * onto black or white, which is how every 256-color program drew wrong.
  */
-private fun readExtendedColor(params: IntArray, at: Int): Pair<Int, Int> {
-    val mode = params.getOrNull(at + 1) ?: return 0 to 0
+private fun readExtendedColor(params: IntArray, at: Int): Pair<AnsiColor, Int> {
+    val mode = params.getOrNull(at + 1) ?: return AnsiColor.Palette(0) to 0
     return when (mode) {
         5 -> {
             val index = params.getOrNull(at + 2) ?: 0
-            when (index) {
-                in 0..7 -> index to 2
-                in 8..15 -> index - 8 to 2
-                in 16..231 -> {
-                    // The 6x6x6 colour cube: 16 is black, 232 is white, 6 steps each.
-                    val cube = index - 16
-                    val brightest = maxOf(cube / 36, (cube % 36) / 6, cube % 6)
-                    (if (brightest > 2) 7 else 0) to 2
-                }
-                else -> (if (index >= 232) 7 else 0) to 2
-            }
+            (ansi256(index) to 2)
         }
         2 -> {
-            val r = params.getOrNull(at + 2) ?: 0
-            val g = params.getOrNull(at + 3) ?: 0
-            val b = params.getOrNull(at + 4) ?: 0
-            val luma = (r * 299 + g * 587 + b * 114) / 1000
-            (if (luma > 140) 7 else 0) to 4
+            val r = params.getOrNull(at + 2)?.coerceIn(0, 255) ?: 0
+            val g = params.getOrNull(at + 3)?.coerceIn(0, 255) ?: 0
+            val b = params.getOrNull(at + 4)?.coerceIn(0, 255) ?: 0
+            AnsiColor.Rgb((r shl 16) or (g shl 8) or b) to 4
         }
-        else -> 0 to 0
+        else -> AnsiColor.Palette(0) to 0
+    }
+}
+
+/** The 256-color palette as an exact color: 0–15 the sixteen, 16–231 the cube, 232–255 gray. */
+internal fun ansi256(index: Int): AnsiColor = when (index) {
+    in 0..15 -> AnsiColor.Palette(index)
+    in 16..231 -> {
+        val cube = index - 16
+        val steps = intArrayOf(0, 95, 135, 175, 215, 255)
+        val r = steps[cube / 36]
+        val g = steps[(cube % 36) / 6]
+        val b = steps[cube % 6]
+        AnsiColor.Rgb((r shl 16) or (g shl 8) or b)
+    }
+    else -> {
+        val level = (8 + 10 * (index.coerceIn(232, 255) - 232)).coerceIn(0, 255)
+        AnsiColor.Rgb((level shl 16) or (level shl 8) or level)
     }
 }
 
@@ -307,15 +319,25 @@ private fun readExtendedColor(params: IntArray, at: Int): Pair<Int, Int> {
  * on what it is drawn on, so `fg` and `bg` have to have been chosen before the swap can happen.
  */
 private fun spanStyleFor(style: AnsiStyle, ansi: AnsiColors, defaultFg: Color, defaultBg: Color): SpanStyle {
-    val fg = style.fg?.let { ansi.colorOf(it) }
-    val bg = style.bg?.let { ansi.colorOf(it) }
-    val swapped = if (style.inverse) bg ?: defaultBg else fg ?: defaultFg
+    // Palette entries read the reader's chosen sixteen; exact colors draw as themselves, so a
+    // program's 256-color red is red rather than the nearest of sixteen.
+    fun resolve(which: AnsiColor?, fallback: Color): Color = when (which) {
+        is AnsiColor.Palette -> ansi.colorOf(which.index)
+        is AnsiColor.Rgb -> Color(which.rgb or 0xFF000000.toInt())
+        null -> fallback
+    }
+    val fg = resolve(style.fg, defaultFg)
+    val bg = resolve(style.bg, defaultBg)
+    val swapped = if (style.inverse) bg else fg
     // Dim is a partly transparent foreground rather than a grey, so it dims the colour it was asked
     // to dim instead of flattening it to one. `SpanStyle` has no alpha of its own, so it has to be
     // folded into the colour — which is also why it is applied after the inverse swap: a dim
     // inverted run dims the colour that ended up in front, not the one that started behind.
     val foreground = if (style.dim) swapped.copy(alpha = DimAlpha) else swapped
-    val background = (if (style.inverse) fg ?: defaultFg else bg) ?: Color.Unspecified
+    // Unspecified unless the program asked for a background (or inversion put one in front):
+    // painting the editor's own background explicitly would be the same color but a different
+    // span, and spans are what the tests count.
+    val background = if (style.inverse) fg else if (style.bg != null) bg else Color.Unspecified
     return SpanStyle(
         color = foreground,
         background = background,
@@ -370,15 +392,20 @@ internal fun TerminalLine(
     val c = LocalPageColors.current
     val settings = LocalSettings.current
     val hasEscapes = remember(line) { line.indexOf(ESC) >= 0 }
+    // Null means "whatever the terminal is set to", so a line of output and the line being
+    // typed are always the same size.
+    val size = fontSize ?: terminalFontSize(settings).sp
     Text(
         text = if (hasEscapes) ansiAnnotated(line) else AnnotatedString(line),
         color = color ?: c.tx,
-        // Null means "whatever the terminal is set to", so a line of output and the line being
-        // typed are always the same size.
-        fontSize = fontSize ?: terminalFontSize(settings).sp,
+        fontSize = size,
         fontFamily = fontFamily,
-        maxLines = 1,
-        softWrap = false,
+        // The spec pairs 11.5 sp with 19 dp rows; any other size scales the rows with it, so a
+        // larger terminal font gets larger rows instead of running lines into each other.
+        lineHeight = (size.value * 19f / 11.5f).sp,
+        // Long lines wrap rather than clip: a clipped path or URL is information lost, while a
+        // wrapped one is only taller.
+        softWrap = true,
         modifier = modifier,
     )
 }

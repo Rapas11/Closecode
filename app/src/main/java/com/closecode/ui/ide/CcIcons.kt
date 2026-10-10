@@ -66,6 +66,8 @@ object CcIcons {
     )
     // The green check for clean states and done steps.
     val Check = icon("check", "M20 6L9 17l-5-5")
+    // Commands chip: a bolt. The terminal's saved commands live behind it.
+    val Zap = icon("zap", "M13 2L3 14h9l-1 8 10-12h-9l1-8z")
     // Repository rows: a lock for private, a book for public.
     val Lock = icon("lock", "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4")
     val Book = icon(

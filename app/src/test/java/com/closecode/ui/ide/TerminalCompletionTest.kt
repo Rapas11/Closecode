@@ -293,36 +293,29 @@ class TerminalCompletionTest {
         assertEquals(listOf("res/", "Theme.kt"), labels)
     }
 
-    // -- The chips -------------------------------------------------------------
+    // -- The saved-commands shelf ------------------------------------------------
 
     @Test
-    fun everyChipEitherRunsACommandOrOpensAScreen() {
-        // Nothing on the row is allowed to be decorative, and nothing is allowed to claim it will
-        // run something the shell has no binary for.
-        for ((label, action) in TerminalChips) {
-            assertTrue(label, label.isNotBlank())
-            assertTrue(label, action is ChipAction.Command || action is ChipAction.SourceControl)
+    fun everyShelfEntryIsTypable() {
+        // Nothing on the shelf is allowed to be decorative: every entry is a line the shell
+        // can take, typed at the prompt without running so it can be edited first.
+        for (command in DefaultTerminalCommands) {
+            assertTrue(command, command.isNotBlank())
+            assertTrue(command, '\n' !in command)
         }
     }
 
     @Test
-    fun theChipsRunExactlyWhatTheySay() {
-        val commands = TerminalChips.mapNotNull { (_, action) -> (action as? ChipAction.Command)?.command }
-        assertEquals(listOf("ls -la", "pwd", "ps", "clear", "kill"), commands)
+    fun theShelfOpensWithTheWorkingSet() {
+        assertEquals(
+            listOf("ls -la", "pwd", "ps", "clear", "kill", "git status", "git diff"),
+            DefaultTerminalCommands,
+        )
     }
 
     @Test
-    fun theGitChipsOpenSourceControlRatherThanRunningGit() {
-        // There is no git binary in the shell. A chip that typed `git status` would report
-        // "not found" every time, which is why these two go to the panel where Git really is.
-        val opens = TerminalChips.filter { it.second == ChipAction.SourceControl }.map { it.first }
-        assertEquals(listOf("Status", "Diff"), opens)
-        assertTrue(TerminalChips.none { (_, action) -> action is ChipAction.Command && action.command.startsWith("git") })
-    }
-
-    @Test
-    fun aChipIsNeverEmpty() {
-        assertTrue(TerminalChips.isNotEmpty())
+    fun aCommandIsNeverEmpty() {
+        assertTrue(DefaultTerminalCommands.isNotEmpty())
     }
 
     // -- code ------------------------------------------------------------------
