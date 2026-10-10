@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -2658,15 +2659,87 @@ formatRequest: Int = 0,
     } else {
         emptyList()
     }
-    val highlighted = remember(codeRange, code, c, codeLanguage, bracketCycle) {
+    // The symbol the caret sits in, or the single word selected: every other whole-word
+    // occurrence lights up behind it. A selected word of any length counts — selecting is
+    // deliberate — but a caret merely parked needs two letters, or every `i` and `x` in the
+    // file would glow while typing. Long-press and double-tap both select the word, so both
+    // get highlights and details with no gesture detection of their own.
+    val selectedSymbol = remember(code, fieldValue.selection) {
+        val sel = fieldValue.selection
+        if (sel.collapsed) {
+            null
+        } else {
+            code.substring(sel.min.coerceIn(0, code.length), sel.max.coerceIn(0, code.length))
+                .takeIf { it.isNotEmpty() && it.all(::isWordChar) }
+        }
+    }
+    val occurrenceSymbol = selectedSymbol
+        ?: remember(code, cursor) { symbolAt(code, cursor)?.takeIf { it.length >= 2 } }
+    val occurrenceOffsets = remember(code, occurrenceSymbol) {
+        occurrenceSymbol?.let { symbolOccurrences(code, it) } ?: emptyList()
+    }
+    // The selected symbol's details, for the selection bar's header: its name, where it is
+    // declared, and how many times the file uses it. The declaration reads the source, not the
+    // display text — folds hide bodies the symbol may live in — mapped through the fold map
+    // from the selected row. Shown for selections only: a caret merely passing through a word
+    // gets the glow but not the panel.
+    val symbolDetails = remember(selectedSymbol, fieldValue.selection, code, foldMap, sourceText) {
+        val symbol = selectedSymbol ?: return@remember null
+        val caret = fieldValue.selection.min.coerceIn(0, code.length)
+        val displayLine = caretPosition(code, caret).first
+        val sourceLine = foldMap.displayLines.getOrNull(displayLine - 1) ?: displayLine
+        val ownLine = sourceText.lines().getOrNull(sourceLine - 1).orEmpty()
+        val decl = declarationOf(ownLine).takeIf { it.contains(symbol) }
+            ?: enclosingDeclarationAt(sourceText, sourceLine)?.second
+                ?.replace(Regex("\\s+"), " ")?.trim()?.take(SYMBOL_DETAILS_DECL_MAX)
+        val count = occurrenceOffsets.size
+        val uses = "$count ${if (count == 1) "use" else "uses"}"
+        if (decl.isNullOrEmpty()) "$symbol · $uses" else "$symbol · $decl · $uses"
+    }
+    val highlighted = remember(codeRange, code, c, codeLanguage, bracketCycle, occurrenceSymbol) {
+        val slice = sliceOfLines(codeLines, codeRange)
         val above = code.substring(0, codeWindow.startOffset.coerceIn(0, code.length))
-        highlightCode(
-            sliceOfLines(codeLines, codeRange),
+        val base = highlightCode(
+            slice,
             c,
             codeLanguage,
             bracketCycle,
             openBlockDepth(above),
         )
+        // Other occurrences of the caret's symbol glow behind the text, so a tap on a name
+        // shows everywhere that name is used. Spans join the slice's own highlighting, which
+        // is why only matches inside the visible slice are drawn — the list itself still
+        // counts the whole display text, folded bodies excluded, since folds never reach it.
+        val symbol = occurrenceSymbol
+        if (symbol == null || occurrenceOffsets.isEmpty()) {
+            base
+        } else {
+            val sliceStart = codeWindow.startOffset.coerceIn(0, code.length)
+            val sel = fieldValue.selection
+            val mark = androidx.compose.ui.text.SpanStyle(
+                background = c.accent.copy(alpha = 0.22f),
+            )
+            androidx.compose.ui.text.AnnotatedString.Builder().apply {
+                append(base)
+                var drawn = 0
+                for (range in occurrenceOffsets) {
+                    if (drawn >= MAX_OCCURRENCE_SPANS) break
+                    // The selected word itself is skipped: the selection highlight already owns it.
+                    if (!sel.collapsed && range.first == sel.min && range.last + 1 == sel.max) {
+                        continue
+                    }
+                    if (range.last < sliceStart || range.first >= sliceStart + slice.length) {
+                        continue
+                    }
+                    addStyle(
+                        mark,
+                        (range.first - sliceStart).coerceAtLeast(0),
+                        (range.last + 1 - sliceStart).coerceAtMost(slice.length),
+                    )
+                    drawn++
+                }
+            }.toAnnotatedString()
+        }
     }
 
     // Pairs are found in the whole buffer rather than the window, because a block can open above
@@ -4021,8 +4094,15 @@ val applySuggestion: (Int) -> Unit = { index ->
                     lineTopPx(codeLayout, code, selectedLine, codeWindow)
                         ?: pillTopPx(selectedLine, lineHeightPx)
                 val selectedTopViewport = topPaddingPx + selectedTopContent - codeScroll.value
+                // Taller on a single-word selection: the bar grows a details header, and the
+                // positioned box must grow with it or the buttons would hang off its bottom.
+                val selectionBarHeight = if (symbolDetails != null) {
+                    SELECTION_BAR_HEIGHT + SELECTION_BAR_DETAILS_HEIGHT
+                } else {
+                    SELECTION_BAR_HEIGHT
+                }
                 val selectionBarHeightPx =
-                    with(popupDensity) { SELECTION_BAR_HEIGHT.toPx() }
+                    with(popupDensity) { selectionBarHeight.toPx() }
                 val selectionBarWidthPx =
                     with(popupDensity) { SELECTION_BAR_WIDTH.toPx() }
                 val selectionBarTop = popupTopPx(
@@ -4078,6 +4158,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                         },
                 ) {
                     SelectionBar(
+                        details = symbolDetails,
                         onCut = {
                             clipboard.setText(androidx.compose.ui.text.AnnotatedString(selectedText))
                             commit(
@@ -4374,6 +4455,12 @@ private const val AUTOSAVE_DELAY_MS = 900L
 /** The floating bar a selection earns: wide enough for the two words plus the two glyphs. */
 private val SELECTION_BAR_WIDTH = 240.dp
 private val SELECTION_BAR_HEIGHT = 34.dp
+// The symbol-details line above the selection bar's buttons, when the selection is one word.
+private val SELECTION_BAR_DETAILS_HEIGHT = 20.dp
+// How many occurrence glows are drawn; the count in the details line still totals the file.
+private const val MAX_OCCURRENCE_SPANS = 200
+// How much of a declaration the details line may quote before cutting it off.
+private const val SYMBOL_DETAILS_DECL_MAX = 48
 
 /**
  * The four actions that reach for selected text: paste over it, stretch the selection to the whole
@@ -4406,20 +4493,47 @@ private fun SelectionBar(
     onInfo: () -> Unit,
     onDuplicate: () -> Unit,
     pasteEnabled: Boolean = true,
+    // The selected symbol's details — name, declaration, use count — shown as a header row
+    // when the selection is exactly one word. Null draws the button row alone, as before.
+    details: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
     var menuOpen by remember { mutableStateOf(false) }
     Box(modifier) {
-        Row(
+        Column(
             Modifier
                 .width(SELECTION_BAR_WIDTH)
-                .height(SELECTION_BAR_HEIGHT)
                 .clip(RoundedCornerShape(10.dp))
                 .background(c.toolbarBg)
                 .border(1.dp, c.toolbarBorder, RoundedCornerShape(10.dp)),
-            verticalAlignment = Alignment.CenterVertically,
         ) {
+            // One line, muted and cut off: it names the symbol, it does not explain it.
+            if (details != null) {
+                Text(
+                    text = details,
+                    color = c.popupMuted,
+                    fontSize = 11.sp,
+                    fontFamily = Mono,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(SELECTION_BAR_DETAILS_HEIGHT)
+                        .padding(horizontal = 12.dp)
+                        .wrapContentHeight(Alignment.CenterVertically),
+                )
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(c.toolbarBorder),
+                )
+            }
+            Row(
+                Modifier.height(SELECTION_BAR_HEIGHT),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
             SelectionBarLabel("Cut", Modifier.weight(1f), onCut)
             SelectionBarSeparator()
             SelectionBarLabel("Copy", Modifier.weight(1f), onCopy)
@@ -4430,6 +4544,7 @@ private fun SelectionBar(
             SelectionBarSeparator()
             SelectionBarLabel("Format", Modifier.weight(1f), onFormat, accent = true)
             SelectionBarGlyph("⋯", "More actions") { menuOpen = true }
+            }
         }
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
             DropdownMenuItem(text = { Text("Copy", fontFamily = Sans) }, onClick = {

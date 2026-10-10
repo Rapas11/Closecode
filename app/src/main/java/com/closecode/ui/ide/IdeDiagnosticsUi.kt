@@ -2328,6 +2328,54 @@ internal fun declarationOf(line: String): String {
     return head.ifEmpty { line.trim() }
 }
 
+/**
+ * A code word's characters: letters, digits and the underscore. `$` is not one — it marks
+ * string templates and generated names, and treating it as a word character would glue a
+ * template like `"${name}x"` into one unselectable lump.
+ */
+internal fun isWordChar(ch: Char): Boolean = ch.isLetterOrDigit() || ch == '_'
+
+/**
+ * The word a collapsed caret sits in, or null when the caret is between words. A caret parked
+ * right after a word's last letter still belongs to that word — that is where a tap lands when
+ * a finger aims at the word's end — but a caret between a word and a space belongs to neither.
+ */
+internal fun symbolAt(text: String, offset: Int): String? {
+    if (text.isEmpty()) return null
+    val at = offset.coerceIn(0, text.length)
+    val anchor = when {
+        at < text.length && isWordChar(text[at]) -> at
+        at > 0 && isWordChar(text[at - 1]) -> at - 1
+        else -> return null
+    }
+    var start = anchor
+    while (start > 0 && isWordChar(text[start - 1])) start--
+    var end = anchor
+    while (end < text.length && isWordChar(text[end])) end++
+    return text.substring(start, end).takeIf { it.isNotEmpty() }
+}
+
+/**
+ * Every whole-word, case-sensitive occurrence of [word], as offset ranges. `foo` matches in
+ * `foo(bar)` but not in `foobar` or `my_foo`: symbols are case-sensitive, and a prefix is a
+ * different symbol. An empty or non-word query matches nothing rather than everything.
+ */
+internal fun symbolOccurrences(text: String, word: String): List<IntRange> {
+    if (word.isEmpty() || word.any { !isWordChar(it) }) return emptyList()
+    val out = ArrayList<IntRange>()
+    var from = 0
+    while (from <= text.length - word.length) {
+        val found = text.indexOf(word, from)
+        if (found < 0) return out
+        val beforeOk = found == 0 || !isWordChar(text[found - 1])
+        val after = found + word.length
+        val afterOk = after == text.length || !isWordChar(text[after])
+        if (beforeOk && afterOk) out.add(found until after)
+        from = found + 1
+    }
+    return out
+}
+
 /** One folded block's chip: the display row it sits on and where its source block starts. */
 internal data class FoldChip(val displayLine: Int, val sourceLine: Int)
 
