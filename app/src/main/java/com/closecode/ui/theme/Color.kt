@@ -187,6 +187,24 @@ data class PageColors(
     val badgeF: Color,         // #2F9E7A function badge
     val badgeM: Color,         // #C28A2C member / variable badge
     val warnText: Color,       // #E5C07B warning squiggle, tab/save dots
+
+    // -- App screens design spec tokens --------------------------------------------
+    // One token per row of the spec's token table. Dark values are verbatim; light values are
+    // adapted the same way the editor tokens were (same hues, readable on near-white).
+    val surface: Color,        // cards and panels on the dark background
+    val surfaceBorder: Color,   // 1 dp card border
+    val chipBg: Color,         // segmented controls, chips, search fields
+    val fieldBg: Color,        // text fields, terminal and log background
+    val fieldBorder: Color,     // 1 dp text-field border
+    val primary: Color,         // the one large main button on a screen
+    val primaryTint: Color,     // outline buttons with blue text
+    val link: Color,            // links and outline button text
+    val textMuted: Color,       // descriptions and helper text
+    val textFaint: Color,       // hints, disabled text, folder counts
+    val warning: Color,         // modified files, unsaved dots, warnings
+    val statusAddedBg: Color,   // A badge background
+    val statusModifiedBg: Color, // M badge background
+    val statusDeletedBg: Color, // D badge background
 )
 
 /**
@@ -350,6 +368,20 @@ val LightColors = PageColors(
     badgeF = Color(0xFF2F9E7A),
     badgeM = Color(0xFFC28A2C),
     warnText = Color(0xFF8A5A00),
+    surface = Color(0xFFFFFFFF),
+    surfaceBorder = Color(0xFFDDE2EA),
+    chipBg = Color(0xFFF3F5F9),
+    fieldBg = Color(0xFFEFF2F7),
+    fieldBorder = Color(0xFFDDE2EA),
+    primary = Color(0xFF2F6FED),
+    primaryTint = Color(0xFFE3EAFF),
+    link = Color(0xFF2457FF),
+    textMuted = Color(0xFF66728A),
+    textFaint = Color(0xFF8A94A6),
+    warning = Color(0xFF8A5A00),
+    statusAddedBg = Color(0xFFDFF5E9),
+    statusModifiedBg = Color(0xFFFFF0CF),
+    statusDeletedBg = Color(0xFFFDE3E6),
 )
 
 val DarkColors = PageColors(
@@ -459,6 +491,21 @@ val DarkColors = PageColors(
     badgeF = Color(0xFF2F9E7A),
     badgeM = Color(0xFFC28A2C),
     warnText = Color(0xFFE5C07B),
+    // App screens design spec tokens, dark values verbatim from the spec table.
+    surface = Color(0xFF12161F),
+    surfaceBorder = Color(0xFF232938),
+    chipBg = Color(0xFF161B26),
+    fieldBg = Color(0xFF0B0D12),
+    fieldBorder = Color(0xFF2A3142),
+    primary = Color(0xFF2F6FED),
+    primaryTint = Color(0xFF161F3A),
+    link = Color(0xFF7FB0FF),
+    textMuted = Color(0xFF7D869A),
+    textFaint = Color(0xFF566078),
+    warning = Color(0xFFE5C07B),
+    statusAddedBg = Color(0xFF16382A),
+    statusModifiedBg = Color(0xFF3A3115),
+    statusDeletedBg = Color(0xFF3A1A1F),
 )
 
 val LocalPageColors = staticCompositionLocalOf { LightColors }
