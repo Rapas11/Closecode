@@ -129,6 +129,15 @@ val GutterBulbIcon = 14.dp
 val GutterBulbTapWidth = 36.dp
 val GutterBulbTapHeight = 20.dp
 
+/**
+ * Where the bulb's tap area starts. The slot sits 6 dp from the edge, so a centred 36 dp area
+ * would start at -3 dp — and negative padding throws the moment the bulb is drawn. Clamped to
+ * the edge instead; the tile keeps its slot inside the area either way.
+ */
+internal val GutterBulbTapLeft: androidx.compose.ui.unit.Dp =
+    (GutterBulbLeft - (GutterBulbTapWidth - GutterBulbSize) / 2)
+        .coerceAtLeast(0.dp)
+
 /** The git marker's slot: 0 to 3 dp, with a 1 dp inset top and bottom. */
 val GutterGitWidth = 3.dp
 val GutterGitInset = 1.dp
@@ -137,6 +146,14 @@ val GutterGitInset = 1.dp
 val GutterFoldLeft = 41.dp
 val GutterFoldSize = 12.dp
 val GutterFoldTapWidth = 32.dp
+
+/**
+ * Where the fold chevron's tap area starts, same centring idea as the bulb's. Clamped for the
+ * same reason: if these numbers ever move, the geometry test says so before a phone does.
+ */
+internal val GutterFoldTapLeft: androidx.compose.ui.unit.Dp =
+    (GutterFoldLeft - (GutterFoldTapWidth - GutterFoldSize) / 2)
+        .coerceAtLeast(0.dp)
 
 /** Width reserved for the status dot and the line number. */
 val NumberColumnWidth = GutterWidth
@@ -693,19 +710,25 @@ fun LineNumberLayer(
                     )
                 }
                 if (bulbLine == line && onBulbTap != null) {
-                    // The tile is 18 dp; the tap area is 36 by 20 centred on the slot, so a thumb
-                    // can hit it without the eye paying for it.
+                    // The tile is 18 dp; the tap area is 36 by 20. It is centred on the slot
+                    // when there is room, otherwise it starts at the gutter edge — raw centring
+                    // math goes negative here, and negative padding crashes the app the moment
+                    // the bulb appears. The tile is placed at the slot inside the area either
+                    // way, so it lands exactly where it always did.
                     Box(
                         Modifier
                             .align(Alignment.TopStart)
-                            .padding(start = GutterBulbLeft - (GutterBulbTapWidth - GutterBulbSize) / 2)
+                            .padding(start = GutterBulbTapLeft)
                             .width(GutterBulbTapWidth)
                             .height(GutterBulbTapHeight)
                             .clickable(onClick = onBulbTap),
-                        contentAlignment = Alignment.Center,
                     ) {
                         Box(
                             Modifier
+                                .padding(
+                                    start = GutterBulbLeft - GutterBulbTapLeft,
+                                    top = (GutterBulbTapHeight - GutterBulbSize) / 2,
+                                )
                                 .size(GutterBulbSize)
                                 .clip(RoundedCornerShape(5.dp))
                                 .background(c.bulbTileBg),
@@ -743,7 +766,7 @@ fun LineNumberLayer(
                     Box(
                         Modifier
                             .align(Alignment.TopStart)
-                            .padding(start = GutterFoldLeft - (GutterFoldTapWidth - GutterFoldSize) / 2)
+                            .padding(start = GutterFoldTapLeft)
                             .width(GutterFoldTapWidth)
                             .fillMaxHeight()
                             .clickable { onFoldTap(line) },
