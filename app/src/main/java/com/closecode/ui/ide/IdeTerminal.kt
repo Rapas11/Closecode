@@ -184,6 +184,16 @@ internal class ShellProcess(
             isDaemon = true
             start()
         }
+        // Folders draw blue: plain `ls` asks for color on every listing, and the panel already
+        // parses ANSI, so the escapes turn into the palette's blue. A shell function rather than
+        // an alias, because a piped shell does not expand aliases. Always rather than auto:
+        // auto means "only on a terminal", and this shell is a pipe, so auto would color
+        // nothing. Silenced: a shell without the flag says so once into the void, not into
+        // the transcript.
+        runCatching {
+            stdin?.write("ls() { command ls --color=always \"$@\"; } 2>/dev/null\n")
+            stdin?.flush()
+        }
     }
 
     /** Sends one command, restarting a dead shell first. Nothing typed is ever handed to a logger. */
@@ -249,7 +259,6 @@ internal fun IdeTerminal(
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
-    val settings = LocalSettings.current
     val context = LocalContext.current
     val density = LocalDensity.current
     var ctrl by remember { mutableStateOf(ModifierLatch.OFF) }
@@ -687,7 +696,7 @@ internal fun IdeTerminal(
             onRename = { renameShell = it },
         )
 
-        val fontSp = terminalFontSize(settings).sp
+        val fontSp = 11.5.sp
         // One selection container over the whole output, so a long press starts a real selection
         // with handles and the system's own copy action rather than a bespoke one. It is the
         // only way to get at a stack trace or a URL word by word, and the only way to copy it at
@@ -770,15 +779,23 @@ internal fun IdeTerminal(
             onSend = { send() },
         )
 
-        // The key bar sits below the prompt rather than above anything else, so it lands
-        // directly on top of the soft keyboard with nothing between them — which is where a
-        // thumb already is.
+        // Whatever Tab was unsure about, shown rather than guessed at. Above the key bar
+        // because it is about the line being typed, and the line is the thing just above it —
+        // which also keeps the key row pinned to the very bottom in every state.
         //
-        // Only while the keyboard is open. Without it the bar is a dead strip eating a third
-        // of the screen; tapping the prompt opens the keyboard, and the bar comes with it.
-        // The completion list belongs to typing too, so it hides with the bar.
-        // Same reading as the editor's tool row: nonzero exactly while the keyboard is up.
+        // Both hide with the keyboard: without it the bar is a dead strip eating a third of
+        // the screen, and completion belongs to typing. Tapping the prompt opens the keyboard
+        // and both come with it. Same reading as the editor's tool row.
         val imeVisible = WindowInsets.isImeVisible
+        if (imeVisible && completionCandidates.isNotEmpty()) {
+            TerminalCompletionPopup(
+                candidates = completionCandidates,
+                onPick = { pickCompletion(it) },
+            )
+        }
+
+        // The key bar sits below everything else, so it lands directly on top of the soft
+        // keyboard with nothing between them — which is where a thumb already is.
         if (imeVisible) {
             TerminalKeyBar(
                 ctrl = ctrl,
@@ -790,15 +807,6 @@ internal fun IdeTerminal(
                     if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
                 },
             )
-
-            // Whatever Tab was unsure about, shown rather than guessed at. Above the key bar because it
-            // is about the line being typed, and the line is the thing just above it.
-            if (completionCandidates.isNotEmpty()) {
-                TerminalCompletionPopup(
-                    candidates = completionCandidates,
-                    onPick = { pickCompletion(it) },
-                )
-            }
         }
 
         /** Types a saved command without running it — except clear and kill, which act at once. */

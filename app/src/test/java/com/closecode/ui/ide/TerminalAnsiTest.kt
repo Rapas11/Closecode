@@ -297,12 +297,19 @@ class TerminalAnsiTest {
         // 16 is the cube's black.
         assertEquals(AnsiColor.Rgb(0x000000), styleOf(38, 5, 16).fg)
     }
-
     @Test
     fun theGraysClimbInTensFromEight() {
         assertEquals(AnsiColor.Rgb(0x080808), styleOf(38, 5, 232).fg)
         // 240 is eight steps up: 8 + 10 * 8 = 88 = 0x58.
         assertEquals(AnsiColor.Rgb(0x585858), styleOf(38, 5, 240).fg)
+    }
+
+    @Test
+    fun lsFolderBlueIsBoldPaletteBlue() {
+        // What `ls --color` emits for a folder: bright-bold blue.
+        val style = styleOf(1, 34)
+        assertTrue(style.bold)
+        assertEquals(AnsiColor.Palette(4), style.fg)
     }
 
     @Test

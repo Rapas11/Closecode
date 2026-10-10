@@ -390,19 +390,15 @@ internal fun TerminalLine(
     color: Color? = null,
 ) {
     val c = LocalPageColors.current
-    val settings = LocalSettings.current
     val hasEscapes = remember(line) { line.indexOf(ESC) >= 0 }
-    // Null means "whatever the terminal is set to", so a line of output and the line being
-    // typed are always the same size.
-    val size = fontSize ?: terminalFontSize(settings).sp
+    // Fixed size: 11.5sp on 19sp rows, so output, echoes and the prompt line up as one transcript.
+    val size = fontSize ?: 11.5.sp
     Text(
         text = if (hasEscapes) ansiAnnotated(line) else AnnotatedString(line),
         color = color ?: c.tx,
         fontSize = size,
         fontFamily = fontFamily,
-        // The spec pairs 11.5 sp with 19 dp rows; any other size scales the rows with it, so a
-        // larger terminal font gets larger rows instead of running lines into each other.
-        lineHeight = (size.value * 19f / 11.5f).sp,
+        lineHeight = 19.sp,
         // Long lines wrap rather than clip: a clipped path or URL is information lost, while a
         // wrapped one is only taller.
         softWrap = true,

@@ -160,8 +160,7 @@ class TerminalTest {
     }
 
     @Test
-    fun killingTheShellDoesNotBrickTheTab() {
-        // The exact failure from the phone: Stop kills the shell, and every later command was
+    fun killingTheShellDoesNotBrickTheTab() {        // The exact failure from the phone: Stop kills the shell, and every later command was
         // silently swallowed — echoed, but never run, with no output and no error. A dead shell
         // restarts on the next command instead.
         val output = CopyOnWriteArrayList<String>()
@@ -191,5 +190,25 @@ class TerminalTest {
         session.submit("ls -la", "slug", store, "~/Blank app $ ")
         assertEquals(listOf("~/Blank app $ ls -la"), session.lines.toList())
         session.close()
+    }
+
+    @Test
+    fun plainLsIsAColorAskingFunction() {
+        // Folders draw blue because `ls` always asks for color; the panel parses the escapes.
+        val output = CopyOnWriteArrayList<String>()
+        val shell = ShellProcess(directory = null, onLine = output::add, shellPath = "/bin/sh")
+        shell.start()
+        if (!shell.isRunning) return
+
+        try {
+            shell.run("type ls")
+            val deadline = System.currentTimeMillis() + 5_000
+            while (System.currentTimeMillis() < deadline && output.none { "function" in it }) {
+                Thread.sleep(20)
+            }
+            assertTrue("ls is not a function: $output", output.any { "function" in it })
+        } finally {
+            shell.close()
+        }
     }
 }

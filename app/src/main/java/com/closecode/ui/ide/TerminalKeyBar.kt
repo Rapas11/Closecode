@@ -135,14 +135,15 @@ private fun Modifier.verticalSwipeTo(onSwipe: (Int) -> Unit): Modifier = pointer
     }
 }
 
-/** One modifier key, tinted blue like the other tinted keys, darker when locked. */
+/** One modifier key: identical to ESC/TAB, with an outline only while armed. */
 @Composable
 private fun ModifierKey(label: String, latch: ModifierLatch, onTap: () -> Unit) {
     val c = LocalPageColors.current
     val armed = modifierApplies(latch)
     val locked = latch == ModifierLatch.LOCKED
-    // Armed reads as the accent; locked is drawn darker on top of it so the two are told apart at a
-    // glance, which matters because one means "the next key" and the other means "every key".
+    // Same fill as its neighbours either way; locked is drawn darker on top of it so armed
+    // ("the next key") and locked ("every key") still read apart. The outline is the armed
+    // signal and appears only then, so an idle row is four flat blue keys.
     val fill = when {
         locked -> c.accent.copy(alpha = 0.45f)
         else -> c.primaryTint
@@ -152,7 +153,11 @@ private fun ModifierKey(label: String, latch: ModifierLatch, onTap: () -> Unit) 
             .height(34.dp)
             .clip(RoundedCornerShape(7.dp))
             .background(fill)
-            .border(1.dp, if (armed) c.accent else c.primary, RoundedCornerShape(7.dp))
+            .border(
+                1.dp,
+                if (armed) c.accent else Color.Transparent,
+                RoundedCornerShape(7.dp),
+            )
             .clickable(onClick = onTap)
             .padding(horizontal = 13.dp)
             .semantics { contentDescription = "$label ${latch.name.lowercase()}" },
@@ -168,7 +173,7 @@ private fun ModifierKey(label: String, latch: ModifierLatch, onTap: () -> Unit) 
     }
 }
 
-/** One ordinary key: 34 dp tall, tinted blue for ESC/TAB, chip gray for the rest. */
+/** One ordinary key: 34 dp tall, blue like the modifiers for ESC/TAB, chip gray for the rest. */
 @Composable
 private fun PlainKey(label: String, tinted: Boolean, onTap: () -> Unit) {
     val c = LocalPageColors.current
@@ -177,6 +182,7 @@ private fun PlainKey(label: String, tinted: Boolean, onTap: () -> Unit) {
             .height(34.dp)
             .clip(RoundedCornerShape(7.dp))
             .background(if (tinted) c.primaryTint else c.chipBg)
+            .border(1.dp, Color.Transparent, RoundedCornerShape(7.dp))
             .clickable(onClick = onTap)
             .padding(horizontal = 13.dp)
             .semantics { contentDescription = label },
@@ -187,6 +193,7 @@ private fun PlainKey(label: String, tinted: Boolean, onTap: () -> Unit) {
             color = if (tinted) c.link else c.popupText,
             fontSize = 12.sp,
             fontFamily = Mono,
+            fontWeight = if (tinted) FontWeight.Bold else FontWeight.Normal,
         )
     }
 }
