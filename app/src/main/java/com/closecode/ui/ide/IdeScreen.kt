@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -159,6 +160,7 @@ import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
 import java.io.File
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun IdeScreen(
     projectName: String,
@@ -1249,23 +1251,30 @@ internal fun IdeScreen(
                 }
             }
 
-            IdeNav(
-                active = when {
-                    findOpen -> "Search"
-                    moreOpen -> "More"
-                    activePanel == "AI" -> "AI"
-                    else -> ""
-                },
-                onSelect = { item ->
-                    // Spec item 4's save-on-Preview now lives on the path bar, because Preview is
-                    // no longer something the bottom bar selects directly.
-                    when (item) {
-                        "Search" -> findOpen = true
-                        "AI" -> activePanel = if (activePanel == "AI") "Code" else "AI"
-                        "More" -> moreOpen = true
-                    }
-                },
-            )
+            // The terminal owns its strip above the keyboard, so while it is open the
+            // bottom bar steps aside: one row of keys plus the keyboard is already two.
+            // Read once here rather than in the terminal so the whole screen recomposes
+            // only on open and close, never per keystroke.
+            val imeOpen = androidx.compose.foundation.layout.WindowInsets.isImeVisible
+            if (!(activePanel == "Terminal" && imeOpen)) {
+                IdeNav(
+                    active = when {
+                        findOpen -> "Search"
+                        moreOpen -> "More"
+                        activePanel == "AI" -> "AI"
+                        else -> ""
+                    },
+                    onSelect = { item ->
+                        // Spec item 4's save-on-Preview now lives on the path bar, because Preview is
+                        // no longer something the bottom bar selects directly.
+                        when (item) {
+                            "Search" -> findOpen = true
+                            "AI" -> activePanel = if (activePanel == "AI") "Code" else "AI"
+                            "More" -> moreOpen = true
+                        }
+                    },
+                )
+            }
         }
 
         AnimatedVisibility(

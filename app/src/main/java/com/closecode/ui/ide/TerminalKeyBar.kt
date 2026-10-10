@@ -72,6 +72,7 @@ internal fun TerminalKeyBar(
     onAlt: () -> Unit,
     onKey: (String) -> Unit,
     onHistory: (Int) -> Unit,
+    onCommands: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -89,7 +90,21 @@ internal fun TerminalKeyBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            PlainKey("ESC", tinted = true) { onKey("") }
+            // The bolt opens Commands; it looks like the other dark keys, not the blue four.
+            Box(
+                Modifier
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(c.chipBg)
+                    .border(1.dp, Color.Transparent, RoundedCornerShape(7.dp))
+                    .clickable(onClick = onCommands)
+                    .padding(horizontal = 13.dp)
+                    .semantics { contentDescription = "Saved commands" },
+                contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(CcIcons.Zap, c.textMuted, 15.dp)
+            }
+            PlainKey("ESC", tinted = true) { onKey("\u001B") }
             PlainKey("TAB", tinted = true) { onKey("	") }
             ModifierKey("CTRL", ctrl, onCtrl)
             ModifierKey("ALT", alt, onAlt)

@@ -195,15 +195,16 @@ class TerminalTest {
     @Test
     fun plainLsIsAColorAskingFunction() {
         // Folders draw blue because `ls` always asks for color; the panel parses the escapes.
+        // Same for git, so status and diffs arrive colored.
         val output = CopyOnWriteArrayList<String>()
         val shell = ShellProcess(directory = null, onLine = output::add, shellPath = "/bin/sh")
         shell.start()
         if (!shell.isRunning) return
 
         try {
-            shell.run("type ls")
+            shell.run("type ls; type git")
             val deadline = System.currentTimeMillis() + 5_000
-            while (System.currentTimeMillis() < deadline && output.none { "function" in it }) {
+            while (System.currentTimeMillis() < deadline && output.size < 2) {
                 Thread.sleep(20)
             }
             assertTrue("ls is not a function: $output", output.any { "function" in it })

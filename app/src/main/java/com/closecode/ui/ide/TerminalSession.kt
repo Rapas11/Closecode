@@ -397,3 +397,29 @@ internal class TerminalSessions {
             name.takeIf { it.isNotBlank() }
     }
 }
+
+/**
+ * Whether a plain output line reads as a failure. The shell never colors its own complaints
+ * ("sh: foo: not found"), so the panel tints them red itself. Deliberately narrow — a build
+ * log mentioning "not found" in passing stays plain — and only ever applied to lines with no
+ * ANSI of their own, so a program's own colors always win.
+ */
+internal fun isErrorLine(line: String): Boolean {
+    val text = line.trim()
+    if (text.isEmpty()) return false
+    for (head in ErrorLineHeads) {
+        if (text.startsWith(head, ignoreCase = true)) return true
+    }
+    for (fragment in ErrorLineFragments) {
+        if (text.contains(fragment, ignoreCase = true)) return true
+    }
+    return false
+}
+
+private val ErrorLineHeads = listOf("sh:", "error:", "fatal:", "E ", "FAILED")
+private val ErrorLineFragments = listOf(
+    "not found",
+    "no such file",
+    "permission denied",
+    "command not found",
+)

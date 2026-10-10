@@ -61,4 +61,23 @@ class TerminalPromptTest {
             DefaultTerminalCommands,
         )
     }
+
+    // -- Failure lines ---------------------------------------------------------
+
+    @Test
+    fun shellComplaintsReadAsErrors() {
+        assertTrue(isErrorLine("sh: foo: not found"))
+        assertTrue(isErrorLine("fatal: not a git repository"))
+        assertTrue(isErrorLine("ls: No such file or directory"))
+        assertTrue(isErrorLine("Permission denied"))
+    }
+
+    @Test
+    fun ordinaryOutputStaysPlain() {
+        assertTrue(!isErrorLine("total 12"))
+        assertTrue(!isErrorLine("On branch main"))
+        assertTrue(!isErrorLine(""))
+        assertTrue(!isErrorLine("~/Blank app $ ls"))
+    }
+
 }

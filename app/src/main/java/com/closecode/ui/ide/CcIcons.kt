@@ -68,6 +68,11 @@ object CcIcons {
     val Check = icon("check", "M20 6L9 17l-5-5")
     // Commands chip: a bolt. The terminal's saved commands live behind it.
     val Zap = icon("zap", "M13 2L3 14h9l-1 8 10-12h-9l1-8z")
+    // Keyboard button in the commands panel: a board with two key rows and a space bar.
+    val Keyboard = icon(
+        "keyboard",
+        "M2 6h20v12H2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10",
+    )
     // Repository rows: a lock for private, a book for public.
     val Lock = icon("lock", "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4")
     val Book = icon(

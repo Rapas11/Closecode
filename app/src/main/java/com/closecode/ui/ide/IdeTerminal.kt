@@ -6,6 +6,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -26,6 +27,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -46,7 +48,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -159,6 +169,11 @@ internal class ShellProcess(
         val started = runCatching {
             val builder = ProcessBuilder(shellPath)
             directory?.let { builder.directory(it) }
+            // Programs decide their colors from TERM: xterm-256color is the honest answer for
+            // a panel that parses 256 colors and truecolor. (There is no PTY behind this
+            // shell — piping through one needs native code this app does not ship — so
+            // programs that color only on a terminal get their color forced below instead.)
+            builder.environment()["TERM"] = "xterm-256color"
             // Standard error is folded into standard output rather than given its own pipe.
             //
             // It used to have one, and nothing ever read it. A pipe holds about 64 KB and the shell
@@ -184,14 +199,15 @@ internal class ShellProcess(
             isDaemon = true
             start()
         }
-        // Folders draw blue: plain `ls` asks for color on every listing, and the panel already
-        // parses ANSI, so the escapes turn into the palette's blue. A shell function rather than
-        // an alias, because a piped shell does not expand aliases. Always rather than auto:
-        // auto means "only on a terminal", and this shell is a pipe, so auto would color
-        // nothing. Silenced: a shell without the flag says so once into the void, not into
-        // the transcript.
+        // Folders draw blue and git diffs green: plain `ls` and `git` ask for color on
+        // every invocation, and the panel already parses ANSI, so the escapes turn into the
+        // palette's colors. Shell functions rather than aliases, because a piped shell does
+        // not expand aliases. Always rather than auto: auto means "only on a terminal", and
+        // this shell is a pipe, so auto would color nothing. Silenced: a shell without the
+        // flags says so once into the void, not into the transcript.
         runCatching {
             stdin?.write("ls() { command ls --color=always \"$@\"; } 2>/dev/null\n")
+            stdin?.write("git() { command git -c color.ui=always \"$@\"; } 2>/dev/null\n")
             stdin?.flush()
         }
     }
@@ -267,9 +283,41 @@ internal fun IdeTerminal(
     var completionCycle by remember { mutableStateOf(0) }
     var completionStart by remember { mutableStateOf(0) }
     // The Commands sheet, the rename dialog's target shell, and the shelf behind the sheet.
-    var commandsOpen by remember { mutableStateOf(false) }
     var renameShell by remember { mutableStateOf<Int?>(null) }
     var namingCommand by remember { mutableStateOf(false) }
+    // The inline commands panel (which replaces the keyboard) and the keyboard height it
+    // must match so nothing jumps. Tracked live through the platform insets: while the
+    // keyboard is open the inset is the truth; remembered for openings from a closed keyboard.
+    // (Compose's own ime inset is unreadable from this file, so this reads the View's.)
+    var commandsPanelOpen by remember { mutableStateOf(false) }
+    var keyboardHeightPx by remember { mutableStateOf(0f) }
+    val terminalView = androidx.compose.ui.platform.LocalView.current
+    LaunchedEffect(terminalView) {
+        while (true) {
+            val bottom = androidx.core.view.ViewCompat.getRootWindowInsets(terminalView)
+                ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+                ?.bottom ?: 0
+            if (bottom > 0) keyboardHeightPx = bottom.toFloat()
+            kotlinx.coroutines.delay(250)
+        }
+    }
+    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val promptFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+
+    /** Swaps the keyboard for the commands panel at the same height. */
+    fun openCommandsPanel() {
+        commandsPanelOpen = true
+        focusManager.clearFocus(force = true)
+        keyboardController?.hide()
+    }
+
+    /** Closes the commands panel and summons the keyboard back. */
+    fun backToKeyboard() {
+        commandsPanelOpen = false
+        promptFocus.requestFocus()
+        keyboardController?.show()
+    }
     var fieldLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
     var fieldFocused by remember { mutableStateOf(false) }
     val commandKv = remember { com.closecode.ui.settings.SharedPreferencesKeyValueStore(context) }
@@ -659,7 +707,7 @@ internal fun IdeTerminal(
                         .height(28.dp)
                         .clip(RoundedCornerShape(7.dp))
                         .background(c.chipBg)
-                        .clickable { commandsOpen = true }
+                        .clickable { openCommandsPanel() }
                         .padding(horizontal = 12.dp)
                         .semantics { contentDescription = "Saved commands" },
                     contentAlignment = Alignment.Center,
@@ -754,9 +802,15 @@ internal fun IdeTerminal(
                         // A line that names a file of this project becomes a tap on that file.
                         // The match is made against the tree, so this is the file and not a
                         // guess at something that looks like one.
+                        //
+                        // A plain failure line (no ANSI of its own) draws red: the shell never
+                        // colors "sh: foo: not found" itself, so the panel does, and the Errors
+                        // filter of every log works the same way.
                         val opens = pathsMentionedIn(line, tree)
+                        val failed = line.indexOf('') < 0 && isErrorLine(line)
                         TerminalLine(
                             line = line,
+                            color = if (failed) c.error else null,
                             modifier = if (opens.isEmpty()) {
                                 Modifier.padding(vertical = 1.dp)
                             } else {
@@ -786,17 +840,13 @@ internal fun IdeTerminal(
             onLayout = { fieldLayout = it },
             fieldFocused = fieldFocused,
             onFocus = { fieldFocused = it },
+            focusRequester = promptFocus,
             fontSp = fontSp,
             onSend = { send() },
         )
 
-        // Whatever Tab was unsure about, shown rather than guessed at. Above the key bar
-        // because it is about the line being typed, and the line is the thing just above it —
-        // which also keeps the key row pinned to the very bottom in every state.
-        //
-        // Both hide with the keyboard: without it the bar is a dead strip eating a third of
-        // the screen, and completion belongs to typing. Tapping the prompt opens the keyboard
-        // and both come with it. Same reading as the editor's tool row.
+        // Whatever Tab was unsure about, shown rather than guessed at. It belongs to
+        // typing, so it shows with the keyboard; the key row below it stays in every state.
         val imeVisible = WindowInsets.isImeVisible
         if (imeVisible && completionCandidates.isNotEmpty()) {
             TerminalCompletionPopup(
@@ -805,24 +855,25 @@ internal fun IdeTerminal(
             )
         }
 
-        // The key bar sits below everything else, so it lands directly on top of the soft
-        // keyboard with nothing between them — which is where a thumb already is.
-        if (imeVisible) {
-            TerminalKeyBar(
-                ctrl = ctrl,
-                alt = alt,
-                onCtrl = { ctrl = nextLatch(ctrl) },
-                onAlt = { alt = nextLatch(alt) },
-                onKey = { onKeyBar(it) },
-                onHistory = { direction ->
-                    if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
-                },
-            )
-        }
+        // The key row sits below everything else: above the keyboard when it is open, above
+        // the commands panel when that replaces it, pinned to the bottom otherwise. It never
+        // hides — the bolt needs somewhere to live even before the keyboard is summoned.
+        TerminalKeyBar(
+            ctrl = ctrl,
+            alt = alt,
+            onCtrl = { ctrl = nextLatch(ctrl) },
+            onAlt = { alt = nextLatch(alt) },
+            onKey = { onKeyBar(it) },
+            onHistory = { direction ->
+                if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
+            },
+            onCommands = ::openCommandsPanel,
+        )
 
+        // The commands panel swaps the keyboard at the same height, so nothing jumps: the
+        // height is the keyboard's own inset while it is open, else the last one seen.
         /** Types a saved command without running it — except clear and kill, which act at once. */
         fun runSaved(command: String) {
-            commandsOpen = false
             when (command.trim()) {
                 "clear" -> session.lines.clear()
                 "kill" -> {
@@ -832,17 +883,14 @@ internal fun IdeTerminal(
                 else -> session.input = TextFieldValue(command, TextRange(command.length))
             }
         }
-
-        if (commandsOpen) {
-            CommandsSheet(
+        if (commandsPanelOpen) {
+            CommandsPanel(
                 commands = savedCommands,
+                heightPx = keyboardHeightPx.takeIf { it > 0f },
                 onRun = ::runSaved,
-                onAdd = {
-                    commandsOpen = false
-                    namingCommand = true
-                },
+                onAdd = { namingCommand = true },
                 onRemove = { persistCommands(savedCommands - it) },
-                onDismiss = { commandsOpen = false },
+                onKeyboard = ::backToKeyboard,
             )
         }
 
@@ -949,6 +997,7 @@ private fun PromptRow(
     onLayout: (androidx.compose.ui.text.TextLayoutResult) -> Unit,
     fieldFocused: Boolean,
     onFocus: (Boolean) -> Unit,
+    focusRequester: androidx.compose.ui.focus.FocusRequester,
     fontSp: androidx.compose.ui.unit.TextUnit,
     onSend: () -> Unit,
 ) {
@@ -988,6 +1037,7 @@ private fun PromptRow(
                 onTextLayout = onLayout,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .focusRequester(focusRequester)
                     .onFocusChanged { onFocus(it.isFocused) },
             )
             val caret = input.selection.start.coerceIn(0, input.text.length)
@@ -1007,67 +1057,128 @@ private fun PromptRow(
 }
 
 /**
- * The Commands sheet: the saved shelf as two columns of cards, plus an Add card. Tapping a
- * command types it at the prompt without running it, so it can be edited first — except clear
+ * The commands panel: it swaps the keyboard at the same height, so nothing jumps. Saved
+ * commands scroll in two columns, Add stays pinned at the bottom, and Keyboard summons the
+ * keyboard back. Tapping a command types it at the prompt without running it — except clear
  * and kill, which act at once because there is nothing to edit about them.
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CommandsSheet(
+private fun CommandsPanel(
     commands: List<String>,
+    heightPx: Float?,
     onRun: (String) -> Unit,
     onAdd: () -> Unit,
     onRemove: (String) -> Unit,
-    onDismiss: () -> Unit,
+    onKeyboard: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    IdeBottomSheet(onDismiss = onDismiss) {
-        Text(
-            text = "Commands",
-            color = c.text,
-            fontSize = 15.sp,
-            fontFamily = Mono,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
-        )
-        commands.chunked(2).forEach { row ->
-            Row(
+    val density = LocalDensity.current
+    val height = with(density) {
+        (heightPx ?: 300.dp.toPx()).toDp().coerceAtLeast(200.dp)
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .height(height)
+            .background(c.panel)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Saved commands",
+                color = c.text,
+                fontSize = 13.sp,
+                fontFamily = Mono,
+                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                modifier = Modifier.weight(1f),
+            )
+            Box(
                 Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(c.chipBg)
+                    .clickable(onClick = onKeyboard)
+                    .padding(horizontal = 12.dp)
+                    .semantics { contentDescription = "Back to keyboard" },
+                contentAlignment = Alignment.Center,
             ) {
-                row.forEach { command ->
-                    @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
-                    Box(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(c.chipBg)
-                            .combinedClickable(
-                                onClick = { onRun(command) },
-                                onLongClick = { onRemove(command) },
-                            )
-                            .padding(horizontal = 12.dp, vertical = 11.dp),
-                        contentAlignment = Alignment.CenterStart,
-                    ) {
-                        Text(
-                            text = command,
-                            color = c.text,
-                            fontSize = 12.sp,
-                            fontFamily = Mono,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                        )
-                    }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CcIcon(CcIcons.Keyboard, c.textMuted, 16.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = "Keyboard",
+                        color = c.text,
+                        fontSize = 12.sp,
+                        fontFamily = Mono,
+                    )
                 }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
-        Box(Modifier.padding(horizontal = 18.dp, vertical = 4.dp)) {
-            com.closecode.ui.components.OutlineButton(
-                label = "Add command",
-                onClick = onAdd,
+        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+            columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(commands, key = { it }) { command ->
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(c.chipBg)
+                        .combinedClickable(
+                            onClick = { onRun(command) },
+                            onLongClick = { onRemove(command) },
+                        )
+                        .padding(horizontal = 12.dp, vertical = 13.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        text = command,
+                        color = c.text,
+                        fontSize = 12.sp,
+                        fontFamily = Mono,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        // Dashed outline: the only dashed control in the app, so Add reads as "yours to fill".
+        // Drawn rather than bordered — BorderStroke has no dash parameter — inset half a
+        // stroke so the dashes sit inside the box instead of bleeding off its edge.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable(onClick = onAdd)
+                .drawBehind {
+                    val stroke = 1.dp.toPx()
+                    drawRoundRect(
+                        color = c.toolbarAccent.copy(alpha = 0.6f),
+                        topLeft = Offset(stroke / 2f, stroke / 2f),
+                        size = Size(size.width - stroke, size.height - stroke),
+                        cornerRadius = CornerRadius(10.dp.toPx()),
+                        style = Stroke(
+                            width = stroke,
+                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 5f)),
+                        ),
+                    )
+                }
+                .padding(vertical = 12.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "+ Add command",
+                color = c.link,
+                fontSize = 13.sp,
+                fontFamily = Mono,
             )
         }
         Text(
@@ -1075,7 +1186,7 @@ private fun CommandsSheet(
             color = c.textFaint,
             fontSize = 11.sp,
             fontFamily = Mono,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
+            modifier = Modifier.padding(top = 6.dp),
         )
     }
 }
