@@ -139,6 +139,20 @@ class ProjectRepository(context: Context) {
 
     fun projectDir(slug: String): java.io.File = store.projectDir(slug)
 
+    /**
+     * True when a project folder already exists for [name]. The clone screen asks before
+     * cloning into it, because landing in "name-2" by silent rename is a surprise.
+     */
+    fun folderTaken(name: String): Boolean {
+        val slug = name.lowercase()
+            .map { if (it.isLetterOrDigit()) it else '-' }
+            .joinToString("")
+            .replace(Regex("-+"), "-")
+            .trim('-')
+            .ifEmpty { "project" }
+        return store.projectDir(slug).exists()
+    }
+
     /** Where every project on this device lives. Shown, not edited, on the settings screen. */
     fun projectsDir(): java.io.File = store.projectsDir()
 

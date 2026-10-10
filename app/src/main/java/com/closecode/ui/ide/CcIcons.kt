@@ -66,6 +66,13 @@ object CcIcons {
     )
     // The green check for clean states and done steps.
     val Check = icon("check", "M20 6L9 17l-5-5")
+    // Repository rows: a lock for private, a book for public.
+    val Lock = icon("lock", "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4")
+    val Book = icon(
+        "book",
+        "M4 19.5A2.5 2.5 0 0 1 6.5 17H20M4 19.5A2.5 2.5 0 0 0 6.5 22H20V2H6.5" +
+            "A2.5 2.5 0 0 0 4 4.5v15",
+    )
     // GitHub brand mark, for sign-in rows. Drawn, not typed, so it never depends on a font.
     val Github = icon(
         "github",

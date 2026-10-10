@@ -53,6 +53,8 @@ data class GitHubRepo(
     val fullName: String,
     val cloneUrl: String,
     val isPrivate: Boolean,
+    /** When the repo was last pushed to, as epoch millis. 0 when GitHub did not say. */
+    val pushedAtMillis: Long = 0,
 )
 
 /**
@@ -115,9 +117,9 @@ class GitHubClient(private val http: HttpTransport = UrlConnectionTransport()) {
         )
     }
 
-    fun repositories(token: String): Result<List<GitHubRepo>> = runCatching {
+    fun repositories(token: String, page: Int = 1): Result<List<GitHubRepo>> = runCatching {
         val array = arrayOrThrow(
-            http.get("$API/user/repos?per_page=30&sort=pushed", authorized(token)),
+            http.get("$API/user/repos?per_page=30&sort=pushed&page=${page.coerceAtLeast(1)}", authorized(token)),
             "list your repositories",
         )
         array.mapNotNull { element ->
@@ -129,6 +131,7 @@ class GitHubClient(private val http: HttpTransport = UrlConnectionTransport()) {
                 fullName = name,
                 cloneUrl = clone,
                 isPrivate = repo.optionalBoolean("private") ?: true,
+                pushedAtMillis = parseInstant(repo.optionalString("pushed_at")),
             )
         }
     }
@@ -286,4 +289,18 @@ class UrlConnectionTransport : HttpTransport {
         const val CONNECT_TIMEOUT_MS = 15_000
         const val READ_TIMEOUT_MS = 30_000
     }
+}
+
+/**
+ * GitHub's ISO instant ("2026-10-09T20:35:00Z") as epoch millis, or 0 when it is missing or
+ * malformed. Hand-rolled over SimpleDateFormat so the shape stays obvious; the format is fixed
+ * by GitHub's API, not by the device.
+ */
+internal fun parseInstant(raw: String?): Long {
+    if (raw.isNullOrBlank()) return 0
+    return runCatching {
+        val format = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US)
+        format.timeZone = java.util.TimeZone.getTimeZone("UTC")
+        format.parse(raw)?.time ?: 0
+    }.getOrDefault(0)
 }

@@ -215,3 +215,23 @@ class GitHubClientTest {
         assertTrue(failure.exceptionOrNull()?.message.orEmpty().contains("could not read"))
     }
 }
+
+/**
+ * GitHub's pushed_at parses to millis; anything else is 0 rather than a throw, because a
+ * missing timestamp must never break the repository list.
+ */
+class ParseInstantTest {
+
+    @Test
+    fun knownInstantParses() {
+        // 2026-10-09T20:35:00Z
+        assertEquals(1_791_578_100_000L, parseInstant("2026-10-09T20:35:00Z"))
+    }
+
+    @Test
+    fun garbageIsZero() {
+        assertEquals(0L, parseInstant(null))
+        assertEquals(0L, parseInstant(""))
+        assertEquals(0L, parseInstant("yesterday"))
+    }
+}

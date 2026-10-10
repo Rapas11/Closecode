@@ -22,7 +22,16 @@ import org.eclipse.jgit.api.Git
  */
 class GitHubClone {
 
-    fun clone(url: String, token: String?, into: File): Result<Unit> = runCatching {
+    /**
+     * Clones [url] into [into], reporting progress through [onProgress]. The callback fires on
+     * whatever thread JGit uses, so the caller marshals it back before touching state.
+     */
+    fun clone(
+        url: String,
+        token: String?,
+        into: File,
+        onProgress: (CloneProgress) -> Unit = {},
+    ): Result<Unit> = runCatching {
         val trimmed = url.trim()
         require(trimmed.startsWith("https://")) {
             "Only https:// remotes are supported in this build."
@@ -35,9 +44,48 @@ class GitHubClone {
         val command = Git.cloneRepository()
             .setURI(trimmed)
             .setDirectory(into)
+            .setProgressMonitor(CloneMonitor(onProgress))
         if (token != null) command.setCredentialsProvider(tokenCredentials(token))
         command.call().use { }
     }
+}
+
+/** Where a clone is, for the progress screen. [fraction] is null while the total is unknown. */
+data class CloneProgress(val phase: String, val done: Int, val total: Int) {
+    val fraction: Float?
+        get() = if (total > 0) (done.toFloat() / total).coerceIn(0f, 1f) else null
+}
+
+/**
+ * JGit's progress as one stream: the current task's name and its completed/total units. Task
+ * names ("Receiving objects", "Resolving deltas"…) become the screen's step line verbatim —
+ * they already read as plain words, so translating them would only add a second vocabulary.
+ */
+private class CloneMonitor(private val onProgress: (CloneProgress) -> Unit) :
+    org.eclipse.jgit.lib.ProgressMonitor {
+    private var title = "Connecting"
+    private var done = 0
+    private var total = 0
+
+    override fun start(totalTasks: Int) = Unit
+
+    override fun beginTask(title: String, totalWork: Int) {
+        this.title = title
+        this.done = 0
+        this.total = totalWork
+        onProgress(CloneProgress(title, done, total))
+    }
+
+    override fun update(completed: Int) {
+        done += completed
+        onProgress(CloneProgress(title, done, total))
+    }
+
+    override fun endTask() = Unit
+
+    override fun isCancelled(): Boolean = false
+
+    override fun showDuration(enabled: Boolean) = Unit
 }
 
 /**
