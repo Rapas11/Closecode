@@ -3613,8 +3613,12 @@ val applySuggestion: (Int) -> Unit = { index ->
                                     ),
                                 ),
                                 fontFamily = Mono,
+                                // Word wrap off means lines run long, not that lines 2..n vanish:
+                                // only softWrap toggles. maxLines stays unbounded, because one
+                                // line here is the whole visible slice and clipping it to a single
+                                // row renders exactly one line of the file.
                                 softWrap = settings.wordWrap,
-                                maxLines = if (settings.wordWrap) Int.MAX_VALUE else 1,
+                                maxLines = Int.MAX_VALUE,
                             )
                         }
                         Text(
@@ -3631,8 +3635,9 @@ val applySuggestion: (Int) -> Unit = { index ->
                                 ),
                             ),
                             fontFamily = Mono,
+                            // Same as the field above: wrap off clips nothing, it only unwraps.
                             softWrap = settings.wordWrap,
-                            maxLines = if (settings.wordWrap) Int.MAX_VALUE else 1,
+                            maxLines = Int.MAX_VALUE,
                             // The slice is drawn at the absolute row it starts on, so every line in
                             // it lands on the same y it had when the whole file was one Text — and
                             // the transparent field, the gutter and the overlays all still agree.
