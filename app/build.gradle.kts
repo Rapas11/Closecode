@@ -65,6 +65,10 @@ dependencies {
     // GitHub's Device Flow and REST responses are JSON. Parsed with JsonParser rather than
     // with mapped classes so nothing on this path depends on reflection.
     implementation("com.google.code.gson:gson:2.11.0")
+    // The GitHub token lives in EncryptedSharedPreferences (Keystore-backed), and the
+    // device-flow step opens github.com/login/device in a Chrome Custom Tab.
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+    implementation("androidx.browser:browser:1.8.0")
 
     testImplementation("junit:junit:4.13.2")
 
