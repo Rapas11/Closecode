@@ -158,4 +158,38 @@ class TerminalTest {
         }
         return output.mapNotNull { parseExitMarker(it) }
     }
+
+    @Test
+    fun killingTheShellDoesNotBrickTheTab() {
+        // The exact failure from the phone: Stop kills the shell, and every later command was
+        // silently swallowed — echoed, but never run, with no output and no error. A dead shell
+        // restarts on the next command instead.
+        val output = CopyOnWriteArrayList<String>()
+        val shell = ShellProcess(directory = null, onLine = output::add, shellPath = "/bin/sh")
+        shell.start()
+        if (!shell.isRunning) return
+
+        try {
+            shell.run("echo before")
+            assertEquals(listOf(0), awaitExitCodes(output, 1).takeLast(1))
+            shell.killRunning()
+            assertFalse(shell.isRunning)
+            shell.run("echo after")
+            assertEquals(listOf(0, 0), awaitExitCodes(output, 2).takeLast(2))
+            assertTrue(output.any { it.trim() == "after" })
+        } finally {
+            shell.close()
+        }
+    }
+
+    @Test
+    fun aCommandEchoesOnceWithTheLivePrompt() {
+        val store = TerminalHistoryStore(
+            com.closecode.ui.settings.InMemoryKeyValueStore(),
+        )
+        val session = TerminalSession(1)
+        session.submit("ls -la", "slug", store, "~/Blank app $ ")
+        assertEquals(listOf("~/Blank app $ ls -la"), session.lines.toList())
+        session.close()
+    }
 }

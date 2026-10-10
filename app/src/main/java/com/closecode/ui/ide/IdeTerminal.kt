@@ -119,16 +119,6 @@ internal fun parseExitMarker(line: String): Int? {
 internal fun sanitizeCommand(raw: String): String = raw.lineSequence().first().trim()
 
 /**
- * The prompt the app draws at the head of the input line and in front of every echoed command.
- *
- * Not printed by the shell, because a shell fed through a pipe does not print one: prompts belong to
- * interactive shells, and this one is deliberately not interactive. Drawing it here is also what lets
- * it carry the previous command's exit status, which is the one thing about a command a phone
- * keyboard cannot otherwise report.
- */
-internal const val PROMPT = "closecode $ "
-
-/**
  * Appends while enforcing [TERMINAL_MAX_LINES]. Same shape as the log's own cap: dropping the
  * oldest lines is one array copy, which is cheap enough per line and keeps the bound strict.
  */
@@ -158,7 +148,14 @@ internal class ShellProcess(
     val isRunning: Boolean get() = process?.isAlive == true
 
     fun start() {
-        if (process != null) return
+        if (process?.isAlive == true) return
+        // A dead shell restarts instead of staying dead. Killing it is the only Ctrl+C there is,
+        // and `exit` typed at the prompt ends it too — neither must brick the tab, leaving every
+        // later command silently swallowed with no output and no error.
+        runCatching { stdin?.close() }
+        runCatching { process?.destroy() }
+        process = null
+        stdin = null
         val started = runCatching {
             val builder = ProcessBuilder(shellPath)
             directory?.let { builder.directory(it) }
@@ -189,8 +186,9 @@ internal class ShellProcess(
         }
     }
 
-    /** Sends one command. Nothing typed is ever handed to a logger. */
+    /** Sends one command, restarting a dead shell first. Nothing typed is ever handed to a logger. */
     fun run(command: String) {
+        if (process?.isAlive != true) start()
         val writer = stdin ?: return
         runCatching {
             writer.write(shellLine(command))
@@ -367,16 +365,14 @@ internal fun IdeTerminal(
     fun submit(text: String) {
         val command = sanitizeCommand(text)
         if (command.isEmpty()) return
-        // The prompt is drawn by the app rather than printed by the shell, which never would: a
-        // non-interactive shell does not draw one. It carries the exit status too, so the reader
-        // learns how the last command went without looking for a number.
-        session.lines.appendTerminalLine("$PROMPT$command")
-
         // `code` is not a program and never runs. It is the app's own way of saying "show me this
         // file", and it is handled before the shell sees it so that `code` followed by a name opens
         // the editor rather than reporting a command that does not exist.
         val target = codeTarget(command)
         if (target != null) {
+            // Echoed once, in the same shape as a run command: the scrollback reads as one
+            // transcript whether the line ran or opened a file.
+            session.lines.appendTerminalLine(livePrompt() + command)
             val file = codeTargetFile(tree, session.cwd, target)
             if (file != null) onOpenPath(file)
             session.recordAppCommand(command, tree, projectSlug, historyStore, opened = file)
@@ -781,6 +777,7 @@ internal fun IdeTerminal(
         // Only while the keyboard is open. Without it the bar is a dead strip eating a third
         // of the screen; tapping the prompt opens the keyboard, and the bar comes with it.
         // The completion list belongs to typing too, so it hides with the bar.
+        // Same reading as the editor's tool row: nonzero exactly while the keyboard is up.
         val imeVisible = WindowInsets.isImeVisible
         if (imeVisible) {
             TerminalKeyBar(
