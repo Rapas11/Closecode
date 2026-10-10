@@ -151,8 +151,14 @@ internal data class FoldMap(
             val hiSel = maxOf(caretDisplay, anchorDisplay).coerceIn(0, newDisplay.length)
             pre = minOf(pre, loSel)
             suf = minOf(suf, newDisplay.length - hiSel)
-            val srcStart = map.toSource[pre.coerceIn(0, oldDisplay.length)]
-            val srcEnd = map.toSource[(oldDisplay.length - suf).coerceIn(0, oldDisplay.length)]
+            // Every index below is clamped to the map, not to the texts: a caller can hand in a
+            // display text the map was not built from (two keystrokes in one frame, before
+            // recomposition rebuilds it), and an unclamped index then throws. Clamping turns
+            // that into a slightly approximate splice instead of a crash.
+            val lastMap = (map.toSource.size - 1).coerceAtLeast(0)
+            val srcStart = map.toSource[pre.coerceIn(0, oldDisplay.length).coerceIn(0, lastMap)]
+            val srcEnd = map.toSource[(oldDisplay.length - suf).coerceIn(0, oldDisplay.length)
+                .coerceIn(0, lastMap)]
             val middle = newDisplay.substring(pre, newDisplay.length - suf)
             val newSource = map.source.substring(0, srcStart) + middle +
                 map.source.substring(srcEnd)
@@ -160,11 +166,11 @@ internal data class FoldMap(
             fun mapNew(p: Int): Int {
                 val q = p.coerceIn(0, newDisplay.length)
                 return when {
-                    q <= pre -> map.toSource[q]
+                    q <= pre -> map.toSource[q.coerceIn(0, lastMap)]
                     // The boundary itself belongs to the middle: a caret sitting right after
                     // inserted text is past the insertion, not before it.
                     q > newDisplay.length - suf ->
-                        map.toSource[(q - delta).coerceIn(0, oldDisplay.length)]
+                        map.toSource[(q - delta).coerceIn(0, oldDisplay.length).coerceIn(0, lastMap)]
                     else -> srcStart + (q - pre)
                 }
             }
@@ -289,3 +295,18 @@ internal fun blockCommentRanges(source: String): List<IntRange> {
     }
     return out
 }
+
+/**
+ * Display offset to source offset, clamped to the map.
+ *
+ * Event handlers (keystrokes, taps, suggestion picks) can read a map the composition has not
+ * rebuilt yet — two keystrokes in one frame, a tap right after typing — so the offset can point
+ * past the map's end. Clamping turns that into a slightly approximate position instead of an
+ * ArrayIndexOutOfBoundsException that kills the app mid-keystroke.
+ */
+internal fun FoldMap.sourceAt(displayOffset: Int): Int =
+    toSource[displayOffset.coerceIn(0, toSource.size - 1)]
+
+/** Source offset to display offset, clamped for the same reason. */
+internal fun FoldMap.displayAt(sourceOffset: Int): Int =
+    toDisplay[sourceOffset.coerceIn(0, toDisplay.size - 1)]

@@ -131,9 +131,45 @@ class FoldModelTest {
         assertEquals("fun a() {val z = 3\n", edit.source)
     }
 
+    // -- stale maps (two keystrokes, one frame) -------------------------------------
+
     @Test
-    fun selectionEndpointsTravelWithTheEdit() {
-        val map = FoldMap.build(src, setOf(1))
+    fun anEditAgainstAStaleMapDoesNotThrow() {
+        // The crash this pins: the second keystroke of a frame sees the first keystroke's
+        // field text with the map still describing the text before it, so the old display is
+        // longer than the map. ArrayIndexOutOfBoundsException, mid-keystroke.
+        val src = "fun a() {\n    x\n}\n"
+        val stale = FoldMap.build(src, emptySet())
+        val keystroke1 = src.replace("x", "xy")
+        val keystroke2 = keystroke1.replace("xy", "xyz")
+        val edit = FoldMap.applyDisplayEdit(stale, keystroke1, keystroke2, 14, 14)
+        assertTrue(edit.caret in 0..edit.source.length)
+        assertTrue(edit.source.contains("xyz"))
+    }
+
+    @Test
+    fun aStaleMapWithFoldsDoesNotThrowEither() {
+        val map = FoldMap.build("fun a() {\n    x\n}\nval z = 3\n", setOf(1))
+        // A whole line typed past what the map knows, then one more character.
+        val newer = map.display + "w"
+        val newest = "$newer!"
+        val edit = FoldMap.applyDisplayEdit(map, newer, newest, newest.length, newest.length)
+        assertTrue(edit.caret in 0..edit.source.length)
+    }
+
+    @Test
+    fun mapAccessorsClampInsteadOfThrowing() {
+        val map = FoldMap.build("ab\ncd\n", emptySet())
+        assertEquals(5, map.sourceAt(5))
+        assertEquals(6, map.sourceAt(500))
+        assertEquals(0, map.sourceAt(-3))
+        assertEquals(5, map.displayAt(5))
+        assertEquals(6, map.displayAt(500))
+        assertEquals(0, map.displayAt(-1))
+    }
+
+    @Test
+    fun selectionEndpointsTravelWithTheEdit() {        val map = FoldMap.build(src, setOf(1))
         // Select "val z" in display coords (line 5 -> display line 3).
         val anchorD = map.display.indexOf("val z")
         val caretD = anchorD + 5

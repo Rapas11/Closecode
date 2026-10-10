@@ -2581,8 +2581,13 @@ formatRequest: Int = 0,
 
     fun commit(next: TextFieldValue) {
         if (next.text != fieldValue.text) {
+            // Built fresh rather than reading the remembered map: two keystrokes can land in one
+            // frame, and the second sees the first's field text with the first's map still
+            // waiting for recomposition. Mapping across that mismatch indexed past the end of
+            // the map and killed the app on the keystroke.
+            val map = FoldMap.build(sourceText, foldedFirstLines)
             val edit = FoldMap.applyDisplayEdit(
-                foldMap,
+                map,
                 fieldValue.text,
                 next.text,
                 next.selection.start,
@@ -2590,14 +2595,14 @@ formatRequest: Int = 0,
             )
             pushUndo()
             sourceText = edit.source
-            val map = FoldMap.build(edit.source, foldedFirstLines)
+            val fresh = FoldMap.build(edit.source, foldedFirstLines)
             fieldValue = TextFieldValue(
-                map.display,
+                fresh.display,
                 TextRange(
-                    map.toDisplay[edit.caret.coerceIn(0, edit.source.length)]
-                        .coerceIn(0, map.display.length),
-                    map.toDisplay[edit.anchor.coerceIn(0, edit.source.length)]
-                        .coerceIn(0, map.display.length),
+                    fresh.toDisplay[edit.caret.coerceIn(0, edit.source.length)]
+                        .coerceIn(0, fresh.display.length),
+                    fresh.toDisplay[edit.anchor.coerceIn(0, edit.source.length)]
+                        .coerceIn(0, fresh.display.length),
                 ),
             )
         } else {
@@ -2643,16 +2648,21 @@ formatRequest: Int = 0,
     // exist. Toggling clears history: entries hold display snapshots, and a fold changes what
     // every display offset means, so popping one now would restore text the map cannot place.
     fun toggleFold(sourceLine: Int) {
+        val beforeFolds = foldedFirstLines
         foldedFirstLines = if (sourceLine in foldedFirstLines) {
             foldedFirstLines - sourceLine
         } else {
             foldedFirstLines + sourceLine
         }
+        // The caret and anchor travel through a freshly built map, not the remembered one: a
+        // tap can follow a keystroke in the same frame, and the remembered map may still
+        // describe the text from before it.
+        val before = FoldMap.build(sourceText, beforeFolds)
         // The caret and anchor travel through the old map into source offsets, then back out
         // through the new one: a caret inside a region being folded lands on the fold point
         // instead of pointing at a row that no longer exists.
-        val caretS = foldMap.toSource[fieldValue.selection.start.coerceIn(0, fieldValue.text.length)]
-        val anchorS = foldMap.toSource[fieldValue.selection.end.coerceIn(0, fieldValue.text.length)]
+        val caretS = before.sourceAt(fieldValue.selection.start)
+        val anchorS = before.sourceAt(fieldValue.selection.end)
         val map = FoldMap.build(sourceText, foldedFirstLines)
         fieldValue = TextFieldValue(
             map.display,
@@ -2729,7 +2739,7 @@ formatRequest: Int = 0,
     val selectTabKeepingPlace = { name: String ->
         // The caret is stored as a source offset so it survives folds opening and closing
         // underneath it; the scroll is display rows, coerced back into range on restore.
-        caretByFile[active] = foldMap.toSource[cursor.coerceIn(0, fieldValue.text.length)]
+        caretByFile[active] = foldMap.sourceAt(cursor)
         scrollByFile[active] = codeScroll.value to codeHScroll.value
         onSelectTab(name)
     }
@@ -2814,7 +2824,7 @@ formatRequest: Int = 0,
     val caretLine = remember(code, cursor) { caretPosition(code, cursor).first }
     // Reported on every move so the block sheet can insert at the line the caret is actually on.
     // A plain offset is all the insertion needs, so the whole selection never leaves the editor.
-    LaunchedEffect(cursor) { onCaretChange(foldMap.toSource[cursor.coerceIn(0, code.length)]) }
+    LaunchedEffect(cursor) { onCaretChange(foldMap.sourceAt(cursor)) }
 
     var codeLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
     var viewportWidthPx by remember { mutableStateOf(0f) }
@@ -3181,7 +3191,7 @@ formatRequest: Int = 0,
             QuickFixKind.REMOVE_IMPORT -> {
                 val next = SourceEdits.removeImport(sourceText, target.target)
                 if (next == sourceText) return false
-                val caretS = foldMap.toSource[cursor.coerceIn(0, code.length)]
+                val caretS = foldMap.sourceAt(cursor)
                 commitSource(next, caretS.coerceAtMost(next.length))
             }
 
@@ -3311,7 +3321,7 @@ val applySuggestion: (Int) -> Unit = { index ->
             // The prefix is read from the analysis source, so the caret crosses into source
             // coordinates first; its length applies back in display coordinates because the
             // caret's own line reads identically in both.
-            val sourceCursor = foldMap.toSource[liveCursor.coerceIn(0, liveText.length)]
+            val sourceCursor = foldMap.sourceAt(liveCursor)
             val prefix = if (liveItems != null) currentAnalysis?.prefixAt(sourceCursor).orEmpty() else ""
             val start = (liveCursor - prefix.length).coerceAtLeast(0)
             val next = liveText.substring(0, start) + insert + liveText.substring(liveCursor)
