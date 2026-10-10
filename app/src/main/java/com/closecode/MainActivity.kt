@@ -15,6 +15,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.closecode.ui.HeroScreen
 import com.closecode.ui.ide.IdeScreen
 import com.closecode.ui.model.SelectedTemplate
@@ -30,7 +43,12 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashReport.install(filesDir)
+        // A crash leaves its trace in a file; the next launch offers it up for copying instead
+        // of swallowing it. There is no logcat on a phone, so this dialog is the whole report.
+        val pendingCrash = CrashReport.readLast(filesDir)
         setContent {
+            var crashText by rememberSaveable { mutableStateOf(pendingCrash) }
             val settingsStore = rememberSettingsStore()
             var settings by remember(settingsStore) { mutableStateOf(settingsStore.read()) }
             // The theme is a preference, not a per-session toggle: System follows the device and
@@ -41,6 +59,15 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
             ClosecodeTheme(forceDark = useDark) {
+                if (crashText != null) {
+                    CrashDialog(
+                        trace = crashText.orEmpty(),
+                        onClose = {
+                            CrashReport.clear(filesDir)
+                            crashText = null
+                        },
+                    )
+                }
                 var encoded by rememberSaveable { mutableStateOf("") }
                 var settingsOpen by rememberSaveable { mutableStateOf(false) }
                 var section by rememberSaveable { mutableStateOf("general") }
@@ -153,5 +180,40 @@ class MainActivity : ComponentActivity() {
             // named when the slug is reserved, and re-slugifying could point at a different one.
             slug = record.slug,
         )
+    )
+}
+
+/**
+ * The previous run's crash, offered for copying. Plain Material styling on purpose: this shows
+ * above every screen including a broken one, so it reads nothing from the app's own theme.
+ */
+@Composable
+private fun CrashDialog(trace: String, onClose: () -> Unit) {
+    val clipboard = LocalClipboardManager.current
+    AlertDialog(
+        onDismissRequest = onClose,
+        title = { Text("The app crashed", fontSize = 17.sp) },
+        text = {
+            Text(
+                text = trace.take(2000),
+                fontSize = 11.sp,
+                maxLines = 14,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 320.dp)
+                    .verticalScroll(rememberScrollState()),
+            )
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    clipboard.setText(AnnotatedString(trace))
+                    onClose()
+                },
+            ) { Text("Copy") }
+        },
+        dismissButton = {
+            TextButton(onClick = onClose) { Text("Close") }
+        },
     )
 }
