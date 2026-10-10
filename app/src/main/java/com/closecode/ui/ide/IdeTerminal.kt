@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -234,6 +236,7 @@ internal class ShellProcess(
  * substitute for a real terminal — job control and a program's own cursor handling still do not
  * work — but it is what makes the shell usable on a phone rather than write-only.
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun IdeTerminal(
     projectRoot: File?,
@@ -774,24 +777,31 @@ internal fun IdeTerminal(
         // The key bar sits below the prompt rather than above anything else, so it lands
         // directly on top of the soft keyboard with nothing between them — which is where a
         // thumb already is.
-        TerminalKeyBar(
-            ctrl = ctrl,
-            alt = alt,
-            onCtrl = { ctrl = nextLatch(ctrl) },
-            onAlt = { alt = nextLatch(alt) },
-            onKey = { onKeyBar(it) },
-            onHistory = { direction ->
-                if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
-            },
-        )
-
-        // Whatever Tab was unsure about, shown rather than guessed at. Above the key bar because it
-        // is about the line being typed, and the line is the thing just above it.
-        if (completionCandidates.isNotEmpty()) {
-            TerminalCompletionPopup(
-                candidates = completionCandidates,
-                onPick = { pickCompletion(it) },
+        //
+        // Only while the keyboard is open. Without it the bar is a dead strip eating a third
+        // of the screen; tapping the prompt opens the keyboard, and the bar comes with it.
+        // The completion list belongs to typing too, so it hides with the bar.
+        val imeVisible = WindowInsets.isImeVisible
+        if (imeVisible) {
+            TerminalKeyBar(
+                ctrl = ctrl,
+                alt = alt,
+                onCtrl = { ctrl = nextLatch(ctrl) },
+                onAlt = { alt = nextLatch(alt) },
+                onKey = { onKeyBar(it) },
+                onHistory = { direction ->
+                    if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
+                },
             )
+
+            // Whatever Tab was unsure about, shown rather than guessed at. Above the key bar because it
+            // is about the line being typed, and the line is the thing just above it.
+            if (completionCandidates.isNotEmpty()) {
+                TerminalCompletionPopup(
+                    candidates = completionCandidates,
+                    onPick = { pickCompletion(it) },
+                )
+            }
         }
 
         /** Types a saved command without running it — except clear and kill, which act at once. */

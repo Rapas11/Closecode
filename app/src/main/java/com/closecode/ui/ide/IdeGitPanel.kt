@@ -735,15 +735,18 @@ private fun BranchRow(
                 modifier = Modifier.padding(end = 6.dp),
             )
         }
-        CcIcon(
-            CcIcons.Refresh,
-            c.textMuted,
-            16.dp,
+        // A 30 dp touch box with a 16 dp glyph inside: the thumb gets room, the eye gets the
+        // small icon from the mockup. Passing a big box *as* the icon's own modifier stretches
+        // the glyph to the box, which is how the refresh drew huge.
+        Box(
             Modifier
                 .size(30.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .clickable(onClick = onRefresh),
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            CcIcon(CcIcons.Refresh, c.textMuted, 16.dp)
+        }
         Text(
             text = status,
             color = c.textMuted,
@@ -753,15 +756,15 @@ private fun BranchRow(
             modifier = Modifier.padding(end = 2.dp),
         )
         Box {
-            CcIcon(
-                CcIcons.More,
-                c.textMuted,
-                16.dp,
+            Box(
                 Modifier
                     .size(30.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .clickable { menuOpen = true },
-            )
+                contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(CcIcons.More, c.textMuted, 16.dp)
+            }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                 DropdownMenuItem(
                     text = { Text("Switch branch", fontFamily = Sans) },
