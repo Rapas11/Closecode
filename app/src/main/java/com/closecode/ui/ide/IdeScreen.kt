@@ -287,6 +287,9 @@ internal fun IdeScreen(
     // writes it back when it re-authenticates, so the hand-off is just "open it" and there is no
     // second copy of the token to fall out of date.
     var cloneOpen by remember { mutableStateOf(false) }
+    // A side-by-side diff opened from the Source Control tab. Full-screen over everything,
+    // like the clone route, because a two-column diff has no business inside the drawer.
+    var diffPath by remember { mutableStateOf<String?>(null) }
     // Written by that route when it re-authenticates. The drawer caches the token for as long as
     // it is composed, and this is how it is told to read it again rather than go on with the copy
     // it took when it was opened.
@@ -1149,6 +1152,7 @@ internal fun IdeScreen(
                                     // One letter per changed path, so the map's size is the tab's
                                     // count bubble: no second source to drift apart from.
                                     changeCount = gitLetters.size,
+                                    onDiff = { diffPath = it },
                                     onAction = { action, file -> onTreeAction(action, file) },
                                     onSelect = { file ->
                                         // The row is the working point for the next creation whether it
@@ -1533,6 +1537,14 @@ internal fun IdeScreen(
                     cloneOpen = false
                     onProjectCloned(record)
                 },
+            )
+        }
+
+        diffPath?.let { path ->
+            DiffScreen(
+                projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                path = path,
+                onBack = { diffPath = null },
             )
         }
     }
@@ -1987,6 +1999,8 @@ private fun IdeExplorer(
     onCloneRequest: () -> Unit,
     // Staged plus unstaged plus untracked: the Source Control tab's count bubble.
     changeCount: Int,
+    // Opens a side-by-side diff of the tapped change row. The route lives at screen level.
+    onDiff: (String) -> Unit = {},
     // How many times the stored GitHub token has been replaced. Passed on so the panel re-reads it
     // instead of going on with the copy it took when it was composed.
     githubTokenEpoch: Int,
@@ -2197,6 +2211,7 @@ private fun IdeExplorer(
                 revision = gitRevision,
                 onCloneRequest = onCloneRequest,
                 tokenEpoch = githubTokenEpoch,
+                onDiff = onDiff,
                 // One modifier or the other, never both. Appending `size(0.dp)` after
                 // `width(...).fillMaxHeight()` could not work: those hand the child an incoming
                 // minimum of full width by full height, `size` is enforce-incoming, so the zero was

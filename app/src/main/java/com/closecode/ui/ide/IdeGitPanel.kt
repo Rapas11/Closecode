@@ -1,12 +1,15 @@
 package com.closecode.ui.ide
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -57,7 +61,9 @@ import com.closecode.ui.git.GitChange
 import com.closecode.ui.git.GitChangeKind
 import com.closecode.ui.git.GitService
 import com.closecode.ui.git.GitSnapshot
+import com.closecode.ui.git.splitDiff
 import com.closecode.ui.theme.LocalPageColors
+import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
 import java.io.File
 import kotlinx.coroutines.Dispatchers
@@ -1256,5 +1262,188 @@ private fun GitHubSection(
                 }
             }
         }
+    }
+}
+
+/**
+ * A side-by-side diff of one file: HEAD on the left, the working tree on the right. Changed
+ * rows tint green on the new side and red on the old side; added and removed lines show on
+ * their side only. Each side scrolls sideways on its own (one shared state per side, so all
+ * rows travel together) while the rows scroll vertically as one.
+ */
+@Composable
+internal fun DiffScreen(projectRoot: File?, path: String, onBack: () -> Unit) {
+    val c = LocalPageColors.current
+    var rows by remember(path) { mutableStateOf<List<com.closecode.ui.git.DiffRow>?>(null) }
+    var failed by remember(path) { mutableStateOf(false) }
+    var binary by remember(path) { mutableStateOf(false) }
+
+    LaunchedEffect(path) {
+        val root = projectRoot
+        if (root == null) {
+            failed = true
+            return@LaunchedEffect
+        }
+        val loaded = withContext(Dispatchers.IO) {
+            runCatching {
+                val old = GitService(root).fileAtHead(path).getOrNull()
+                val file = File(root, path)
+                old to if (file.isFile) file.readBytes() else ByteArray(0)
+            }.getOrNull()
+        }
+        if (loaded == null) {
+            failed = true
+            return@LaunchedEffect
+        }
+        // A nul byte in the probed head means binary: decoded text would be garbage, and a
+        // wall of replacement characters is not a diff.
+        if (loaded.first?.take(8000)?.any { it == 0.toByte() } == true ||
+            loaded.second.take(8000).any { it == 0.toByte() }
+        ) {
+            binary = true
+            return@LaunchedEffect
+        }
+        rows = splitDiff(
+            loaded.first?.toString(Charsets.UTF_8).orEmpty(),
+            loaded.second.toString(Charsets.UTF_8),
+        )
+    }
+
+    BackHandler(onBack = onBack)
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(c.panel),
+    ) {
+        val current = rows
+        val added = current?.count { it.newLine != null && it.newLine != it.oldLine } ?: 0
+        val removed = current?.count { it.oldLine != null && it.oldLine != it.newLine } ?: 0
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .padding(start = 4.dp, end = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(
+                    CcIcons.Chevron,
+                    c.textMuted,
+                    18.dp,
+                    Modifier.graphicsLayer { rotationZ = 180f },
+                )
+            }
+            Text(
+                text = path.substringAfterLast('/'),
+                color = c.text,
+                fontSize = 14.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            if (current != null) {
+                Text(
+                    text = "+$added −$removed",
+                    color = c.textFaint,
+                    fontSize = 11.sp,
+                    fontFamily = Mono,
+                )
+            }
+        }
+        when {
+            failed -> DiffNote("Could not read the diff.")
+            binary -> DiffNote("This file is not text, so there is nothing to show side by side.")
+            current == null -> DiffNote("Reading the diff…")
+            current.isEmpty() -> DiffNote("No differences.")
+            else -> {
+                // One sideways state per side: every row's cell shares its side's state, so a
+                // long line scrolled on one row stays readable while the rows move together.
+                val leftScroll = rememberScrollState()
+                val rightScroll = rememberScrollState()
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                ) {
+                    Column {
+                        current.forEach { row ->
+                            Row(Modifier.fillMaxWidth()) {
+                                DiffCell(
+                                    text = row.oldLine,
+                                    changed = row.oldLine != row.newLine,
+                                    isOld = true,
+                                    scroll = leftScroll,
+                                )
+                                DiffCell(
+                                    text = row.newLine,
+                                    changed = row.oldLine != row.newLine,
+                                    isOld = false,
+                                    scroll = rightScroll,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DiffNote(text: String) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = c.textMuted,
+            fontSize = 13.sp,
+            fontFamily = Sans,
+        )
+    }
+}
+
+@Composable
+private fun RowScope.DiffCell(
+    text: String?,
+    changed: Boolean,
+    isOld: Boolean,
+    scroll: androidx.compose.foundation.ScrollState,
+) {
+    val c = LocalPageColors.current
+    val bg = when {
+        text == null -> c.fieldBg
+        !changed -> androidx.compose.ui.graphics.Color.Transparent
+        isOld -> c.statusDeletedBg
+        else -> c.statusAddedBg
+    }
+    Box(
+        Modifier
+            .weight(1f)
+            .background(bg)
+            .horizontalScroll(scroll)
+            .padding(horizontal = 8.dp, vertical = 3.dp),
+    ) {
+        Text(
+            text = text.orEmpty(),
+            color = if (text == null) c.textFaint else c.text,
+            fontSize = 11.sp,
+            fontFamily = Mono,
+            softWrap = false,
+            maxLines = 1,
+        )
     }
 }

@@ -193,8 +193,7 @@ class GitService(private val root: File) {
     }
 
     /** True when [relativePath] exists in the HEAD tree. */
-    private fun inHead(repo: org.eclipse.jgit.lib.Repository, relativePath: String): Boolean {
-        val headTree = repo.resolve(Constants.HEAD + "^{tree}") ?: return false
+    private fun inHead(repo: org.eclipse.jgit.lib.Repository, relativePath: String): Boolean {        val headTree = repo.resolve(Constants.HEAD + "^{tree}") ?: return false
         val walk = org.eclipse.jgit.treewalk.TreeWalk(repo).apply {
             addTree(headTree)
             isRecursive = true
@@ -203,6 +202,23 @@ class GitService(private val root: File) {
         val found = walk.next()
         walk.close()
         return found
+    }
+
+    /** The file's bytes at HEAD, or null when no commit contains it. For the diff view. */    fun fileAtHead(relativePath: String): Result<ByteArray?> = runCatching {
+        if (!isVersioned()) return@runCatching null
+        Git.open(root).use { git ->
+            val repo = git.repository
+            val headTree = repo.resolve(Constants.HEAD + "^{tree}") ?: return@runCatching null
+            val walk = org.eclipse.jgit.treewalk.TreeWalk(repo).apply {
+                addTree(headTree)
+                isRecursive = true
+                filter = org.eclipse.jgit.treewalk.filter.PathFilter.create(relativePath)
+            }
+            val id = if (walk.next()) walk.getObjectId(0) else null
+            walk.close()
+            if (id == null || id == org.eclipse.jgit.lib.ObjectId.zeroId()) return@runCatching null
+            repo.newObjectReader().use { it.open(id).bytes }
+        }
     }
 
     /** Commits whatever is staged. Returns the id of the new commit. */
@@ -470,4 +486,61 @@ class GitService(private val root: File) {
             status.missing.sorted().forEach { add(GitChange(it, false, GitChangeKind.Deleted)) }
         }
     }
+}
+
+/** One aligned row of a side-by-side diff. A missing side is an added or removed line. */
+internal data class DiffRow(val oldLine: String?, val newLine: String?)
+
+/**
+ * Aligns two file texts for a side-by-side diff, row by row. Changed blocks pair up line for
+ * line first (so a one-word edit reads as one row), and only the leftover lines go one-sided.
+ * Line lists come from the same [RawText] objects the diff runs on, so the edit indices can
+ * never point past them no matter how the text ends. Capped at [maxRows] for very large files.
+ */
+internal fun splitDiff(oldText: String, newText: String, maxRows: Int = 2000): List<DiffRow> {
+    val oldBytes = oldText.toByteArray()
+    val newBytes = newText.toByteArray()
+    val oldRaw = org.eclipse.jgit.diff.RawText(oldBytes)
+    val newRaw = org.eclipse.jgit.diff.RawText(newBytes)
+    val a = (0 until oldRaw.size()).map { oldRaw.getString(it) }
+    val b = (0 until newRaw.size()).map { newRaw.getString(it) }
+    if (a == b) return a.map { DiffRow(it, it) }.take(maxRows)
+    val algorithm = org.eclipse.jgit.diff.DiffAlgorithm.getAlgorithm(
+        org.eclipse.jgit.diff.DiffAlgorithm.SupportedAlgorithm.HISTOGRAM,
+    )
+    val edits = algorithm.diff(org.eclipse.jgit.diff.RawTextComparator.DEFAULT, oldRaw, newRaw)
+    val rows = ArrayList<DiffRow>()
+    var ai = 0
+    var bi = 0
+    for (i in 0 until edits.size) {
+        val edit = edits[i]
+        while (ai < edit.beginA && rows.size < maxRows) {
+            rows.add(DiffRow(a[ai], b[bi]))
+            ai++
+            bi++
+        }
+        var pa = edit.beginA
+        var pb = edit.beginB
+        while (pa < edit.endA && pb < edit.endB && rows.size < maxRows) {
+            rows.add(DiffRow(a[pa], b[pb]))
+            pa++
+            pb++
+        }
+        while (pa < edit.endA && rows.size < maxRows) {
+            rows.add(DiffRow(a[pa], null))
+            pa++
+        }
+        while (pb < edit.endB && rows.size < maxRows) {
+            rows.add(DiffRow(null, b[pb]))
+            pb++
+        }
+        ai = edit.endA
+        bi = edit.endB
+    }
+    while (ai < a.size && bi < b.size && rows.size < maxRows) {
+        rows.add(DiffRow(a[ai], b[bi]))
+        ai++
+        bi++
+    }
+    return rows
 }
