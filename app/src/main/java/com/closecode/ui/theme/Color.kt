@@ -209,6 +209,8 @@ data class PageColors(
     val fileRowActive: Color,   // open file's row background (#1B2850)
     val htmlIcon: Color,        // HTML file icon
     val keyRowBg: Color,        // terminal key row background (#12151D)
+    val cmdButtonBg: Color,      // commands panel Keyboard button
+    val cmdAddBg: Color,         // commands panel Add background
 )
 
 /**
@@ -389,6 +391,8 @@ val LightColors = PageColors(
     fileRowActive = Color(0xFFE3EAFF),
     htmlIcon = Color(0xFFC25A2E),
     keyRowBg = Color(0xFFE8ECF3),
+    cmdButtonBg = Color(0xFFE8ECF3),
+    cmdAddBg = Color(0xFFE3EAFF),
 )
 
 val DarkColors = PageColors(
@@ -516,6 +520,8 @@ val DarkColors = PageColors(
     fileRowActive = Color(0xFF1B2850),
     htmlIcon = Color(0xFFE5784A),
     keyRowBg = Color(0xFF12151D),
+    cmdButtonBg = Color(0xFF1A1F2B),
+    cmdAddBg = Color(0xFF12172A),
 )
 
 val LocalPageColors = staticCompositionLocalOf { LightColors }

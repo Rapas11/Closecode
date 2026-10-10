@@ -313,6 +313,26 @@ class TerminalAnsiTest {
     }
 
     @Test
+    fun printfRedGreenBlueShowsThreeColors() {
+        // The exact probe from the phone: words in red, green and blue with plain gaps.
+        val runs = runsOf("[31mred[0m [32mgreen[0m [34mblue[0m")
+        assertEquals(
+            listOf("red", " ", "green", " ", "blue"),
+            runs.map { it.text },
+        )
+        assertEquals(
+            listOf(
+                AnsiColor.Palette(1),
+                null,
+                AnsiColor.Palette(2),
+                null,
+                AnsiColor.Palette(4),
+            ),
+            runs.map { it.style.fg },
+        )
+    }
+
+    @Test
     fun anExtendedBackgroundIsRecordedAsABackground() {
         assertEquals(AnsiColor.Palette(2), styleOf(48, 5, 2).bg)
     }

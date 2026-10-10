@@ -285,25 +285,36 @@ internal fun IdeTerminal(
     // The Commands sheet, the rename dialog's target shell, and the shelf behind the sheet.
     var renameShell by remember { mutableStateOf<Int?>(null) }
     var namingCommand by remember { mutableStateOf(false) }
-    // The inline commands panel (which replaces the keyboard) and the keyboard height it
-    // must match so nothing jumps. Tracked live through the platform insets: while the
-    // keyboard is open the inset is the truth; remembered for openings from a closed keyboard.
-    // (Compose's own ime inset is unreadable from this file, so this reads the View's.)
     var commandsPanelOpen by remember { mutableStateOf(false) }
-    var keyboardHeightPx by remember { mutableStateOf(0f) }
+    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    val promptFocus = remember { androidx.compose.ui.focus.FocusRequester() }
+    var fieldLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    var fieldFocused by remember { mutableStateOf(false) }
+    val commandKv = remember { com.closecode.ui.settings.SharedPreferencesKeyValueStore(context) }
+    // The keyboard height the commands panel must match so nothing jumps: exactly the last
+    // keyboard height, defaulting to 216 dp. Tracked live through the platform insets and
+    // persisted, clamped to sane keyboards — an unbounded capture once squeezed the output
+    // to a single line. (Compose's own ime inset is unreadable from this file, so the View's.)
+    var keyboardHeightDp by remember {
+        mutableStateOf(commandKv.getInt(TERMINAL_KEYBOARD_HEIGHT_KEY, 216).coerceIn(150, 450))
+    }
     val terminalView = androidx.compose.ui.platform.LocalView.current
     LaunchedEffect(terminalView) {
         while (true) {
             val bottom = androidx.core.view.ViewCompat.getRootWindowInsets(terminalView)
                 ?.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
                 ?.bottom ?: 0
-            if (bottom > 0) keyboardHeightPx = bottom.toFloat()
+            if (bottom > 0) {
+                val dp = (bottom / density.density).roundToInt().coerceIn(150, 450)
+                if (dp != keyboardHeightDp) {
+                    keyboardHeightDp = dp
+                    commandKv.putInt(TERMINAL_KEYBOARD_HEIGHT_KEY, dp)
+                }
+            }
             kotlinx.coroutines.delay(250)
         }
     }
-    val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
-    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
-    val promptFocus = remember { androidx.compose.ui.focus.FocusRequester() }
 
     /** Swaps the keyboard for the commands panel at the same height. */
     fun openCommandsPanel() {
@@ -318,9 +329,11 @@ internal fun IdeTerminal(
         promptFocus.requestFocus()
         keyboardController?.show()
     }
-    var fieldLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
-    var fieldFocused by remember { mutableStateOf(false) }
-    val commandKv = remember { com.closecode.ui.settings.SharedPreferencesKeyValueStore(context) }
+
+    /** The chip, the bolt key and the Keyboard button all toggle: open panel or back out. */
+    fun toggleCommandsPanel() {
+        if (commandsPanelOpen) backToKeyboard() else openCommandsPanel()
+    }
     var savedCommands by remember(projectSlug) {
         mutableStateOf(
             decodeCommands(commandKv.getString(TERMINAL_COMMANDS_KEY, null))
@@ -707,7 +720,7 @@ internal fun IdeTerminal(
                         .height(28.dp)
                         .clip(RoundedCornerShape(7.dp))
                         .background(c.chipBg)
-                        .clickable { openCommandsPanel() }
+                        .clickable { toggleCommandsPanel() }
                         .padding(horizontal = 12.dp)
                         .semantics { contentDescription = "Saved commands" },
                     contentAlignment = Alignment.Center,
@@ -867,26 +880,36 @@ internal fun IdeTerminal(
             onHistory = { direction ->
                 if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
             },
-            onCommands = ::openCommandsPanel,
+            onCommands = ::toggleCommandsPanel,
         )
 
-        // The commands panel swaps the keyboard at the same height, so nothing jumps: the
-        // height is the keyboard's own inset while it is open, else the last one seen.
+        // The commands panel swaps the keyboard at the same height, so nothing jumps.
+        // Back closes the panel first: only with no panel does it leave the terminal.
+        androidx.activity.compose.BackHandler(enabled = commandsPanelOpen) {
+            commandsPanelOpen = false
+        }
         /** Types a saved command without running it — except clear and kill, which act at once. */
         fun runSaved(command: String) {
+            commandsPanelOpen = false
             when (command.trim()) {
                 "clear" -> session.lines.clear()
                 "kill" -> {
                     session.killRunning()
                     session.lines.appendTerminalLine("^C")
                 }
-                else -> session.input = TextFieldValue(command, TextRange(command.length))
+                // Typed at the prompt with the cursor at the end, panel closed and keyboard
+                // back: the tap is the start of typing, not the whole of it.
+                else -> {
+                    session.input = TextFieldValue(command, TextRange(command.length))
+                    promptFocus.requestFocus()
+                    keyboardController?.show()
+                }
             }
         }
         if (commandsPanelOpen) {
             CommandsPanel(
                 commands = savedCommands,
-                heightPx = keyboardHeightPx.takeIf { it > 0f },
+                heightDp = keyboardHeightDp,
                 onRun = ::runSaved,
                 onAdd = { namingCommand = true },
                 onRemove = { persistCommands(savedCommands - it) },
@@ -1066,22 +1089,18 @@ private fun PromptRow(
 @Composable
 private fun CommandsPanel(
     commands: List<String>,
-    heightPx: Float?,
+    heightDp: Int,
     onRun: (String) -> Unit,
     onAdd: () -> Unit,
     onRemove: (String) -> Unit,
     onKeyboard: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    val density = LocalDensity.current
-    val height = with(density) {
-        (heightPx ?: 300.dp.toPx()).toDp().coerceAtLeast(200.dp)
-    }
     Column(
         Modifier
             .fillMaxWidth()
-            .height(height)
-            .background(c.panel)
+            .height(heightDp.dp)
+            .background(c.fieldBg)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(
@@ -1090,17 +1109,16 @@ private fun CommandsPanel(
         ) {
             Text(
                 text = "Saved commands",
-                color = c.text,
-                fontSize = 13.sp,
+                color = c.iconTint,
+                fontSize = 12.sp,
                 fontFamily = Mono,
-                fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
                 modifier = Modifier.weight(1f),
             )
             Box(
                 Modifier
-                    .height(32.dp)
+                    .height(28.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(c.chipBg)
+                    .background(c.cmdButtonBg)
                     .clickable(onClick = onKeyboard)
                     .padding(horizontal = 12.dp)
                     .semantics { contentDescription = "Back to keyboard" },
@@ -1123,25 +1141,26 @@ private fun CommandsPanel(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             items(commands, key = { it }) { command ->
                 Box(
                     Modifier
-                        .clip(RoundedCornerShape(10.dp))
+                        .height(36.dp)
+                        .clip(RoundedCornerShape(8.dp))
                         .background(c.chipBg)
                         .combinedClickable(
                             onClick = { onRun(command) },
                             onLongClick = { onRemove(command) },
                         )
-                        .padding(horizontal = 12.dp, vertical = 13.dp),
+                        .padding(horizontal = 12.dp),
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     Text(
                         text = command,
-                        color = c.text,
-                        fontSize = 12.sp,
+                        color = c.popupText,
+                        fontSize = 11.5.sp,
                         fontFamily = Mono,
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -1150,18 +1169,17 @@ private fun CommandsPanel(
             }
         }
         Spacer(Modifier.height(8.dp))
-        // Dashed outline: the only dashed control in the app, so Add reads as "yours to fill".
-        // Drawn rather than bordered — BorderStroke has no dash parameter — inset half a
-        // stroke so the dashes sit inside the box instead of bleeding off its edge.
+        // Dashed primary outline on a dark blue fill, pinned under the scrolling list.
         Box(
             Modifier
                 .fillMaxWidth()
+                .height(36.dp)
                 .clip(RoundedCornerShape(10.dp))
-                .clickable(onClick = onAdd)
+                .background(c.cmdAddBg)
                 .drawBehind {
                     val stroke = 1.dp.toPx()
                     drawRoundRect(
-                        color = c.toolbarAccent.copy(alpha = 0.6f),
+                        color = c.primary,
                         topLeft = Offset(stroke / 2f, stroke / 2f),
                         size = Size(size.width - stroke, size.height - stroke),
                         cornerRadius = CornerRadius(10.dp.toPx()),
@@ -1171,7 +1189,7 @@ private fun CommandsPanel(
                         ),
                     )
                 }
-                .padding(vertical = 12.dp),
+                .clickable(onClick = onAdd),
             contentAlignment = Alignment.Center,
         ) {
             Text(
@@ -1181,12 +1199,5 @@ private fun CommandsPanel(
                 fontFamily = Mono,
             )
         }
-        Text(
-            text = "Tapping types without running. Long press a card to remove it.",
-            color = c.textFaint,
-            fontSize = 11.sp,
-            fontFamily = Mono,
-            modifier = Modifier.padding(top = 6.dp),
-        )
     }
 }

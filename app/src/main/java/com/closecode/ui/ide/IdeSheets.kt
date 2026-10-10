@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -144,17 +145,20 @@ fun IdeBottomSheet(
         modifier
             .fillMaxSize()
             .background(c.scrim)
+            // Above the keyboard: a centered dialog on a small screen would otherwise sit
+            // half under it, with the buttons the first thing to go.
+            .imePadding()
             .clickable(
                 interactionSource = MutableInteractionSource(),
                 indication = null,
                 onClick = onDismiss,
             ),
+        contentAlignment = Alignment.Center,
     ) {
         Column(
             Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                .padding(horizontal = 28.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(c.panel)
                 .border(1.dp, c.ln, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                 // An enabled no-op, not `enabled = false`: a disabled clickable adds no input
@@ -502,6 +506,9 @@ fun IdeNameDialog(
         Column(
             Modifier
                 .padding(horizontal = 28.dp)
+                // Above the keyboard: a centered dialog on a small screen would otherwise sit
+                // half under it, with the buttons the first thing to go.
+                .imePadding()
                 .clip(RoundedCornerShape(14.dp))
                 .background(c.panel)
                 .border(1.dp, c.ln, RoundedCornerShape(14.dp))
@@ -555,13 +562,30 @@ fun IdeNameDialog(
             Row(
                 Modifier.padding(top = 14.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                SheetButton(label = "Cancel", fill = false, onClick = onDismiss)
-                SheetButton(
+                // Plain text, never a filled square: Cancel walks away, it does nothing.
+                Box(
+                    Modifier
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = onDismiss)
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Cancel",
+                        color = c.link,
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                        maxLines = 1,
+                    )
+                }
+                com.closecode.ui.components.PrimaryButton(
                     label = confirmLabel,
-                    fill = true,
                     enabled = changed,
                     onClick = { onCreate(trimmed) },
+                    modifier = Modifier.weight(1f),
                 )
             }
         }

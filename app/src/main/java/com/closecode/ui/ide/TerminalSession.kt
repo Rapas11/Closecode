@@ -199,6 +199,9 @@ internal fun decodeCommands(raw: String?): List<String> =
 /** Preference key for the Commands sheet shelf. Global, not per project: tools are tools. */
 internal const val TERMINAL_COMMANDS_KEY = "terminal.commands"
 
+/** Preference key for the last keyboard height in dp. The commands panel matches it. */
+internal const val TERMINAL_KEYBOARD_HEIGHT_KEY = "terminal.keyboard.height"
+
 /**
  * What a tab is called.
  *
