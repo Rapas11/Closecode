@@ -66,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
+import com.closecode.lang.Severity
 import com.closecode.ui.project.PreviewServer
 import com.closecode.ui.project.ProjectRepository
 import com.closecode.ui.theme.LocalPageColors
@@ -591,7 +592,7 @@ fun decodeScaled(bytes: ByteArray, maxEdge: Int = PREVIEW_MAX_IMAGE_EDGE): Previ
  * spec's static phone mock, and all other assets keep the existing static file preview.
  */
 @Composable
-fun IdePreviewPanel(
+internal fun IdePreviewPanel(
     fileName: String,
     fileKind: FileKind?,
     projectPath: String,
@@ -604,6 +605,8 @@ fun IdePreviewPanel(
     projectRoot: java.io.File? = null,
     // Tapping a console source link lands here with the project path and 1-based line.
     onOpenFile: (String, Int) -> Unit = { _, _ -> },
+    // Project errors for the preview cards' Failed state, matched by file name.
+    previewErrors: List<ProjectDiagnostic> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -692,11 +695,13 @@ fun IdePreviewPanel(
 
             PreviewRoute.NoFile -> PreviewMessage("Open a file to preview it.")
 
-            PreviewRoute.KotlinMock -> KotlinPhoneMock(
-                fileName = fileName,
-                projectPath = projectPath,
+            PreviewRoute.KotlinMock -> ScreensPanel(
+                files = diskTree.filter { it.kind == FileKind.Kotlin },
                 loader = loader,
                 refreshToken = refreshToken,
+                activePath = projectPath,
+                errors = previewErrors,
+                onOpenFile = onOpenFile,
             )
 
             PreviewRoute.Static -> StaticPreview(
@@ -1016,95 +1021,7 @@ private fun applyDeviceSettings(view: WebView, device: PreviewDevice) {
     }
 }
 
-@Composable
-private fun ColumnScope.KotlinPhoneMock(
-    fileName: String,
-    projectPath: String,
-    loader: (String) -> String?,
-    refreshToken: Int = 0,
-) {
-    val source by produceState<String?>(initialValue = null, fileName, projectPath, refreshToken) {
-        value = withContext(Dispatchers.IO) { loader(projectPath) }
-    }
-    val content = remember(source, fileName) {
-        extractComposePreview(source.orEmpty(), fileName.ifBlank { "Preview" })
-    }
-    Box(
-        Modifier
-            .weight(1f)
-            .fillMaxWidth()
-            .background(LocalPageColors.current.panel2),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(
-            Modifier.padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box(
-                Modifier
-                    .width(230.dp)
-                    .heightIn(min = 440.dp)
-                    .clip(RoundedCornerShape(32.dp))
-                    .background(Color.White)
-                    .border(7.dp, Color(0xFF202733), RoundedCornerShape(32.dp))
-                    .padding(top = 16.dp, bottom = 24.dp, start = 20.dp, end = 20.dp),
-            ) {
-                Column(
-                    Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Box(
-                        Modifier
-                            .width(54.dp)
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(Color(0xFF202733)),
-                    )
-                    Text(
-                        text = content.title,
-                        color = Color(0xFF101826),
-                        fontSize = 20.sp,
-                        fontFamily = Sans,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    content.subtitle?.let { subtitle ->
-                        Text(
-                            text = subtitle,
-                            color = Color(0xFF66728A),
-                            fontSize = 14.sp,
-                            fontFamily = Sans,
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    content.button?.let { label ->
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(20.dp))
-                                .background(Color(0xFF2457FF))
-                                .padding(vertical = 12.dp),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = label,
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                fontFamily = Sans,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+
 
 /** Static preview for images, markdown, JSON, XML, CSV, Kotlin files */
 @Composable
@@ -2133,3 +2050,4 @@ private fun ConsoleRow(line: ConsoleLine, onOpenFile: (String, Int) -> Unit) {
         }
     }
 }
+

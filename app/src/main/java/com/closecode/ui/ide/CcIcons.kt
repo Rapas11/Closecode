@@ -66,6 +66,19 @@ object CcIcons {
     )
     // The green check for clean states and done steps.
     val Check = icon("check", "M20 6L9 17l-5-5")
+    // Preview card states: a clock while rendering, a cross for a failed one, chevrons
+    // for the full-screen pager.
+    val Clock = icon("clock", "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2")
+    val Cross = icon("cross", "M6 6l12 12M18 6L6 18")
+    val ChevronLeft = icon("chevron-left", "M15 6l-6 6 6 6")
+    val ChevronRight = icon("chevron-right", "M9 6l6 6-6 6")
+    // Theme chip: sun for Light, crescent for Dark.
+    val Sun = icon(
+        "sun",
+        "M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4" +
+            "M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4",
+    )
+    val Moon = icon("moon", "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z")
     // The build panel's app tile: a little robot, body and antennae in strokes. No eyes —
     // at 24 dp they would be two blobs, and the tile reads as Android without them.
     val Android = icon(

@@ -1137,6 +1137,9 @@ internal fun IdeScreen(
                                     activePanel = "Code"
                                 }
                             },
+                            // Preview cards fail on project errors, matched by file name the
+                            // same way the sweep reports them.
+                            previewErrors = projectErrorList,
                             modifier = Modifier.weight(1f),
                         )
 

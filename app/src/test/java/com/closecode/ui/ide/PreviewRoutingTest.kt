@@ -4,6 +4,7 @@ import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PreviewRoutingTest {
@@ -114,4 +115,73 @@ class PreviewRoutingTest {
             previewRoute(webEntry = null, projectRootPresent = true, fileName = "data.json", fileKind = FileKind.Json),
         )
     }
+
+    // -- @Preview discovery ----------------------------------------------------
+
+    @Test
+    fun previewFunctionsAreFoundInOrder() {
+        val source = "@Preview\n@Composable\nfun HomeScreen() {\n}\n\n@Preview\nfun LoginScreen() {\n}\n"
+        assertEquals(
+            listOf(PreviewFunction("HomeScreen", 3), PreviewFunction("LoginScreen", 7)),
+            previewFunctionsOf(source),
+        )
+    }
+
+    @Test
+    fun stackedAnnotationsStillCount() {
+        val source = "@Preview\n@MyTheme\nfun A() {\n}\n"
+        assertEquals(listOf(PreviewFunction("A", 3)), previewFunctionsOf(source))
+    }
+
+    @Test
+    fun aLonePreviewWithNoFunctionIsSkipped() {
+        assertTrue(previewFunctionsOf("@Preview\n// nothing here\n").isEmpty())
+        assertTrue(previewFunctionsOf("fun Plain() {\n}\n").isEmpty())
+    }
+
+
+    // -- Preview error matching --------------------------------------------------
+
+    @Test
+    fun anErrorBelongsToTheFunctionAboveIt() {
+        val errors = listOf(
+            previewError("MainActivity.kt", 12),
+            previewError("MainActivity.kt", 40),
+        )
+        assertEquals(12, previewErrorFor(errors, "MainActivity.kt", 1, 30)?.diagnostic?.line)
+        assertEquals(40, previewErrorFor(errors, "MainActivity.kt", 31, 100)?.diagnostic?.line)
+    }
+
+    @Test
+    fun otherFilesAndWarningsDoNotFailACard() {
+        val errors = listOf(
+            ProjectDiagnostic(
+                "Other.kt",
+                com.closecode.lang.Diagnostic(
+                    severity = com.closecode.lang.Severity.ERROR,
+                    message = "x",
+                    offset = 0,
+                    length = 1,
+                    line = 12,
+                    column = 1,
+                    code = "E",
+                ),
+            ),
+        )
+        assertNull(previewErrorFor(errors, "MainActivity.kt", 1, 100))
+    }
+
+    private fun previewError(file: String, line: Int) = ProjectDiagnostic(
+        file,
+        com.closecode.lang.Diagnostic(
+            severity = com.closecode.lang.Severity.ERROR,
+            message = "x",
+            offset = 0,
+            length = 1,
+            line = line,
+            column = 1,
+            code = "E",
+        ),
+    )
+
 }
