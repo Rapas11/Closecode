@@ -163,9 +163,50 @@ class GitService(private val root: File) {
         }
     }
 
+    /**
+     * Throws away changes to [paths]: tracked files go back to their HEAD content and untracked
+     * ones are deleted. Staged entries for those paths are reset first, so the index ends up
+     * matching HEAD too rather than keeping a staged copy of what was just thrown away. Paths
+     * that are staged-new (no HEAD version) are unstaged and deleted, which is the same end
+     * state by the only route that reaches it.
+     */
+    fun discard(paths: List<String>): Result<Unit> = runCatching {
+        open().use { git ->
+            val repo = git.repository
+            val hasCommits = repo.resolve(Constants.HEAD) != null
+            val untracked = git.status().call().untracked
+            paths.forEach { path ->
+                val file = File(root, path)
+                if (path in untracked || !hasCommits && !inHead(repo, path)) {
+                    if (file.exists()) file.deleteRecursively()
+                    return@forEach
+                }
+                if (inHead(repo, path)) {
+                    git.reset().setRef(Constants.HEAD).addPath(path).call()
+                    git.checkout().setStartPoint(Constants.HEAD).addPath(path).call()
+                } else {
+                    git.rm().addFilepattern(path).setCached(true).call()
+                    if (file.exists()) file.deleteRecursively()
+                }
+            }
+        }
+    }
+
+    /** True when [relativePath] exists in the HEAD tree. */
+    private fun inHead(repo: org.eclipse.jgit.lib.Repository, relativePath: String): Boolean {
+        val headTree = repo.resolve(Constants.HEAD + "^{tree}") ?: return false
+        val walk = org.eclipse.jgit.treewalk.TreeWalk(repo).apply {
+            addTree(headTree)
+            isRecursive = true
+            filter = org.eclipse.jgit.treewalk.filter.PathFilter.create(relativePath)
+        }
+        val found = walk.next()
+        walk.close()
+        return found
+    }
+
     /** Commits whatever is staged. Returns the id of the new commit. */
-    fun commit(message: String): Result<String> = runCatching {
-        val trimmed = message.trim()
+    fun commit(message: String): Result<String> = runCatching {        val trimmed = message.trim()
         require(trimmed.isNotEmpty()) { "A commit needs a message." }
         open().use { git ->
             val ident = identity(git)

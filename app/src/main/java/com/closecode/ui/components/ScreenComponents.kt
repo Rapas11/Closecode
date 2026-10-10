@@ -152,6 +152,7 @@ fun OutlineButton(
     label: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     val c = LocalPageColors.current
     Box(
@@ -159,17 +160,18 @@ fun OutlineButton(
             .fillMaxWidth()
             .height(38.dp)
             .clip(RoundedCornerShape(9.dp))
-            .background(c.primaryTint)
-            .border(1.dp, c.primary, RoundedCornerShape(9.dp))
-            .clickable(onClick = onClick),
+            .background(if (enabled) c.primaryTint else c.chipBg)
+            .border(1.dp, if (enabled) c.primary else c.fieldBorder, RoundedCornerShape(9.dp))
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = c.link,
+            color = if (enabled) c.link else c.textFaint,
             fontSize = 13.sp,
             fontFamily = Sans,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

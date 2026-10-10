@@ -462,4 +462,31 @@ class GitServiceTest {
         val marks = git.bufferMarks("main.kt", "line1\nLINE2\nline3\n").getOrThrow()
         assertEquals(mapOf(2 to GitChangeKind.Modified), marks)
     }
+
+    @Test
+    fun discardRestoresTrackedContent() {
+        val git = committedRepo("line1\nline2\n")
+        write("main.kt", "CHANGED\n")
+        git.discard(listOf("main.kt")).getOrThrow()
+        assertEquals("line1\nline2\n", java.io.File(tmp.root, "main.kt").readText())
+        assertTrue(git.workingTreeMarks("main.kt").getOrThrow().isEmpty())
+    }
+
+    @Test
+    fun discardDeletesUntrackedFiles() {
+        val git = committedRepo("line1\n")
+        write("scratch.kt", "x\n")
+        git.discard(listOf("scratch.kt")).getOrThrow()
+        assertTrue(!java.io.File(tmp.root, "scratch.kt").exists())
+    }
+
+    @Test
+    fun discardRemovesStagedNewFiles() {
+        val git = committedRepo("line1\n")
+        write("new.kt", "x\n")
+        git.stage(listOf("new.kt")).getOrThrow()
+        git.discard(listOf("new.kt")).getOrThrow()
+        assertTrue(!java.io.File(tmp.root, "new.kt").exists())
+        assertTrue(git.workingTreeMarks("new.kt").getOrThrow().isEmpty())
+    }
 }

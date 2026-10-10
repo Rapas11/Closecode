@@ -59,6 +59,21 @@ object CcIcons {
         filled = true,
     )
     val Chevron = icon("chevron", "M9 6l6 6-6 6")
+    // Clone card and cloning progress: a download into a cloud.
+    val CloudDownload = icon(
+        "cloud-download",
+        "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3",
+    )
+    // The green check for clean states and done steps.
+    val Check = icon("check", "M20 6L9 17l-5-5")
+    // GitHub brand mark, for sign-in rows. Drawn, not typed, so it never depends on a font.
+    val Github = icon(
+        "github",
+        "M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 " +
+            "6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.57 " +
+            "13.57 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 " +
+            "3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22",
+    )
     val Up = icon("up", "M6 15l6-6 6 6")
     val Down = icon("down", "M6 9l6 6 6-6")
     val Copy = icon("copy", "M11 9h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2zM5 15V6a2 2 0 0 1 2-2h8")
@@ -114,6 +129,13 @@ object CcIcons {
     )
     // Collapse-all: two chevrons up, the mirror of opening. Used by the explorer header.
     val CollapseAll = icon("collapse-all", "M17 11l-5-5-5 5M17 18l-5-5-5 5")
+    // Branch: for the Git intro tile and the branch row. Circles drawn as arc pairs, since a
+    // zero-sweep arc draws nothing and there is no circle verb in path data.
+    val Branch = icon(
+        "branch",
+        "M6 3v12M15 6a3 3 0 1 0 6 0a3 3 0 1 0-6 0M3 18a3 3 0 1 0 6 0a3 3 0 1 0-6 0" +
+            "M18 9a9 9 0 0 1-9 9",
+    )
     val External = icon(
         "external",
         "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3",

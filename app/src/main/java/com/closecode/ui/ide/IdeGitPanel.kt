@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,6 +19,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -31,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
@@ -38,6 +40,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.closecode.ui.components.OutlineButton
+import com.closecode.ui.components.PrimaryButton
+import com.closecode.ui.components.ScreenCard
+import com.closecode.ui.components.ScreenSectionLabel
+import com.closecode.ui.components.StatusBadge
+import com.closecode.ui.components.StatusKind
+import com.closecode.ui.components.TextLink
 import com.closecode.ui.github.GitHubClient
 import com.closecode.ui.github.GitHubException
 import com.closecode.ui.github.GitHubRemote
@@ -46,15 +55,11 @@ import com.closecode.ui.github.GitHubRepo
 import com.closecode.ui.github.TokenStore
 import com.closecode.ui.git.GitChange
 import com.closecode.ui.git.GitChangeKind
-import com.closecode.ui.git.GitCommit
 import com.closecode.ui.git.GitService
 import com.closecode.ui.git.GitSnapshot
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -65,8 +70,23 @@ private sealed interface GitUiState {
     object NoProject : GitUiState
     object NoRepository : GitUiState
     data class Failed(val message: String) : GitUiState
-    data class Loaded(val snap: GitSnapshot, val history: List<GitCommit>) : GitUiState
+    data class Loaded(val snap: GitSnapshot) : GitUiState
 }
+
+/**
+ * The push/pull line under the branch name, in plain words: where the commits are, not counts
+ * and arrows. Pinned by test because it is the one sentence every Git beginner reads.
+ */
+internal fun gitStatusText(hasRemote: Boolean, ahead: Int, behind: Int): String = when {
+    !hasRemote -> "Not published"
+    behind > 0 && ahead > 0 -> "$behind to pull · $ahead to push"
+    behind > 0 -> "$behind to pull"
+    ahead > 0 -> "$ahead to push"
+    else -> "Up to date"
+}
+
+/** A change path split for its row: the file name white, the folder small and gray after it. */
+internal fun displayFolder(path: String): String = path.substringBeforeLast('/', "")
 
 /**
  * The Source Control tab: local version control first, GitHub second.
@@ -92,6 +112,9 @@ fun IdeGitPanel(
     // in too. Re-keying the read on it is what stops this panel pushing with a token that has
     // since been replaced, which would look exactly like the failure it replaced.
     tokenEpoch: Int = 0,
+    // Opens a side-by-side diff of the file. The panel lives in the drawer, so the route itself
+    // lives at screen level; this only says which path was tapped.
+    onDiff: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -103,6 +126,9 @@ fun IdeGitPanel(
     var busy by remember(projectRoot) { mutableStateOf(false) }
     var error by remember(projectRoot) { mutableStateOf<String?>(null) }
     var namingBranch by remember(projectRoot) { mutableStateOf(false) }
+    var switchingBranch by remember(projectRoot) { mutableStateOf(false) }
+    var branches by remember(projectRoot) { mutableStateOf(emptyList<String>()) }
+    var confirmingDiscard by remember(projectRoot) { mutableStateOf(false) }
 
     // GitHub. The token is read once from private preferences and kept in memory only for as
     // long as this panel is composed; everything that touches the network runs off the main
@@ -145,8 +171,8 @@ fun IdeGitPanel(
                 if (snap.isFailure) {
                     GitUiState.Failed(snap.exceptionOrNull()?.message ?: "Could not read the repository.")
                 } else {
-                    val history = service.history(HISTORY_LIMIT).getOrElse { emptyList() }
-                    GitUiState.Loaded(snap.getOrThrow(), history)
+                    branches = service.branches().getOrElse { emptyList() }
+                    GitUiState.Loaded(snap.getOrThrow())
                 }
             }
         }
@@ -220,30 +246,12 @@ fun IdeGitPanel(
 
             GitUiState.Loading -> SectionLabel("VERSION CONTROL")
 
-            GitUiState.NoRepository -> Column(
-                Modifier.padding(start = 17.dp, end = 14.dp, top = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "Not under version control",
-                    color = c.tx,
-                    fontSize = 14.sp,
-                    fontFamily = Sans,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = "This project has no git repository yet. Initialize one to track changes, keep a history and switch between branches. Nothing leaves this device.",
-                    color = c.mu,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    lineHeight = 17.sp,
-                )
-                Spacer(Modifier.height(4.dp))
-                PanelButton(
-                    label = if (busy) "Working…" else "Initialize repository",
-                    enabled = !busy,
-                ) { actOn { init() } }
-            }
+            GitUiState.NoRepository -> GitIntro(
+                busy = busy,
+                onTrack = { actOn { init() } },
+                onClone = onCloneRequest,
+                onSignIn = { signInOpen = true },
+            )
 
             is GitUiState.Failed -> PanelNote(
                 title = "Could not read the repository",
@@ -252,18 +260,38 @@ fun IdeGitPanel(
 
             is GitUiState.Loaded -> {
                 error?.let { ErrorLine(it) }
-                BranchBar(
+                BranchRow(
                     snap = current.snap,
-                    remoteUrl = remoteUrl,
+                    status = gitStatusText(remoteUrl != null, current.snap.ahead, current.snap.behind),
+                    branches = branches,
+                    hasStash = hasStash,
+                    hasChanges = !current.snap.isClean,
+                    busy = busy,
+                    onRefresh = { scope.launch { reload() } },
+                    onSwitchBranch = { switchingBranch = true },
                     onNewBranch = { namingBranch = true },
+                    onStash = { actOn { stash() } },
+                    onRestoreStash = { actOn { stashPop() } },
+                    onDiscardAll = { confirmingDiscard = true },
                 )
 
-                SectionLabel("CHANGES")
                 if (current.snap.isClean) {
-                    PanelNote(
-                        title = "Working tree clean",
-                        body = "Nothing to commit. Make an edit and it will show up here.",
-                    )
+                    // Nothing to stage, so no commit box either: the screen says done and stops.
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 17.dp, end = 14.dp, top = 18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        CcIcon(CcIcons.Check, c.success, 16.dp)
+                        Text(
+                            text = "Everything is saved",
+                            color = c.text,
+                            fontSize = 13.sp,
+                            fontFamily = Sans,
+                        )
+                    }
                 } else {
                     if (current.snap.conflicts.isNotEmpty()) {
                         ChangeGroup(
@@ -271,6 +299,7 @@ fun IdeGitPanel(
                             rows = current.snap.conflicts.map {
                                 GitChange(it, false, GitChangeKind.Deleted)
                             },
+                            conflicted = true,
                             actionLabel = null,
                             onAction = null,
                             onRow = {},
@@ -283,63 +312,30 @@ fun IdeGitPanel(
                         actionLabel = if (current.snap.staged.isEmpty()) null else "Unstage all",
                         onAction = { actOn { unstage(current.snap.staged.map { it.path }) } },
                         onRow = { change -> actOn { unstage(listOf(change.path)) } },
+                        onDiff = onDiff,
                     )
+                    val unstaged = current.snap.unstaged + current.snap.untracked
                     ChangeGroup(
-                        label = "Changes · ${current.snap.unstaged.size}",
-                        rows = current.snap.unstaged,
-                        actionLabel = if (current.snap.unstaged.isEmpty()) null else "Stage all",
-                        onAction = { actOn { stage(current.snap.unstaged.map { it.path }) } },
+                        label = "Changes · ${unstaged.size}",
+                        rows = unstaged,
+                        actionLabel = if (unstaged.isEmpty()) null else "Stage all",
+                        onAction = { actOn { stage(unstaged.map { it.path }) } },
                         onRow = { change -> actOn { stage(listOf(change.path)) } },
-                    )
-                    ChangeGroup(
-                        label = "Untracked · ${current.snap.untracked.size}",
-                        rows = current.snap.untracked,
-                        actionLabel = if (current.snap.untracked.isEmpty()) null else "Stage all",
-                        onAction = { actOn { stage(current.snap.untracked.map { it.path }) } },
-                        onRow = { change -> actOn { stage(listOf(change.path)) } },
+                        onDiff = onDiff,
                     )
                 }
 
-                // Stash sits with the changes it would clear, because that is where a reader
-                // looking at a dirty tree is already looking.
-                if (!current.snap.isClean || hasStash) {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        if (!current.snap.isClean && current.snap.conflicts.isEmpty()) {
-                            PanelButton(
-                                label = "Stash",
-                                enabled = !busy,
-                                modifier = Modifier.weight(1f),
-                            ) { actOn { stash() } }
-                        }
-                        if (hasStash) {
-                            PanelButton(
-                                label = "Restore stash",
-                                enabled = !busy,
-                                modifier = Modifier.weight(1f),
-                            ) { actOn { stashPop() } }
-                        }
-                    }
-                }
-
-                CommitBox(
-                    value = message,
-                    busy = busy,
-                    staged = current.snap.staged.size,
-                    onChange = { message = it },
-                    onCommit = {
-                        val text = message
-                        actOn { commit(text).onSuccess { message = "" } }
-                    },
-                )
-
-                if (current.history.isNotEmpty()) {
-                    SectionLabel("HISTORY")
-                    current.history.forEach { entry -> HistoryRow(entry) }
+                if (!current.snap.isClean) {
+                    CommitBox(
+                        value = message,
+                        busy = busy,
+                        staged = current.snap.staged.size,
+                        onChange = { message = it },
+                        onCommit = {
+                            val text = message
+                            actOn { commit(text).onSuccess { message = "" } }
+                        },
+                    )
                 }
             }
         }
@@ -348,12 +344,15 @@ fun IdeGitPanel(
         // open this tab for, and none of them need a repository to exist yet — which is exactly
         // the state someone is in when they want to clone a different one.
         val hasCommits = (state as? GitUiState.Loaded)?.snap?.hasCommits == true
+        val snap = (state as? GitUiState.Loaded)?.snap
         GitHubSection(
             projectName = projectName,
             token = githubToken,
             account = account,
             remoteUrl = remoteUrl,
             hasCommits = hasCommits,
+            toPull = snap?.behind ?: 0,
+            toPush = snap?.ahead ?: 0,
             busy = githubBusy,
             error = githubError,
             note = githubNote,
@@ -440,6 +439,35 @@ fun IdeGitPanel(
         )
     }
 
+    if (switchingBranch && state is GitUiState.Loaded) {
+        BranchDialog(
+            current = (state as GitUiState.Loaded).snap.branch,
+            branches = branches,
+            onSwitch = { name ->
+                switchingBranch = false
+                actOn { checkout(name) }
+            },
+            onDismiss = { switchingBranch = false },
+        )
+    }
+
+    if (confirmingDiscard && state is GitUiState.Loaded) {
+        val snap = (state as GitUiState.Loaded).snap
+        val paths = snap.staged.map { it.path } + snap.unstaged.map { it.path } +
+            snap.untracked.map { it.path }
+        IdeConfirmDialog(
+            title = "Throw away ${paths.size} ${if (paths.size == 1) "change" else "changes"}?",
+            message = "Every edit goes back to the last commit, and new files are deleted. " +
+                "This cannot be undone.",
+            confirmLabel = "Discard",
+            onConfirm = {
+                confirmingDiscard = false
+                actOn { discard(paths) }
+            },
+            onDismiss = { confirmingDiscard = false },
+        )
+    }
+
     if (signInOpen) {
         GitHubSignIn(
             onSignedIn = { token ->
@@ -495,25 +523,196 @@ private fun ErrorLine(message: String) {
     )
 }
 
+/**
+ * The first-time screen: a project with no Git history yet. One intro, three option cards,
+ * nothing else. "Initialize repository" and "Not under version control" must never appear —
+ * the first card says what happens in the words a beginner reads.
+ */
 @Composable
-private fun BranchBar(snap: GitSnapshot, remoteUrl: String?, onNewBranch: () -> Unit) {
+private fun GitIntro(
+    busy: Boolean,
+    onTrack: () -> Unit,
+    onClone: () -> Unit,
+    onSignIn: () -> Unit,
+) {
     val c = LocalPageColors.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 17.dp, end = 14.dp, top = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier
+                .size(52.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(c.primaryTint),
+            contentAlignment = Alignment.Center,
+        ) {
+            CcIcon(CcIcons.Branch, c.link, 24.dp)
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Get started with Git",
+            color = c.text,
+            fontSize = 17.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "Git saves versions of your project so you can undo mistakes and back it up online.",
+            color = c.textMuted,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            lineHeight = 17.sp,
+        )
+        Spacer(Modifier.height(16.dp))
+        // The one primary action: start tracking. The other two are plain cards.
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(c.primary)
+                .clickable(enabled = !busy, onClick = onTrack)
+                .padding(12.dp),
+        ) {
+            IntroCardRow(
+                tileBg = Color.White.copy(alpha = 0.2f),
+                tileFg = Color.White,
+                icon = CcIcons.Play,
+                title = "Start tracking this project",
+                subtitle = if (busy) "Working…" else "Create a Git history on this device",
+                titleColor = Color.White,
+                subtitleColor = Color.White.copy(alpha = 0.85f),
+                chevronColor = Color.White,
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        IntroCard(
+            icon = CcIcons.CloudDownload,
+            title = "Clone a repository",
+            subtitle = "Download a project from GitHub",
+            onClick = onClone,
+        )
+        Spacer(Modifier.height(12.dp))
+        IntroCard(
+            icon = CcIcons.Github,
+            title = "Sign in with GitHub",
+            subtitle = "Back up and sync your projects",
+            onClick = onSignIn,
+        )
+    }
+}
+
+@Composable
+private fun IntroCard(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(c.surface)
+            .border(1.dp, c.surfaceBorder, RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+    ) {
+        IntroCardRow(
+            tileBg = c.chipBg,
+            tileFg = c.textMuted,
+            icon = icon,
+            title = title,
+            subtitle = subtitle,
+            titleColor = c.text,
+            subtitleColor = c.textMuted,
+            chevronColor = c.textFaint,
+        )
+    }
+}
+
+@Composable
+private fun IntroCardRow(
+    tileBg: androidx.compose.ui.graphics.Color,
+    tileFg: androidx.compose.ui.graphics.Color,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    subtitle: String,
+    titleColor: androidx.compose.ui.graphics.Color,
+    subtitleColor: androidx.compose.ui.graphics.Color,
+    chevronColor: androidx.compose.ui.graphics.Color,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(tileBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            CcIcon(icon, tileFg, 18.dp)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = titleColor,
+                fontSize = 14.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                color = subtitleColor,
+                fontSize = 11.sp,
+                fontFamily = Sans,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        CcIcon(CcIcons.Chevron, chevronColor, 16.dp)
+    }
+}
+
+/**
+ * The branch row: branch icon and name on the left, refresh plus the plain-words status on the
+ * right, and a three-dot menu holding everything that is not staging, committing or pushing —
+ * switch and new branch, stash and restore, discard all.
+ */
+@Composable
+private fun BranchRow(
+    snap: GitSnapshot,
+    status: String,
+    branches: List<String>,
+    hasStash: Boolean,
+    hasChanges: Boolean,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+    onSwitchBranch: () -> Unit,
+    onNewBranch: () -> Unit,
+    onStash: () -> Unit,
+    onRestoreStash: () -> Unit,
+    onDiscardAll: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         Modifier
             .fillMaxWidth()
             .padding(start = 17.dp, end = 8.dp, top = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(if (snap.hasCommits) c.success else c.mu),
-        )
+        CcIcon(CcIcons.Branch, c.textMuted, 16.dp)
         Spacer(Modifier.width(8.dp))
         Text(
             text = snap.branch,
-            color = c.tx,
+            color = c.text,
             fontSize = 13.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -522,59 +721,123 @@ private fun BranchBar(snap: GitSnapshot, remoteUrl: String?, onNewBranch: () -> 
             modifier = Modifier.weight(1f),
         )
         if (snap.detached) {
-            Spacer(Modifier.width(6.dp))
-            Text("detached HEAD", color = c.amber, fontSize = 10.sp, fontFamily = Sans)
+            Text(
+                text = "detached HEAD",
+                color = c.warning,
+                fontSize = 10.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(end = 6.dp),
+            )
         }
-        if (snap.ahead > 0) {
-            Spacer(Modifier.width(6.dp))
-            CountPill("↑${snap.ahead}", c.ac)
-        }
-        if (snap.behind > 0) {
-            Spacer(Modifier.width(6.dp))
-            CountPill("↓${snap.behind}", c.amber)
-        }
-        if (snap.hasCommits) {
-            Spacer(Modifier.width(4.dp))
-            Box(
+        CcIcon(
+            CcIcons.Refresh,
+            c.textMuted,
+            16.dp,
+            Modifier
+                .size(30.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(onClick = onRefresh),
+        )
+        Text(
+            text = status,
+            color = c.textMuted,
+            fontSize = 11.sp,
+            fontFamily = Sans,
+            maxLines = 1,
+            modifier = Modifier.padding(end = 2.dp),
+        )
+        Box {
+            CcIcon(
+                CcIcons.More,
+                c.textMuted,
+                16.dp,
                 Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(c.panel2)
-                    .clickable(onClick = onNewBranch),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("+", color = c.tx, fontSize = 16.sp, fontFamily = Sans, fontWeight = FontWeight.Medium)
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { menuOpen = true },
+            )
+            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                DropdownMenuItem(
+                    text = { Text("Switch branch", fontFamily = Sans) },
+                    enabled = branches.size > 1,
+                    onClick = { menuOpen = false; onSwitchBranch() },
+                )
+                DropdownMenuItem(
+                    text = { Text("New branch", fontFamily = Sans) },
+                    onClick = { menuOpen = false; onNewBranch() },
+                )
+                if (hasChanges && !busy) {
+                    DropdownMenuItem(
+                        text = { Text("Stash changes", fontFamily = Sans) },
+                        onClick = { menuOpen = false; onStash() },
+                    )
+                }
+                if (hasStash && !busy) {
+                    DropdownMenuItem(
+                        text = { Text("Restore stash", fontFamily = Sans) },
+                        onClick = { menuOpen = false; onRestoreStash() },
+                    )
+                }
+                if (hasChanges && !busy) {
+                    DropdownMenuItem(
+                        text = { Text("Discard all changes", fontFamily = Sans, color = c.error) },
+                        onClick = { menuOpen = false; onDiscardAll() },
+                    )
+                }
             }
         }
     }
-    // Reads the remote we actually know about: ahead 0 and behind 0 with a remote configured
-    // means the push landed, and saying "no remote yet" there was simply wrong.
-    if (snap.hasCommits && snap.ahead == 0 && snap.behind == 0) {
-        Text(
-            text = if (remoteUrl == null) "Local only · no remote yet" else "Up to date with origin",
-            color = c.mu.copy(alpha = 0.75f),
-            fontSize = 10.sp,
-            fontFamily = Sans,
-            modifier = Modifier.padding(start = 33.dp, top = 4.dp),
-        )
-    }
 }
 
+/** Every branch, with a check on the current one. Tapping one switches to it. */
 @Composable
-private fun CountPill(text: String, color: androidx.compose.ui.graphics.Color) {
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(7.dp))
-            .background(color.copy(alpha = 0.16f))
-            .padding(horizontal = 6.dp, vertical = 2.dp),
-    ) {
-        Text(text, color = color, fontSize = 10.sp, fontFamily = Sans, fontWeight = FontWeight.Bold)
-    }
+private fun BranchDialog(
+    current: String,
+    branches: List<String>,
+    onSwitch: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Switch branch", fontSize = 17.sp, fontFamily = Sans) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                branches.forEach { name ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onSwitch(name) }
+                            .padding(horizontal = 8.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = name,
+                            color = c.text,
+                            fontSize = 14.sp,
+                            fontFamily = Sans,
+                            fontWeight = if (name == current) FontWeight.Medium else FontWeight.Normal,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (name == current) CcIcon(CcIcons.Check, c.success, 16.dp)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
 }
 
 /**
- * One list inside the Changes section — staged, changes, untracked or conflicts — with a bulk
- * action in its header. Groups with nothing in them disappear entirely.
+ * One list inside the Changes section — staged, changes or conflicts — with a bulk action in
+ * its header. Groups with nothing in them disappear entirely. Tapping a row opens its diff;
+ * the round button on the right stages or unstages.
  */
 @Composable
 private fun ChangeGroup(
@@ -583,6 +846,8 @@ private fun ChangeGroup(
     actionLabel: String?,
     onAction: (() -> Unit)?,
     onRow: (GitChange) -> Unit,
+    onDiff: (String) -> Unit = {},
+    conflicted: Boolean = false,
     interactive: Boolean = true,
 ) {
     val c = LocalPageColors.current
@@ -591,26 +856,12 @@ private fun ChangeGroup(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(start = 17.dp, end = 12.dp, top = 8.dp),
+            .padding(start = 17.dp, end = 14.dp, top = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = label,
-            color = c.mu,
-            fontSize = 11.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f),
-        )
+        ScreenSectionLabel(label, Modifier.weight(1f))
         if (actionLabel != null && onAction != null) {
-            Text(
-                text = actionLabel,
-                color = c.ac,
-                fontSize = 11.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable(onClick = onAction),
-            )
+            TextLink(actionLabel, onClick = onAction)
         }
     }
 
@@ -619,8 +870,10 @@ private fun ChangeGroup(
             kind = change.kind,
             path = change.path,
             staged = change.staged,
+            conflicted = conflicted,
             interactive = interactive,
-            onClick = { onRow(change) },
+            onClick = { onDiff(change.path) },
+            onToggle = { onRow(change) },
         )
     }
 }
@@ -630,51 +883,84 @@ private fun ChangeRow(
     kind: GitChangeKind,
     path: String,
     staged: Boolean,
+    conflicted: Boolean,
     interactive: Boolean,
     onClick: () -> Unit,
+    onToggle: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    val kindColor = when (kind) {
-        GitChangeKind.Added -> c.success
-        GitChangeKind.Modified -> c.amber
-        GitChangeKind.Deleted -> c.red
-    }
+    val name = path.substringAfterLast('/')
+    val folder = displayFolder(path)
     Row(
         Modifier
             .fillMaxWidth()
-            .height(34.dp)
-            .then(if (interactive) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(start = 17.dp, end = 12.dp),
+            .height(38.dp)
+            .clickable(enabled = interactive, onClick = onClick)
+            .padding(start = 17.dp, end = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(
-            text = kindLetter(kind),
-            color = kindColor,
-            fontSize = 12.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(16.dp),
-        )
-        Text(
-            text = path,
-            color = c.tx,
-            fontSize = 12.sp,
-            fontFamily = Sans,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (interactive) {
+        if (conflicted) {
+            // Conflicted files sort first with a red C: the letter is the alarm here, so the
+            // badge borrows the error colors rather than inventing new ones.
             Box(
                 Modifier
-                    .size(24.dp)
+                    .size(18.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(c.statusDeletedBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "C",
+                    color = c.error,
+                    fontSize = 10.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        } else {
+            StatusBadge(
+                when (kind) {
+                    GitChangeKind.Added -> StatusKind.Added
+                    GitChangeKind.Modified -> StatusKind.Modified
+                    GitChangeKind.Deleted -> StatusKind.Deleted
+                },
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = name,
+                color = c.text,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (folder.isNotEmpty()) {
+                Text(
+                    text = folder,
+                    color = c.textMuted,
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (interactive) {
+            // Round, 26 dp, minus to unstage and plus to stage — the row's tap opens the diff,
+            // so the button owns the stage action alone and never fights the row over a tap.
+            Box(
+                Modifier
+                    .size(26.dp)
                     .clip(CircleShape)
-                    .background(c.panel2),
+                    .background(c.chipBg)
+                    .clickable(onClick = onToggle),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = if (staged) "−" else "+",
-                    color = c.tx,
+                    color = c.text,
                     fontSize = 15.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Medium,
@@ -682,12 +968,6 @@ private fun ChangeRow(
             }
         }
     }
-}
-
-private fun kindLetter(kind: GitChangeKind): String = when (kind) {
-    GitChangeKind.Added -> "A"
-    GitChangeKind.Modified -> "M"
-    GitChangeKind.Deleted -> "D"
 }
 
 @Composable
@@ -700,42 +980,34 @@ private fun CommitBox(
 ) {
     val c = LocalPageColors.current
     Column(
-        Modifier.padding(start = 17.dp, end = 14.dp, top = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        Modifier.padding(start = 17.dp, end = 14.dp, top = 16.dp, bottom = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(
-            text = "COMMIT",
-            color = c.mu.copy(alpha = 0.7f),
-            fontSize = 10.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp,
-        )
         BasicTextField(
             value = value,
             onValueChange = onChange,
             enabled = !busy,
             textStyle = TextStyle(
-                color = c.tx,
-                fontSize = 12.sp,
+                color = c.text,
+                fontSize = 13.sp,
                 fontFamily = Sans,
-                lineHeight = 17.sp,
+                lineHeight = 18.sp,
             ),
-            cursorBrush = SolidColor(c.ac),
+            cursorBrush = SolidColor(c.accent),
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 62.dp)
-                .clip(RoundedCornerShape(9.dp))
-                .background(c.bg)
-                .border(1.dp, c.ln, RoundedCornerShape(9.dp))
-                .padding(10.dp),
+                .height(58.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(c.fieldBg)
+                .border(1.dp, c.fieldBorder, RoundedCornerShape(10.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             decorationBox = { inner ->
                 Box {
                     if (value.isEmpty()) {
                         Text(
-                            text = "Describe this change",
-                            color = c.mu,
-                            fontSize = 12.sp,
+                            text = "Message: what did you change?",
+                            color = c.textFaint,
+                            fontSize = 13.sp,
                             fontFamily = Sans,
                         )
                     }
@@ -743,101 +1015,14 @@ private fun CommitBox(
                 }
             },
         )
-        val canCommit = staged > 0 && value.isNotBlank() && !busy
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(38.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(if (canCommit) c.ac.copy(alpha = 0.16f) else c.panel2)
-                .border(
-                    1.dp,
-                    if (canCommit) c.ac else c.ln,
-                    RoundedCornerShape(10.dp),
-                )
-                .then(if (canCommit) Modifier.clickable(onClick = onCommit) else Modifier),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = when {
-                    busy -> "Working…"
-                    staged == 0 -> "Nothing staged"
-                    else -> "Commit $staged ${if (staged == 1) "file" else "files"}"
-                },
-                color = if (canCommit) c.ac else c.mu,
-                fontSize = 13.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-    }
-}
-
-@Composable
-private fun HistoryRow(entry: GitCommit) {
-    val c = LocalPageColors.current
-    val stamp = remember(entry.id) {
-        SimpleDateFormat("d MMM yyyy, HH:mm", Locale.getDefault()).format(Date(entry.whenMillis))
-    }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .padding(start = 17.dp, end = 14.dp, top = 9.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = entry.shortId,
-                color = c.ac,
-                fontSize = 10.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.width(58.dp),
-            )
-            Text(
-                text = entry.summary,
-                color = c.tx,
-                fontSize = 12.sp,
-                fontFamily = Sans,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-        }
-        Text(
-            text = "${entry.author} · $stamp",
-            color = c.mu.copy(alpha = 0.8f),
-            fontSize = 10.sp,
-            fontFamily = Sans,
-        )
-    }
-}
-
-/** A full-width, low-contrast action that reads as a button without shouting. */
-@Composable
-private fun PanelButton(
-    label: String,
-    enabled: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    val c = LocalPageColors.current
-    Box(
-        modifier
-            .fillMaxWidth()
-            .height(38.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (enabled) c.ac.copy(alpha = 0.16f) else c.panel2)
-            .border(1.dp, if (enabled) c.ac else c.ln, RoundedCornerShape(10.dp))
-            .then(if (enabled) Modifier.clickable(onClick = onClick) else Modifier),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = if (enabled) c.ac else c.mu,
-            fontSize = 13.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.SemiBold,
+        // The one primary button: gray and dead until a message and a staged file both exist.
+        PrimaryButton(
+            label = when {
+                busy -> "Working…"
+                else -> "Commit $staged ${if (staged == 1) "file" else "files"}"
+            },
+            enabled = staged > 0 && value.isNotBlank() && !busy,
+            onClick = onCommit,
         )
     }
 }
@@ -856,6 +1041,8 @@ private fun GitHubSection(
     account: GitHubUser?,
     remoteUrl: String?,
     hasCommits: Boolean,
+    toPull: Int,
+    toPush: Int,
     busy: Boolean,
     error: String?,
     note: String?,
@@ -889,29 +1076,34 @@ private fun GitHubSection(
     }
 
     if (token == null) {
-        Column(
-            Modifier.padding(start = 17.dp, end = 14.dp, top = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = "Publish this project to GitHub, or link one you already have. Signing in " +
-                    "opens github.com/login/device — nothing else leaves the device.",
-                color = c.mu,
-                fontSize = 12.sp,
-                fontFamily = Sans,
-                lineHeight = 17.sp,
-            )
-            PanelButton(label = if (busy) "Working…" else "Sign in with GitHub", enabled = !busy, onClick = onSignIn)
-            // A clone never needs *this* project's repository — it makes its own — so it sits
-            // beside sign-in rather than inside the signed-in-only controls below.
-            Text(
-                text = "Clone a repository",
-                color = c.ac,
-                fontSize = 12.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier.clickable(enabled = !busy, onClick = onClone),
-            )
+        // The card the mockup shows: what is missing, why it matters, connect, and a quiet
+        // clone door underneath. Shown only when not signed in.
+        Column(Modifier.padding(start = 17.dp, end = 14.dp, top = 16.dp)) {
+            ScreenCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CcIcon(CcIcons.Github, c.text, 20.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = "GitHub is not connected",
+                        color = c.text,
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Connect it to back up this project online and open it on other devices.",
+                    color = c.textMuted,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    lineHeight = 17.sp,
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlineButton(label = "Connect GitHub", onClick = onSignIn)
+                Spacer(Modifier.height(4.dp))
+                TextLink(label = "Clone a repository", onClick = onClone)
+            }
         }
         return
     }
@@ -964,7 +1156,7 @@ private fun GitHubSection(
                     fontFamily = Sans,
                     lineHeight = 17.sp,
                 )
-                PanelButton(
+                OutlineButton(
                     label = if (busy) "Working…" else "Publish to GitHub",
                     enabled = !busy,
                     onClick = onPublish,
@@ -981,20 +1173,22 @@ private fun GitHubSection(
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PanelButton(
-                    label = if (busy) "…" else "Pull",
-                    enabled = !busy,
-                    modifier = Modifier.weight(1f),
-                    onClick = onPull,
-                )
+                Box(Modifier.weight(1f)) {
+                    OutlineButton(
+                        label = if (toPull > 0) "Pull · $toPull" else "Pull",
+                        enabled = !busy,
+                        onClick = onPull,
+                    )
+                }
                 // Push with an unborn HEAD is a guaranteed transport failure; say so up front
                 // rather than handing the user JGit's opaque wrapper.
-                PanelButton(
-                    label = if (busy) "…" else "Push",
-                    enabled = !busy && hasCommits,
-                    modifier = Modifier.weight(1f),
-                    onClick = onPush,
-                )
+                Box(Modifier.weight(1f)) {
+                    OutlineButton(
+                        label = if (toPush > 0) "Push · $toPush" else "Push",
+                        enabled = !busy && hasCommits,
+                        onClick = onPush,
+                    )
+                }
             }
             Text(
                 text = remoteUrl,
@@ -1064,5 +1258,3 @@ private fun GitHubSection(
         }
     }
 }
-
-private const val HISTORY_LIMIT = 30
