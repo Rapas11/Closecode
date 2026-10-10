@@ -233,35 +233,26 @@ class SignatureHelpTest {
     @Test
     fun theSignatureLineNamesTheFunctionAndEveryParameter() {
         val info = SignatureInfo("Text", listOf(SignatureParam("text", "String"), SignatureParam("modifier", "Modifier")), activeIndex = 0)
-        val line = signatureText(info, Color.Blue, Color.White).text
-        assertEquals("Text(text: String, modifier: Modifier)", line)
+        assertEquals("Text(text: String, modifier: Modifier)", signaturePlainText(info))
     }
 
     @Test
     fun theSignatureLineCarriesTheReturnTypeWhenThereIsOne() {
         val info = SignatureInfo("greet", listOf(SignatureParam("name", "String")), activeIndex = 0, returnType = "String")
-        assertEquals("greet(name: String): String", signatureText(info, Color.Blue, Color.White).text)
+        assertEquals("greet(name: String): String", signaturePlainText(info))
     }
 
     @Test
     fun theActiveParameterIsTheOneThatIsEmphasised() {
         val info = SignatureInfo("Text", listOf(SignatureParam("text", "String"), SignatureParam("modifier", "Modifier")), activeIndex = 1)
-        val line = signatureText(info, Color.Blue, Color.White)
-        val spans = line.spanStyles
-        assertTrue(spans.isNotEmpty())
-        // The emphasised span must cover the second parameter, not the first.
-        val span = spans.first()
-        assertEquals(
-            "modifier: Modifier",
-            line.text.substring(span.start, span.end),
-        )
-        assertEquals(Color.Blue, span.item.background)
+        // The emphasised text is the second parameter, not the first.
+        assertEquals("modifier: Modifier", activeParamText(info))
     }
 
     @Test
     fun aFunctionWithNoParametersDrawsItsBareName() {
         val info = SignatureInfo("restart", emptyList(), activeIndex = 0)
-        assertEquals("restart()", signatureText(info, Color.Blue, Color.White).text)
+        assertEquals("restart()", signaturePlainText(info))
     }
 
     // -- where the box goes ---------------------------------------------------------------
@@ -297,5 +288,101 @@ class SignatureHelpTest {
         val caret = 300f
         val top = signatureTopPx(caret, 60f, 6f, 900f, 6f)
         assertTrue(top!! + 60f <= caret)
+    }
+}
+class SignatureOverloadsTest {
+
+    @Test
+    fun everyOverloadIsListedNearestFirst() {
+        val src = "fun load(path: String) {}\nfun load(path: String, force: Boolean) {}\nload("
+        val options = signatureHelpAll(src, src.length, AndroidApiIndex.EMPTY)
+        assertEquals(2, options.size)
+        // Nearest declaration first, so the single answer keeps meaning "the one being written".
+        assertEquals(2, options[0].params.size)
+        assertEquals(1, options[1].params.size)
+        assertEquals(options[0], signatureHelp(src, src.length, AndroidApiIndex.EMPTY))
+    }
+
+    @Test
+    fun noCallMeansNoOptions() {
+        assertTrue(signatureHelpAll("val x = 1", 9, AndroidApiIndex.EMPTY).isEmpty())
+    }
+}
+
+class NamedArgumentTest {
+
+    private val params = listOf(
+        SignatureParam("text", "String"),
+        SignatureParam("modifier", "Modifier"),
+        SignatureParam("color", "Color"),
+    )
+
+    private fun indexOf(src: String, cursor: Int): Int {
+        val open = src.indexOf('(')
+        val positional = src.substring(open + 1, cursor).count { it == ',' }
+        return namedOrPositionalIndex(src, cursor, open, positional, params)
+    }
+
+    @Test
+    fun aNamedArgumentHighlightsItsParameterWhereverItSits() {
+        val src = "Text(color = "
+        assertEquals(2, indexOf(src, src.length))
+    }
+
+    @Test
+    fun aPositionalArgumentKeepsTheCommaCount() {
+        val src = "Text(\"Hi\", "
+        assertEquals(1, indexOf(src, src.length))
+    }
+
+    @Test
+    fun anUnknownNameFallsBackToPosition() {
+        val src = "Text(nope = "
+        assertEquals(0, indexOf(src, src.length))
+    }
+
+    @Test
+    fun aComparisonIsNotAnAssignment() {
+        val src = "Text(a == "
+        assertEquals(0, indexOf(src, src.length))
+    }
+
+    @Test
+    fun aCommaInsideAStringDoesNotSplitTheArgument() {
+        val src = "Text(\"a,b\", color = "
+        assertEquals(2, indexOf(src, src.length))
+    }
+
+    @Test
+    fun midValueStillHighlightsTheNamedParameter() {
+        val src = "Text(color = Red"
+        assertEquals(2, indexOf(src, src.length))
+    }
+}
+
+class SignaturePlainTextTest {
+
+    @Test
+    fun plainTextNamesEveryParameter() {
+        val info = SignatureInfo("Text", listOf(SignatureParam("text", "String"), SignatureParam("modifier", "Modifier")), activeIndex = 0)
+        assertEquals("Text(text: String, modifier: Modifier)", signaturePlainText(info))
+    }
+
+    @Test
+    fun plainTextCarriesTheReturnType() {
+        val info = SignatureInfo("greet", listOf(SignatureParam("name", "String")), activeIndex = 0, returnType = "String")
+        assertEquals("greet(name: String): String", signaturePlainText(info))
+    }
+
+    @Test
+    fun activeParamTextIsTheHighlightedOne() {
+        val info = SignatureInfo("Text", listOf(SignatureParam("text", "String"), SignatureParam("modifier", "Modifier")), activeIndex = 1)
+        assertEquals("modifier: Modifier", activeParamText(info))
+    }
+
+    @Test
+    fun activeParamTextIsNullPastTheEnd() {
+        val info = SignatureInfo("f", emptyList(), activeIndex = 0)
+        assertNull(activeParamText(info))
     }
 }

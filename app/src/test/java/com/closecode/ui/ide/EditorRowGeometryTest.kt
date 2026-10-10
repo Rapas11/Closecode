@@ -160,9 +160,12 @@ class EditorRowGeometryTest {
     }
 
     @Test
-    fun thePopupRowsAreFiftyThreeDpSoThePackageLineIsNeverClipped() {
-        // 8 + 37 + 8. At 46 dp the package under the name was squeezed against the row below.
-        assertEquals(53f, POPUP_ROW_HEIGHT_FOR_TEST.value, 0.001f)
+    fun thePopupRowsAreTwentySixDpAndFourRowsTall() {
+        // One line per row now: badge, name and type share 26 dp, and four rows cap the list at
+        // 104 dp so it never covers a third of the screen.
+        assertEquals(26f, POPUP_ROW_HEIGHT_FOR_TEST.value, 0.001f)
+        assertEquals(4, MAX_VISIBLE_SUGGESTIONS_FOR_TEST)
+        assertEquals(104f, POPUP_ROW_HEIGHT_FOR_TEST.value * MAX_VISIBLE_SUGGESTIONS_FOR_TEST, 0.001f)
     }
 
     @Test
@@ -652,5 +655,80 @@ class SnapScrollTest {
         // A 7.2 px JetBrains Mono advance: the third character starts at 21.6 px.
         assertEquals(22, snapScrollToCharacter(21f, 7.2f))
         assertEquals(22, snapScrollToCharacter(22f, 7.2f))
+    }
+}
+
+class SuggestionOrderTest {
+
+    private fun sug(name: String) = com.closecode.ui.ide.model.Suggestion(
+        glyph = "M",
+        name = name,
+        detail = "Unit",
+    )
+
+    @Test
+    fun exactPrefixMatchesComeFirst() {
+        val items = listOf(sug("amodifier"), sug("modifier"), sug("amode"))
+        val ordered = sortSuggestions(items, prefix = "mod", recent = emptyList())
+        assertEquals("modifier", ordered[0].name)
+    }
+
+    @Test
+    fun recentPicksBreakTies() {
+        val items = listOf(sug("modeA"), sug("modeB"))
+        val ordered = sortSuggestions(items, prefix = "mode", recent = listOf("modeB"))
+        assertEquals("modeB", ordered[0].name)
+        assertEquals("modeA", ordered[1].name)
+    }
+
+    @Test
+    fun untouchedNamesKeepEngineOrder() {
+        val items = listOf(sug("b"), sug("a"), sug("c"))
+        assertEquals(items, sortSuggestions(items, prefix = "", recent = emptyList()))
+    }
+
+    @Test
+    fun badgeLettersFollowTheSpecTable() {
+        // F for functions, P for properties and parameters, M for everything the table
+        // does not name — never a fourth letter.
+        assertEquals('F', suggestionBadge("ƒ"))
+        assertEquals('P', suggestionBadge("P"))
+        assertEquals('P', suggestionBadge("p"))
+        assertEquals('M', suggestionBadge("C"))
+        assertEquals('M', suggestionBadge("K"))
+        assertEquals('M', suggestionBadge(""))
+    }
+}
+
+class TooltipBelowTest {
+
+    @Test
+    fun theTooltipDropsBelowWhenNothingFitsAbove() {
+        // Caret on the first line: above is the top edge, below has the whole viewport.
+        val top = tooltipBelowTopPx(
+            caretTopPx = 4f,
+            lineHeightPx = 20f,
+            gapPx = 4f,
+            tooltipHeightPx = 54f,
+            viewportHeightPx = 800f,
+            edgePx = 8f,
+        )
+        assertEquals(28f, top!!, 0.001f)
+    }
+
+    @Test
+    fun noRoomEitherSideMeansNoTooltip() {
+        // A viewport shorter than the tooltip itself: above fails and below fails, so the
+        // honest answer is null rather than a box over the line being typed.
+        assertNull(
+            tooltipBelowTopPx(
+                caretTopPx = 10f,
+                lineHeightPx = 20f,
+                gapPx = 4f,
+                tooltipHeightPx = 200f,
+                viewportHeightPx = 100f,
+                edgePx = 8f,
+            ),
+        )
     }
 }

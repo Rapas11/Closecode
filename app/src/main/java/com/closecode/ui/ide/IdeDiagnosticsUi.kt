@@ -854,8 +854,8 @@ fun InlineProblemLayer(
             // Spec 6.5: when a line has several problems, show the most severe one and a count.
             val primary = list.minByOrNull { if (it.severity == Severity.ERROR) 0 else 1 } ?: return@forEach
             val isWarning = primary.severity == Severity.WARNING
-            val tone = if (isWarning) c.warnPillTx else c.errorPillTx
-            val fill = if (isWarning) c.warnPillBg else c.errorPillBg
+            val tone = if (isWarning) c.warnPillTx else c.pillText
+            val fill = if (isWarning) c.warnPillBg else c.pillBg
 
             // The layout has not rendered this line yet, so there is no honest place to put the
             // pill. Anchoring at 0 instead would draw it over the first characters of the line.
@@ -873,58 +873,29 @@ fun InlineProblemLayer(
                     // The x is load bearing. Dropping it here drew every pill on top of the first
                     // characters of its own line, with no room of its own.
                     .offset { pillOffsetOf(x, top) }
-                    .height(22.dp)
-                    .clip(RoundedCornerShape(8.5.dp))
+                    .height(18.dp)
+                    .clip(RoundedCornerShape(9.dp))
                     .background(fill)
+                    .border(1.dp, c.pillBorder, RoundedCornerShape(9.dp))
                     // Spec 7: tapping a pill opens the Problems sheet at that problem. The pill sits
                     // past the end of the line's text, so it only ever takes taps aimed at itself.
                     .clickable { onTap(primary) }
-                    .padding(start = 5.dp, end = 7.dp),
+                    .padding(start = 6.dp, end = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                SeverityGlyph(severity = primary.severity)
+                CcIcon(CcIcons.AlertCircle, tone, 12.dp)
                 Text(
-                    text = primary.message,
+                    // Short form, cut after 22 characters: the pill names the problem, and the
+                    // sheet it opens carries the full message.
+                    text = primary.message.take(22),
                     color = tone,
-                    fontSize = 12.5.sp,
+                    fontSize = 11.sp,
                     fontFamily = Sans,
-                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     softWrap = false,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = messageWidth),
                 )
-                // Spec 6.5: the code is mono at 75 percent opacity, small enough that a line with
-                // several problems still leaves room for the message it is labelling.
-                Text(
-                    text = primary.code,
-                    color = tone.copy(alpha = 0.75f),
-                    fontSize = 9.5.sp,
-                    fontFamily = Mono,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    softWrap = false,
-                )
-                if (list.size > 1) {
-                    Row(
-                        Modifier
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(c.stackBadge)
-                            .padding(horizontal = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        StackGlyph(tone)
-                        Text(
-                            text = "${list.size}",
-                            color = tone,
-                            fontSize = 11.sp,
-                            fontFamily = Sans,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                }
             }
         }
     }
@@ -2074,36 +2045,31 @@ fun signatureTopPx(
     return if (top >= edgePx && top + tooltipHeightPx <= viewportHeightPx) top else null
 }
 
+/**
+ * Where the signature tooltip goes when there is no room above the caret line: below it, if the
+ * tooltip fits there inside the viewport margins. Null when it fits nowhere, and the tooltip stays
+ * hidden rather than covering the line being typed.
+ */
+fun tooltipBelowTopPx(
+    caretTopPx: Float,
+    lineHeightPx: Float,
+    gapPx: Float,
+    tooltipHeightPx: Float,
+    viewportHeightPx: Float,
+    edgePx: Float,
+): Float? {
+    if (tooltipHeightPx <= 0f || viewportHeightPx <= 0f) return null
+    val top = caretTopPx + lineHeightPx + gapPx
+    return if (top >= edgePx && top + tooltipHeightPx <= viewportHeightPx - edgePx) {
+        top
+    } else {
+        null
+    }
+}
 /** The box's own height: one line of signature, then one of description, plus its padding. */
 val SignatureRowHeight = 20.dp
 val SignatureDescriptionHeight = 18.dp
 val SignatureBoxVerticalPadding = 8.dp
-
-/** The signature line with the caret's own argument picked out. */
-internal fun signatureText(info: SignatureInfo, activeBg: Color, activeTx: Color): AnnotatedString =
-    buildAnnotatedString {
-        append(info.name)
-        append('(')
-        info.params.forEachIndexed { index, param ->
-            if (index > 0) append(", ")
-            if (index == info.activeIndex) {
-                withStyle(SpanStyle(background = activeBg, color = activeTx)) {
-                    append(param.name)
-                    append(": ")
-                    append(param.type)
-                }
-            } else {
-                append(param.name)
-                append(": ")
-                append(param.type)
-            }
-        }
-        append(')')
-        info.returnType?.takeIf { it.isNotBlank() }?.let {
-            append(": ")
-            append(it)
-        }
-    }
 
 /**
  * The floating parameter tooltip: the signature, the argument the caret is in picked out, and one
@@ -2111,34 +2077,101 @@ internal fun signatureText(info: SignatureInfo, activeBg: Color, activeTx: Color
  *
  * The description line is always drawn, even when nothing is known about the parameter, because the
  * box changing height as the caret crosses a comma would move the very line the reader is reading.
+ * Each parameter is its own composable rather than one annotated string because the active one
+ * carries a rounded background with padding, which an inline span cannot draw.
  */
 @Composable
 internal fun SignatureHelpTooltip(
     info: SignatureInfo,
+    overloadLabel: String? = null,
+    onOverloadTap: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
     Column(
         modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(c.panel2)
-            .border(1.dp, c.ln, RoundedCornerShape(10.dp))
-            .padding(horizontal = 11.dp, vertical = SignatureBoxVerticalPadding),
+            .clip(RoundedCornerShape(8.dp))
+            .background(c.popupBg)
+            .border(1.dp, c.popupBorder, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
     ) {
-        Text(
-            text = signatureText(info, activeBg = c.selection, activeTx = c.tx),
-            color = c.mu,
-            fontSize = 12.sp,
-            fontFamily = Mono,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+        androidx.compose.foundation.layout.FlowRow(
+        ) {
+            Text(
+                text = info.name + "(",
+                color = c.iconTint,
+                fontSize = 11.sp,
+                fontFamily = Mono,
+                lineHeight = 11.sp * 1.5f,
+            )
+            info.params.forEachIndexed { index, param ->
+                if (index > 0) {
+                    Text(
+                        text = ", ",
+                        color = c.iconTint,
+                        fontSize = 11.sp,
+                        fontFamily = Mono,
+                        lineHeight = 11.sp * 1.5f,
+                    )
+                }
+                val label = "${param.name}: ${param.type}"
+                if (index == info.activeIndex) {
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(c.popupSelected)
+                            .padding(horizontal = 3.dp),
+                    ) {
+                        Text(
+                            text = label,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontFamily = Mono,
+                            fontWeight = FontWeight.Medium,
+                            lineHeight = 11.sp * 1.5f,
+                        )
+                    }
+                } else {
+                    Text(
+                        text = label,
+                        color = c.iconTint,
+                        fontSize = 11.sp,
+                        fontFamily = Mono,
+                        lineHeight = 11.sp * 1.5f,
+                    )
+                }
+            }
+            Text(
+                text = ")" + (info.returnType?.takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""),
+                color = c.iconTint,
+                fontSize = 11.sp,
+                fontFamily = Mono,
+                lineHeight = 11.sp * 1.5f,
+            )
+            if (overloadLabel != null) {
+                // The overload counter rides at the end of the signature: tapping it steps through
+                // the versions. It is text, not a button chrome, because it must sit inline where
+                // the signature ends rather than in a row of its own.
+                Text(
+                    text = overloadLabel,
+                    color = c.popupMuted,
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                    modifier = Modifier
+                        .padding(start = 8.dp)
+                        .clickable(onClick = onOverloadTap),
+                )
+            }
+        }
         Text(
             text = info.params.getOrNull(info.activeIndex)?.let { describeParam(it.name) } ?: "",
-            color = c.mu.copy(alpha = 0.85f),
+            color = c.hintText,
             fontSize = 11.sp,
             fontFamily = Sans,
-            modifier = Modifier.height(SignatureDescriptionHeight),
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .height(SignatureDescriptionHeight),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

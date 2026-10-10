@@ -2645,6 +2645,22 @@ formatRequest: Int = 0,
         }
     }
 
+    // Names accepted from this list, newest first, capped. A suggestion picked once is the
+    // likeliest answer the next time its prefix is typed, so recent picks sort above untouched
+    // names that merely match.
+    val recentSuggestions = remember { mutableStateListOf<String>() }
+    fun noteSuggestionAccepted(name: String) {
+        recentSuggestions.remove(name)
+        recentSuggestions.add(0, name)
+        while (recentSuggestions.size > 20) recentSuggestions.removeAt(recentSuggestions.size - 1)
+    }
+
+    val kotlinPrefix = if (kotlinItems != null) {
+        runCatching { currentAnalysis?.prefixAt(cursor) }.getOrNull().orEmpty()
+    } else {
+        ""
+    }
+
     val visibleSuggestions = remember(
         kotlinItems,
         htmlItems,
@@ -2653,14 +2669,31 @@ formatRequest: Int = 0,
         isKotlin,
         settings.autocomplete,
     ) {
+        // A space ends the word being typed, so the list that was completing it has nothing to say
+        // anymore. Without this the list lingered over the fresh word until the next keystroke gave
+        // it a reason to leave.
+        val typedSpace = cursor > 0 && cursor <= code.length && code[cursor - 1] == ' '
         when {
             // Checked first so a reader cannot mistake "switched off" for "nothing matched".
             !settings.autocomplete -> emptyList()
+            typedSpace -> emptyList()
             htmlContext != null -> htmlItems
-            kotlinItems != null -> kotlinItems.map { it.toSuggestion() }
+            kotlinItems != null -> sortSuggestions(
+                kotlinItems.map { it.toSuggestion() },
+                prefix = kotlinPrefix,
+                recent = recentSuggestions,
+            )
             else -> {
                 val tail = code.takeLastWhile { it.isLetterOrDigit() }
-                if (tail.isEmpty()) emptyList() else staticSuggestions.filter { it.name.startsWith(tail) }
+                if (tail.isEmpty()) {
+                    emptyList()
+                } else {
+                    sortSuggestions(
+                        staticSuggestions.filter { it.name.startsWith(tail) },
+                        prefix = tail,
+                        recent = recentSuggestions,
+                    )
+                }
             }
         }
     }
@@ -2811,6 +2844,7 @@ val applySuggestion: (Int) -> Unit = { index ->
             val start = (liveCursor - prefix.length).coerceAtLeast(0)
             val next = liveText.substring(0, start) + insert + liveText.substring(liveCursor)
             commit(TextFieldValue(next, TextRange(start + insert.length)))
+            visibleSuggestions.getOrNull(index)?.name?.let { noteSuggestionAccepted(it) }
         }
     }
 
@@ -3113,6 +3147,74 @@ fun formatSelection() {
                 }
             }
         }
+        val popupDensity = androidx.compose.ui.platform.LocalDensity.current
+        // The signature tooltip is computed here, above the pill, because the pill
+        // hides while the tooltip is open: reading the tooltip's answer after the
+        // pill would draw both on the same frame.
+        val caretTopContentEarly = lineTopPx(codeLayout, code, caretLine, codeWindow)
+            ?: pillTopPx(caretLine, lineHeightPx)
+        val caretTopViewportEarly = topPaddingPx + caretTopContentEarly - codeScroll.value
+        val popupEdgePxEarly = with(popupDensity) { POPUP_EDGE_INSET.toPx() }
+        val signatureOptions = remember(code, cursor) {
+            signatureHelpAll(code, cursor, AndroidApiAssets.cached())
+        }
+        var sigChoice by remember(code, cursor) { mutableIntStateOf(0) }
+        val signatureInfo = signatureOptions.getOrNull(
+            sigChoice.coerceIn(0, (signatureOptions.size - 1).coerceAtLeast(0)),
+        )
+        val sigWidthPx = with(popupDensity) { 272.dp.toPx() }
+        val sigGapPx = with(popupDensity) { 4.dp.toPx() }
+        val sigLeft = with(popupDensity) { 62.dp.toPx() }
+            .coerceIn(
+                with(popupDensity) { 8.dp.toPx() },
+                (viewportWidthPx - sigWidthPx - with(popupDensity) { 8.dp.toPx() })
+                    .coerceAtLeast(with(popupDensity) { 8.dp.toPx() }),
+            )
+        val signatureHeightPx = with(popupDensity) {
+            (SignatureRowHeight + SignatureDescriptionHeight + SignatureBoxVerticalPadding * 2)
+                .toPx()
+        }
+        val signatureTop = signatureTopPx(
+            caretTopPx = caretTopViewportEarly,
+            tooltipHeightPx = signatureHeightPx,
+            gapPx = sigGapPx,
+            viewportHeightPx = viewportHeightPx,
+            edgePx = popupEdgePxEarly,
+        )?.takeIf { signatureInfo != null }
+            val signatureBelowTop =
+                if (signatureInfo != null && signatureTop == null) {
+                    tooltipBelowTopPx(
+                        caretTopPx = caretTopViewportEarly,
+                        lineHeightPx = lineHeightPx,
+                        gapPx = sigGapPx,
+                        tooltipHeightPx = signatureHeightPx,
+                        viewportHeightPx = viewportHeightPx,
+                        edgePx = popupEdgePxEarly,
+                    )
+                } else {
+                    null
+                }
+        val signatureShownTop = signatureTop ?: signatureBelowTop
+        var sigMeasuredH by remember { mutableStateOf(0f) }
+        val caretRowOnScreenEarly = caretTopViewportEarly + lineHeightPx > 0f &&
+            caretTopViewportEarly < viewportHeightPx
+        // Back dismisses the tooltip without moving the caret: any edit lifts the
+        // suppression on its own, because the code or the cursor it was recorded
+        // against is gone.
+        var sigSuppressedAt by remember { mutableStateOf<Pair<String, Int>?>(null) }
+        if (sigSuppressedAt != null && sigSuppressedAt != (code to cursor)) {
+            sigSuppressedAt = null
+        }
+        val sigVisible = signatureInfo != null &&
+            signatureShownTop != null &&
+            caretRowOnScreenEarly &&
+            quickFixLine == null &&
+            fieldValue.selection.max == fieldValue.selection.min &&
+            problemSheetLine.value == null &&
+            sigSuppressedAt == null
+        BackHandler(enabled = sigVisible) {
+            sigSuppressedAt = code to cursor
+        }
 
         Box(
             Modifier
@@ -3373,32 +3475,50 @@ fun formatSelection() {
                                     }
                                 },
                         )
-                        // The air a problem pill and the quick-fix bulb leave after a line's own
-                        // text, measured off the rendered layout rather than guessed: two
-                        // characters' worth. Both draw on the same side of a line, so they share
-                        // one number and can never drift apart.
-                        val twoCharGapPx = 2f * (charWidthPx(codeLayout) ?: 0f)
-                        if (problems.byLine.isNotEmpty()) {
-                            // Wavy lines under the exact bad characters. Drawn before the labels
-                            // so the labels stay readable on top of them.
-                            SquiggleLayer(
-                                problems = problems,
-                                layout = codeLayout,
-                                window = codeWindow,
-                                modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .fillMaxSize(),
-                            )
+                        // The error pill, when the tooltip is closed: one pill for the cursor
+                        // line's own error, on the line above it — or below it when the line above
+                        // is too long to hold it.
+                        val pillError = problems.on(caretLine)
+                            .firstOrNull { it.severity == Severity.ERROR }
+                        if (pillError != null && !sigVisible) {
+                            val charW = charWidthPx(codeLayout) ?: 0f
+                            val pillGapPx = with(popupDensity) { 12.dp.toPx() }
+                            // Icon, gap, 22 characters of message and padding: the width the pill
+                            // needs before it may start.
+                            val pillNeedPx = with(popupDensity) { 12.dp.toPx() } +
+                                with(popupDensity) { 4.dp.toPx() } +
+                                22 * charW +
+                                with(popupDensity) { 14.dp.toPx() }
+                            val viewportRightPx = codeHScroll.value + viewportWidthPx
+                            val aboveLine = caretLine - 1
+                            val aboveEnd = if (aboveLine >= 1) {
+                                endOfLineX(codeLayout, code, aboveLine, codeWindow)
+                            } else {
+                                null
+                            }
+                            // Above when it fits, below when it does not, above anyway when there
+                            // is no below: a pill off the right edge helps nobody, and the layer
+                            // below would draw it there without a word.
+                            val pillLine = if (
+                                aboveEnd == null ||
+                                aboveEnd + pillGapPx + pillNeedPx > viewportRightPx
+                            ) {
+                                caretLine + 1
+                            } else {
+                                aboveLine
+                            }.takeIf { it in 1..codeLines.size } ?: aboveLine.coerceAtLeast(1)
+                            val pillX = (endOfLineX(codeLayout, code, pillLine, codeWindow) ?: 0f) +
+                                pillGapPx
+                            val pillTop =
+                                (lineTopPx(codeLayout, code, pillLine, codeWindow)
+                                    ?: pillTopPx(pillLine, lineHeightPx)) -
+                                    with(popupDensity) { 1.dp.toPx() }
                             InlineProblemLayer(
-                                problems = problems,
+                                problems = ProblemsByLine.from(listOf(pillError)),
                                 lineHeightPx = lineHeightPx,
-                                // Spec 6.5: two characters past the end of the line's text, both
-                                // measured off the rendered layout. The line's own newline has no
-                                // width, so the anchor is its right edge, never the character.
-                                gapPx = twoCharGapPx,
-                                anchorX = { line -> endOfLineX(codeLayout, code, line, codeWindow) },
-                                yOfLine = { line -> lineTopPx(codeLayout, code, line, codeWindow) },
-                                // Spec 7: a pill is one of the four ways into the Problems sheet.
+                                gapPx = 0f,
+                                anchorX = { pillX },
+                                yOfLine = { pillTop + with(popupDensity) { 1.dp.toPx() } },
                                 onTap = { diagnostic ->
                                     commit(
                                         TextFieldValue(
@@ -3411,6 +3531,18 @@ fun formatSelection() {
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
                                     .fillMaxWidth(),
+                            )
+                        }
+                        if (problems.byLine.isNotEmpty()) {
+                            // Wavy lines under the exact bad characters. Drawn before the labels
+                            // so the labels stay readable on top of them.
+                            SquiggleLayer(
+                                problems = problems,
+                                layout = codeLayout,
+                                window = codeWindow,
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .fillMaxSize(),
                             )
                         }
                         }
@@ -3526,10 +3658,9 @@ fun formatSelection() {
             // Anchored on the rendered caret line, never on an assumed row height. The popup sits on the row
             // below the line being typed so that line stays readable while typing, and flips above it
             // when the keyboard leaves no room below. It never overlaps the caret line or its pill.
-            val popupDensity = androidx.compose.ui.platform.LocalDensity.current
             val popupGapPx = with(popupDensity) { POPUP_GAP.toPx() }
             val popupRowHeightPx = with(popupDensity) { POPUP_ROW_HEIGHT.toPx() }
-            val popupBorderPx = with(popupDensity) { 3.dp.toPx() }
+            val popupBorderPx = with(popupDensity) { 1.dp.toPx() }
             val popupEdgePx = with(popupDensity) { POPUP_EDGE_INSET.toPx() }
             val popupWidthPx = popupWidthPx(
                 maxWidthPx = with(popupDensity) { POPUP_MAX_WIDTH.toPx() },
@@ -3573,59 +3704,43 @@ fun formatSelection() {
                 codeWidthPx = codeWidthPx,
                 insetPx = popupEdgePx,
             )
-            // The signature tooltip. It shares the suggestion popup's measurements but sits above
-            // the caret line instead of below it, because below is where the list of names goes —
-            // one box each side is the only way a reader can see both while typing an argument.
-            val signatureInfo = remember(code, cursor) {
-                signatureHelp(code, cursor, AndroidApiAssets.cached())
-            }
-            val signatureHeightPx = with(popupDensity) {
-                (SignatureRowHeight + SignatureDescriptionHeight + SignatureBoxVerticalPadding * 2)
-                    .toPx()
-            }
-            val signatureTop = signatureTopPx(
-                caretTopPx = caretTopViewport,
-                tooltipHeightPx = signatureHeightPx,
-                gapPx = popupGapPx,
-                viewportHeightPx = viewportHeightPx,
-                edgePx = popupEdgePx,
-            )?.takeIf { signatureInfo != null }
-            val signatureLeft = popupLeftPx(
-                wordX = xForOffset(codeLayout, cursor.coerceIn(0, code.length), codeWindow) ?: 0f,
-                columnStartPx = with(popupDensity) { columnStart.toPx() },
-                hScrollPx = codeHScroll.value,
-                popupWidthPx = popupWidthPx,
-                codeWidthPx = codeWidthPx,
-                insetPx = popupEdgePx,
-            )
-            val caretRowOnScreen = caretTopViewport + lineHeightPx > 0f &&
-                caretTopViewport < viewportHeightPx
             androidx.compose.animation.AnimatedVisibility(
-                visible = signatureInfo != null &&
-                    signatureTop != null &&
-                    caretRowOnScreen &&
-                    quickFixLine == null &&
-                    fieldValue.selection.max == fieldValue.selection.min &&
-                    problemSheetLine.value == null,
+                visible = sigVisible,
                 enter = fadeIn(tween(120)),
                 exit = fadeOut(tween(120)),
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .offset {
                         androidx.compose.ui.unit.IntOffset(
-                            signatureLeft.toInt(),
-                            (signatureTop ?: 0f).toInt(),
+                            sigLeft.toInt(),
+                            (signatureShownTop ?: 0f).toInt(),
                         )
                     },
             ) {
                 signatureInfo?.let {
                     SignatureHelpTooltip(
                         info = it,
-                        modifier = Modifier.width(with(popupDensity) { popupWidthPx.toDp() }),
+                        overloadLabel = signatureOptions.size.takeIf { n -> n > 1 }
+                            ?.let { n -> "${sigChoice.coerceIn(0, n - 1) + 1}/$n" },
+                        onOverloadTap = {
+                            if (signatureOptions.size > 1) {
+                                sigChoice = (sigChoice + 1) % signatureOptions.size
+                            }
+                        },
+                        modifier = Modifier
+                            .width(with(popupDensity) { sigWidthPx.toDp() })
+                            .onSizeChanged { sigMeasuredH = it.height.toFloat() },
                     )
                 }
             }
 
+            // When the tooltip sits below the caret, the list moves beneath the tooltip's
+            // measured height rather than a guess, so a wrapped signature still clears it.
+            val popupTopAdj = if (signatureBelowTop != null && sigMeasuredH > 0f) {
+                maxOf(popupTop, signatureBelowTop + sigMeasuredH + popupGapPx)
+            } else {
+                popupTop
+            }
             androidx.compose.animation.AnimatedVisibility(
                 visible = quickFixLine == null &&
                     shownSuggestions.isNotEmpty() &&
@@ -3636,7 +3751,7 @@ fun formatSelection() {
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .offset {
-                        androidx.compose.ui.unit.IntOffset(popupLeft.toInt(), popupTop.toInt())
+                        androidx.compose.ui.unit.IntOffset(popupLeft.toInt(), popupTopAdj.toInt())
                     },
             ) {
                 SuggestionPopup(
@@ -4219,6 +4334,42 @@ private fun BoxScope.EditorScrollbar(
     }
 }
 
+/**
+ * Which badge letter a suggestion's glyph maps to: F for functions, P for properties and
+ * parameters, M for everything else. The engine's glyph set is wider than the spec's three
+ * letters, so anything the table does not name reads as a member rather than inventing a fourth.
+ */
+internal fun suggestionBadge(glyph: String): Char = when (glyph) {
+    "ƒ" -> 'F'
+    "P", "p" -> 'P'
+    else -> 'M'
+}
+
+/**
+ * Orders suggestions the way a reader scans them: exact prefix matches first, then names picked
+ * recently, then everything else in the order it arrived. [recent] is newest-first; anything not
+ * in it keeps its relative order, so the engine's own ranking survives underneath.
+ */
+internal fun sortSuggestions(
+    items: List<com.closecode.ui.ide.model.Suggestion>,
+    prefix: String,
+    recent: List<String>,
+): List<com.closecode.ui.ide.model.Suggestion> {
+    if (items.size < 2 || (prefix.isEmpty() && recent.isEmpty())) return items
+    return items.sortedWith(
+        compareBy(
+            { if (prefix.isNotEmpty() && it.name.startsWith(prefix)) 0 else 1 },
+            {
+                if (prefix.isNotEmpty() && it.name.startsWith(prefix, ignoreCase = true)) 0 else 1
+            },
+            {
+                val at = recent.indexOf(it.name)
+                if (at < 0) Int.MAX_VALUE else at
+            },
+        ),
+    )
+}
+
 @Composable
 private fun SuggestionPopup(
     suggestions: List<com.closecode.ui.ide.model.Suggestion>,
@@ -4239,110 +4390,110 @@ private fun SuggestionPopup(
         if (selected in suggestions.indices) listState.animateScrollToItem(selected)
     }
 
-    LazyColumn(
-        state = listState,
-        modifier = modifier
-            // Spec 6.7: width min(430, editor width - 16), radius 16, 1.5 dp border. The caller
-            // supplies the clamped width, so this only guarantees the corner radius and the height
-            // the room allowed.
-            .height(POPUP_ROW_HEIGHT * shown)
-            .clip(RoundedCornerShape(16.dp))
-            .background(c.panel)
-            .border(1.5.dp, c.ln, RoundedCornerShape(16.dp)),
-    ) {
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    Box(modifier) {
+        LazyColumn(
+            state = listState,
+            modifier = Modifier
+                // 196 dp wide, 26 dp rows, radius 8, 1 dp border. The caller supplies the clamped
+                // width; this guarantees the corner radius and exactly the height the room allowed.
+                .height(POPUP_ROW_HEIGHT * shown)
+                .clip(RoundedCornerShape(8.dp))
+                .background(c.popupBg)
+                .border(1.dp, c.popupBorder, RoundedCornerShape(8.dp)),
+        ) {
         itemsIndexed(suggestions) { index, item ->
             val isSel = index == selected
-            val package_ = item.subtitle?.takeIf { it.isNotBlank() }
-            val type = item.detail.takeIf { it.isNotBlank() }
-            Column(
+            val badge = suggestionBadge(item.glyph)
+            val badgeColor = when (badge) {
+                'F' -> c.badgeF
+                'P' -> c.badgeP
+                else -> c.badgeM
+            }
+            Row(
                 Modifier
                     .fillMaxWidth()
-                    // Spec 6.7: every row is 53 dp so the package line under the name is never
-                    // squeezed against the row below it.
                     .height(POPUP_ROW_HEIGHT)
-                    .drawBehind {
-                        if (index != suggestions.lastIndex) {
-                            val y = size.height - 0.5f
-                            drawLine(
-                                color = c.ln.copy(alpha = 0.45f),
-                                start = androidx.compose.ui.geometry.Offset(0f, y),
-                                end = androidx.compose.ui.geometry.Offset(size.width, y),
-                                strokeWidth = 1f,
-                            )
-                        }
-                    }
-                    // Spec 6.7: the selected row is purple with white text.
-                    .background(if (isSel) c.purple else Color.Transparent)
+                    // The selected row is the popup's own highlight with white text, not the
+                    // app's purple: the list must read as one surface, not a slice of another.
+                    .background(if (isSel) c.popupSelected else Color.Transparent)
                     .clickable {
                         onSelect(index)
                         onAccept(index)
                     }
-                    .padding(horizontal = 12.dp),
-                verticalArrangement = Arrangement.Center,
+                    .padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier
-                            .size(30.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (isSel) c.autoIconBgSelected else c.autoIconBg),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = item.glyph.ifBlank { "C" }.take(2),
-                            color = if (isSel) Color.White else c.autoIconTx,
-                            fontSize = 13.sp,
-                            fontFamily = Mono,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                        )
-                    }
+                Box(
+                    Modifier
+                        .size(16.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(badgeColor),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Text(
-                        text = item.name,
-                        color = if (isSel) Color.White else c.tx,
-                        fontSize = 14.sp,
-                        fontFamily = Mono,
+                        text = badge.toString(),
+                        color = Color.White,
+                        fontSize = 10.sp,
+                        fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
-                        modifier = Modifier
-                            .padding(start = 12.dp)
-                            .weight(1f, fill = false),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
-                    // The type rides on the same row as the name, at the right. It used to be
-                    // dropped for Android members in favour of the package line, which is the one
-                    // fact about a member you can never act on — the type is what tells you whether
-                    // the call you are about to accept can compile.
-                    if (type != null) {
-                        Text(
-                            text = type,
-                            color = if (isSel) Color.White.copy(alpha = 0.75f) else c.mu,
-                            fontSize = 12.sp,
-                            fontFamily = Mono,
-                            textAlign = TextAlign.End,
-                            modifier = Modifier
-                                .padding(start = 10.dp)
-                                .weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
                 }
-                if (package_ != null) {
-                    // The package stays on its own dimmer line under the name, indented past the
-                    // badge so it reads as a continuation of the name rather than of the row.
+                Text(
+                    text = item.name,
+                    color = if (isSel) Color.White else c.popupText,
+                    fontSize = 12.sp,
+                    fontFamily = Mono,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val type = item.detail.takeIf { it.isNotBlank() }
+                if (type != null) {
                     Text(
-                        text = package_,
-                        color = if (isSel) Color.White.copy(alpha = 0.75f) else c.mu,
-                        fontSize = 12.sp,
-                        fontFamily = Mono,
-                        modifier = Modifier.padding(start = 42.dp, top = 1.dp),
+                        text = type,
+                        color = if (isSel) Color.White.copy(alpha = 0.75f) else c.popupMuted,
+                        fontSize = 11.sp,
+                        fontFamily = Sans,
+                        textAlign = TextAlign.End,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
         }
+    }
+    // A 3 dp thumb that exists only while the list moves. The list is at most four rows tall, so
+    // the thumb answers the only question it can: whether there is more below.
+    if (suggestions.size > shown && listState.isScrollInProgress) {
+        val trackH = POPUP_ROW_HEIGHT * shown
+        val thumbH = trackH * (shown.toFloat() / suggestions.size)
+        val travelPx = with(density) { (trackH - thumbH).toPx() }
+        val progress = if (suggestions.size - shown <= 0) {
+            0f
+        } else {
+            (listState.firstVisibleItemIndex.toFloat() / (suggestions.size - shown)).coerceIn(0f, 1f)
+        }
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .height(trackH)
+                .width(3.dp)
+                .padding(vertical = 4.dp),
+        ) {
+            Box(
+                Modifier
+                    .align(Alignment.TopCenter)
+                    .offset { androidx.compose.ui.unit.IntOffset(0, (travelPx * progress).toInt()) }
+                    .width(3.dp)
+                    .height(thumbH)
+                    .clip(RoundedCornerShape(1.5.dp))
+                    .background(c.scrollThumb),
+            )
+        }
+    }
     }
 }
 
@@ -4439,10 +4590,10 @@ internal const val MAX_VISIBLE_SUGGESTIONS = 4
 /** Exposed for the geometry tests. */
 internal const val MAX_VISIBLE_SUGGESTIONS_FOR_TEST = MAX_VISIBLE_SUGGESTIONS
 
-/** Spec 6.7 popup metrics. */
-private val POPUP_ROW_HEIGHT = 53.dp
-private val POPUP_MAX_WIDTH = 430.dp
-private val POPUP_EDGE_INSET = 6.dp
+/** Spec popup metrics: 196 dp wide, 26 dp rows, at most four rows (104 dp tall). */
+private val POPUP_ROW_HEIGHT = 26.dp
+private val POPUP_MAX_WIDTH = 196.dp
+private val POPUP_EDGE_INSET = 8.dp
 
 /** Spec 6.7: the gap between the caret line and the popup, whichever side it opens on. */
 private val POPUP_GAP = 6.dp

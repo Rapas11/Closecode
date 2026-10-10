@@ -64,6 +64,8 @@ object CcIcons {
     val Copy = icon("copy", "M11 9h7a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2zM5 15V6a2 2 0 0 1 2-2h8")
     val Warning = icon("warning", "M12 3l10 18H2zM12 10v5M12 18h.01")
     val ErrorCircle = icon("error", "M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0zM9 9l6 6M15 9l-6 6")
+    // The error pill's mark: a circle with an exclamation, drawn in the pill's own text tone.
+    val AlertCircle = icon("alert", "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 8v4M12 16h.01")
     val Stack = icon("stack", "M12 3l9 5-9 5-9-5zM3 13l9 5 9-5")
     val Bulb = icon("bulb", "M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z")
     val Close = icon("close", "M6 6l12 12M18 6L6 18")

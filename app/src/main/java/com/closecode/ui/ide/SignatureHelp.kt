@@ -154,40 +154,37 @@ private val FunDeclaration = Regex(
  * the same way the compiler reads it. A `fun` whose parameter list does not parse is skipped
  * rather than reported as empty: an empty list means "takes nothing", which is a different claim.
  */
-internal fun declaredParams(source: String, name: String): List<SignatureParam>? {
-    var best: List<SignatureParam>? = null
-    var bestStart = -1
+internal fun declaredParams(source: String, name: String): List<SignatureParam>? =
+    declaredSignatures(source, name).lastOrNull()?.params
+
+/** Every `fun` in this buffer declared under [name], nearest the caret last. */
+internal data class DeclaredSignature(
+    val params: List<SignatureParam>,
+    val returnType: String?,
+    val start: Int,
+)
+
+internal fun declaredSignatures(source: String, name: String): List<DeclaredSignature> {
+    val out = ArrayList<DeclaredSignature>()
     for (match in FunDeclaration.findAll(source)) {
         if (match.groupValues[1] != name) continue
         val close = matchingParen(source, match.range.last) ?: continue
         val parsed = splitParams(source.substring(match.range.last + 1, close)) ?: continue
-        if (match.range.first >= bestStart) {
-            best = parsed
-            bestStart = match.range.first
+        val rest = source.indexOf('\n', close).let { if (it < 0) source.length else it }
+        val tail = source.substring(close + 1, rest).trim()
+        val returnType = if (!tail.startsWith(":")) {
+            null
+        } else {
+            tail.substring(1).substringBefore("{").substringBefore("=").trim().takeIf { it.isNotEmpty() }
         }
+        out.add(DeclaredSignature(parsed, returnType, match.range.first))
     }
-    return best
+    return out.sortedBy { it.start }
 }
 
 /** The declared return type of a `fun` in this buffer, for the tooltip's trailing colon. */
-internal fun declaredReturnType(source: String, name: String): String? {
-    var best: String? = null
-    var bestStart = -1
-    for (match in FunDeclaration.findAll(source)) {
-        if (match.groupValues[1] != name) continue
-        val close = matchingParen(source, match.range.last) ?: continue
-        val rest = source.indexOf('\n', close).let { if (it < 0) source.length else it }
-        val tail = source.substring(close + 1, rest).trim()
-        if (!tail.startsWith(":")) continue
-        val type = tail.substring(1).substringBefore("{").substringBefore("=").trim()
-        if (type.isEmpty()) continue
-        if (match.range.first >= bestStart) {
-            best = type
-            bestStart = match.range.first
-        }
-    }
-    return best
-}
+internal fun declaredReturnType(source: String, name: String): String? =
+    declaredSignatures(source, name).lastOrNull { it.returnType != null }?.returnType
 
 /** The `)` matching the `(` at [open], or null when it is not closed. */
 internal fun matchingParen(source: String, openParen: Int): Int? {
@@ -277,38 +274,148 @@ internal fun apiParams(member: ApiMember): List<SignatureParam> =
  * A function written in the buffer beats an Android one of the same name, because the reader is
  * looking at the definition when they write the call.
  */
-internal fun signatureHelp(source: String, cursor: Int, index: AndroidApiIndex): SignatureInfo? {
-    val call = callSiteAt(source, cursor) ?: return null
-    val own = declaredParams(source, call.name)
-    if (own != null) {
-        return SignatureInfo(
-            name = call.name,
-            params = own,
-            activeIndex = call.argIndex.coerceIn(0, own.size.coerceAtLeast(0)),
-            returnType = declaredReturnType(source, call.name),
+internal fun signatureHelp(source: String, cursor: Int, index: AndroidApiIndex): SignatureInfo? =
+    signatureHelpAll(source, cursor, index).firstOrNull()
+
+/**
+ * Every signature the call the caret is in could mean: each matching buffer declaration, then each
+ * matching platform member. The tooltip shows one and counts the rest, so an overloaded call reads
+ * `1/3` instead of silently picking.
+ */
+internal fun signatureHelpAll(source: String, cursor: Int, index: AndroidApiIndex): List<SignatureInfo> {
+    val call = callSiteAt(source, cursor) ?: return emptyList()
+    val out = ArrayList<SignatureInfo>()
+    // Nearest declaration first, so the single-result answer stays what it always was: the
+    // definition the reader is most likely looking at.
+    val declared = declaredSignatures(source, call.name)
+    val orderedDeclared = declared.lastOrNull()?.let { nearest ->
+        listOf(nearest) + declared.filterNot { it === nearest }
+    }.orEmpty()
+    for (found in orderedDeclared) {
+        out.add(
+            SignatureInfo(
+                name = call.name,
+                params = found.params,
+                activeIndex = namedOrPositionalIndex(
+                    source = source,
+                    cursor = cursor,
+                    openParen = call.openParen,
+                    positional = call.argIndex,
+                    params = found.params,
+                ),
+                returnType = found.returnType,
+            ),
         )
     }
-    // A qualified call names its class outright — `TextPainter.apply(` — so that class's members are
-    // the answer, and the cheaper of the two lookups. Unqualified, the reader may mean any class, so
-    // every member of that name is a candidate and the arity decides.
     val qualified = call.qualifier?.takeIf { it.firstOrNull()?.isUpperCase() == true }
     val candidates = when {
         qualified != null -> index.membersOf(qualified)
         else -> index.membersNamed(call.name)
-    }
+    }.filter { it.name == call.name }
+    // The arity match first, as before: with three arguments typed, the three-argument version is
+    // the one being written.
     val arity = call.argIndex + 1
-    val member = candidates.firstOrNull { it.name == call.name && it.params.size == arity }
-        ?: candidates.firstOrNull { it.name == call.name && it.params.isNotEmpty() }
-        ?: candidates.firstOrNull { it.name == call.name }
-        ?: return null
-    val params = apiParams(member)
-    return SignatureInfo(
-        name = call.name,
-        params = params,
-        activeIndex = call.argIndex.coerceIn(0, params.size.coerceAtLeast(0)),
-        returnType = member.type.takeIf { it.isNotBlank() && it != "void" },
-    )
+    val ordered = candidates.filter { it.params.size == arity } +
+        candidates.filter { it.params.size != arity && it.params.isNotEmpty() } +
+        candidates.filter { it.params.isEmpty() }
+    for (member in ordered) {
+        val params = apiParams(member)
+        out.add(
+            SignatureInfo(
+                name = call.name,
+                params = params,
+                activeIndex = namedOrPositionalIndex(
+                    source = source,
+                    cursor = cursor,
+                    openParen = call.openParen,
+                    positional = call.argIndex,
+                    params = params,
+                ),
+                returnType = member.type.takeIf { it.isNotBlank() && it != "void" },
+            ),
+        )
+    }
+    return out
 }
+
+/**
+ * Which argument the caret is on: the named one when the text being typed says `name =`, otherwise
+ * the positional count of commas.
+ *
+ * A named argument highlights its matching parameter wherever it sits, so `color = …` lights up
+ * `color` even when it is not the argument the commas would point at.
+ */
+internal fun namedOrPositionalIndex(
+    source: String,
+    cursor: Int,
+    openParen: Int,
+    positional: Int,
+    params: List<SignatureParam>,
+): Int {
+    val named = namedArgumentAt(source, cursor, openParen)?.let { name ->
+        params.indexOfFirst { it.name == name }.takeIf { it >= 0 }
+    }
+    return (named ?: positional).coerceIn(0, params.size.coerceAtLeast(0))
+}
+
+/**
+ * The parameter name being assigned at the caret, or null when this argument is positional.
+ *
+ * Reads the current argument's text — everything after the last top-level comma or the opening
+ * paren — and matches `name =` with nothing after the `=` yet. Strings and nested calls are
+ * stepped over, so a comma inside either cannot split the argument early.
+ */
+internal fun namedArgumentAt(source: String, cursor: Int, openParen: Int): String? {
+    val at = cursor.coerceIn(0, source.length)
+    if (openParen < 0 || openParen >= at) return null
+    var depth = 0
+    var argStart = openParen + 1
+    var i = openParen + 1
+    while (i < at) {
+        when (source[i]) {
+            '"', '\'' -> i = skipLiteral(source, i, at)
+            '(','[','{' -> depth++
+            ')',']','}' -> depth--
+            ',' -> if (depth == 0) argStart = i + 1
+            else -> Unit
+        }
+        i++
+    }
+    val arg = source.substring(argStart.coerceIn(0, at), at)
+    val equals = arg.indexOf('=')
+    if (equals < 0) return null
+    // `==` compares; only a bare `=` assigns.
+    if (arg.getOrNull(equals + 1) == '=') return null
+    val name = arg.substring(0, equals).trim()
+    if (name.isEmpty() || !name.all { it.isLetterOrDigit() || it == '_' }) return null
+    return name
+}
+
+/** The signature as plain text, for tests and for anything that cannot draw boxes. */
+internal fun signaturePlainText(info: SignatureInfo): String = buildString {
+    append(info.name)
+    append('(')
+    info.params.forEachIndexed { index, param ->
+        if (index > 0) append(", ")
+        append(param.name)
+        append(": ")
+        append(param.type)
+    }
+    append(')')
+    info.returnType?.takeIf { it.isNotBlank() }?.let {
+        append(": ")
+        append(it)
+    }
+}
+
+/**
+ * The active parameter's text, or null when the index points past the end.
+ *
+ * The tooltip draws this inside the highlighted box; the test below pins the same answer without
+ * needing a screen.
+ */
+internal fun activeParamText(info: SignatureInfo): String? =
+    info.params.getOrNull(info.activeIndex)?.let { "${it.name}: ${it.type}" }
 
 /**
  * A one-line description of a parameter, for the tooltip's second line.
