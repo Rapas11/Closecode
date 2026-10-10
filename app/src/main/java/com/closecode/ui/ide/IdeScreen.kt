@@ -2880,12 +2880,28 @@ val applySuggestion: (Int) -> Unit = { index ->
  * part of a file it would re-indent every line outside the selection too, which is the opposite of
  * what selecting three lines asked for.
  */
-fun formatSelection() {
+    fun formatSelection() {
         val live = fieldValue
         val from = live.selection.min
         val to = live.selection.max
         if (from >= to) {
             onToast("Select the lines to format")
+            return
+        }
+        // Whole lines belong to the selection; a partial line belongs to the file. Re-indenting
+        // half a line would move code the reader did not select.
+        if (!SourceEdits.selectionCoversWholeLines(live.text, from, to)) {
+            val formatted = if (activeKind == FileKind.Kotlin || active.endsWith(".kt", true)) {
+                SourceEdits.formatKotlin(live.text)
+            } else {
+                SourceEdits.normalizeTrailingWhitespace(live.text)
+            }
+            if (formatted == live.text) {
+                onToast("Already formatted")
+                return
+            }
+            commit(TextFieldValue(formatted, TextRange(from.coerceIn(0, formatted.length))))
+            onToast("Formatted $active")
             return
         }
         val formatted = SourceEdits.formatRange(live.text, from, to, settings.tabSize)
@@ -3801,8 +3817,28 @@ fun formatSelection() {
                 val selectionRowVisible = selectedTopViewport + lineHeightPx > 0f &&
                     selectedTopViewport < viewportHeightPx
                 val selectedText = fieldValue.text.substring(selectedRange.min, selectedRange.max)
+                // Whether Paste does anything right now, read when the selection appears: the
+                // clipboard is not observable, so this is a snapshot rather than a subscription,
+                // and a fresh selection re-takes it.
+                var pasteReady by remember(hasSelection) { mutableStateOf(false) }
+                LaunchedEffect(hasSelection) {
+                    pasteReady = clipboard.getText()?.text?.isNotEmpty() == true
+                }
+                // The bar stands down while the code moves under it and comes back about 200 ms
+                // after it stops: a bar that stays up during a scroll points at a selection the
+                // reader can no longer see.
+                var toolbarAllowed by remember { mutableStateOf(true) }
+                LaunchedEffect(codeScroll.isScrollInProgress, codeHScroll.isScrollInProgress) {
+                    if (codeScroll.isScrollInProgress || codeHScroll.isScrollInProgress) {
+                        toolbarAllowed = false
+                    } else {
+                        delay(200)
+                        toolbarAllowed = true
+                    }
+                }
                 androidx.compose.animation.AnimatedVisibility(
                     visible = selectionRowVisible &&
+                        toolbarAllowed &&
                         quickFixLine == null &&
                         visibleSuggestions.isEmpty() &&
                         problemSheetLine.value == null,
@@ -3827,6 +3863,7 @@ fun formatSelection() {
                             onToast("Cut ${selectedText.length} chars")
                         },
                         onFormat = onSelectionFormat,
+                        pasteEnabled = pasteReady,
                         onPaste = {
                             val pasted = clipboard.getText()?.text
                             if (pasted.isNullOrEmpty()) {
@@ -4109,7 +4146,7 @@ private const val AUTOSAVE_DELAY_MS = 900L
 
 /** The floating bar a selection earns: wide enough for the two words plus the two glyphs. */
 private val SELECTION_BAR_WIDTH = 240.dp
-private val SELECTION_BAR_HEIGHT = 40.dp
+private val SELECTION_BAR_HEIGHT = 34.dp
 
 /**
  * The four actions that reach for selected text: paste over it, stretch the selection to the whole
@@ -4141,6 +4178,7 @@ private fun SelectionBar(
     onSelectAll: () -> Unit,
     onInfo: () -> Unit,
     onDuplicate: () -> Unit,
+    pasteEnabled: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -4151,14 +4189,18 @@ private fun SelectionBar(
                 .width(SELECTION_BAR_WIDTH)
                 .height(SELECTION_BAR_HEIGHT)
                 .clip(RoundedCornerShape(10.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(10.dp)),
+                .background(c.toolbarBg)
+                .border(1.dp, c.toolbarBorder, RoundedCornerShape(10.dp)),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SelectionBarLabel("Cut", Modifier.weight(1f), onCut)
+            SelectionBarSeparator()
             SelectionBarLabel("Copy", Modifier.weight(1f), onCopy)
-            SelectionBarLabel("Paste", Modifier.weight(1f), onPaste)
+            SelectionBarSeparator()
+            SelectionBarLabel("Paste", Modifier.weight(1f), onPaste, enabled = pasteEnabled)
+            SelectionBarSeparator()
             SelectionBarLabel("Comment", Modifier.weight(1f), onComment)
+            SelectionBarSeparator()
             SelectionBarLabel("Format", Modifier.weight(1f), onFormat, accent = true)
             SelectionBarGlyph("⋯", "More actions") { menuOpen = true }
         }
@@ -4180,28 +4222,42 @@ private fun SelectionBar(
 }
 
 @Composable
+private fun RowScope.SelectionBarSeparator() {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .fillMaxHeight()
+            .width(1.dp)
+            .background(c.toolbarBorder),
+    )
+}
+
+@Composable
 private fun RowScope.SelectionBarLabel(
     label: String,
     modifier: Modifier,
     onClick: () -> Unit,
     accent: Boolean = false,
+    enabled: Boolean = true,
 ) {
     val c = LocalPageColors.current
     Box(
         modifier
             .fillMaxHeight()
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = if (accent) c.ac else c.tx,
-            fontSize = 13.sp,
+            color = (if (accent) c.toolbarAccent else c.text).let {
+                if (enabled) it else it.copy(alpha = 0.5f)
+            },
+            fontSize = 12.sp,
             fontFamily = Sans,
             fontWeight = if (accent) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 8.dp),
+            modifier = Modifier.padding(horizontal = 11.dp),
         )
     }
 }

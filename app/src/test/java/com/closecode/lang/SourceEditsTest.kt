@@ -1,6 +1,7 @@
 package com.closecode.lang
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -329,5 +330,42 @@ class FormatRangeTest {
         assertEquals(file, SourceEdits.formatRange(file, 5, 5))
         assertEquals(file, SourceEdits.formatRange(file, 400, 500))
         assertEquals("", SourceEdits.formatRange("", 0, 0))
+    }
+}
+
+class SelectionScopeTest {
+
+    private val file = "fun a() {\n    val x = 1\n}\n"
+
+    @Test
+    fun wholeLinesFromMarginToNewlineCount() {
+        val from = file.indexOf("    val x")
+        val to = file.indexOf('\n', from) + 1
+        assertTrue(SourceEdits.selectionCoversWholeLines(file, from, to))
+    }
+
+    @Test
+    fun theWholeFileCounts() {
+        assertTrue(SourceEdits.selectionCoversWholeLines(file, 0, file.length))
+    }
+
+    @Test
+    fun aPartialFirstLineDoesNot() {
+        val from = file.indexOf("val x")
+        val to = file.indexOf('\n', from) + 1
+        assertFalse(SourceEdits.selectionCoversWholeLines(file, from, to))
+    }
+
+    @Test
+    fun aPartialLastLineDoesNot() {
+        val from = file.indexOf("    val x")
+        val to = from + 5
+        assertFalse(SourceEdits.selectionCoversWholeLines(file, from, to))
+    }
+
+    @Test
+    fun anEmptySelectionCoversNothing() {
+        assertFalse(SourceEdits.selectionCoversWholeLines(file, 4, 4))
+        assertFalse(SourceEdits.selectionCoversWholeLines("", 0, 0))
     }
 }

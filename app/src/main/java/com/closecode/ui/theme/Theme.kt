@@ -21,8 +21,8 @@ fun ClosecodeTheme(
         // defaults the handle came out in Material's own purple, a colour that appears nowhere in
         // this palette, which is what put a stray lavender shape in the middle of the code.
         LocalTextSelectionColors provides TextSelectionColors(
-            backgroundColor = colors.selection,
-            handleColor = colors.ac,
+            backgroundColor = colors.textSelection,
+            handleColor = colors.accent,
         ),
     ) {
         MaterialTheme(

@@ -46,6 +46,23 @@ object SourceEdits {
      * braces are then read as they are re-indented, which is what makes a selected block's body come out
      * right rather than flat.
      */
+    /**
+     * Whether a selection covers whole lines: it starts at a line start and ends at a line end.
+     * Decides whether Format touches just the selection or the whole file — a partial line is
+     * never reformatted on its own, because re-indenting half a line would move code the reader
+     * did not select.
+     */
+    fun selectionCoversWholeLines(source: String, from: Int, to: Int): Boolean {
+        if (from >= to) return false
+        val startOk = from <= 0 || source.getOrNull(from - 1) == '\n'
+        // Ending at a line end, at the file end, or just past a newline: all three leave no
+        // partial line inside the selection.
+        val endOk = to >= source.length ||
+            source.getOrNull(to) == '\n' ||
+            source.getOrNull(to - 1) == '\n'
+        return startOk && endOk
+    }
+
     fun formatRange(source: String, from: Int, to: Int, tabSize: Int = 2): String {
         if (source.isEmpty() || from >= to) return source
         val eol = eolOf(source)
