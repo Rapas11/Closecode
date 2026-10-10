@@ -567,6 +567,10 @@ fun LineNumberLayer(
     // that computes them arrives; the gutter draws whatever it is given, so that phase feeds data
     // rather than redesigning the row.
     gitMarks: Map<Int, GitMark> = emptyMap(),
+    // Display row to source line, for folded files: the gutter counts display rows but
+    // numbers source lines, so line 5 still reads 5 with lines 2-4 collapsed above it. Null
+    // means identity, which is every unfolded file.
+    sourceLines: List<Int>? = null,
     // Read here rather than at the call site on purpose: a scroll then recomposes only this layer,
     // not the whole editor around it. Null means the caller does not scroll, so compose every row.
     scrollState: ScrollState? = null,
@@ -602,6 +606,9 @@ fun LineNumberLayer(
         }
         for (index in rows) {
             val line = index + 1
+            // The number on the row is the source line, so folding never renumbers the file:
+            // collapsing lines 2-4 leaves 5 reading 5, not 2.
+            val numbered = sourceLines?.getOrNull(index) ?: line
             val errored = line in problems.linesWithErrors
             val warned = !errored && line in problems.linesWithWarnings
             val onCaret = line == caretLine
@@ -624,7 +631,9 @@ fun LineNumberLayer(
                 // measured from where centring put it — which is why the old dot drifted onto the
                 // line number from line 100 up instead of sitting at the edge where it was asked
                 // to sit. Each owns a fixed slot, so numbers never shift when an icon appears.
-                when (gitMarks[line]) {
+                // Looked up by source line, not display row: with lines 2-4 folded away, the
+                // mark for source line 5 is drawn on the row numbered 5, wherever that row sits.
+                when (gitMarks[numbered]) {
                     GitMark.Added -> Box(
                         Modifier
                             .align(Alignment.TopStart)
@@ -707,7 +716,7 @@ fun LineNumberLayer(
                     }
                 }
                 Text(
-                    text = "$line",
+                    text = "$numbered",
                     color = if (onCaret) c.lineNumberActive else c.lineNumber,
                     fontSize = 11.sp,
                     style = androidx.compose.ui.text.TextStyle(
@@ -2317,4 +2326,55 @@ internal fun declarationOf(line: String): String {
     val brace = line.indexOf('{')
     val head = if (brace >= 0) line.substring(0, brace).trim() else line.trim()
     return head.ifEmpty { line.trim() }
+}
+
+/** One folded block's chip: the display row it sits on and where its source block starts. */
+internal data class FoldChip(val displayLine: Int, val sourceLine: Int)
+
+/**
+ * The ellipsis chips after folded blocks' first lines. Tapping one unfolds, the same as tapping
+ * the chevron — two doors to the same room, because the chevron sits in the gutter and the chip
+ * sits where the hidden code used to continue.
+ *
+ * Positioned like pills: past the end of the row's text in content coordinates, so chips travel
+ * sideways with their lines.
+ */
+@Composable
+internal fun FoldChipLayer(
+    chips: List<FoldChip>,
+    lineEndX: (Int) -> Float?,
+    lineTop: (Int) -> Float?,
+    gapPx: Float,
+    onTap: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalPageColors.current
+    Box(modifier) {
+        for (chip in chips) {
+            val end = lineEndX(chip.displayLine) ?: continue
+            val top = lineTop(chip.displayLine) ?: continue
+            Box(
+                Modifier
+                    .offset {
+                        androidx.compose.ui.unit.IntOffset(
+                            (end + gapPx).roundToInt(),
+                            top.roundToInt(),
+                        )
+                    }
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(c.foldChipBg)
+                    .clickable { onTap(chip.sourceLine) }
+                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "…",
+                    color = c.popupMuted,
+                    fontSize = 12.sp,
+                    fontFamily = Mono,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
 }

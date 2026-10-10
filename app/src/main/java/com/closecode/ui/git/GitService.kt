@@ -253,6 +253,110 @@ class GitService(private val root: File) {
         open().use { git -> git.checkout().setName(name).call() }
     }
 
+    /**
+     * Which lines of one file the working tree changed, keyed by 1-based new-file line.
+     *
+     * Compares HEAD to the file on disk, so staged and unstaged edits both mark: the gutter
+     * answers "what is different", not "what is staged". Inserted lines read Added, replaced
+     * lines Modified, and a pure deletion — which has no line of its own — points at the line
+     * that follows it, or at nothing when the deletion runs past the end of the file.
+     *
+     * Untracked files, repositories without commits, and anything JGit cannot parse (binary
+     * files, a corrupt index) mark nothing: an empty map is always a safe answer for a margin.
+     */
+    fun workingTreeMarks(relativePath: String): Result<Map<Int, GitChangeKind>> =
+        runCatching {
+            val newBytes = File(root, relativePath).takeIf { it.isFile }?.readBytes()
+            marksAgainstHead(relativePath, newBytes) ?: emptyMap()
+        }
+
+    /**
+     * The same comparison against the live buffer instead of the file on disk, so the gutter
+     * reflects what is on screen including unsaved edits. The line numbers in the returned map
+     * count the buffer's lines, which is also what the gutter numbers.
+     */
+    fun bufferMarks(relativePath: String, newText: String): Result<Map<Int, GitChangeKind>> =
+        runCatching {
+            marksAgainstHead(relativePath, newText.toByteArray()) ?: emptyMap()
+        }
+
+    /**
+     * The version-control marks for one file, by 1-based new-side line. Null [newBytes] means the
+     * file is absent from the worktree — a deletion, whose mark points at the follower line, or
+     * nothing when the file never existed. Null is also returned when there is no HEAD to compare
+     * against, or the path was never tracked: with no old side there is nothing to mark.
+     */
+    private fun marksAgainstHead(relativePath: String, newBytes: ByteArray?): Map<Int, GitChangeKind>? {
+        if (!isVersioned()) return null
+        return Git.open(root).use { git ->
+            if (git.status().call().untracked.contains(relativePath)) {
+                return@use null
+            }
+            val repo = git.repository
+            val headTree = repo.resolve(Constants.HEAD + "^{tree}") ?: return@use null
+            // The old blob comes straight from the HEAD tree for this path, not from a
+            // worktree diff: when only the buffer changed, the worktree diff is empty and
+            // there is nothing to iterate, yet the buffer still differs from HEAD.
+            val walk = org.eclipse.jgit.treewalk.TreeWalk(repo).apply {
+                addTree(headTree)
+                isRecursive = true
+                filter = org.eclipse.jgit.treewalk.filter.PathFilter.create(relativePath)
+            }
+            val oldId = if (walk.next()) walk.getObjectId(0) else null
+            walk.close()
+            if (oldId == null) return@use null
+            val reader = repo.newObjectReader()
+            try {
+                // The old bytes come straight from this reader, and the new bytes arrive as a
+                // parameter: no formatter in between. DiffFormatter loads both sides through its
+                // own content pipeline, which is also where binary detection and large-file guards
+                // live — none of which a 3 dp margin mark needs. A null new side is a file absent
+                // from the worktree; an empty new side is how a deletion diffs.
+                val newSide = newBytes ?: ByteArray(0)
+                val newLineCount = org.eclipse.jgit.diff.RawText(newSide).size()
+                val oldBytes = if (oldId == org.eclipse.jgit.lib.ObjectId.zeroId()) {
+                    ByteArray(0)
+                } else {
+                    reader.open(oldId).bytes
+                }
+                val algorithm = org.eclipse.jgit.diff.DiffAlgorithm.getAlgorithm(
+                    org.eclipse.jgit.diff.DiffAlgorithm.SupportedAlgorithm.HISTOGRAM,
+                )
+                val edits = algorithm.diff(
+                    org.eclipse.jgit.diff.RawTextComparator.DEFAULT,
+                    org.eclipse.jgit.diff.RawText(oldBytes),
+                    org.eclipse.jgit.diff.RawText(newSide),
+                )
+                val marks = LinkedHashMap<Int, GitChangeKind>()
+                for (i in 0 until edits.size) {
+                    val edit = edits[i]
+                    when (edit.type) {
+                        org.eclipse.jgit.diff.Edit.Type.INSERT -> {
+                            for (line in edit.beginB + 1..edit.endB) {
+                                marks[line] = GitChangeKind.Added
+                            }
+                        }
+                        org.eclipse.jgit.diff.Edit.Type.REPLACE -> {
+                            for (line in edit.beginB + 1..edit.endB) {
+                                marks[line] = GitChangeKind.Modified
+                            }
+                        }
+                        org.eclipse.jgit.diff.Edit.Type.DELETE -> {
+                            val follower = edit.beginB + 1
+                            if (follower in 1..newLineCount) {
+                                marks.putIfAbsent(follower, GitChangeKind.Deleted)
+                            }
+                        }
+                        org.eclipse.jgit.diff.Edit.Type.EMPTY -> Unit
+                    }
+                }
+                marks
+            } finally {
+                reader.close()
+            }
+        }
+    }
+
     private fun open(): Git = Git.open(root)
 
     private fun identity(git: Git): PersonIdent {

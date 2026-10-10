@@ -1120,6 +1120,8 @@ internal fun IdeScreen(
                                     onCaretChange = { editorCaret = it },
                                     projectSymbols = projectNames,
                                     onSaveRequest = { saveActiveFile() },
+                                    relativePath = activeFile?.path,
+                                    projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                                     onHistoryState = { undo, redo ->
                                         canUndo = undo
                                         canRedo = redo
@@ -2205,6 +2207,9 @@ private fun TreeRow(
     }
 }
 
+/** One undo step: the field restores the display half, the analysis reads the source half. */
+internal data class UndoEntry(val field: TextFieldValue, val source: String)
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun IdeEditorArea(
@@ -2258,6 +2263,12 @@ formatRequest: Int = 0,
     // Ctrl S from a hardware keyboard, which the palette advertises as the save shortcut.
     onSaveRequest: () -> Unit = {},
     onHistoryState: (Boolean, Boolean) -> Unit = { _, _ -> },
+    // The file's path inside the project, for the version-control margin marks. The tab name is
+    // not enough: two folders can hold the same name, and only the path addresses the git object.
+    relativePath: String? = null,
+    // The project's directory on disk, which the marks above are computed against. Null means
+    // the project has no directory (a remote-only view), so the gutter marks nothing.
+    projectRoot: java.io.File? = null,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -2279,19 +2290,51 @@ formatRequest: Int = 0,
     // mutating snapshot state mid-composition would schedule another one.
     val caretByFile = remember { mutableMapOf<String, Int>() }
     val scrollByFile = remember { mutableMapOf<String, Pair<Int, Int>>() }
+    // Fold state: source start-lines collapsed, per file. Entries that stop being foldable after
+    // an edit are ignored by the map builder rather than cleaned up, so no bookkeeping here can
+    // ever hide the wrong lines.
+    var foldedFirstLines by remember(active) { mutableStateOf(setOf<Int>()) }
+    // The file as it is on disk: the analysis, the persistence and every structural edit read
+    // this, while the field, the layout and the caret read the folded display text below. The
+    // two meet only in commit(), commitSource() and the fold toggle — nowhere else.
+    var sourceText by remember(active, language, sourceRevision) { mutableStateOf(fromDisk) }
+    val foldMap = remember(sourceText, foldedFirstLines) {
+        FoldMap.build(sourceText, foldedFirstLines)
+    }
+    // Display rows (1-based, gutter numbering) whose source line starts an active fold: the chip
+    // rows. The chip sits past the end of the first line, where the hidden body used to continue.
+    val foldedDisplayRows = remember(foldMap) {
+        foldMap.foldedRanges.mapNotNull { range ->
+            val row = foldMap.sourceToDisplayLine.getOrNull(range.first) ?: -1
+            if (row >= 0) row + 1 else null
+        }.toSet()
+    }
+    val foldableDisplayRows = remember(sourceText, foldMap) {
+        foldableRanges(sourceText).mapNotNull { range ->
+            val row = foldMap.sourceToDisplayLine.getOrNull(range.first) ?: -1
+            if (row >= 0) row + 1 else null
+        }.toSet()
+    }
     var fieldValue by remember(active, language, sourceRevision) {
         mutableStateOf(
             TextFieldValue(
-                text = fromDisk,
-                // Opens where the file was left, when it was left somewhere: tapping back and
-                // forth between two files no longer drops the caret at the end of the code each
-                // time. Otherwise the last line with code, unless a caller asked for a spot.
+                text = foldMap.display,
+                // Opens where the file was left: the saved caret is a source offset, mapped into
+                // the current display, so tapping back and forth keeps each file's place even
+                // across folds opening and closing underneath it.
                 selection = run {
                     val saved = caretByFile.remove(active)
+                    val displayCaret = saved?.let {
+                        foldMap.toDisplay[it.coerceIn(0, sourceText.length)]
+                    }
                     when {
-                        saved != null -> TextRange(saved.coerceIn(0, fromDisk.length))
-                        caretRequest >= 0 -> TextRange(caretRequest.coerceIn(0, fromDisk.length))
-                        else -> TextRange(caretOffsetAtEndOfCode(fromDisk))
+                        displayCaret != null ->
+                            TextRange(displayCaret.coerceIn(0, foldMap.display.length))
+                        caretRequest >= 0 -> TextRange(
+                            foldMap.toDisplay[caretRequest.coerceIn(0, sourceText.length)]
+                                .coerceIn(0, foldMap.display.length),
+                        )
+                        else -> TextRange(caretOffsetAtEndOfCode(foldMap.display))
                     }
                 },
             ),
@@ -2300,29 +2343,107 @@ formatRequest: Int = 0,
     // Spec 4.1 Undo and Redo. Every text change goes through commit(), which records the value being
     // replaced, so the header can step back through the editor's own history without a native undo
     // manager. Selection-only moves commit too but record nothing, because they are not edits.
-    val undoStack = remember(active, sourceRevision) { mutableStateListOf<TextFieldValue>() }
-    val redoStack = remember(active, sourceRevision) { mutableStateListOf<TextFieldValue>() }
+    // Entries hold display and source together: the field restores one half and the analysis reads
+    // the other, and either half alone would strand the editor showing text its own diagnostics do
+    // not describe.
+    val undoStack = remember(active, sourceRevision) { mutableStateListOf<UndoEntry>() }
+    val redoStack = remember(active, sourceRevision) { mutableStateListOf<UndoEntry>() }
+
+    fun pushUndo() {
+        undoStack.add(UndoEntry(fieldValue, sourceText))
+        while (undoStack.size > UNDO_HISTORY_LIMIT) undoStack.removeAt(0)
+        redoStack.clear()
+    }
 
     fun commit(next: TextFieldValue) {
         if (next.text != fieldValue.text) {
-            undoStack.add(fieldValue)
-            while (undoStack.size > UNDO_HISTORY_LIMIT) undoStack.removeAt(0)
-            redoStack.clear()
+            val edit = FoldMap.applyDisplayEdit(
+                foldMap,
+                fieldValue.text,
+                next.text,
+                next.selection.start,
+                next.selection.end,
+            )
+            pushUndo()
+            sourceText = edit.source
+            val map = FoldMap.build(edit.source, foldedFirstLines)
+            fieldValue = TextFieldValue(
+                map.display,
+                TextRange(
+                    map.toDisplay[edit.caret.coerceIn(0, edit.source.length)]
+                        .coerceIn(0, map.display.length),
+                    map.toDisplay[edit.anchor.coerceIn(0, edit.source.length)]
+                        .coerceIn(0, map.display.length),
+                ),
+            )
+        } else {
+            fieldValue = next
         }
-        fieldValue = next
+    }
+
+    /**
+     * Commits an edit computed against the source text — whole-file formatting, import surgery —
+     * which the display pipeline can never produce because folded bodies are not in it.
+     */
+    fun commitSource(newSource: String, sourceCaret: Int, sourceAnchor: Int = sourceCaret) {
+        if (newSource == sourceText) return
+        pushUndo()
+        sourceText = newSource
+        val map = FoldMap.build(newSource, foldedFirstLines)
+        fieldValue = TextFieldValue(
+            map.display,
+            TextRange(
+                map.toDisplay[sourceCaret.coerceIn(0, newSource.length)]
+                    .coerceIn(0, map.display.length),
+                map.toDisplay[sourceAnchor.coerceIn(0, newSource.length)]
+                    .coerceIn(0, map.display.length),
+            ),
+        )
     }
 
     fun undoOnce() {
         val previous = undoStack.removeLastOrNull() ?: return
-        redoStack.add(fieldValue)
-        fieldValue = previous
+        redoStack.add(UndoEntry(fieldValue, sourceText))
+        fieldValue = previous.field
+        sourceText = previous.source
     }
 
     fun redoOnce() {
         val next = redoStack.removeLastOrNull() ?: return
-        undoStack.add(fieldValue)
-        fieldValue = next
+        undoStack.add(UndoEntry(fieldValue, sourceText))
+        fieldValue = next.field
+        sourceText = next.source
     }
+    // Folding a block hides its interior rows from the display text, and everything downstream —
+    // gutter, overlays, caret — reads display coordinates, so no other layer needs to know folds
+    // exist. Toggling clears history: entries hold display snapshots, and a fold changes what
+    // every display offset means, so popping one now would restore text the map cannot place.
+    fun toggleFold(sourceLine: Int) {
+        foldedFirstLines = if (sourceLine in foldedFirstLines) {
+            foldedFirstLines - sourceLine
+        } else {
+            foldedFirstLines + sourceLine
+        }
+        // The caret and anchor travel through the old map into source offsets, then back out
+        // through the new one: a caret inside a region being folded lands on the fold point
+        // instead of pointing at a row that no longer exists.
+        val caretS = foldMap.toSource[fieldValue.selection.start.coerceIn(0, fieldValue.text.length)]
+        val anchorS = foldMap.toSource[fieldValue.selection.end.coerceIn(0, fieldValue.text.length)]
+        val map = FoldMap.build(sourceText, foldedFirstLines)
+        fieldValue = TextFieldValue(
+            map.display,
+            TextRange(
+                map.toDisplay[caretS.coerceIn(0, sourceText.length)]
+                    .coerceIn(0, map.display.length),
+                map.toDisplay[anchorS.coerceIn(0, sourceText.length)]
+                    .coerceIn(0, map.display.length),
+            ),
+        )
+        undoStack.clear()
+        redoStack.clear()
+    }
+
+    // Display rows (1-based, gutter numbering) whose source line starts an active fold: the chip
 
     LaunchedEffect(active, undoStack.size, redoStack.size) {
         onHistoryState(undoStack.isNotEmpty(), redoStack.isNotEmpty())
@@ -2337,11 +2458,17 @@ formatRequest: Int = 0,
     }
 
     // Opening a file is not an edit, so it replaces the text and starts a fresh history.
+    // Both halves are reseeded: the field shows the folded display, the analysis reads source.
     LaunchedEffect(active) {
         val next = contentFor(active)
         undoStack.clear()
         redoStack.clear()
-        fieldValue = TextFieldValue(next, TextRange(caretOffsetAtEndOfCode(next)))
+        sourceText = next
+        val map = FoldMap.build(next, foldedFirstLines)
+        fieldValue = TextFieldValue(
+            map.display,
+            TextRange(caretOffsetAtEndOfCode(map.display)),
+        )
     }
     // One ScrollState per axis. Sharing a single state between verticalScroll and
     // horizontalScroll made the two fight over the same value, so the line-number gutter
@@ -2376,7 +2503,9 @@ formatRequest: Int = 0,
         scrollByFile.remove(name)
     }
     val selectTabKeepingPlace = { name: String ->
-        caretByFile[active] = cursor
+        // The caret is stored as a source offset so it survives folds opening and closing
+        // underneath it; the scroll is display rows, coerced back into range on restore.
+        caretByFile[active] = foldMap.toSource[cursor.coerceIn(0, fieldValue.text.length)]
         scrollByFile[active] = codeScroll.value to codeHScroll.value
         onSelectTab(name)
     }
@@ -2389,14 +2518,13 @@ formatRequest: Int = 0,
         // the caret is seeded into the field above before first draw.
         val saved = scrollByFile.remove(active)
         if (saved != null) {
-            codeScroll.scrollTo(saved.first)
-            codeHScroll.scrollTo(saved.second)
+            codeScroll.scrollTo(saved.first.coerceIn(0, codeScroll.maxValue))
+            codeHScroll.scrollTo(saved.second.coerceIn(0, codeHScroll.maxValue))
         }
     }
-    // Report the buffer for every mutation path, not just typing: quick fixes, suggestion
-    // acceptance and tab switches all rewrite the field without going through onValueChange.
-    // The parent needs this to save before Preview and to count diagnostics project wide.
-    LaunchedEffect(active, code) { onBufferChange(code) }
+    // Report the source buffer, not the display text: the parent saves it, diffs it for Preview
+    // and counts diagnostics project wide, and none of those may ever see folded bodies missing.
+    LaunchedEffect(active, sourceText) { onBufferChange(sourceText) }
     val isKotlin = language.contains("Kotlin", true) || active.endsWith(".kt")
     val staticSuggestions = remember(language) { suggestionsFor(language) }
     var selectedSug by remember(language) { mutableStateOf(0) }
@@ -2410,13 +2538,13 @@ formatRequest: Int = 0,
     }
 
     var analysis by remember { mutableStateOf<KotlinFileAnalysis?>(null) }
-    LaunchedEffect(code, isKotlin, apiIndex, projectSymbols) {
-        if (!isKotlin || code.length > MAX_ANALYZED_CHARS) {
+    LaunchedEffect(sourceText, isKotlin, apiIndex, projectSymbols) {
+        if (!isKotlin || sourceText.length > MAX_ANALYZED_CHARS) {
             analysis = null
             return@LaunchedEffect
         }
         delay(ANALYSIS_DEBOUNCE_MS)
-        val snapshot = code
+        val snapshot = sourceText
         val index = apiIndex
         val declared = projectSymbols
         val computed = withContext(Dispatchers.Default) {
@@ -2432,38 +2560,37 @@ formatRequest: Int = 0,
     // the markup check below has to know it is looking at a page and not at code.
     val codeLanguage = remember(code) { codeLanguageFor(languageOf(active)) }
 
-    // Spec 6.3: the first import line carries the fold affordance. Zero means there is none.
-    val firstImportLine = remember(code) {
-        codeLines.indexOfFirst { it.trimStart().startsWith("import ") } + 1
-    }
-
-    val currentAnalysis = analysis?.takeIf { it.source == code }
+    val currentAnalysis = analysis?.takeIf { it.source == sourceText }
 
     // Diagnostics off means "show me nothing", not "stop analysing": the analysis still runs,
     // because Run and Build gate on its error count and turning the display off must not quietly
     // make an unbuildable project look buildable. Only what is drawn changes.
-    // Markup gets its own check. The Kotlin analyser knows nothing about tags, so a page
-    // previously had no diagnostics of any kind — no squiggle, no bar in the margin, no count
-    // anywhere — and an unclosed element was something only the browser would complain about, in
-    // a preview the reader has to switch to in order to find out.
-    val markupDiagnostics = remember(code, codeLanguage) {
-        if (codeLanguage == CodeLanguage.MARKUP) htmlTagDiagnostics(code) else emptyList()
+    // Markup gets its own check on the source text: folded-away tags are still tags, and
+    // checking the display text would cry unclosed over every element hidden inside a fold.
+    val markupDiagnostics = remember(sourceText, codeLanguage) {
+        if (codeLanguage == CodeLanguage.MARKUP) htmlTagDiagnostics(sourceText) else emptyList()
     }
 
-    val problems = remember(currentAnalysis, markupDiagnostics, settings.diagnostics) {
+    // Diagnostics arrive in source coordinates and are drawn in display coordinates: the analyzer
+    // sees the whole file including folded bodies, while squiggles, pills and gutter bars only
+    // exist for visible rows. Anything hidden drops out until it unfolds.
+    val displayDiagnostics = remember(currentAnalysis, markupDiagnostics, foldMap) {
+        val mapped = ArrayList<Diagnostic>()
+        currentAnalysis?.diagnostics.orEmpty().forEach { mapDiagnosticToDisplay(foldMap, it)?.let(mapped::add) }
+        markupDiagnostics.forEach { mapDiagnosticToDisplay(foldMap, it)?.let(mapped::add) }
+        mapped
+    }
+
+    val problems = remember(displayDiagnostics, settings.diagnostics) {
         ProblemsByLine.from(
-            if (settings.diagnostics) {
-                currentAnalysis?.diagnostics.orEmpty() + markupDiagnostics
-            } else {
-                emptyList()
-            }
+            if (settings.diagnostics) displayDiagnostics else emptyList()
         )
     }
 
     val caretLine = remember(code, cursor) { caretPosition(code, cursor).first }
     // Reported on every move so the block sheet can insert at the line the caret is actually on.
     // A plain offset is all the insertion needs, so the whole selection never leaves the editor.
-    LaunchedEffect(cursor) { onCaretChange(cursor) }
+    LaunchedEffect(cursor) { onCaretChange(foldMap.toSource[cursor.coerceIn(0, code.length)]) }
 
     var codeLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
     var viewportWidthPx by remember { mutableStateOf(0f) }
@@ -2545,18 +2672,39 @@ formatRequest: Int = 0,
     // Pairs are found in the whole buffer rather than the window, because a block can open above
     // the slice the renderer is holding; the layer decides for each pair whether either end is on
     // screen. The setting is read here so switching it off stops the scan, not just the drawing.
-    val braceGuides = remember(code, settings.bracketGuides) {
-        if (settings.bracketGuides) bracePairs(code) else emptyList()
+    // Structural scans read the source: folded bodies still open blocks, pair braces and
+    // indent lines, and none of that is visible in the display text. Their results are mapped
+    // back into display coordinates for drawing, dropping anything the folds hide.
+    val braceGuidesSrc = remember(sourceText, settings.bracketGuides) {
+        if (settings.bracketGuides) bracePairs(sourceText) else emptyList()
     }
-    // Every line's indent, read once per buffer. This is what places a guide: the column is
-    // arithmetic over these numbers, so the rule can never land on top of the code it annotates.
-    val indentColumns = remember(code, settings.tabSize) {
-        indentColumnsOf(code, settings.tabSize)
+    val indentColumnsSrc = remember(sourceText, settings.tabSize) {
+        indentColumnsOf(sourceText, settings.tabSize)
+    }
+    val bracketPairsAllSrc = remember(sourceText) { allBracketPairs(sourceText) }
+    fun FoldMap.displayRange(sourceRange: IntRange): IntRange? {
+        val a = toDisplay[sourceRange.first.coerceIn(0, sourceText.length)]
+        val b = toDisplay[sourceRange.last.coerceIn(0, sourceText.length)]
+        // Both ends must land exactly: a clamped end would underline whatever character the
+        // fold point happens to sit on.
+        if (toSource[a.coerceIn(0, display.length)] != sourceRange.first) return null
+        if (toSource[b.coerceIn(0, display.length)] != sourceRange.last) return null
+        return a..b
+    }
+    val braceGuides = remember(braceGuidesSrc, foldMap) {
+        braceGuidesSrc.mapNotNull { foldMap.displayRange(it) }
+    }
+    val indentColumns = remember(indentColumnsSrc, foldMap) {
+        IntArray(foldMap.displayLines.size) { row ->
+            indentColumnsSrc.getOrElse(foldMap.displayLines[row] - 1) { 0 }
+        }
+    }
+    val bracketPairsAll = remember(bracketPairsAllSrc, foldMap) {
+        bracketPairsAllSrc.mapNotNull { foldMap.displayRange(it) }
     }
     // The one pair the caret is in, resolved once and read by the brace underline. Any of the
     // three bracket kinds counts, and a lone bracket with no partner is reported separately so it
-    // can be underlined in red.
-    val bracketPairsAll = remember(code) { allBracketPairs(code) }
+    // can be underlined in red. All display coordinates: the pairs above already crossed over.
     val activeBracketPair = remember(bracketPairsAll, code, cursor) {
         activeBraces(bracketPairsAll, code, cursor)
     }
@@ -2596,14 +2744,17 @@ formatRequest: Int = 0,
         return (offset + (column - 1)).coerceIn(0, code.length)
     }
 
-    val kotlinItems = remember(code, cursor, isKotlin, currentAnalysis) {
+    val kotlinItems = remember(code, cursor, isKotlin, currentAnalysis, foldMap) {
         val live = currentAnalysis
         if (!isKotlin || live == null) {
             null
         } else {
+            // The analysis reads source text, so the display caret is mapped before it goes in:
+            // with folds above, the two disagree by exactly the hidden span.
+            val sourceCursor = foldMap.toSource[cursor.coerceIn(0, code.length)]
             runCatching {
-                if (live.prefixAt(cursor).isNotEmpty() || live.isMemberAccess(cursor)) {
-                    live.completionsAt(cursor, limit = 25)
+                if (live.prefixAt(sourceCursor).isNotEmpty() || live.isMemberAccess(sourceCursor)) {
+                    live.completionsAt(sourceCursor, limit = 25)
                 } else {
                     emptyList()
                 }
@@ -2656,7 +2807,8 @@ formatRequest: Int = 0,
     }
 
     val kotlinPrefix = if (kotlinItems != null) {
-        runCatching { currentAnalysis?.prefixAt(cursor) }.getOrNull().orEmpty()
+        val sourceCursor = foldMap.toSource[cursor.coerceIn(0, code.length)]
+        runCatching { currentAnalysis?.prefixAt(sourceCursor) }.getOrNull().orEmpty()
     } else {
         ""
     }
@@ -2714,23 +2866,27 @@ formatRequest: Int = 0,
      * Applies a quick fix and returns the text plus where the caret should land. Keeping this
      * outside composition means it can be tested and reused by both entry points.
      */
-    fun applyQuickFix(action: QuickFixAction): Pair<String, Int>? {
-        val target = quickFixActions.firstOrNull { it.label == action.label } ?: return null
+    fun applyQuickFix(action: QuickFixAction): Boolean {
+        val target = quickFixActions.firstOrNull { it.label == action.label } ?: return false
         val line = target.target.toIntOrNull()
-        val (_, column) = caretPosition(code, cursor)
-        return when (target.kind) {
+        when (target.kind) {
+            // Import surgery reads the whole file including folded bodies, so it runs on source
+            // and commits through the source path. Running it on display text would duplicate
+            // imports it cannot see.
             QuickFixKind.ADD_IMPORT -> {
-                val next = SourceEdits.addImport(code, target.target)
-                if (next == code) {
-                    null
-                } else {
-                    next to (SourceEdits.caretAfterAddImport(code, target.target) ?: code.length)
-                }
+                val next = SourceEdits.addImport(sourceText, target.target)
+                if (next == sourceText) return false
+                commitSource(
+                    next,
+                    SourceEdits.caretAfterAddImport(sourceText, target.target) ?: next.length,
+                )
             }
 
             QuickFixKind.REMOVE_IMPORT -> {
-                val next = SourceEdits.removeImport(code, target.target)
-                if (next == code) null else next to cursor.coerceAtMost(next.length)
+                val next = SourceEdits.removeImport(sourceText, target.target)
+                if (next == sourceText) return false
+                val caretS = foldMap.toSource[cursor.coerceIn(0, code.length)]
+                commitSource(next, caretS.coerceAtMost(next.length))
             }
 
             // Spec 6.6: E0101 deletes the offending token and leaves the caret where it began,
@@ -2738,38 +2894,54 @@ formatRequest: Int = 0,
             QuickFixKind.REMOVE_TOKEN -> {
                 val diagnostic = problems.on(line ?: -1)
                     .firstOrNull { it.code == DiagnosticCodes.E0101_UNRESOLVED }
-                if (diagnostic == null) return null
+                    ?: return false
                 val next = SourceEdits.removeToken(code, diagnostic.offset, diagnostic.length)
-                    ?: return null
-                next to diagnostic.offset.coerceIn(0, next.length)
+                    ?: return false
+                commit(TextFieldValue(next, TextRange(diagnostic.offset.coerceIn(0, next.length))))
             }
 
             QuickFixKind.ADD_SEMICOLON -> {
-                if (line == null) return null
-                val next = SourceEdits.addSemicolon(code, line) ?: return null
-                next to next.length.coerceAtMost(next.length)
+                if (line == null) return false
+                val next = SourceEdits.addSemicolon(code, line) ?: return false
+                commit(TextFieldValue(next, TextRange(next.length.coerceAtMost(next.length))))
             }
 
-            QuickFixKind.NO_FIX -> null
+            QuickFixKind.NO_FIX -> return false
 
             QuickFixKind.TOGGLE_COMMENT -> {
-                if (line == null) return null
+                if (line == null) return false
                 val next = SourceEdits.toggleLineComment(code, line)
-                if (next == code) null else next to cursor.coerceAtMost(next.length)
+                if (next == code) return false
+                commit(TextFieldValue(next, TextRange(cursor.coerceAtMost(next.length))))
             }
 
             QuickFixKind.MOVE_LINE_UP, QuickFixKind.MOVE_LINE_DOWN -> {
-                if (line == null) return null
+                if (line == null) return false
+                // Moving a folded header alone would orphan its body a row away: unfold first so
+                // the move carries what the reader sees as one block. Unfolding leaves the line
+                // number itself alone, so the move below still aims at the right row.
+                foldMap.displayLines.getOrNull(line - 1)?.let { sourceLine ->
+                    if (sourceLine in foldedFirstLines) toggleFold(sourceLine)
+                }
+                val fresh = fieldValue.text
+                val freshCursor = fieldValue.selection.start.coerceIn(0, fresh.length)
                 val down = target.kind == QuickFixKind.MOVE_LINE_DOWN
                 val next =
-                    if (down) SourceEdits.moveLineDown(code, line) else SourceEdits.moveLineUp(code, line)
-                if (next == code) {
-                    null
+                    if (down) SourceEdits.moveLineDown(fresh, line) else SourceEdits.moveLineUp(fresh, line)
+                if (next == fresh) {
+                    return false
                 } else {
-                    next to SourceEdits.caretAfterLineMove(code, line, column, down)
+                    val (_, freshColumn) = caretPosition(fresh, freshCursor)
+                    commit(
+                        TextFieldValue(
+                            next,
+                            TextRange(SourceEdits.caretAfterLineMove(fresh, line, freshColumn, down)),
+                        ),
+                    )
                 }
             }
         }
+        return true
     }
 
     // Keeps the caret on screen. Compose does not do this for a BasicTextField that sits inside a
@@ -2840,7 +3012,11 @@ val applySuggestion: (Int) -> Unit = { index ->
         val insert = liveItems?.getOrNull(index)?.insertText
             ?: visibleSuggestions.getOrNull(index)?.name
         if (insert != null) {
-            val prefix = if (liveItems != null) currentAnalysis?.prefixAt(liveCursor).orEmpty() else ""
+            // The prefix is read from the analysis source, so the caret crosses into source
+            // coordinates first; its length applies back in display coordinates because the
+            // caret's own line reads identically in both.
+            val sourceCursor = foldMap.toSource[liveCursor.coerceIn(0, liveText.length)]
+            val prefix = if (liveItems != null) currentAnalysis?.prefixAt(sourceCursor).orEmpty() else ""
             val start = (liveCursor - prefix.length).coerceAtLeast(0)
             val next = liveText.substring(0, start) + insert + liveText.substring(liveCursor)
             commit(TextFieldValue(next, TextRange(start + insert.length)))
@@ -2889,18 +3065,22 @@ val applySuggestion: (Int) -> Unit = { index ->
             return
         }
         // Whole lines belong to the selection; a partial line belongs to the file. Re-indenting
-        // half a line would move code the reader did not select.
+        // half a line would move code the reader did not select. The whole file is formatted
+        // from source: folded bodies still count braces, and the display text cannot see them.
         if (!SourceEdits.selectionCoversWholeLines(live.text, from, to)) {
+            val sourceCaret = foldMap.toSource[cursor.coerceIn(0, code.length)]
             val formatted = if (activeKind == FileKind.Kotlin || active.endsWith(".kt", true)) {
-                SourceEdits.formatKotlin(live.text)
+                SourceEdits.formatKotlin(sourceText)
             } else {
-                SourceEdits.normalizeTrailingWhitespace(live.text)
+                SourceEdits.normalizeTrailingWhitespace(sourceText)
             }
-            if (formatted == live.text) {
+            if (formatted == sourceText) {
                 onToast("Already formatted")
                 return
             }
-            commit(TextFieldValue(formatted, TextRange(from.coerceIn(0, formatted.length))))
+            val (line, column) = caretPosition(sourceText, sourceCaret)
+            val caret = offsetOfLineColumn(formatted, line, column).coerceIn(0, formatted.length)
+            commitSource(formatted, caret)
             onToast("Formatted $active")
             return
         }
@@ -2976,18 +3156,21 @@ val applySuggestion: (Int) -> Unit = { index ->
 
     LaunchedEffect(formatRequest) {
         if (formatRequest == 0) return@LaunchedEffect
+        // Whole-file formatting reads the source: the display text is missing folded bodies,
+        // and re-indenting from it would stack every line under a fold one level too deep.
+        val sourceCaret = foldMap.toSource[cursor.coerceIn(0, code.length)]
         val formatted = if (activeKind == FileKind.Kotlin || active.endsWith(".kt", true)) {
-            SourceEdits.formatKotlin(code)
+            SourceEdits.formatKotlin(sourceText)
         } else {
-            SourceEdits.normalizeTrailingWhitespace(code)
+            SourceEdits.normalizeTrailingWhitespace(sourceText)
         }
-        if (formatted == code) {
+        if (formatted == sourceText) {
             onToast("Already formatted")
             return@LaunchedEffect
         }
-        val (line, column) = caretPosition(code, cursor)
+        val (line, column) = caretPosition(sourceText, sourceCaret)
         val caret = offsetOfLineColumn(formatted, line, column).coerceIn(0, formatted.length)
-        commit(TextFieldValue(formatted, TextRange(caret)))
+        commitSource(formatted, caret)
         onToast("Formatted $active")
     }
 
@@ -3549,6 +3732,29 @@ val applySuggestion: (Int) -> Unit = { index ->
                                     .fillMaxWidth(),
                             )
                         }
+                        if (foldedDisplayRows.isNotEmpty()) {
+                            // The ellipsis chips after folded first lines, in the same content
+                            // coordinates as pills so they travel sideways with their rows.
+                            val chipGapPx = with(popupDensity) { 6.dp.toPx() }
+                            FoldChipLayer(
+                                chips = foldedDisplayRows.sorted().mapNotNull { row ->
+                                    foldMap.displayLines.getOrNull(row - 1)?.let { source ->
+                                        FoldChip(displayLine = row, sourceLine = source)
+                                    }
+                                },
+                                lineEndX = { row ->
+                                    endOfLineX(codeLayout, code, row, codeWindow)
+                                },
+                                lineTop = { row ->
+                                    lineTopPx(codeLayout, code, row, codeWindow)
+                                },
+                                gapPx = chipGapPx,
+                                onTap = { sourceLine -> toggleFold(sourceLine) },
+                                modifier = Modifier
+                                    .align(Alignment.TopStart)
+                                    .fillMaxWidth(),
+                            )
+                        }
                         if (problems.byLine.isNotEmpty()) {
                             // Wavy lines under the exact bad characters. Drawn before the labels
                             // so the labels stay readable on top of them.
@@ -3565,20 +3771,40 @@ val applySuggestion: (Int) -> Unit = { index ->
             }
 
                 // Drawn last with an opaque background: code scrolled sideways passes underneath.
+                // The marks compare the live buffer to HEAD, so they include unsaved edits, and are
+                // keyed by source line — the gutter looks them up by the number it draws, which is
+                // why folding never moves a mark onto the wrong row. Recomputed only when the file
+                // or its text changes, never on scroll: the layer reads the scroll itself.
+                val gitMarks = remember(relativePath, sourceText, projectRoot) {
+                    val path = relativePath
+                    val root = projectRoot
+                    if (path == null || root == null) {
+                        emptyMap<Int, GitMark>()
+                    } else {
+                        com.closecode.ui.git.GitService(root).bufferMarks(path, sourceText)
+                            .getOrElse { emptyMap() }
+                            .mapValues { (_, kind) -> GitMark.valueOf(kind.name) }
+                    }
+                }
                 if (settings.lineNumbers) {
                     LineNumberLayer(
                         lineCount = gutterRowCount(codeLines, caretLine),
                         lineHeightPx = lineHeightPx,
                         problems = problems,
                         caretLine = caretLine,
+                        gitMarks = gitMarks,
+                        sourceLines = foldMap.displayLines,
                         // Rows come from the layout that drew the glyphs, not from a second row model.
                         layout = codeLayout,
                         // ...and from the slice that layout describes, so a number stays on its own
                         // row even though the text is no longer one Text for the whole file.
                         window = codeWindow,
-                        // Spec 6.3: the first import line gets the fold affordance.
-                        foldLine = firstImportLine,
-                        onFoldTap = { _ -> onToast("Code folding is not available yet") },
+                        foldLine = 0,
+                        foldableLines = foldableDisplayRows,
+                        foldedLines = foldedDisplayRows,
+                        onFoldTap = { displayRow ->
+                            foldMap.displayLines.getOrNull(displayRow - 1)?.let { toggleFold(it) }
+                        },
                         // The bulb is drawn by the gutter now, so it needs no layout of its own and
                         // cannot land on top of the caret line's text. It appears for the caret line
                         // whenever that line has something to offer to fix and no card is open.
@@ -3628,10 +3854,11 @@ val applySuggestion: (Int) -> Unit = { index ->
                     onSelect = { index ->
                         quickFixIndex = index
                         quickFixActions.getOrNull(index)?.let { action ->
-                            applyQuickFix(action)?.let { (text, caret) ->
-                                commit(TextFieldValue(text, TextRange(caret.coerceIn(0, text.length))))
-                                quickFixLine = null
-                                problemSheetLine.value = null
+                            applyQuickFix(action).let { applied ->
+                                if (applied) {
+                                    quickFixLine = null
+                                    problemSheetLine.value = null
+                                }
                             }
                         }
                     },

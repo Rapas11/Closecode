@@ -401,4 +401,65 @@ class GitServiceTest {
     fun hasStashIsFalseOutsideARepository() {
         assertFalse(GitService(tmp.root).hasStash())
     }
+
+    private fun committedRepo(body: String): GitService {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        write("main.kt", body)
+        git.stage(listOf("main.kt")).getOrThrow()
+        git.commit("first").getOrThrow()
+        return git
+    }
+
+    @Test
+    fun changedLinesMarkModified() {
+        val git = committedRepo("line1\nline2\nline3\n")
+        write("main.kt", "line1\nLINE2\nline3\n")
+        val marks = git.workingTreeMarks("main.kt").getOrThrow()
+        assertEquals(mapOf(2 to GitChangeKind.Modified), marks)
+    }
+
+    @Test
+    fun addedLinesMarkAdded() {
+        val git = committedRepo("line1\nline3\n")
+        write("main.kt", "line1\nline2\nline3\n")
+        val marks = git.workingTreeMarks("main.kt").getOrThrow()
+        assertEquals(mapOf(2 to GitChangeKind.Added), marks)
+    }
+
+    @Test
+    fun deletedLinesPointAtTheFollower() {
+        val git = committedRepo("line1\nline2\nline3\n")
+        write("main.kt", "line1\nline3\n")
+        val marks = git.workingTreeMarks("main.kt").getOrThrow()
+        // Line 2 is gone; the triangle sits on line 2, which now holds old line 3.
+        assertEquals(mapOf(2 to GitChangeKind.Deleted), marks)
+    }
+
+    @Test
+    fun aCleanFileMarksNothing() {
+        val git = committedRepo("line1\n")
+        assertTrue(git.workingTreeMarks("main.kt").getOrThrow().isEmpty())
+    }
+
+    @Test
+    fun anUntrackedFileMarksNothing() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        write("main.kt", "line1\n")
+        assertTrue(git.workingTreeMarks("main.kt").getOrThrow().isEmpty())
+    }
+
+    @Test
+    fun outsideARepositoryMarksNothing() {
+        assertTrue(GitService(tmp.root).workingTreeMarks("main.kt").getOrThrow().isEmpty())
+    }
+
+    @Test
+    fun bufferMarksSeeUnsavedEdits() {
+        val git = committedRepo("line1\nline2\nline3\n")
+        // The file on disk is untouched; only the buffer changed.
+        val marks = git.bufferMarks("main.kt", "line1\nLINE2\nline3\n").getOrThrow()
+        assertEquals(mapOf(2 to GitChangeKind.Modified), marks)
+    }
 }
