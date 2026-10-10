@@ -3658,7 +3658,6 @@ val applySuggestion: (Int) -> Unit = { index ->
         // pill would draw both on the same frame.
         val caretTopContentEarly = lineTopPx(codeLayout, code, caretLine, codeWindow)
             ?: pillTopPx(caretLine, lineHeightPx)
-        val caretTopViewportEarly = topPaddingPx + caretTopContentEarly - codeScroll.value
         val popupEdgePxEarly = with(popupDensity) { POPUP_EDGE_INSET.toPx() }
         val signatureOptions = remember(code, cursor) {
             signatureHelpAll(code, cursor, AndroidApiAssets.cached())
@@ -3679,30 +3678,44 @@ val applySuggestion: (Int) -> Unit = { index ->
             (SignatureRowHeight + SignatureDescriptionHeight + SignatureBoxVerticalPadding * 2)
                 .toPx()
         }
-        val signatureTop = signatureTopPx(
-            caretTopPx = caretTopViewportEarly,
-            tooltipHeightPx = signatureHeightPx,
-            gapPx = sigGapPx,
-            viewportHeightPx = viewportHeightPx,
-            edgePx = popupEdgePxEarly,
-        )?.takeIf { signatureInfo != null }
-            val signatureBelowTop =
-                if (signatureInfo != null && signatureTop == null) {
-                    tooltipBelowTopPx(
-                        caretTopPx = caretTopViewportEarly,
+        // Everything below this line reads the scroll position, and a scroll read in
+        // composition subscribes this whole scope to every pixel of movement — which used to
+        // recompose the entire editor on every frame of a fling. Gated on a signature actually
+        // showing: while it is null none of this runs and scrolling pays nothing; open, the
+        // tooltip tracks the caret as it should.
+        val (signatureShownTop, signatureBelowTop) =
+            if (signatureInfo == null) {
+                null to null
+            } else {
+                val caretTopViewport = topPaddingPx + caretTopContentEarly - codeScroll.value
+                val above = signatureTopPx(
+                    caretTopPx = caretTopViewport,
+                    tooltipHeightPx = signatureHeightPx,
+                    gapPx = sigGapPx,
+                    viewportHeightPx = viewportHeightPx,
+                    edgePx = popupEdgePxEarly,
+                )
+                if (above != null) {
+                    above to null
+                } else {
+                    val below = tooltipBelowTopPx(
+                        caretTopPx = caretTopViewport,
                         lineHeightPx = lineHeightPx,
                         gapPx = sigGapPx,
                         tooltipHeightPx = signatureHeightPx,
                         viewportHeightPx = viewportHeightPx,
                         edgePx = popupEdgePxEarly,
                     )
-                } else {
-                    null
+                    below to below
                 }
-        val signatureShownTop = signatureTop ?: signatureBelowTop
+            }
         var sigMeasuredH by remember { mutableStateOf(0f) }
-        val caretRowOnScreenEarly = caretTopViewportEarly + lineHeightPx > 0f &&
-            caretTopViewportEarly < viewportHeightPx
+        val caretRowOnScreenEarly = if (signatureInfo == null) {
+            true
+        } else {
+            val caretTopViewport = topPaddingPx + caretTopContentEarly - codeScroll.value
+            caretTopViewport + lineHeightPx > 0f && caretTopViewport < viewportHeightPx
+        }
         // Back dismisses the tooltip without moving the caret: any edit lifts the
         // suppression on its own, because the code or the cursor it was recorded
         // against is gone.
@@ -4223,41 +4236,57 @@ val applySuggestion: (Int) -> Unit = { index ->
                 insetPx = popupEdgePx,
             ).coerceAtLeast(with(popupDensity) { 120.dp.toPx() })
             val shownSuggestions = visibleSuggestions.take(MAX_VISIBLE_SUGGESTIONS)
-            val caretTopContent = lineTopPx(codeLayout, code, caretLine, codeWindow)
-                ?: pillTopPx(caretLine, lineHeightPx)
-            val caretTopViewport = topPaddingPx + caretTopContent - codeScroll.value
+            // The placement reads both scroll positions, and a scroll read in composition
+            // subscribes this whole scope to every pixel of movement — the same per-frame
+            // recompose the tooltip had. Gated on the popup existing: empty 99% of the time,
+            // scrolling pays nothing for it; open, it tracks like everything else.
+            // Triple: caret top in viewport pixels, placement (top, rows), left edge.
+            val placement: Triple<Float, Pair<Float, Int>?, Float>? =
+                if (shownSuggestions.isEmpty()) {
+                    null
+                } else {
+                    val caretTopContent = lineTopPx(codeLayout, code, caretLine, codeWindow)
+                        ?: pillTopPx(caretLine, lineHeightPx)
+                    val caretTopViewport = topPaddingPx + caretTopContent - codeScroll.value
+                    Triple(
+                        caretTopViewport,
+                        popupPlacement(
+                            caretTopPx = caretTopViewport,
+                            lineHeightPx = lineHeightPx,
+                            gapPx = popupGapPx,
+                            rowHeightPx = popupRowHeightPx,
+                            borderPx = popupBorderPx,
+                            viewportHeightPx = viewportHeightPx,
+                            edgePx = popupEdgePx,
+                            maxRows = shownSuggestions.size.coerceAtLeast(1),
+                        ),
+                        popupLeftPx(
+                            wordX = xForOffset(
+                                codeLayout,
+                                wordStartOffset(code, cursor.coerceIn(0, code.length)),
+                                codeWindow,
+                            ) ?: 0f,
+                            columnStartPx = with(popupDensity) { columnStart.toPx() },
+                            hScrollPx = codeHScroll.value,
+                            popupWidthPx = popupWidthPx,
+                            codeWidthPx = codeWidthPx,
+                            insetPx = popupEdgePx,
+                        ),
+                    )
+                }
             // Spec 6.7: the popup hides when the caret line scrolls out of view, so it never floats
             // over unrelated code, and comes back when the line is on screen again.
-            val caretRowVisible = caretTopViewport + lineHeightPx > 0f &&
-                caretTopViewport < viewportHeightPx
+            val caretRowVisible = placement?.let { (top, _, _) ->
+                top + lineHeightPx > 0f && top < viewportHeightPx
+            } == true
             // Where it goes *and* how much of it the space allows, answered together: when the room
             // under the caret line cannot take the whole list, the row count gives way rather than
             // the line the user is typing on. Null means not even one row fits either side, and a
             // popup that cannot keep the caret line clear has no business being on screen.
-            val popupAt = popupPlacement(
-                caretTopPx = caretTopViewport,
-                lineHeightPx = lineHeightPx,
-                gapPx = popupGapPx,
-                rowHeightPx = popupRowHeightPx,
-                borderPx = popupBorderPx,
-                viewportHeightPx = viewportHeightPx,
-                edgePx = popupEdgePx,
-                maxRows = shownSuggestions.size.coerceAtLeast(1),
-            )
+            val popupAt = placement?.second
             val popupTop = popupAt?.first ?: 0f
             val popupRows = popupAt?.second ?: 1
-            val popupLeft = popupLeftPx(
-                wordX = xForOffset(
-                    codeLayout,
-                    wordStartOffset(code, cursor.coerceIn(0, code.length)),
-                    codeWindow,
-                ) ?: 0f,
-                columnStartPx = with(popupDensity) { columnStart.toPx() },
-                hScrollPx = codeHScroll.value,
-                popupWidthPx = popupWidthPx,
-                codeWidthPx = codeWidthPx,
-                insetPx = popupEdgePx,
-            )
+            val popupLeft = placement?.third ?: 0f
             androidx.compose.animation.AnimatedVisibility(
                 visible = sigVisible,
                 enter = fadeIn(tween(120)),
