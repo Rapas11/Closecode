@@ -292,6 +292,8 @@ internal fun IdeScreen(
     // A side-by-side diff opened from the Source Control tab. Full-screen over everything,
     // like the clone route, because a two-column diff has no business inside the drawer.
     var diffPath by remember { mutableStateOf<String?>(null) }
+    // The full build log over everything, for the same reason: errors want the whole screen.
+    var buildLogOpen by remember { mutableStateOf(false) }
     // Written by that route when it re-authenticates. The drawer caches the token for as long as
     // it is composed, and this is how it is told to read it again rather than go on with the copy
     // it took when it was opened.
@@ -370,6 +372,11 @@ internal fun IdeScreen(
     var buildWarningCount by remember { mutableStateOf(0) }
     var buildPhase by remember { mutableStateOf(BuildPhase.IDLE) }
     var buildFileCount by remember { mutableIntStateOf(0) }
+    // How long each sweep phase took, for the step rows. Zero until a build measures them.
+    var buildSymbolsMs by remember { mutableStateOf(0L) }
+    var buildFilesMs by remember { mutableStateOf(0L) }
+    // Whether a build has ever finished: the "last build" line only exists after one.
+    var hasBuilt by remember { mutableStateOf(false) }
     // Every name declared anywhere in the project. The editor's own per-file pass needs it so a
     // composable defined in Theme.kt is not reported as missing in MainActivity.kt.
     var projectNames by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -877,6 +884,8 @@ internal fun IdeScreen(
         val result = withContext(Dispatchers.Default) {
             buildPhase = BuildPhase.FILES
             val index = AndroidApiAssets.cached()
+            val symbolsDone = System.nanoTime()
+            buildSymbolsMs = (symbolsDone - started) / 1_000_000
             val declared = KotlinAnalyzer.projectSymbols(sources.map { it.second })
             var errors = 0
             var warnings = 0
@@ -901,11 +910,13 @@ internal fun IdeScreen(
         }
         val (errors, warnings, elapsedMs) = result
         buildElapsedMs = elapsedMs.coerceAtMost(MAX_REPORTED_BUILD_MS)
+        buildFilesMs = (elapsedMs - buildSymbolsMs).coerceAtLeast(0L)
         buildErrorCount = errors
         buildWarningCount = warnings
         buildProgress = 1f
         buildPhase = BuildPhase.DONE
         building = false
+        hasBuilt = true
         if (errors > 0) {
             logLines.appendCapped(
                 LogLine(
@@ -1007,6 +1018,11 @@ internal fun IdeScreen(
                     modifier = Modifier.weight(1f),
                 )
                 "Build" -> IdeBuildPanel(
+                    appName = projectName,
+                    packageName = diskTree.firstOrNull { it.path.endsWith("AndroidManifest.xml") }
+                        ?.let { manifestPackageOf(diskContents[it.name]) },
+                    version = diskTree.filter { it.path.endsWith("build.gradle.kts") }
+                        .firstNotNullOfOrNull { gradleVersionOf(diskContents[it.name]) },
                     building = building,
                     errorCount = buildErrorCount,
                     warningCount = buildWarningCount,
@@ -1014,6 +1030,10 @@ internal fun IdeScreen(
                     phase = buildPhase,
                     fileCount = buildFileCount,
                     progress = buildProgress,
+                    symbolsMs = buildSymbolsMs,
+                    filesMs = buildFilesMs,
+                    hasBuilt = hasBuilt,
+                    errors = projectErrorList,
                     onRun = {
                         // Spec 7: build and run are blocked while any error exists.
                         if (projectErrors > 0) {
@@ -1023,6 +1043,23 @@ internal fun IdeScreen(
                             building = true
                         }
                     },
+                    onCancel = { building = false },
+                    onViewErrors = {
+                        problemSheetScope = ProblemScope.PROJECT
+                        problemSheet.value = problemSheet.value ?: 1
+                    },
+                    onOpenLog = { buildLogOpen = true },
+                    onOpenFile = { name, line ->
+                        diskTree.firstOrNull { it.name == name }?.let { file ->
+                            openFile(file)
+                            val text = liveBuffers[file.name]
+                                ?: diskContents[file.name].orEmpty()
+                            caretRequest = offsetOfLine(text, line)
+                            sourceRevision++
+                            activePanel = "Code"
+                        }
+                    },
+                    onAskAi = { activePanel = "AI" },
                     onBack = { activePanel = panelBeforeTool },
                     modifier = Modifier.weight(1f),
                 )
@@ -1563,6 +1600,26 @@ internal fun IdeScreen(
                 projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                 path = path,
                 onBack = { diffPath = null },
+            )
+        }
+
+        if (buildLogOpen) {
+            BuildLogScreen(
+                errors = projectErrorList,
+                warnings = projectWarningList,
+                elapsedMs = buildElapsedMs,
+                onOpenFile = { name, line ->
+                    diskTree.firstOrNull { it.name == name }?.let { file ->
+                        openFile(file)
+                        val text = liveBuffers[file.name]
+                            ?: diskContents[file.name].orEmpty()
+                        caretRequest = offsetOfLine(text, line)
+                        sourceRevision++
+                        activePanel = "Code"
+                    }
+                    buildLogOpen = false
+                },
+                onBack = { buildLogOpen = false },
             )
         }
     }

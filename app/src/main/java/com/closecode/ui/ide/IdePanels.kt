@@ -7,24 +7,35 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.closecode.ui.components.OutlineButton
+import com.closecode.ui.components.PrimaryButton
+import com.closecode.ui.components.ScreenCard
+import com.closecode.ui.components.TextLink
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
@@ -115,6 +126,28 @@ internal fun formatBuildTime(elapsedMs: Long): String =
     } else {
         String.format(java.util.Locale.US, "%.1f s", elapsedMs / 1000.0)
     }
+
+/**
+ * The app's package name from its manifest, or null when no manifest is loaded. Reads the
+ * `package` attribute rather than guessing from the folder, because the folder is the reader's
+ * words and the attribute is the system's.
+ */
+internal fun manifestPackageOf(manifest: String?): String? {
+    if (manifest.isNullOrBlank()) return null
+    val match = Regex("""package\s*=\s*["']([^"']+)["']""").find(manifest)
+    return match?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+}
+
+/**
+ * The app's version from its Gradle file, or null when it is not declared there. Accepts both
+ * quoted styles and ignores surrounding configuration, because the line sits among other lines
+ * that look almost like it.
+ */
+internal fun gradleVersionOf(buildFile: String?): String? {
+    if (buildFile.isNullOrBlank()) return null
+    val match = Regex("""(?m)^\s*versionName\s*=?\s*["']([^"']+)["']""").find(buildFile)
+    return match?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+}
 
 private fun countOf(n: Int, one: String, many: String): String =
     "$n ${if (n == 1) one else many}"
@@ -250,18 +283,25 @@ fun IdeLogcatPanel(
 }
 
 /**
- * Spec 7 Build panel: a 6 dp progress bar, one row per phase of the compile check with a status
- * glyph, and a bold result line.
+ * Spec 7 Build panel: the app header, a result bar, one row per phase of the compile check
+ * with its measured time, and the actions that mean something.
  *
  * This is a real check, not a Gradle build: there is no Gradle daemon inside an Android app and
  * there never will be, so the panel runs the app's own Kotlin analyser across the project's files
  * and reports what it genuinely found. The old version of this panel named Gradle tasks it never
  * ran and walked them on a timer, which is worse than useless — it looked like a build log without
- * being one. Everything drawn here now comes from the sweep: the bar from the files it has done, the
- * steps from the phase it is in, and the result line from the counts and time it measured.
+ * being one. Everything drawn here now comes from the sweep: the bar from the files it has done,
+ * the steps from the phase it is in, and the result line from the counts and time it measured.
+ *
+ * Two spec rows have no honest equivalent and are left out on purpose: Share APK (the sweep
+ * produces no APK to share) and Open app / Back to editor (nothing is installed or launched).
+ * The primary button is View errors on a failed build and Run checks otherwise.
  */
 @Composable
-fun IdeBuildPanel(
+internal fun IdeBuildPanel(
+    appName: String,
+    packageName: String?,
+    version: String?,
     building: Boolean,
     errorCount: Int,
     warningCount: Int,
@@ -269,7 +309,16 @@ fun IdeBuildPanel(
     phase: BuildPhase,
     fileCount: Int,
     progress: Float,
+    symbolsMs: Long = 0L,
+    filesMs: Long = 0L,
+    hasBuilt: Boolean = false,
+    errors: List<ProjectDiagnostic> = emptyList(),
     onRun: () -> Unit,
+    onCancel: () -> Unit = {},
+    onViewErrors: () -> Unit = {},
+    onOpenLog: () -> Unit = {},
+    onOpenFile: (String, Int) -> Unit = { _, _ -> },
+    onAskAi: () -> Unit = {},
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
 ) {
@@ -284,88 +333,229 @@ fun IdeBuildPanel(
         else -> 1f
     }
 
+    // A build must survive leaving the app: the sweep continues either way, but the screen
+    // going dark halfway through is how a finished build gets missed.
+    val view = LocalView.current
+    DisposableEffect(building) {
+        view.keepScreenOn = building
+        onDispose { view.keepScreenOn = false }
+    }
+
     Column(modifier.fillMaxSize().background(c.bg)) {
         PanelBackBar("Build", onBack)
-        Row(
+        Column(
             Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Box(
-                Modifier
-                    .weight(1f)
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(c.panel2),
-            ) {
+            // The app being built: icon tile, name, and package with version underneath.
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     Modifier
-                        .fillMaxWidth(fraction)
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1D2B57)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(CcIcons.Android, c.toolbarAccent, 24.dp)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = appName,
+                        color = c.text,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = "${packageName ?: "—"} · v${version ?: "—"}",
+                        color = c.textMuted,
+                        fontSize = 11.sp,
+                        fontFamily = Mono,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            if (building) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
                         .height(6.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(if (failed) c.red else c.ac),
-                )
+                        .background(c.panel2),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(fraction)
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(c.accent),
+                    )
+                }
             }
-            Box(
-                Modifier
-                    .clip(RoundedCornerShape(9.dp))
-                    .background(if (failed) c.red else c.ac)
-                    .clickable(onClick = onRun)
-                    .padding(horizontal = 12.dp, vertical = 7.dp),
-            ) {
-                Text(
-                    text = if (building) "Building" else "Run Build",
-                    color = c.af,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-        }
 
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+            if (hasBuilt && !building) {
+                // The result bar: green success or dark-red failure with what it found and
+                // how long honesty took.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (failed) Color(0xFF2A1519) else Color(0xFF12281F))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (failed) {
+                        CcIcon(CcIcons.Warning, Color(0xFFF2A0A0), 16.dp)
+                    } else {
+                        CcIcon(CcIcons.Check, Color(0xFF5FD19A), 16.dp)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = if (failed) {
+                            "Build failed · $errorCount ${if (errorCount == 1) "error" else "errors"}"
+                        } else {
+                            "Build successful · ${formatBuildTime(elapsedMs)}"
+                        },
+                        color = if (failed) Color(0xFFF2A0A0) else Color(0xFF5FD19A),
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
+
+            // One row per sweep phase with its measured time: checks while running, times
+            // once done, gray for whatever a failure never reached.
             val labels = buildStepLabels(fileCount)
+            val times = listOf(symbolsMs, filesMs)
             buildStepStates(phase).forEachIndexed { index, state ->
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 8.dp, horizontal = 12.dp),
+                        .height(30.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        text = when (state) {
-                            StepState.PENDING -> "."
-                            StepState.RUNNING -> "..."
-                            StepState.DONE -> "✓"
-                        },
-                        color = if (state == StepState.DONE) c.success else c.mu,
-                        fontSize = 13.sp,
-                        fontFamily = Mono,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.size(width = 18.dp, height = 18.dp),
-                    )
+                    when (state) {
+                        StepState.DONE -> CcIcon(CcIcons.Check, c.success, 15.dp)
+                        StepState.RUNNING -> CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            color = c.text,
+                            strokeWidth = 2.dp,
+                        )
+                        StepState.PENDING -> Box(
+                            Modifier
+                                .size(8.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(c.textFaint),
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
                     Text(
                         text = labels[index],
-                        color = if (state == StepState.DONE) c.tx else c.mu,
+                        color = if (state == StepState.PENDING) c.textFaint else c.text,
                         fontSize = 13.sp,
-                        fontFamily = Mono,
+                        fontFamily = Sans,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (state == StepState.DONE && hasBuilt) {
+                        Text(
+                            text = formatBuildTime(times.getOrElse(index) { 0L }),
+                            color = c.textMuted,
+                            fontSize = 12.sp,
+                            fontFamily = Mono,
+                        )
+                    }
+                }
+            }
+
+            if (building) {
+                // Destructive in red text only, never a filled red button.
+                TextLink(label = "Cancel", color = c.error, onClick = onCancel)
+            } else {
+                PrimaryButton(
+                    label = if (failed) "View errors" else "Run checks",
+                    onClick = if (failed) onViewErrors else onRun,
+                )
+                if (hasBuilt) {
+                    OutlineButton(label = "Build log", onClick = onOpenLog)
+                    Text(
+                        text = "Last build · ${formatBuildTime(elapsedMs)} · " +
+                            "$errorCount ${if (errorCount == 1) "error" else "errors"}",
+                        color = c.textFaint,
+                        fontSize = 11.sp,
+                        fontFamily = Sans,
                     )
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(c.ln.copy(alpha = 0.45f)))
+                // Failed builds list every error as a card: plain words, a file-and-line link,
+                // and a door to the AI panel. Capped — a hundred-error project needs the log,
+                // not a hundred cards.
+                errors.take(50).forEach { row ->
+                    BuildErrorCard(
+                        row = row,
+                        onOpenFile = onOpenFile,
+                        onAskAi = onAskAi,
+                    )
+                }
+                if (errors.size > 50) {
+                    Text(
+                        text = "…and ${errors.size - 50} more in the build log.",
+                        color = c.textFaint,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                }
             }
-            Text(
-                text = buildResultLine(errorCount, warningCount, elapsedMs),
-                color = if (failed) c.red else c.success,
-                fontSize = 13.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(12.dp),
-            )
         }
     }
 }
+
+/** One build failure: what it says, where it is, and a door to the AI panel. */
+@Composable
+private fun BuildErrorCard(
+    row: ProjectDiagnostic,
+    onOpenFile: (String, Int) -> Unit,
+    onAskAi: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    ScreenCard {
+        Text(
+            text = row.diagnostic.message,
+            color = c.text,
+            fontSize = 13.sp,
+            fontFamily = Sans,
+            lineHeight = 18.sp,
+        )
+        Spacer(Modifier.height(6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "${row.fileName}:${row.diagnostic.line}",
+                color = c.link,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable {
+                        onOpenFile(row.fileName, row.diagnostic.line.coerceAtLeast(1))
+                    },
+            )
+            TextLink(label = "Ask AI", onClick = onAskAi)
+        }
+    }
+}
+
+
 
 @Composable
 private fun FilterChip(label: String, active: Boolean, onClick: () -> Unit) {
@@ -386,5 +576,69 @@ private fun FilterChip(label: String, active: Boolean, onClick: () -> Unit) {
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
+    }
+}
+/**
+ * The full build log: every error and warning with its file and line, newest check last.
+ * A log the reader can tap through to the code, rather than a count they cannot act on.
+ */
+@Composable
+internal fun BuildLogScreen(
+    errors: List<ProjectDiagnostic>,
+    warnings: List<ProjectDiagnostic>,
+    elapsedMs: Long,
+    onOpenFile: (String, Int) -> Unit,
+    onBack: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    androidx.activity.compose.BackHandler(onBack = onBack)
+    Column(Modifier.fillMaxSize().background(c.bg)) {
+        PanelBackBar("Build log", onBack)
+        if (errors.isEmpty() && warnings.isEmpty()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = "Clean in ${formatBuildTime(elapsedMs)} — nothing to show.",
+                    color = c.textMuted,
+                    fontSize = 13.sp,
+                    fontFamily = Sans,
+                )
+            }
+            return@Column
+        }
+        LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+            items(errors.size + warnings.size) { index ->
+                val row = if (index < errors.size) {
+                    errors[index] to true
+                } else {
+                    warnings[index - errors.size] to false
+                }
+                val (entry, isError) = row
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(if (isError) Color(0xFF1D1215) else Color(0xFF1D1A10))
+                        .clickable {
+                            onOpenFile(entry.fileName, entry.diagnostic.line.coerceAtLeast(1))
+                        }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Text(
+                        text = entry.diagnostic.message,
+                        color = if (isError) Color(0xFFF2A0A0) else c.warning,
+                        fontSize = 12.sp,
+                        fontFamily = Mono,
+                        lineHeight = 17.sp,
+                    )
+                    Text(
+                        text = "${entry.fileName}:${entry.diagnostic.line}",
+                        color = c.link,
+                        fontSize = 11.sp,
+                        fontFamily = Sans,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                }
+                Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
+            }
+        }
     }
 }

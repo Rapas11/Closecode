@@ -1,6 +1,7 @@
 package com.closecode.ui.ide
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -105,4 +106,38 @@ class BuildPanelTest {
         // same app would look like a bug rather than a translation.
         assertEquals("1.2 s", formatBuildTime(1_234))
     }
+
+    // -- App identity ----------------------------------------------------------
+
+    @Test
+    fun thePackageComesFromTheManifestAttribute() {
+        assertEquals(
+            "com.closecode.blankapp",
+            manifestPackageOf("<manifest package=\"com.closecode.blankapp\"></manifest>"),
+        )
+        assertEquals(
+            "com.example.app",
+            manifestPackageOf("<manifest\n    package='com.example.app'\n>"),
+        )
+    }
+
+    @Test
+    fun noManifestMeansNoPackage() {
+        assertNull(manifestPackageOf(null))
+        assertNull(manifestPackageOf(""))
+        assertNull(manifestPackageOf("<manifest></manifest>"))
+    }
+
+    @Test
+    fun theVersionComesFromTheGradleFile() {
+        assertEquals("1.0", gradleVersionOf("versionName \"1.0\""))
+        assertEquals("2.3-beta", gradleVersionOf("    versionName='2.3-beta'\n"))
+    }
+
+    @Test
+    fun noVersionMeansNoVersion() {
+        assertNull(gradleVersionOf(null))
+        assertNull(gradleVersionOf("applicationId \"com.x\""))
+    }
+
 }

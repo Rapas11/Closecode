@@ -66,6 +66,12 @@ object CcIcons {
     )
     // The green check for clean states and done steps.
     val Check = icon("check", "M20 6L9 17l-5-5")
+    // The build panel's app tile: a little robot, body and antennae in strokes. No eyes —
+    // at 24 dp they would be two blobs, and the tile reads as Android without them.
+    val Android = icon(
+        "android",
+        "M12 2v2M8 7h8v10H8zM8 20v2M16 20v2M4 11h2M18 11h2",
+    )
     // Commands chip: a bolt. The terminal's saved commands live behind it.
     val Zap = icon("zap", "M13 2L3 14h9l-1 8 10-12h-9l1-8z")
     // Keyboard button in the commands panel: a board with two key rows and a space bar.
