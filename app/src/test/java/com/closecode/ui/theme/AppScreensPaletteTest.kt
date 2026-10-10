@@ -35,5 +35,7 @@ class AppScreensPaletteTest {
         assertEquals("FF16382A", hex(c.statusAddedBg))
         assertEquals("FF3A3115", hex(c.statusModifiedBg))
         assertEquals("FF3A1A1F", hex(c.statusDeletedBg))
+        assertEquals("FF1B2850", hex(c.fileRowActive))
+        assertEquals("FFE5784A", hex(c.htmlIcon))
     }
 }

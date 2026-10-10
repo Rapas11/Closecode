@@ -2,6 +2,8 @@ package com.closecode.ui.ide.model
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import com.closecode.ui.components.StatusKind
+import com.closecode.ui.git.GitChangeKind
 import com.closecode.ui.model.FileKind
 import com.closecode.ui.theme.PageColors
 
@@ -42,15 +44,24 @@ fun suggestionsFor(language: String): List<Suggestion> = when {
     else -> KotlinSuggestions
 }
 
-// Red is reserved for diagnostics only, so a red badge always means an actual error.
-// File-type badges identify the file, they never alarm.
+// File icon colors from the app screens spec: the color carries the file type.
 fun kindColor(kind: FileKind, c: PageColors): Color = when (kind) {
-    FileKind.Folder -> c.ac
-    FileKind.Kotlin -> c.keyword
-    FileKind.Xml, FileKind.Html -> c.string
-    FileKind.Gradle, FileKind.Json, FileKind.Js, FileKind.Csv -> c.mu
-    else -> c.mu
+    FileKind.Folder -> c.codeFunction
+    FileKind.Kotlin -> c.codeKeyword
+    FileKind.Html -> c.htmlIcon
+    FileKind.Css -> c.accent
+    FileKind.Js -> c.codeType
+    FileKind.Markdown -> c.iconTint
+    FileKind.Xml, FileKind.Gradle, FileKind.Json, FileKind.Csv,
+    FileKind.Properties, FileKind.Unknown,
+    -> c.popupMuted
 }
+
+/**
+ * The explorer's Git letter for a change kind. The names match on purpose, so the gutter's
+ * GitChangeKind and the tree's StatusKind can never drift apart without the compiler noticing.
+ */
+fun statusKindOf(kind: GitChangeKind): StatusKind = StatusKind.valueOf(kind.name)
 
 fun kindGlyph(kind: FileKind): String = when (kind) {
     FileKind.Folder -> "▾"

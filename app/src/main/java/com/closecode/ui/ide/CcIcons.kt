@@ -112,6 +112,8 @@ object CcIcons {
         "refresh",
         "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15",
     )
+    // Collapse-all: two chevrons up, the mirror of opening. Used by the explorer header.
+    val CollapseAll = icon("collapse-all", "M17 11l-5-5-5 5M17 18l-5-5-5 5")
     val External = icon(
         "external",
         "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3",

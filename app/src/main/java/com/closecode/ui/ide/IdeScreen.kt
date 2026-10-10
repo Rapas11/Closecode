@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -140,6 +141,7 @@ import com.closecode.ui.github.TokenStore
 import com.closecode.ui.ide.model.IdeNavItems
 import com.closecode.ui.ide.model.kindColor
 import com.closecode.ui.ide.model.kindGlyph
+import com.closecode.ui.ide.model.statusKindOf
 import com.closecode.ui.ide.model.suggestionsFor
 import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
@@ -177,6 +179,7 @@ internal fun IdeScreen(
     // them, and reading them once keeps a row changed on the settings screen in force immediately.
     val settings = LocalSettings.current
     val context = LocalContext.current
+    val treeClipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val c = LocalPageColors.current
     var tabs by remember { mutableStateOf(emptyList<ProjectFile>()) }
     var active by remember { mutableStateOf("") }
@@ -196,10 +199,60 @@ internal fun IdeScreen(
     // Folders the reader has closed, by path. It used to live inside the drawer, but creating a
     // file has to open every folder between the root and the new row or the row arrives invisible
     // and the creation looks like nothing happened.
-    var collapsedFolders by remember(slug) { mutableStateOf(setOf<String>()) }
+    //
+    // Persisted per project, because the spec says the tree remembers its open folders between
+    // launches. Paths join on a unit separator, which a file name cannot practically contain.
+    val kvStore = remember(context) {
+        com.closecode.ui.settings.SharedPreferencesKeyValueStore(context)
+    }
+    var collapsedFolders by remember(slug) {
+        mutableStateOf(
+            kvStore.getString("collapsed_$slug", null).orEmpty()
+                .split('\u001F').filter { it.isNotEmpty() }.toSet(),
+        )
+    }
+    LaunchedEffect(slug, collapsedFolders) {
+        kvStore.putString("collapsed_$slug", collapsedFolders.joinToString("\u001F"))
+    }
     val diskContents = remember(slug) { mutableStateMapOf<String, String>() }
     var activePanel by remember(slug) { mutableStateOf("Code") }
     var explorerOpen by remember { mutableStateOf(false) }
+    // How many times the drawer has been opened: the hint line under the tree shows for the
+    // first three opens, then never again.
+    var drawerOpens by remember { mutableStateOf(kvStore.getInt("drawer_hint_opens", 0)) }
+    LaunchedEffect(explorerOpen) {
+        if (explorerOpen) {
+            drawerOpens++
+            kvStore.putInt("drawer_hint_opens", drawerOpens)
+        }
+    }
+    // One Git letter per file for the tree rows, from a single status call per revision: A/M/D
+    // from staged entries first, then unstaged, U for untracked. Refreshed on the same revision
+    // counter as the Source Control tab, so the two never disagree.
+    var gitLetters by remember(slug) {
+        mutableStateOf(emptyMap<String, com.closecode.ui.components.StatusKind>())
+    }
+    LaunchedEffect(slug, gitRevision) {
+        val root = runCatching { repository.projectDir(slug) }.getOrNull()
+        gitLetters = if (root == null) {
+            emptyMap()
+        } else {
+            withContext(Dispatchers.Default) {
+                val snap = runCatching { com.closecode.ui.git.GitService(root).snapshot() }
+                    .getOrNull()?.getOrNull() ?: com.closecode.ui.git.GitSnapshot.Empty
+                buildMap {
+                    snap.unstaged.forEach { put(it.path, statusKindOf(it.kind)) }
+                    snap.staged.forEach { put(it.path, statusKindOf(it.kind)) }
+                    snap.untracked.forEach {
+                        put(it.path, com.closecode.ui.components.StatusKind.Untracked)
+                    }
+                    snap.conflicts.forEach {
+                        put(it, com.closecode.ui.components.StatusKind.Modified)
+                    }
+                }
+            }
+        }
+    }
     // The drawer's width, kept here rather than inside the drawer so the scrim that closes it
     // starts exactly where the drawer ends. Two numbers computed apart drift the moment either one
     // animates, and a scrim that overlaps the drawer would swallow the file list. The drawer takes
@@ -451,6 +504,12 @@ internal fun IdeScreen(
                 dirtyTabs[name] = it
             }
 
+    // Unsaved files by path, for the tree's yellow dots. Recomputed when the revision counter
+    // moves, which is every route that could have changed an answer.
+    val dirtyPaths = remember(tabs, contentRevision) {
+        tabs.filter { isDirtyTab(it.name) }.map { it.path }.toSet()
+    }
+
     /** Opens a file in a tab, reading it only when it has not been read before. */
     fun openFile(file: ProjectFile) {
         if (file.kind == FileKind.Folder) return
@@ -675,6 +734,28 @@ internal fun IdeScreen(
             .onFailure { toast = it.message ?: "Could not import $name" }
     }
 
+    /**
+     * A copy beside the original, named "name copy.ext" (then "name copy2.ext" and so on when
+     * taken). Folders copy whole; the drawer reveals the copy so it does not arrive silently.
+     */
+    fun duplicateEntry(target: ProjectFile) {
+        val parent = target.path.substringBeforeLast('/', "")
+        val dot = target.name.lastIndexOf('.')
+        val base = if (dot > 0) target.name.substring(0, dot) else target.name
+        val ext = if (dot > 0) target.name.substring(dot) else ""
+        val leaf = uniqueLeafIn(parent, "$base copy$ext") { candidate ->
+            diskTree.any { it.path == candidate }
+        }
+        val dest = if (parent.isEmpty()) leaf else "$parent/$leaf"
+        runCatching { repository.copyPath(slug, target.path, dest) }
+            .onSuccess {
+                refreshTree()
+                selectedPath = dest
+                toast = "Duplicated as $leaf"
+            }
+            .onFailure { toast = it.message ?: "Could not duplicate ${target.name}" }
+    }
+
     /** Every long-press action, in one place: the row is selected first, so creation lands in it. */
     fun onTreeAction(action: TreeAction, file: ProjectFile) {
         when (action) {
@@ -695,6 +776,11 @@ internal fun IdeScreen(
             }
 
             TreeAction.RENAME -> prompt = TreePrompt.Rename(file)
+            TreeAction.DUPLICATE -> duplicateEntry(file)
+            TreeAction.COPY_PATH -> {
+                treeClipboard.setText(androidx.compose.ui.text.AnnotatedString(file.path))
+                toast = "Path copied"
+            }
             TreeAction.MOVE -> prompt = TreePrompt.Transfer(file, copy = false)
             TreeAction.COPY -> prompt = TreePrompt.Transfer(file, copy = true)
             TreeAction.SHARE -> shareEntry(file)
@@ -1051,6 +1137,18 @@ internal fun IdeScreen(
                                     onTab = { explorerTab = it },
                                     onCreateFile = { prompt = TreePrompt.New(isFolder = false) },
                                     onCreateFolder = { prompt = TreePrompt.New(isFolder = true) },
+                                    onRefresh = { refreshTree() },
+                                    onCollapseAll = {
+                                        collapsedFolders = diskTree
+                                            .filter { it.kind == FileKind.Folder }
+                                            .map { it.path }.toSet()
+                                    },
+                                    gitLetters = gitLetters,
+                                    dirtyPaths = dirtyPaths,
+                                    hintVisible = drawerOpens <= 3,
+                                    // One letter per changed path, so the map's size is the tab's
+                                    // count bubble: no second source to drift apart from.
+                                    changeCount = gitLetters.size,
                                     onAction = { action, file -> onTreeAction(action, file) },
                                     onSelect = { file ->
                                         // The row is the working point for the next creation whether it
@@ -1574,18 +1672,20 @@ private fun HeaderIconButton(
     tint: Color,
     background: Color = Color.Transparent,
     enabled: Boolean = true,
+    boxSize: Dp = 34.dp,
+    iconSize: Dp = 19.dp,
     onClick: () -> Unit,
 ) {
     Box(
         Modifier
-            .size(34.dp)
+            .size(boxSize)
             .clip(RoundedCornerShape(9.dp))
             .background(background)
             .clickable(enabled = enabled, onClick = onClick)
             .androidxSemantics(label),
         contentAlignment = Alignment.Center,
     ) {
-        CcIcon(icon, tint, 19.dp)
+        CcIcon(icon, tint, iconSize)
     }
 }
 
@@ -1871,6 +1971,13 @@ private fun IdeExplorer(
     onTab: (String) -> Unit,
     onCreateFile: () -> Unit,
     onCreateFolder: () -> Unit,
+    onRefresh: () -> Unit,
+    onCollapseAll: () -> Unit,
+    // One Git letter per file path, and unsaved files by path, for the row decorations.
+    gitLetters: Map<String, com.closecode.ui.components.StatusKind>,
+    dirtyPaths: Set<String>,
+    // The hint line shows for the drawer's first three opens, then never again.
+    hintVisible: Boolean,
     onSelect: (ProjectFile) -> Unit,
     // The long-press menu. It is carried up because every one of its actions needs the repository,
     // the open tabs or a dialog, and the drawer has none of those.
@@ -1878,6 +1985,8 @@ private fun IdeExplorer(
     // Carried through to the GitHub tab: it only says *when* a clone should start. The route that
     // runs one is full-screen, so it lives at screen level, and only the screen has room for it.
     onCloneRequest: () -> Unit,
+    // Staged plus unstaged plus untracked: the Source Control tab's count bubble.
+    changeCount: Int,
     // How many times the stored GitHub token has been replaced. Passed on so the panel re-reads it
     // instead of going on with the copy it took when it was composed.
     githubTokenEpoch: Int,
@@ -1923,6 +2032,16 @@ private fun IdeExplorer(
         }
     }
 
+    // Closed folders carry their item count; open ones show their children instead.
+    // Counted once per tree rather than per row, so a big project does not pay
+    // a scan for every folder on every frame.
+    val childCounts = remember(tree) {
+        tree.filter { it.kind == FileKind.Folder }.associate { folder ->
+            val prefix = folder.path + "/"
+            folder.path to tree.count { it.path.startsWith(prefix) }
+        }
+    }
+
     Column(
         Modifier
             .width(width)
@@ -1930,46 +2049,66 @@ private fun IdeExplorer(
             .background(c.panel)
             .clipToBounds(),
     ) {
+        // The tab switch first, then the project row: the switch says which half is showing,
+        // and the project row says where its buttons act.
+        com.closecode.ui.components.AppSegmentedControl(
+            items = listOf(
+                com.closecode.ui.components.SegmentItem("Files"),
+                com.closecode.ui.components.SegmentItem("Source Control", changeCount),
+            ),
+            selected = if (tab == SourceControlTab) 1 else 0,
+            onSelect = { onTab(if (it == 1) SourceControlTab else FilesTab) },
+            modifier = Modifier.padding(top = 8.dp),
+        )
         Row(
             Modifier
-                .width(if (expanded) fullWidth else 0.dp)
-                .height(50.dp)
-                .border(1.dp, c.ln, RoundedCornerShape(0.dp))
-                .padding(horizontal = 14.dp),
+                .fillMaxWidth()
+                .height(40.dp)
+                .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "EXPLORER",
-                color = c.mu,
-                fontSize = 12.sp,
+                text = projectName.uppercase(),
+                color = c.textFaint,
+                fontSize = 11.sp,
                 fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.2.sp,
+                letterSpacing = 0.77.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
             HeaderIconButton(
                 icon = CcIcons.FilePlus,
                 label = "New file",
-                tint = c.mu,
+                tint = c.iconTint,
+                boxSize = 30.dp,
+                iconSize = 17.dp,
                 onClick = onCreateFile,
             )
             HeaderIconButton(
                 icon = CcIcons.FolderPlus,
                 label = "New folder",
-                tint = c.mu,
+                tint = c.iconTint,
+                boxSize = 30.dp,
+                iconSize = 17.dp,
                 onClick = onCreateFolder,
             )
-        }
-
-        Row(
-            Modifier
-                .width(if (expanded) fullWidth else 0.dp)
-                .height(36.dp)
-                .border(1.dp, c.ln, RoundedCornerShape(0.dp)),
-        ) {
-            ExplorerTabs.forEach { name ->
-                ExplorerTab(name, tab == name) { onTab(name) }
-            }
+            HeaderIconButton(
+                icon = CcIcons.Refresh,
+                label = "Refresh",
+                tint = c.iconTint,
+                boxSize = 30.dp,
+                iconSize = 17.dp,
+                onClick = onRefresh,
+            )
+            HeaderIconButton(
+                icon = CcIcons.CollapseAll,
+                label = "Collapse all",
+                tint = c.iconTint,
+                boxSize = 30.dp,
+                iconSize = 17.dp,
+                onClick = onCollapseAll,
+            )
         }
 
         // Both lists stay composed so the Source Control tab never loses a half-typed commit message
@@ -1981,22 +2120,36 @@ private fun IdeExplorer(
                 .fillMaxHeight(),
         ) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                item(key = "root") {
-                    TreeRow(
-                        label = projectName,
-                        depth = 0,
-                        bold = true,
-                        icon = CcIcons.FolderOpen,
-                        iconTint = c.ac,
-                        active = false,
-                        onClick = {},
-                    )
+                if (rows.isEmpty()) {
+                    item(key = "empty") {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                text = "No files yet",
+                                color = c.textMuted,
+                                fontSize = 13.sp,
+                                fontFamily = Sans,
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            com.closecode.ui.components.OutlineButton(
+                                label = "New file",
+                                onClick = onCreateFile,
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            com.closecode.ui.components.OutlineButton(
+                                label = "Clone a repository",
+                                onClick = onCloneRequest,
+                            )
+                        }
+                    }
                 }
-
-                item(key = "sec-project") { SectionLabel("PROJECT") }
-
                 itemsIndexed(rows, key = { _, f -> "tree-${f.path}" }) { _, file ->
                     val open = file.kind == FileKind.Folder
+                    val closed = open && file.path in collapsed
                     TreeRow(
                         label = file.name,
                         depth = file.depth + 1,
@@ -2007,11 +2160,14 @@ private fun IdeExplorer(
                         // behind it that is not being shown, down when it is being shown.
                         chevron = when {
                             !open -> null
-                            file.path in collapsed -> CcIcons.Chevron
+                            closed -> CcIcons.Chevron
                             else -> CcIcons.Down
                         },
-                        chevronTint = c.mu,
+                        chevronTint = c.textFaint,
                         active = file.path == activePath,
+                        gitStatus = gitLetters[file.path],
+                        dirty = file.path in dirtyPaths,
+                        childCount = if (closed) childCounts[file.path] else null,
                         // Both kinds of row report the tap: opening a folder and selecting it as
                         // the place a new file lands are the same gesture, so the screen that owns
                         // the collapsed set decides which one happened.
@@ -2019,6 +2175,19 @@ private fun IdeExplorer(
                         actions = actionsForTree(file),
                         onAction = { action -> onAction(action, file) },
                     )
+                }
+                if (hintVisible && rows.isNotEmpty()) {
+                    item(key = "hint") {
+                        Text(
+                            text = "Tap a file to open it. Long press for Rename, Duplicate, " +
+                                "Copy path and Delete. A yellow dot means unsaved changes. " +
+                                "The letter on the right is the Git status.",
+                            color = c.textFaint,
+                            fontSize = 11.sp,
+                            fontFamily = Sans,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        )
+                    }
                 }
             }
 
@@ -2040,37 +2209,6 @@ private fun IdeExplorer(
                 } else {
                     Modifier.size(0.dp)
                 },
-            )
-        }
-    }
-}
-
-/** One half of the drawer's Files / GitHub switch. */
-@Composable
-private fun RowScope.ExplorerTab(label: String, selected: Boolean, onClick: () -> Unit) {
-    val c = LocalPageColors.current
-    Box(
-        Modifier
-            .weight(1f)
-            .fillMaxHeight()
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = if (selected) c.tx else c.mu,
-            fontSize = 12.sp,
-            fontFamily = Sans,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            letterSpacing = 0.4.sp,
-        )
-        if (selected) {
-            Box(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .background(c.ac),
             )
         }
     }
@@ -2104,6 +2242,8 @@ internal enum class TreeAction(val label: String) {
     NEW_FILE("New file"),
     NEW_FOLDER("New folder"),
     RENAME("Rename"),
+    DUPLICATE("Duplicate"),
+    COPY_PATH("Copy path"),
     MOVE("Move to…"),
     COPY("Copy to…"),
     IMPORT("Import file…"),
@@ -2117,6 +2257,7 @@ internal fun actionsForTree(file: ProjectFile): List<TreeAction> =
         listOf(
             TreeAction.NEW_FILE,
             TreeAction.NEW_FOLDER,
+            TreeAction.DUPLICATE,
             TreeAction.RENAME,
             TreeAction.MOVE,
             TreeAction.COPY,
@@ -2124,11 +2265,11 @@ internal fun actionsForTree(file: ProjectFile): List<TreeAction> =
             TreeAction.DELETE,
         )
     } else {
+        // The spec's four file actions: rename it, copy it, copy its path, delete it.
         listOf(
             TreeAction.RENAME,
-            TreeAction.MOVE,
-            TreeAction.COPY,
-            TreeAction.SHARE,
+            TreeAction.DUPLICATE,
+            TreeAction.COPY_PATH,
             TreeAction.DELETE,
         )
     }
@@ -2146,32 +2287,63 @@ private fun TreeRow(
     chevron: androidx.compose.ui.graphics.vector.ImageVector? = null,
     chevronTint: Color = Color.Unspecified,
     active: Boolean,
+    // The file's Git letter (A/M/D/U), and whether it has unsaved changes. Null and false draw
+    // nothing, so rows outside version control look exactly as before.
+    gitStatus: com.closecode.ui.components.StatusKind? = null,
+    dirty: Boolean = false,
+    // Closed folders carry their item count; open folders show their children instead.
+    childCount: Int? = null,
     onClick: () -> Unit,
     actions: List<TreeAction> = emptyList(),
     onAction: (TreeAction) -> Unit = {},
 ) {
     val c = LocalPageColors.current
     var menuOpen by remember { mutableStateOf(false) }
+    // One indent step per level. The guides run down the middle of each step the row sits in.
+    val indentStart = 12.dp
+    val indentStep = 16.dp
 
     Box {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 1.dp)
-                .height(34.dp)
-                .clip(RoundedCornerShape(7.dp))
-                .background(if (active) c.selection else Color.Transparent)
+                .height(36.dp)
+                .background(if (active) c.fileRowActive else Color.Transparent)
                 .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
-                .padding(start = 9.dp + 17.dp * depth),
+                .drawBehind {
+                    for (level in 0 until depth) {
+                        val x = (indentStart + indentStep * level + indentStep / 2).toPx()
+                        drawLine(
+                            color = c.indentGuide,
+                            start = androidx.compose.ui.geometry.Offset(x, 0f),
+                            end = androidx.compose.ui.geometry.Offset(x, size.height),
+                            strokeWidth = 1.dp.toPx(),
+                        )
+                    }
+                    if (active) {
+                        // The open file's bar: 3 dp on the left edge with a 4 dp inset top and
+                        // bottom. Drawn, not laid out, so the text never shifts when it appears.
+                        drawRoundRect(
+                            color = c.accent,
+                            topLeft = androidx.compose.ui.geometry.Offset(0f, 4.dp.toPx()),
+                            size = androidx.compose.ui.geometry.Size(
+                                3.dp.toPx(),
+                                size.height - 8.dp.toPx(),
+                            ),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()),
+                        )
+                    }
+                }
+                .padding(start = indentStart + indentStep * depth, end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 Modifier.width(15.dp).height(15.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                if (chevron != null) CcIcon(chevron, chevronTint, 14.dp)
+                if (chevron != null) CcIcon(chevron, chevronTint, 13.dp)
             }
-            CcIcon(icon, iconTint, 15.dp, Modifier.padding(start = 2.dp, end = 7.dp))
+            CcIcon(icon, iconTint, 16.dp, Modifier.padding(start = 2.dp, end = 8.dp))
             Text(
                 text = label,
                 color = if (active) c.tx else c.tx.copy(alpha = 0.86f),
@@ -2179,8 +2351,47 @@ private fun TreeRow(
                 fontFamily = Sans,
                 fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
                 maxLines = 1,
+                // Middle ellipsis needs a newer Compose than this project vendors; end
+                // ellipsis keeps long names readable until that upgrade lands.
                 overflow = TextOverflow.Ellipsis,
             )
+            // The yellow dot reads before the row's tail: unsaved is about the name, not the edge.
+            if (dirty) {
+                Box(
+                    Modifier
+                        .padding(start = 6.dp)
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(c.warning),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            if (childCount != null && childCount > 0) {
+                Text(
+                    text = childCount.toString(),
+                    color = c.textFaint,
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                    maxLines = 1,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+            }
+            if (gitStatus != null) {
+                val (letter, tone) = when (gitStatus) {
+                    com.closecode.ui.components.StatusKind.Added -> "A" to c.gitAdded
+                    com.closecode.ui.components.StatusKind.Modified -> "M" to c.warning
+                    com.closecode.ui.components.StatusKind.Deleted -> "D" to c.error
+                    com.closecode.ui.components.StatusKind.Untracked -> "U" to c.textMuted
+                }
+                Text(
+                    text = letter,
+                    color = tone,
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
         }
 
         if (actions.isNotEmpty()) {
@@ -5044,19 +5255,21 @@ internal val ToolPanels = setOf("Logcat", "Build", "Terminal")
  */
 internal const val SourceControlTab = "Source Control"
 
-/** The drawer's tabs, in the order they are shown. Stated once so the strip's order and the
- *  default cannot drift apart. */
-internal val ExplorerTabs: List<String> = listOf(SourceControlTab, "Files")
+/** The drawer's Files tab. Stated once so the segmented control and the default cannot drift. */
+internal const val FilesTab = "Files"
+
+/** The drawer's tabs. The first is the default; the segmented control shows Files first. */
+internal val ExplorerTabs: List<String> = listOf(SourceControlTab, FilesTab)
 
 /** Spec 4.1: how many edits Undo can step back through before the oldest one is dropped. */
 private const val UNDO_HISTORY_LIMIT = 100
 
 /**
- * The rows the drawer's list puts above every file: the project root and the PROJECT label. A
- * tree index has to be offset by them before it means anything to LazyColumn, and the number lives
- * here so the offset and the two `item` blocks above cannot drift apart.
+ * The rows the drawer's list puts above every file: none anymore. The project root row and the
+ * PROJECT label were removed (the header row carries the project name), so a tree index already
+ * means a LazyColumn index. The constant stays so the reveal math keeps a name for its offset.
  */
-internal const val TreeListHeaderItems = 2
+internal const val TreeListHeaderItems = 0
 
 /**
  * Height of the file tab strip, 34 dp. It has to be stated rather than wrapped around the tabs,

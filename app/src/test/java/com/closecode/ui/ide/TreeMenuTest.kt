@@ -40,6 +40,7 @@ class TreeMenuTest {
             listOf(
                 TreeAction.NEW_FILE,
                 TreeAction.NEW_FOLDER,
+                TreeAction.DUPLICATE,
                 TreeAction.RENAME,
                 TreeAction.MOVE,
                 TreeAction.COPY,
@@ -51,9 +52,8 @@ class TreeMenuTest {
         assertEquals(
             listOf(
                 TreeAction.RENAME,
-                TreeAction.MOVE,
-                TreeAction.COPY,
-                TreeAction.SHARE,
+                TreeAction.DUPLICATE,
+                TreeAction.COPY_PATH,
                 TreeAction.DELETE,
             ),
             fileMenu,
@@ -64,8 +64,10 @@ class TreeMenuTest {
     fun foldersAreNeverHandedToAnotherAppAndFilesAlwaysCan() {
         // A content URI for a directory has no receiver, and the app's projects live in private
         // storage, so the share sheet is only ever offered something it can actually take.
+        // (Sharing now lives outside the tree menu; the row offers Copy path instead.)
         assertFalse(TreeAction.SHARE in actionsForTree(folder("app")))
-        assertTrue(TreeAction.SHARE in actionsForTree(file("app/README.md")))
+        assertFalse(TreeAction.SHARE in actionsForTree(file("app/README.md")))
+        assertTrue(TreeAction.COPY_PATH in actionsForTree(file("app/README.md")))
     }
 
     @Test
