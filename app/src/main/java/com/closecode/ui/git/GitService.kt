@@ -326,6 +326,38 @@ class GitService(private val root: File) {
         }
     }
 
+    /**
+     * One file's bytes at two points in history: the commit itself and its first parent.
+     * Null means "no such file there" — added files have no parent side, deleted files
+     * have no commit side. The pair feeds the same side-by-side diff as the working tree.
+     */
+    fun commitFileContents(id: String, relativePath: String): Result<Pair<ByteArray?, ByteArray?>> =
+        runCatching {
+            open().use { git ->
+                val repo = git.repository
+                org.eclipse.jgit.revwalk.RevWalk(repo).use { walk ->
+                    val commit = walk.parseCommit(repo.resolve(id))
+                        ?: throw IllegalArgumentException("No such commit.")
+                    val parent = commit.parents.firstOrNull()?.let { walk.parseCommit(it) }
+                    fun bytesAt(tree: org.eclipse.jgit.lib.ObjectId?): ByteArray? {
+                        if (tree == null) return null
+                        val tw = org.eclipse.jgit.treewalk.TreeWalk(repo).apply {
+                            addTree(tree)
+                            isRecursive = true
+                            filter = org.eclipse.jgit.treewalk.filter.PathFilter.create(relativePath)
+                        }
+                        val objectId = if (tw.next()) tw.getObjectId(0) else null
+                        tw.close()
+                        if (objectId == null || objectId == org.eclipse.jgit.lib.ObjectId.zeroId()) {
+                            return null
+                        }
+                        return repo.newObjectReader().use { it.open(objectId).bytes }
+                    }
+                    bytesAt(parent?.tree) to bytesAt(commit.tree)
+                }
+            }
+        }
+
     fun branches(): Result<List<String>> = runCatching {
         open().use { git ->
             git.branchList().call()

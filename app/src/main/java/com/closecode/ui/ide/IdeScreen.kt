@@ -363,6 +363,9 @@ internal fun IdeScreen(
     // A side-by-side diff opened from the Source Control tab. Full-screen over everything,
     // like the clone route, because a two-column diff has no business inside the drawer.
     var diffPath by remember { mutableStateOf<String?>(null) }
+    // A commit's before/after diff opened from a History row. Same full-screen treatment:
+    // commit id plus path, closed by the same Back order as the working-tree diff.
+    var commitDiff by remember { mutableStateOf<Pair<String, String>?>(null) }
     // The full build log over everything, for the same reason: errors want the whole screen.
     var buildLogOpen by remember { mutableStateOf(false) }
     // Written by that route when it re-authenticates. The drawer caches the token for as long as
@@ -1124,6 +1127,7 @@ internal fun IdeScreen(
             "menu".takeIf { menuOpen },
             "explorer".takeIf { explorerOpen },
             "diff".takeIf { diffPath != null },
+            "commitDiff".takeIf { commitDiff != null },
             "buildLog".takeIf { buildLogOpen },
             "findReturn".takeIf { findReturn },
         ).joinToString("+").ifEmpty { "none" }
@@ -1184,6 +1188,10 @@ internal fun IdeScreen(
             diffPath != null -> {
                 BackLog.press("main", "${backState()} branch=diff")
                 diffPath = null
+            }
+            commitDiff != null -> {
+                BackLog.press("main", "${backState()} branch=commitDiff")
+                commitDiff = null
             }
             buildLogOpen -> {
                 BackLog.press("main", "${backState()} branch=buildLog")
@@ -1475,6 +1483,7 @@ internal fun IdeScreen(
                                     // count bubble: no second source to drift apart from.
                                     changeCount = gitLetters.size,
                                     onDiff = { diffPath = it },
+                                    onCommitDiff = { id, path -> commitDiff = id to path },
                                     onAction = { action, file -> onTreeAction(action, file) },
                                     onSelect = { file ->
                                         // The row is the working point for the next creation whether it
@@ -1919,6 +1928,15 @@ internal fun IdeScreen(
                 projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                 path = path,
                 onBack = ::handleBackPress,
+            )
+        }
+
+        commitDiff?.let { (id, path) ->
+            DiffScreen(
+                projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                path = path,
+                onBack = ::handleBackPress,
+                commitId = id,
             )
         }
 
@@ -2496,6 +2514,8 @@ private fun IdeExplorer(
     changeCount: Int,
     // Opens a side-by-side diff of the tapped change row. The route lives at screen level.
     onDiff: (String) -> Unit = {},
+    // Opens a commit's before/after diff of one history file. Same routing.
+    onCommitDiff: (commitId: String, path: String) -> Unit = { _, _ -> },
     // How many times the stored GitHub token has been replaced. Passed on so the panel re-reads it
     // instead of going on with the copy it took when it was composed.
     githubTokenEpoch: Int,
@@ -2720,6 +2740,7 @@ private fun IdeExplorer(
                 onCloneRequest = onCloneRequest,
                 tokenEpoch = githubTokenEpoch,
                 onDiff = onDiff,
+                onCommitDiff = onCommitDiff,
                 // One modifier or the other, never both. Appending `size(0.dp)` after
                 // `width(...).fillMaxHeight()` could not work: those hand the child an incoming
                 // minimum of full width by full height, `size` is enforce-incoming, so the zero was

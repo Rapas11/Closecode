@@ -481,6 +481,63 @@ class GitServiceTest {
     }
 
     @Test
+    fun commitFilesListsWhatTheCommitTouched() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        write("keep.kt", "keep\n")
+        git.stage(listOf("keep.kt")).getOrThrow()
+        git.commit("first").getOrThrow()
+
+        write("keep.kt", "keep changed\n")
+        write("new.kt", "new\n")
+        git.stage(listOf("keep.kt", "new.kt")).getOrThrow()
+        val id = git.commit("second").getOrThrow()
+
+        assertEquals(listOf("keep.kt", "new.kt"), git.commitFiles(id).getOrThrow())
+        val first = git.history(100).getOrThrow().last()
+        assertEquals(listOf("keep.kt"), git.commitFiles(first.id).getOrThrow())
+    }
+
+    @Test
+    fun commitContentsAreBeforeAndAfter() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        write("main.kt", "line1\nline2\n")
+        git.stage(listOf("main.kt")).getOrThrow()
+        git.commit("first").getOrThrow()
+
+        write("main.kt", "line1\nLINE2\n")
+        git.stage(listOf("main.kt")).getOrThrow()
+        val id = git.commit("second").getOrThrow()
+
+        val (before, after) = git.commitFileContents(id, "main.kt").getOrThrow()
+        assertEquals("line1\nline2\n", before?.toString(Charsets.UTF_8))
+        assertEquals("line1\nLINE2\n", after?.toString(Charsets.UTF_8))
+    }
+
+    @Test
+    fun addedFilesHaveNoBeforeAndDeletedFilesHaveNoAfter() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        write("gone.kt", "gone\n")
+        git.stage(listOf("gone.kt")).getOrThrow()
+        git.commit("first").getOrThrow()
+
+        write("added.kt", "added\n")
+        File(tmp.root, "gone.kt").delete()
+        git.stage(listOf("added.kt", "gone.kt")).getOrThrow()
+        val id = git.commit("second").getOrThrow()
+
+        val (beforeAdded, afterAdded) = git.commitFileContents(id, "added.kt").getOrThrow()
+        assertEquals(null, beforeAdded)
+        assertEquals("added\n", afterAdded?.toString(Charsets.UTF_8))
+
+        val (beforeGone, afterGone) = git.commitFileContents(id, "gone.kt").getOrThrow()
+        assertEquals("gone\n", beforeGone?.toString(Charsets.UTF_8))
+        assertEquals(null, afterGone)
+    }
+
+    @Test
     fun discardRemovesStagedNewFiles() {
         val git = committedRepo("line1\n")
         write("new.kt", "x\n")

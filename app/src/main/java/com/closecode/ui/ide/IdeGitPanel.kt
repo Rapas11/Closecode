@@ -122,6 +122,8 @@ fun IdeGitPanel(
     // Opens a side-by-side diff of the file. The panel lives in the drawer, so the route itself
     // lives at screen level; this only says which path was tapped.
     onDiff: (String) -> Unit = {},
+    // Opens a commit's before/after diff of one file. Same routing: which commit and path.
+    onCommitDiff: (commitId: String, path: String) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -371,6 +373,7 @@ fun IdeGitPanel(
                         openId = historyOpen,
                         files = historyFiles,
                         onMore = { historyShown = (historyShown + 50).coerceAtMost(100) },
+                        onFile = { id, path -> onCommitDiff(id, path) },
                         onToggle = { commit ->
                             historyOpen = if (historyOpen == commit.id) null else commit.id
                             if (historyOpen != null && historyFiles[commit.id] == null) {
@@ -1313,19 +1316,21 @@ private fun GitHubSection(
 }
 
 /**
- * A side-by-side diff of one file: HEAD on the left, the working tree on the right. Changed
- * rows tint green on the new side and red on the old side; added and removed lines show on
- * their side only. Each side scrolls sideways on its own (one shared state per side, so all
- * rows travel together) while the rows scroll vertically as one.
+ * A side-by-side diff of one file. Working-tree mode (no commit id): HEAD on the left,
+ * the working tree on the right. Commit mode: the commit's parent on the left, the commit
+ * itself on the right — the before and after of that commit. Changed rows tint green on
+ * the new side and red on the old side; added and removed lines show on their side only.
+ * Each side scrolls sideways on its own (one shared state per side, so all rows travel
+ * together) while the rows scroll vertically as one.
  */
 @Composable
-internal fun DiffScreen(projectRoot: File?, path: String, onBack: () -> Unit) {
+internal fun DiffScreen(projectRoot: File?, path: String, onBack: () -> Unit, commitId: String? = null) {
     val c = LocalPageColors.current
-    var rows by remember(path) { mutableStateOf<List<com.closecode.ui.git.DiffRow>?>(null) }
-    var failed by remember(path) { mutableStateOf(false) }
-    var binary by remember(path) { mutableStateOf(false) }
+    var rows by remember(path, commitId) { mutableStateOf<List<com.closecode.ui.git.DiffRow>?>(null) }
+    var failed by remember(path, commitId) { mutableStateOf(false) }
+    var binary by remember(path, commitId) { mutableStateOf(false) }
 
-    LaunchedEffect(path) {
+    LaunchedEffect(path, commitId) {
         val root = projectRoot
         if (root == null) {
             failed = true
@@ -1333,9 +1338,15 @@ internal fun DiffScreen(projectRoot: File?, path: String, onBack: () -> Unit) {
         }
         val loaded = withContext(Dispatchers.IO) {
             runCatching {
-                val old = GitService(root).fileAtHead(path).getOrNull()
-                val file = File(root, path)
-                old to if (file.isFile) file.readBytes() else ByteArray(0)
+                val id = commitId
+                if (id == null) {
+                    val old = GitService(root).fileAtHead(path).getOrNull()
+                    val file = File(root, path)
+                    old to if (file.isFile) file.readBytes() else ByteArray(0)
+                } else {
+                    val sides = GitService(root).commitFileContents(id, path).getOrNull()
+                    (sides?.first) to (sides?.second ?: ByteArray(0))
+                }
             }.getOrNull()
         }
         if (loaded == null) {
@@ -1390,7 +1401,8 @@ internal fun DiffScreen(projectRoot: File?, path: String, onBack: () -> Unit) {
                 )
             }
             Text(
-                text = path.substringAfterLast('/'),
+                text = if (commitId == null) path.substringAfterLast('/') else
+                    "${path.substringAfterLast('/')} · ${commitId.take(7)}",
                 color = c.text,
                 fontSize = 14.sp,
                 fontFamily = Sans,
@@ -1461,6 +1473,7 @@ private fun HistorySection(
     files: Map<String, List<String>>,
     onMore: () -> Unit,
     onToggle: (GitCommit) -> Unit,
+    onFile: (commitId: String, path: String) -> Unit = { _, _ -> },
 ) {
     val c = LocalPageColors.current
     SectionLabel("HISTORY · ${commits?.size ?: 0}")
@@ -1551,15 +1564,28 @@ private fun HistorySection(
                             }
                             else -> {
                                 rows.forEach { path ->
-                                    Text(
-                                        text = path,
-                                        color = c.text,
-                                        fontSize = 11.sp,
-                                        fontFamily = Mono,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(top = 2.dp),
-                                    )
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable(onClick = { onFile(commit.id, path) })
+                                            .padding(top = 2.dp),
+                                    ) {
+                                        Text(
+                                            text = path,
+                                            color = c.accent,
+                                            fontSize = 11.sp,
+                                            fontFamily = Mono,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f),
+                                        )
+                                        CcIcon(
+                                            CcIcons.Chevron,
+                                            c.textFaint,
+                                            14.dp,
+                                        )
+                                    }
                                 }
                             }
                         }
