@@ -59,6 +59,7 @@ import com.closecode.ui.github.GitHubRepo
 import com.closecode.ui.github.TokenStore
 import com.closecode.ui.git.GitChange
 import com.closecode.ui.git.GitChangeKind
+import com.closecode.ui.git.GitCommit
 import com.closecode.ui.git.GitService
 import com.closecode.ui.git.GitSnapshot
 import com.closecode.ui.git.splitDiff
@@ -167,6 +168,14 @@ fun IdeGitPanel(
     // Read straight from `refs/stash` rather than carried on GitSnapshot, so restoring a stash
     // shows up after the reload that follows it without reshaping every snapshot test.
     var hasStash by remember(projectRoot) { mutableStateOf(false) }
+    // Commit history: up to 100 rows, newest first. Loaded with the snapshot so a commit
+    // made here appears without reopening the tab; null until the first load finishes.
+    var history by remember(projectRoot) { mutableStateOf<List<GitCommit>?>(null) }
+    // How many history rows show: 50 first, the rest behind a Load-more button.
+    var historyShown by remember(projectRoot) { mutableStateOf(50) }
+    // The expanded commit, by id. Its file list loads on demand, not with the history.
+    var historyOpen by remember(projectRoot) { mutableStateOf<String?>(null) }
+    var historyFiles by remember(projectRoot) { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
 
     suspend fun reload() {
         val service = git
@@ -188,6 +197,7 @@ fun IdeGitPanel(
                     GitUiState.Failed(snap.exceptionOrNull()?.message ?: "Could not read the repository.")
                 } else {
                     branches = service.branches().getOrElse { emptyList() }
+                    history = service.history(100).getOrElse { emptyList() }
                     GitUiState.Loaded(snap.getOrThrow())
                 }
             }
@@ -350,6 +360,30 @@ fun IdeGitPanel(
                         onCommit = {
                             val text = message
                             actOn { commit(text).onSuccess { message = "" } }
+                        },
+                    )
+                }
+
+                if (current.snap.hasCommits) {
+                    HistorySection(
+                        commits = history,
+                        shown = historyShown,
+                        openId = historyOpen,
+                        files = historyFiles,
+                        onMore = { historyShown = (historyShown + 50).coerceAtMost(100) },
+                        onToggle = { commit ->
+                            historyOpen = if (historyOpen == commit.id) null else commit.id
+                            if (historyOpen != null && historyFiles[commit.id] == null) {
+                                val service = git
+                                if (service != null) {
+                                    scope.launch {
+                                        val rows = withContext(Dispatchers.IO) {
+                                            service.commitFiles(commit.id).getOrElse { emptyList() }
+                                        }
+                                        historyFiles = historyFiles + (commit.id to rows)
+                                    }
+                                }
+                            }
                         },
                     )
                 }
@@ -1411,6 +1445,150 @@ internal fun DiffScreen(projectRoot: File?, path: String, onBack: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Commit history: newest first, up to 100 rows with 50 shown before Load more.
+ * Tapping a row expands it to the full id, the date and the files that commit
+ * touched, so the reader sees what changed and when without leaving the drawer.
+ */
+@Composable
+private fun HistorySection(
+    commits: List<GitCommit>?,
+    shown: Int,
+    openId: String?,
+    files: Map<String, List<String>>,
+    onMore: () -> Unit,
+    onToggle: (GitCommit) -> Unit,
+) {
+    val c = LocalPageColors.current
+    SectionLabel("HISTORY · ${commits?.size ?: 0}")
+    when {
+        commits == null -> {
+            Text(
+                text = "Loading history…",
+                color = c.textMuted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(start = 17.dp, end = 14.dp, top = 6.dp),
+            )
+        }
+        commits.isEmpty() -> {
+            Text(
+                text = "No commits yet. Commit staged files to start the history.",
+                color = c.textMuted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(start = 17.dp, end = 14.dp, top = 6.dp),
+            )
+        }
+        else -> {
+            commits.take(shown.coerceAtMost(commits.size)).forEach { commit ->
+                val open = openId == commit.id
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = { onToggle(commit) })
+                        .padding(start = 17.dp, end = 14.dp, top = 8.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = commit.shortId,
+                            color = c.accent,
+                            fontSize = 11.sp,
+                            fontFamily = Mono,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = commit.summary,
+                            color = c.text,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                            maxLines = if (open) Int.MAX_VALUE else 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Text(
+                        text = "${commit.author} · ${relativeTime(commit.whenMillis)}",
+                        color = c.textMuted,
+                        fontSize = 11.sp,
+                        fontFamily = Sans,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                    if (open) {
+                        Text(
+                            text = commit.id,
+                            color = c.textFaint,
+                            fontSize = 10.sp,
+                            fontFamily = Mono,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp),
+                        )
+                        val rows = files[commit.id]
+                        when {
+                            rows == null -> {
+                                Text(
+                                    text = "Loading files…",
+                                    color = c.textMuted,
+                                    fontSize = 11.sp,
+                                    fontFamily = Sans,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
+                            rows.isEmpty() -> {
+                                Text(
+                                    text = "No file changes listed for this commit.",
+                                    color = c.textMuted,
+                                    fontSize = 11.sp,
+                                    fontFamily = Sans,
+                                    modifier = Modifier.padding(top = 4.dp),
+                                )
+                            }
+                            else -> {
+                                rows.forEach { path ->
+                                    Text(
+                                        text = path,
+                                        color = c.text,
+                                        fontSize = 11.sp,
+                                        fontFamily = Mono,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.padding(top = 2.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (shown < commits.size) {
+                Text(
+                    text = "Show more (${commits.size - shown} older)",
+                    color = c.accent,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier
+                        .clickable(onClick = onMore)
+                        .padding(start = 17.dp, end = 14.dp, top = 10.dp, bottom = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+private fun relativeTime(whenMillis: Long): String {
+    val minutes = ((System.currentTimeMillis() - whenMillis) / 60_000).coerceAtLeast(0)
+    return when {
+        minutes < 1 -> "just now"
+        minutes < 60 -> "$minutes min ago"
+        minutes < 24 * 60 -> "${minutes / 60} hr ago"
+        else -> "${minutes / (24 * 60)} days ago"
     }
 }
 

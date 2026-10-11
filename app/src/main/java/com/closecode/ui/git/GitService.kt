@@ -292,6 +292,40 @@ class GitService(private val root: File) {
         }
     }
 
+    /**
+     * Paths one commit touched, against its first parent (or against nothing for the
+     * root commit). Powers the History section's expandable rows. Sorted, so the eye
+     * can scan a large commit the same way every time.
+     */
+    fun commitFiles(id: String): Result<List<String>> = runCatching {
+        open().use { git ->
+            val repo = git.repository
+            org.eclipse.jgit.revwalk.RevWalk(repo).use { walk ->
+                val commit = walk.parseCommit(repo.resolve(id))
+                    ?: throw IllegalArgumentException("No such commit.")
+                val parent = commit.parents.firstOrNull()?.let { walk.parseCommit(it) }
+                repo.newObjectReader().use { reader ->
+                    fun parser(tree: org.eclipse.jgit.lib.ObjectId?): org.eclipse.jgit.treewalk.AbstractTreeIterator =
+                        if (tree == null) {
+                            org.eclipse.jgit.treewalk.EmptyTreeIterator()
+                        } else {
+                            org.eclipse.jgit.treewalk.CanonicalTreeParser().apply { reset(reader, tree) }
+                        }
+                    org.eclipse.jgit.diff.DiffFormatter(
+                        org.eclipse.jgit.util.io.DisabledOutputStream.INSTANCE,
+                    ).use { formatter ->
+                        formatter.setRepository(repo)
+                        formatter.scan(parser(parent?.tree), parser(commit.tree))
+                            .map { entry ->
+                                if (entry.newPath != "/dev/null") entry.newPath else entry.oldPath
+                            }
+                            .sorted()
+                    }
+                }
+            }
+        }
+    }
+
     fun branches(): Result<List<String>> = runCatching {
         open().use { git ->
             git.branchList().call()

@@ -227,6 +227,20 @@ internal fun IdeScreen(
     LaunchedEffect(slug, collapsedFolders) {
         kvStore.putString("collapsed_$slug", collapsedFolders.joinToString(""))
     }
+    // Folders start closed: on the first open of a project (no stored choice yet) every
+    // folder collapses once the tree loads, so the reader opens only what they need.
+    // The choice persists afterwards, so reopening a folder survives relaunches.
+    // Captured before the write-back above ever runs, so first-run detection survives it.
+    val hadStoredCollapsed = remember(slug) { kvStore.getString("collapsed_$slug", null) != null }
+    var collapsedSeeded by remember(slug) { mutableStateOf(false) }
+    LaunchedEffect(slug, diskTree) {
+        if (!collapsedSeeded && !hadStoredCollapsed && diskTree.isNotEmpty()) {
+            collapsedFolders = diskTree
+                .filter { it.kind == FileKind.Folder }
+                .map { it.path }.toSet()
+            collapsedSeeded = true
+        }
+    }
     // Reopening restores the last session: open tabs, the active file, and each file's caret
     // and scroll. Entries use the unit separator like the collapsed set; a corrupt value parses
     // to nothing rather than to a tab that does not exist.
@@ -1233,8 +1247,10 @@ internal fun IdeScreen(
             val activePath = activeFile?.path ?: active
             // Terminal owns its chrome: no app top bar there — drawer, undo, save and run are
             // editor actions, and the drawer still opens from the left edge. Everywhere else
-            // the bar stays exactly as it is.
+            // the bar stays exactly as it is. The bar slides with the drawer so header,
+            // editor and bottom bar flow as one and the drawer keeps its own screen.
             if (activePanel != "Terminal") {
+            Box(Modifier.fillMaxWidth().padding(start = drawerWidth)) {
             IdeTopBar(
                 projectName = projectName,
                 dirty = isDirtyTab(active),
@@ -1260,6 +1276,7 @@ internal fun IdeScreen(
                 onMore = { menuOpen = true },
                 menuActive = menuOpen,
             )
+            }
             }
 
             when (activePanel) {
@@ -1342,7 +1359,8 @@ internal fun IdeScreen(
                 )
                 else -> {
                     // Code, the block editor and Preview share one path bar, so the way back to the
-                    // code is always one `<>` tap away.
+                    // code is always one `<>` tap away. Slides with the drawer like the top bar.
+                    Box(Modifier.fillMaxWidth().padding(start = drawerWidth)) {
                     IdePathBar(
                         filePath = activeFile?.path ?: active,
                         previewable = isPreviewable(activeFile?.kind, active),
@@ -1361,6 +1379,7 @@ internal fun IdeScreen(
                             activePanel = "Preview"
                         },
                     )
+                    }
                     when (activePanel) {
                         "Preview" -> IdePreviewPanel(
                             fileName = activeName,
@@ -1592,7 +1611,9 @@ internal fun IdeScreen(
                             "More" -> moreOpen = true
                         }
                     },
-                    modifier = Modifier.onSizeChanged { navBarHeightPx = it.height },
+                    // Slides with the drawer like the top bar so all three flow as one.
+                    modifier = Modifier.onSizeChanged { navBarHeightPx = it.height }
+                        .padding(start = drawerWidth),
                 )
             }
         }
@@ -2565,38 +2586,51 @@ private fun IdeExplorer(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            HeaderIconButton(
-                icon = CcIcons.FilePlus,
-                label = "New file",
-                tint = c.iconTint,
-                boxSize = 30.dp,
-                iconSize = 17.dp,
-                onClick = onCreateFile,
-            )
-            HeaderIconButton(
-                icon = CcIcons.FolderPlus,
-                label = "New folder",
-                tint = c.iconTint,
-                boxSize = 30.dp,
-                iconSize = 17.dp,
-                onClick = onCreateFolder,
-            )
-            HeaderIconButton(
-                icon = CcIcons.Refresh,
-                label = "Refresh",
-                tint = c.iconTint,
-                boxSize = 30.dp,
-                iconSize = 17.dp,
-                onClick = onRefresh,
-            )
-            HeaderIconButton(
-                icon = CcIcons.CollapseAll,
-                label = "Collapse all",
-                tint = c.iconTint,
-                boxSize = 30.dp,
-                iconSize = 17.dp,
-                onClick = onCollapseAll,
-            )
+            // Each tab owns its header: file actions on Files, version-control
+            // actions on Source Control — never file buttons on the Git side.
+            if (tab == FilesTab) {
+                HeaderIconButton(
+                    icon = CcIcons.FilePlus,
+                    label = "New file",
+                    tint = c.iconTint,
+                    boxSize = 30.dp,
+                    iconSize = 17.dp,
+                    onClick = onCreateFile,
+                )
+                HeaderIconButton(
+                    icon = CcIcons.FolderPlus,
+                    label = "New folder",
+                    tint = c.iconTint,
+                    boxSize = 30.dp,
+                    iconSize = 17.dp,
+                    onClick = onCreateFolder,
+                )
+                HeaderIconButton(
+                    icon = CcIcons.Refresh,
+                    label = "Refresh",
+                    tint = c.iconTint,
+                    boxSize = 30.dp,
+                    iconSize = 17.dp,
+                    onClick = onRefresh,
+                )
+                HeaderIconButton(
+                    icon = CcIcons.CollapseAll,
+                    label = "Collapse all",
+                    tint = c.iconTint,
+                    boxSize = 30.dp,
+                    iconSize = 17.dp,
+                    onClick = onCollapseAll,
+                )
+            } else {
+                HeaderIconButton(
+                    icon = CcIcons.Refresh,
+                    label = "Refresh status",
+                    tint = c.iconTint,
+                    boxSize = 30.dp,
+                    iconSize = 17.dp,
+                    onClick = onRefresh,
+                )
+            }
         }
 
         // Both lists stay composed so the Source Control tab never loses a half-typed commit message

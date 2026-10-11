@@ -1054,9 +1054,9 @@ internal fun IdeTerminal(
             )
         }
 
-        // The key row sits below everything else: above the keyboard when it is open, above
-        // the commands panel when that replaces it, pinned to the bottom otherwise. It never
-        // hides — the bolt needs somewhere to live even before the keyboard is summoned.
+        // The key row sits at the very bottom: above the keyboard when it is open, pinned
+        // to the bottom otherwise. It never hides — the bolt needs somewhere to live even
+        // before the keyboard is summoned.
         TerminalKeyBar(
             modifier = Modifier.onSizeChanged { keyBarHeightPx = it.height },
             ctrl = ctrl,
@@ -1133,10 +1133,10 @@ internal fun IdeTerminal(
         }
     }
 
-    // Follow is off — and the commands panel is not covering the prompt area: a pill
-    // back to the bottom, floating above the key row. The blue dot says output arrived
-    // while the reader was away; tapping re-engages follow and jumps.
-    if (!session.followOutput && !commandsPanelOpen) {
+    // Follow is off — and neither the commands panel nor its form is covering the
+    // prompt area: a pill back to the bottom, floating above the key row. The blue dot
+    // says output arrived while the reader was away; tapping re-engages follow and jumps.
+    if (!session.followOutput && !commandsPanelOpen && !commandFormOpen) {
         Box(
             Modifier
                 .align(Alignment.BottomEnd)
@@ -1389,10 +1389,10 @@ private fun CommandsPanel(
     Column(
         Modifier
             .fillMaxWidth()
-            // The form wraps its content so Cancel and Create sit with no dead space under
-            // them; the list keeps the keyboard height so swapping with the keyboard jumps
-            // nothing.
-            .then(if (formOpen) Modifier.wrapContentHeight() else Modifier.height(heightDp.dp))
+            // Always the keyboard height so swapping with the keyboard jumps nothing and
+            // no dead space opens under the panel. The form docks its field and buttons
+            // to the bottom via the weight spacer in the form branch.
+            .height(heightDp.dp)
             .background(c.fieldBg)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
@@ -1500,6 +1500,9 @@ private fun CommandsPanel(
                 )
             }
         } else {
+            // Pushes the field and buttons to the bottom so they dock at the keyboard
+            // with no dead space under them.
+            Spacer(Modifier.weight(1f))
             Spacer(Modifier.height(8.dp))
             // The field carries its own hint in a faded tone, so placeholder and typed text
             // can never be mistaken for each other.
