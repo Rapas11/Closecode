@@ -1113,6 +1113,38 @@ internal fun IdeScreen(
                 ),
             )
             toast = "Build successful · 0 errors"
+            // On-device packaging (Part B): contract check now, toolchain-gated steps
+            // report setup instead of pretending. Analysis passing is not an APK.
+            val engine = com.closecode.build.BuildEngine(
+                com.closecode.build.ToolchainStore(
+                    java.io.File(context.filesDir, "toolchain"),
+                    kvStore,
+                ),
+            )
+            val projectRoot = runCatching { repository.projectDir(slug) }.getOrNull()
+            if (projectRoot != null) {
+                when (val outcome = engine.build(projectRoot, slug)) {
+                    is com.closecode.build.BuildOutcome.ContractFailed -> {
+                        val first = outcome.violations.first()
+                        logLines.appendCapped(
+                            LogLine(
+                                LogLevel.ERROR,
+                                "Package",
+                                "Not packable: ${first.path} — ${first.message}",
+                            ),
+                        )
+                    }
+                    com.closecode.build.BuildOutcome.NeedsSetup ->
+                        logLines.appendCapped(
+                            LogLine(
+                                LogLevel.INFO,
+                                "Package",
+                                "Build tools are not downloaded yet — one Wi-Fi setup, then offline.",
+                            ),
+                        )
+                    else -> Unit
+                }
+            }
         }
     }
     // The Android back button closes what is open, newest first, in one fixed order, and only
