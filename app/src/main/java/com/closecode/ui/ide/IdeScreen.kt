@@ -61,6 +61,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -389,6 +390,54 @@ internal fun IdeScreen(
     var explorerFilter by remember { mutableStateOf("") }
     var toast by remember { mutableStateOf<String?>(null) }
     var building by remember { mutableStateOf(false) }
+    // Phase 3 install state: the APK the engine produced (null until packaging lands
+    // one), and where its install stands. The panel draws rows only for a real file.
+    var builtApkPath by remember(slug) { mutableStateOf<String?>(null) }
+    var installState by remember(slug) {
+        mutableStateOf<com.closecode.build.InstallState>(
+            com.closecode.build.InstallState.Idle,
+        )
+    }
+    // A plain stat per composition (microseconds): always fresh after a build without
+    // depending on declaration order. The engine will set builtApkPath when packaging
+    // lands; until then the conventional output path is probed directly.
+    val builtApk: java.io.File? =
+        builtApkPath?.let { java.io.File(it) }?.takeIf { it.isFile }
+            ?: runCatching { repository.projectDir(slug) }.getOrNull()
+                ?.let { java.io.File(it, "build/closecode/app-debug.apk") }
+                ?.takeIf { it.isFile }
+    // The system's answer to our install session, wired into the state machine.
+    DisposableEffect(slug) {
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(
+                context: android.content.Context?,
+                intent: android.content.Intent?,
+            ) {
+                val status = intent?.getIntExtra(
+                    android.content.pm.PackageInstaller.EXTRA_STATUS,
+                    -100,
+                ) ?: return
+                val packageName = intent.getStringExtra(
+                    android.content.pm.PackageInstaller.EXTRA_PACKAGE_NAME,
+                ).orEmpty()
+                val message = intent.getStringExtra(
+                    android.content.pm.PackageInstaller.EXTRA_STATUS_MESSAGE,
+                ).orEmpty()
+                installState = com.closecode.build.nextInstallState(
+                    installState,
+                    com.closecode.build.InstallEvent.SystemStatus(status, packageName, message),
+                )
+            }
+        }
+        val filter = android.content.IntentFilter(
+            com.closecode.build.InstallHelper.ACTION_INSTALL_STATUS,
+        )
+        androidx.core.content.ContextCompat.registerReceiver(
+            context, receiver, filter,
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        onDispose { context.unregisterReceiver(receiver) }
+    }
     // The build and logcat streams. The log still carries nothing but what a build reports; the
     // build now reports a real sweep of the project's own files.
     val logLines = remember { mutableStateListOf<LogLine>() }
@@ -1408,6 +1457,69 @@ internal fun IdeScreen(
                     onAskAi = { activePanel = "AI" },
                     onBack = ::handleBackPress,
                     modifier = Modifier.weight(1f),
+                    apkName = builtApk?.let { file ->
+                        val kb = (file.length() + 512) / 1024
+                        "app-debug.apk · $kb KB"
+                    },
+                    installLabel = when (val state = installState) {
+                        com.closecode.build.InstallState.Idle -> "Install"
+                        is com.closecode.build.InstallState.Installing -> "Installing…"
+                        is com.closecode.build.InstallState.Installed -> "Open app"
+                        com.closecode.build.InstallState.NeedsPermission -> "Allow install"
+                        is com.closecode.build.InstallState.Failed -> "Try install again"
+                    },
+                    appInstalled = runCatching {
+                        val manifest = diskTree.firstOrNull { it.path.endsWith("AndroidManifest.xml") }
+                            ?.let { diskContents[it.path] }.orEmpty()
+                        val pkg = com.closecode.build.TemplateContract.manifestPackage(manifest)
+                            ?: com.closecode.build.TemplateContract.packageForSlug(slug)
+                        com.closecode.build.InstallHelper.isInstalled(context, pkg)
+                    }.getOrDefault(false),
+                    onInstall = {
+                        val apk = builtApk ?: return@IdeBuildPanel
+                        val session = com.closecode.build.InstallHelper.install(context, apk)
+                        if (session < 0) {
+                            installState = com.closecode.build.InstallState.NeedsPermission
+                            // Android 12+: one-time allow-this-source toggle the app opens
+                            // settings for but can never flip itself.
+                            val settingsIntent = android.content.Intent(
+                                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                android.net.Uri.parse("package:${context.packageName}"),
+                            )
+                            runCatching { context.startActivity(settingsIntent) }
+                        } else {
+                            installState = com.closecode.build.nextInstallState(
+                                installState,
+                                com.closecode.build.InstallEvent.SessionOpened(session),
+                            )
+                        }
+                    },
+                    onOpenApp = {
+                        val manifest = diskTree.firstOrNull { it.path.endsWith("AndroidManifest.xml") }
+                            ?.let { diskContents[it.path] }.orEmpty()
+                        val pkg = com.closecode.build.TemplateContract.manifestPackage(manifest)
+                            ?: com.closecode.build.TemplateContract.packageForSlug(slug)
+                        com.closecode.build.InstallHelper.launchIntent(context, pkg)
+                            ?.let { runCatching { context.startActivity(it) } }
+                    },
+                    onShareApk = {
+                        val apk = builtApk ?: return@IdeBuildPanel
+                        val uri = androidx.core.content.FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            apk,
+                        )
+                        val share = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                            type = "application/vnd.android.package-archive"
+                            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent.createChooser(share, "Share APK"),
+                            )
+                        }
+                    },
                 )
                 "Terminal" -> IdeTerminal(
                     projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),

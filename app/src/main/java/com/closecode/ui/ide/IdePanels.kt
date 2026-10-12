@@ -293,9 +293,9 @@ fun IdeLogcatPanel(
  * being one. Everything drawn here now comes from the sweep: the bar from the files it has done,
  * the steps from the phase it is in, and the result line from the counts and time it measured.
  *
- * Two spec rows have no honest equivalent and are left out on purpose: Share APK (the sweep
- * produces no APK to share) and Open app / Back to editor (nothing is installed or launched).
- * The primary button is View errors on a failed build and Run checks otherwise.
+ * Two spec rows appear only when a real APK exists: Share APK and Open app / install.
+ * With no APK there is nothing to share or launch, so the rows stay hidden rather than
+ * decorative — the primary button is View errors on a failed build and Run checks otherwise.
  */
 @Composable
 internal fun IdeBuildPanel(
@@ -321,6 +321,14 @@ internal fun IdeBuildPanel(
     onAskAi: () -> Unit = {},
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
+    // Phase 3: present only when the engine produced a real APK. Null hides every
+    // install row, so an unbuilt project can never show a decorative Open button.
+    apkName: String? = null,
+    installLabel: String? = null,
+    appInstalled: Boolean = false,
+    onInstall: () -> Unit = {},
+    onOpenApp: () -> Unit = {},
+    onShareApk: () -> Unit = {},
 ) {
     val c = LocalPageColors.current
     val failed = errorCount > 0
@@ -488,6 +496,25 @@ internal fun IdeBuildPanel(
                 )
                 if (hasBuilt) {
                     OutlineButton(label = "Build log", onClick = onOpenLog)
+                    // A real APK unlocks install, launch and share. The install label
+                    // carries the live state (Installing… / Needs permission / Open app).
+                    if (apkName != null && !failed) {
+                        if (appInstalled) {
+                            PrimaryButton(label = "Open app", onClick = onOpenApp)
+                        } else {
+                            PrimaryButton(
+                                label = installLabel ?: "Install",
+                                onClick = onInstall,
+                            )
+                        }
+                        OutlineButton(label = "Share APK", onClick = onShareApk)
+                        Text(
+                            text = apkName,
+                            color = c.textFaint,
+                            fontSize = 11.sp,
+                            fontFamily = Mono,
+                        )
+                    }
                     Text(
                         text = "Last build · ${formatBuildTime(elapsedMs)} · " +
                             "$errorCount ${if (errorCount == 1) "error" else "errors"}",

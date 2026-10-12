@@ -193,6 +193,32 @@ class BuildModuleTest {
     }
 
     @Test
+    fun installWalksIdleToInstalled() {
+        var state: InstallState = InstallState.Idle
+        state = nextInstallState(state, InstallEvent.SessionOpened(7))
+        assertEquals(InstallState.Installing(7), state)
+        state = nextInstallState(state, InstallEvent.SystemStatus(0, "com.x", ""))
+        assertEquals(InstallState.Installed("com.x"), state)
+        state = nextInstallState(state, InstallEvent.Reset)
+        assertEquals(InstallState.Idle, state)
+    }
+
+    @Test
+    fun installDenialAndFailureAreNamed() {
+        assertEquals(
+            InstallState.NeedsPermission,
+            nextInstallState(InstallState.Idle, InstallEvent.StartDenied),
+        )
+        assertEquals(
+            InstallState.Failed("Install failed (-7)."),
+            nextInstallState(
+                InstallState.Installing(1),
+                InstallEvent.SystemStatus(-7, "", ""),
+            ),
+        )
+    }
+
+    @Test
     fun engineReportsContractFailureHonestly() = runBlocking {
         val toolchain = ToolchainStore(File(tmp.root, "toolchain"), InMemoryKeyValueStore())
         val outcome = BuildEngine(toolchain).build(tmp.root, "biz")
