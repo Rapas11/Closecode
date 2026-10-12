@@ -1134,7 +1134,12 @@ internal fun IdeScreen(
                             ),
                         )
                     }
-                    com.closecode.build.BuildOutcome.NeedsSetup ->
+                    is com.closecode.build.BuildOutcome.NeedsSetup -> {
+                        outcome.warnings.forEach { warning ->
+                            logLines.appendCapped(
+                                LogLine(LogLevel.WARN, "Package", warning.message),
+                            )
+                        }
                         logLines.appendCapped(
                             LogLine(
                                 LogLevel.INFO,
@@ -1142,6 +1147,7 @@ internal fun IdeScreen(
                                 "Build tools are not downloaded yet — one Wi-Fi setup, then offline.",
                             ),
                         )
+                    }
                     else -> Unit
                 }
             }

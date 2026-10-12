@@ -56,8 +56,8 @@ class BuildModuleTest {
 
     @Test
     fun emptyDirectoryFailsTheContract() {
-        val violations = TemplateContract.check(tmp.root, "biz")
-        assertTrue(violations.any { it.path.endsWith("AndroidManifest.xml") })
+        val report = TemplateContract.check(tmp.root, "biz")
+        assertTrue(report.violations.any { it.path.endsWith("AndroidManifest.xml") })
     }
 
     @Test
@@ -71,7 +71,9 @@ class BuildModuleTest {
             parentFile.mkdirs()
             writeText("package $pkg\n")
         }
-        assertTrue(TemplateContract.check(tmp.root, "biz").isEmpty())
+        val report = TemplateContract.check(tmp.root, "biz")
+        assertTrue(report.ok)
+        assertTrue(report.warnings.isEmpty())
     }
 
     @Test
@@ -88,8 +90,8 @@ class BuildModuleTest {
         File(tmp.root, "app/build.gradle.kts").writeText(
             "implementation(\"com.evil:lib:1.0\")\n",
         )
-        val violations = TemplateContract.check(tmp.root, "biz")
-        assertTrue(violations.any { "allowlist" in it.message })
+        val report = TemplateContract.check(tmp.root, "biz")
+        assertTrue(report.violations.any { "allowlist" in it.message })
     }
 
     @Test
@@ -146,6 +148,32 @@ class BuildModuleTest {
         assertEquals("home.png", entries[0].png)
         assertEquals("boom", entries[1].error)
         assertTrue(PreviewContract.readIndex(tmp.root).isEmpty())
+    }
+
+    @Test
+    fun importedProjectKeepsItsOwnPackageWithAWarning() {
+        File(tmp.root, "app/src/main/AndroidManifest.xml").apply {
+            parentFile.mkdirs()
+            writeText("<manifest package=\"com.example.biz\"></manifest>")
+        }
+        File(tmp.root, "app/src/main/java/com/example/biz/Main.kt").apply {
+            parentFile.mkdirs()
+            writeText("package com.example.biz\n")
+        }
+        val report = TemplateContract.check(tmp.root, "biz")
+        assertTrue(report.ok)
+        assertEquals(1, report.warnings.size)
+        assertTrue("clash" in report.warnings.single().message)
+    }
+
+    @Test
+    fun manifestWithoutAnyPackageFails() {
+        File(tmp.root, "app/src/main/AndroidManifest.xml").apply {
+            parentFile.mkdirs()
+            writeText("<manifest></manifest>")
+        }
+        val report = TemplateContract.check(tmp.root, "biz")
+        assertTrue(report.violations.any { "No package declared" in it.message })
     }
 
     @Test

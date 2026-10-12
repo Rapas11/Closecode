@@ -20,10 +20,10 @@ class BuildEngine(
 
     suspend fun build(projectDir: File, slug: String): BuildOutcome = withContext(Dispatchers.Default) {
         _state.value = BuildState.Running(Step.ValidateContract, 0f)
-        val violations = TemplateContract.check(projectDir, slug)
-        if (violations.isNotEmpty()) {
-            _state.value = BuildState.Failed(Step.ValidateContract, violations.first().message)
-            return@withContext BuildOutcome.ContractFailed(violations)
+        val report = TemplateContract.check(projectDir, slug)
+        if (!report.ok) {
+            _state.value = BuildState.Failed(Step.ValidateContract, report.violations.first().message)
+            return@withContext BuildOutcome.ContractFailed(report.violations)
         }
         _state.value = BuildState.Running(Step.ResolveDeps, 0.15f)
         val sources = projectDir.walkTopDown()
@@ -35,7 +35,7 @@ class BuildEngine(
         }
         if (!toolchain.isReady()) {
             _state.value = BuildState.RequiresSetup(Step.CompileKotlin)
-            return@withContext BuildOutcome.NeedsSetup
+            return@withContext BuildOutcome.NeedsSetup(report.warnings)
         }
         // Toolchain-gated steps run here (kotlinc/ECJ/D8/aapt2/apksig). Each one shells
         // out to the verified jars and maps diagnostics to file+line cards; until the
@@ -73,7 +73,7 @@ sealed interface BuildState {
 sealed interface BuildOutcome {
     data class ContractFailed(val violations: List<TemplateContract.Violation>) : BuildOutcome
     data object NoSources : BuildOutcome
-    data object NeedsSetup : BuildOutcome
+    data class NeedsSetup(val warnings: List<TemplateContract.Violation> = emptyList()) : BuildOutcome
     data object DriverPending : BuildOutcome
     data class Installed(val apk: File) : BuildOutcome
 }

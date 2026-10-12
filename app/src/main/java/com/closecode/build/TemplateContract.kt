@@ -33,32 +33,66 @@ object TemplateContract {
 
     data class Violation(val path: String, val message: String)
 
+    /**
+     * What the check found. Violations block the build; warnings are shown and
+     * never block — a foreign-looking package risks an install clash with the
+     * original app, so the reader is told, not stopped.
+     */
+    data class Report(val violations: List<Violation>, val warnings: List<Violation>) {
+        val ok: Boolean get() = violations.isEmpty()
+    }
+
     fun packageForSlug(slug: String): String {
         val safe = slug.lowercase().map { if (it.isLetterOrDigit()) it else '_' }
             .joinToString("").trim('_').ifEmpty { "app" }
         return "$PACKAGE_PREFIX$safe"
     }
 
-    fun check(projectDir: File, slug: String): List<Violation> {
+    private val PackageName = Regex("[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+")
+
+    /** The package a manifest declares, from `package=` or `namespace =`. */
+    fun manifestPackage(manifestText: String): String? {
+        val fromPackage = Regex("package=\"([^\"]+)\"").find(manifestText)?.groupValues?.get(1)
+        if (fromPackage != null) return fromPackage
+        return Regex("namespace\\s*=\\s*\"([^\"]+)\"").find(manifestText)?.groupValues?.get(1)
+    }
+
+    fun check(projectDir: File, slug: String): Report {
         val problems = mutableListOf<Violation>()
-        val expectedPackage = packageForSlug(slug)
+        val warnings = mutableListOf<Violation>()
 
         val manifest = File(projectDir, "app/src/main/AndroidManifest.xml")
-        if (!manifest.isFile) {
-            problems.add(Violation("app/src/main/AndroidManifest.xml", "Missing. Recreate the project from a template."))
+        val manifestText = if (manifest.isFile) {
+            runCatching { manifest.readText() }.getOrNull().orEmpty()
         } else {
-            val text = runCatching { manifest.readText() }.getOrNull().orEmpty()
-            if (expectedPackage !in text) {
-                problems.add(
-                    Violation(
-                        "app/src/main/AndroidManifest.xml",
-                        "Package must be $expectedPackage.",
-                    ),
-                )
-            }
+            problems.add(Violation("app/src/main/AndroidManifest.xml", "Missing. Recreate the project from a template."))
+            ""
+        }
+        // The manifest's own package wins: template projects default to
+        // com.closecode.<name> and the field stays editable, while imported
+        // projects like com.example keep building under their own name.
+        val actualPackage = manifestPackage(manifestText)
+        if (manifest.isFile && actualPackage == null) {
+            problems.add(
+                Violation("app/src/main/AndroidManifest.xml", "No package declared. Add package=\"com.example.app\"."),
+            )
+        }
+        if (actualPackage != null && !PackageName.matches(actualPackage)) {
+            problems.add(
+                Violation("app/src/main/AndroidManifest.xml", "\"$actualPackage\" is not a valid package name."),
+            )
+        }
+        if (actualPackage != null && !actualPackage.startsWith(PACKAGE_PREFIX)) {
+            warnings.add(
+                Violation(
+                    "app/src/main/AndroidManifest.xml",
+                    "\"$actualPackage\" is not a com.closecode package: installing it may " +
+                        "clash with the original app.",
+                ),
+            )
         }
 
-        val packagePath = expectedPackage.replace('.', '/')
+        val packagePath = (actualPackage ?: packageForSlug(slug)).replace('.', '/')
         val ktRoot = File(projectDir, "app/src/main/java/$packagePath")
         val sources = ktRoot.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
         if (sources.isEmpty()) {
@@ -87,6 +121,6 @@ object TemplateContract {
                 problems.add(Violation(script, "Dependency ${dep.first}:${dep.second} is not on the on-device allowlist."))
             }
         }
-        return problems
+        return Report(problems, warnings)
     }
 }
