@@ -54,6 +54,40 @@ class SplitDiffTest {
     }
 
     @Test
+    fun unifyNumbersBothSides() {
+        val rows = com.closecode.ui.ide.unify(splitDiff("a\nb\n", "a\nB\n"))
+        assertEquals(2, rows.size)
+        assertEquals(1 to 1, (rows[0].oldNo to rows[0].newNo))
+        assertEquals(' ', rows[0].sign)
+        assertEquals(2 to 2, (rows[1].oldNo to rows[1].newNo))
+        assertEquals('+', rows[1].sign)
+        assertTrue(rows[1].added && rows[1].removed)
+    }
+
+    @Test
+    fun newFilesCollapseToSixPlusABar() {
+        val added = (1..20).joinToString("\n") { "line$it" }
+        val rows = com.closecode.ui.ide.unify(splitDiff("", added))
+        val blocks = com.closecode.ui.ide.collapseUnified(rows, isNew = true, emptyMap())
+        assertEquals(2, blocks.size)
+        val gap = blocks[1] as com.closecode.ui.ide.DiffBlock.Gap
+        assertEquals(14, gap.hidden)
+    }
+
+    @Test
+    fun changedFilesKeepThreeLinesOfContext() {
+        val old = (1..20).joinToString("\n") { "line$it" }
+        val new = (1..20).joinToString("\n") { if (it == 10) "CHANGED" else "line$it" }
+        val rows = com.closecode.ui.ide.unify(splitDiff(old, new))
+        val blocks = com.closecode.ui.ide.collapseUnified(rows, isNew = false, emptyMap())
+        val gaps = blocks.filterIsInstance<com.closecode.ui.ide.DiffBlock.Gap>()
+        assertEquals(2, gaps.size)
+        // Leading run keeps its last 3, trailing run its first 3.
+        assertEquals(6, gaps[0].hidden)
+        assertEquals(7, gaps[1].hidden)
+    }
+
+    @Test
     fun everythingIsCapped() {
         val big = (1..5000).joinToString("\n") { "line$it" }
         assertTrue(splitDiff(big, big + "x").size <= 2000)

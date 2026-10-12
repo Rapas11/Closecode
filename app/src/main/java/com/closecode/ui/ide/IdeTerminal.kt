@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -69,11 +70,14 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.closecode.ui.components.PageBackButton
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.theme.LocalPageColors
@@ -209,7 +213,49 @@ internal class ShellProcess(
         stdin = started.outputStream.bufferedWriter()
         Thread {
             runCatching {
-                started.inputStream.bufferedReader().useLines { sequence -> sequence.forEach(onLine) }
+                // Chunked reader, not line-blocked: a line is drawn after its newline
+                // arrives, or after 50 ms without more data for the final partial line.
+                // Reading runs until the stream ends and the last chunk is flushed, so
+                // output is never cut — the missing tail of ls -la was the reader
+                // stopping early, and a stuck reader is measured against the raw bytes.
+                val reader = started.inputStream.bufferedReader()
+                val pending = StringBuilder()
+                val chunk = CharArray(4096)
+                var lastDataAt = System.currentTimeMillis()
+                fun emitLine(raw: String) {
+                    val line = if (raw.endsWith("\r")) raw.dropLast(1) else raw
+                    onLine(line)
+                }
+                try {
+                    while (true) {
+                        if (reader.ready()) {
+                            val count = reader.read(chunk)
+                            if (count < 0) break
+                            pending.append(chunk, 0, count)
+                            lastDataAt = System.currentTimeMillis()
+                            var cut = pending.indexOf("\n")
+                            while (cut >= 0) {
+                                emitLine(pending.substring(0, cut))
+                                pending.delete(0, cut + 1)
+                                cut = pending.indexOf("\n")
+                            }
+                        } else {
+                            if (pending.isNotEmpty() &&
+                                System.currentTimeMillis() - lastDataAt >= 50
+                            ) {
+                                emitLine(pending.toString())
+                                pending.clear()
+                            }
+                            Thread.sleep(10)
+                        }
+                    }
+                } finally {
+                    if (pending.isNotEmpty()) {
+                        emitLine(pending.toString())
+                        pending.clear()
+                    }
+                    runCatching { reader.close() }
+                }
             }
         }.apply {
             isDaemon = true
@@ -433,7 +479,8 @@ internal fun IdeTerminal(
                         session.lastExit = exit
                         session.commandRunning = false
                     } else {
-                        val dropped = session.lines.appendTerminalLine(line)
+                        // Short, plain errors: shell noise is rewritten before drawing.
+                        val dropped = session.lines.appendTerminalLine(rewriteShellNoise(line))
                         // Holding an unfollowed view still across the trim: the list loses rows
                         // at the top, so without this step-back the same content sits lower and
                         // the view jumps. Only the tab on screen owns the list position.
@@ -779,13 +826,22 @@ internal fun IdeTerminal(
             // the screen. The editor works the same way — adjustResize alone, plus a reserved height
             // for its tool row — and the two now agree.
     ) {
-        // 52 dp header: the title with the shell's folder under it, and Commands — or Stop
-        // while a command runs, which sends the same kill the old CANCEL key did.
+        // Header: back button, title with the shell's folder under it, and Commands — or
+        // Stop while a command runs, which sends the same kill the old CANCEL key did.
+        // 10 dp top/bottom, 12 dp sides, 1 dp bottom divider.
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(52.dp)
-                .padding(horizontal = 4.dp),
+                .background(c.bg)
+                .drawBehind {
+                    drawLine(
+                        color = c.divider,
+                        start = Offset(0f, size.height - 0.5f),
+                        end = Offset(size.width, size.height - 0.5f),
+                        strokeWidth = 1f,
+                    )
+                }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
     // The header button walks the same inner-first order as system Back — form, dialog,
@@ -810,34 +866,20 @@ internal fun IdeTerminal(
         }
     }
             // A button card rather than a bare glyph: the visible door back to the editor.
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(c.keyBg)
-                    .clickable(onClick = ::terminalHeaderBack)
-                    .semantics { contentDescription = "Back" },
-                contentAlignment = Alignment.Center,
-            ) {
-                CcIcon(
-                    CcIcons.Chevron,
-                    Color.White,
-                    18.dp,
-                    Modifier.graphicsLayer { rotationZ = 180f },
-                )
-            }
+            PageBackButton(onBack = ::terminalHeaderBack)
+            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = "Terminal",
-                    color = c.text,
-                    fontSize = 14.sp,
-                    fontFamily = Mono,
+                    color = c.brightText,
+                    fontSize = 15.sp,
+                    fontFamily = Sans,
                     fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
                     maxLines = 1,
                 )
                 Text(
-                    text = "Closecode · ${displayDir(projectName, session.cwd)}",
-                    color = c.textFaint,
+                    text = displayDir(projectName, session.cwd),
+                    color = c.hintText,
                     fontSize = 11.sp,
                     fontFamily = Mono,
                     maxLines = 1,
@@ -848,8 +890,8 @@ internal fun IdeTerminal(
                 Box(
                     Modifier
                         .height(28.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(c.chipBg)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(c.keyBg)
                         .clickable {
                             session.killRunning()
                             session.lines.appendTerminalLine("^C")
@@ -870,15 +912,15 @@ internal fun IdeTerminal(
                 Box(
                     Modifier
                         .height(28.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(c.chipBg)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(c.keyBg)
                         .clickable { toggleCommandsPanel() }
                         .padding(horizontal = 12.dp)
                         .semantics { contentDescription = "Saved commands" },
                     contentAlignment = Alignment.Center,
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CcIcon(CcIcons.Zap, c.textMuted, 13.dp)
+                        CcIcon(CcIcons.Zap, c.textMuted, 14.dp)
                         Spacer(Modifier.width(6.dp))
                         Text(
                             text = "Commands",
@@ -954,9 +996,12 @@ internal fun IdeTerminal(
         // Column that holds it, and inside the selection container it was silently ignored —
         // which left the list wrapped around its content and the key row stranded mid-screen
         // with dead space below it.
+        // The output keeps at least 3 lines visible, anchored so the latest lines and
+        // the prompt stay in view above the form and keys.
         Box(
             Modifier
-                .weight(1f)
+                .weight(1f, fill = false)
+                .heightIn(min = 57.dp)
                 .fillMaxWidth()
                 .background(c.fieldBg)
                 .onSizeChanged { termWidthPx = it.width },
@@ -1020,6 +1065,11 @@ internal fun IdeTerminal(
                         )
                     }
                 }
+                // Breathing room under the last line so underscores and descenders draw
+                // inside the viewport instead of clipping at its edge.
+                item(key = "end-pad") {
+                    Spacer(Modifier.height(6.dp))
+                }
             }
         }
 
@@ -1054,23 +1104,8 @@ internal fun IdeTerminal(
             )
         }
 
-        // The key row sits at the very bottom: above the keyboard when it is open, pinned
-        // to the bottom otherwise. It never hides — the bolt needs somewhere to live even
-        // before the keyboard is summoned.
-        TerminalKeyBar(
-            modifier = Modifier.onSizeChanged { keyBarHeightPx = it.height },
-            ctrl = ctrl,
-            alt = alt,
-            onCtrl = { ctrl = nextLatch(ctrl) },
-            onAlt = { alt = nextLatch(alt) },
-            onKey = { onKeyBar(it) },
-            onHistory = { direction ->
-                if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
-            },
-            onCommands = ::toggleCommandsPanel,
-        )
-
         // The commands panel swaps the keyboard at the same height, so nothing jumps.
+        // It sits directly above the key row: output, then form, then keys, then keyboard.
         // Back closes the panel first: only with no panel does it leave the terminal.
         androidx.activity.compose.BackHandler(enabled = commandsPanelOpen) {
             com.closecode.ui.ide.BackLog.press("terminal", "branch=commands-panel")
@@ -1117,6 +1152,22 @@ internal fun IdeTerminal(
                 onFormOpenChange = { commandFormOpen = it },
             )
         }
+
+        // The key row sits at the very bottom: above the keyboard when it is open, pinned
+        // to the bottom otherwise. It never hides — the bolt needs somewhere to live even
+        // before the keyboard is summoned.
+        TerminalKeyBar(
+            modifier = Modifier.onSizeChanged { keyBarHeightPx = it.height },
+            ctrl = ctrl,
+            alt = alt,
+            onCtrl = { ctrl = nextLatch(ctrl) },
+            onAlt = { alt = nextLatch(alt) },
+            onKey = { onKeyBar(it) },
+            onHistory = { direction ->
+                if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
+            },
+            onCommands = ::toggleCommandsPanel,
+        )
 
         renameShell?.let { number ->
             val target = sessionList.firstOrNull { it.number == number }
@@ -1320,7 +1371,14 @@ private fun PromptRow(
             ),
             visualTransformation = transformation,
             cursorBrush = SolidColor(Color.Transparent),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+            // Commands must arrive as typed: the keyboard once turned ls into Ls and
+            // ping into Ping, so capitalization, auto-correct and suggestions stay off.
+            keyboardOptions = KeyboardOptions(
+                capitalization = KeyboardCapitalization.None,
+                        autoCorrect = false,
+                keyboardType = KeyboardType.Ascii,
+                imeAction = ImeAction.Send,
+            ),
             keyboardActions = KeyboardActions(onSend = { onSend() }),
             onTextLayout = onLayout,
             modifier = Modifier
@@ -1394,7 +1452,15 @@ private fun CommandsPanel(
             // to the bottom via the weight spacer in the form branch.
             .height(heightDp.dp)
             .background(c.fieldBg)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .drawBehind {
+                drawLine(
+                    color = c.divider,
+                    start = Offset(0f, 0.5f),
+                    end = Offset(size.width, 0.5f),
+                    strokeWidth = 1f,
+                )
+            }
+            .padding(start = 12.dp, end = 12.dp, top = 10.dp, bottom = 12.dp),
     ) {
         Row(
             Modifier.fillMaxWidth(),
@@ -1503,22 +1569,29 @@ private fun CommandsPanel(
             // Pushes the field and buttons to the bottom so they dock at the keyboard
             // with no dead space under them.
             Spacer(Modifier.weight(1f))
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(6.dp))
             // The field carries its own hint in a faded tone, so placeholder and typed text
-            // can never be mistaken for each other.
+            // can never be mistaken for each other. 40 dp tall, blue border on focus.
+            var fieldFocused by remember { mutableStateOf(false) }
             Box(
                 Modifier
                     .fillMaxWidth()
+                    .height(40.dp)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(c.panel)
-                    .border(1.dp, c.ln, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                    .background(c.editorBg)
+                    .border(
+                        1.dp,
+                        if (fieldFocused) c.runFill else c.fieldBorder,
+                        RoundedCornerShape(10.dp),
+                    )
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart,
             ) {
                 if (draft.isEmpty()) {
                     Text(
                         text = "git log --oneline",
-                        color = c.popupText.copy(alpha = 0.4f),
-                        fontSize = 13.sp,
+                        color = c.textFaint,
+                        fontSize = 12.sp,
                         fontFamily = Mono,
                         maxLines = 1,
                     )
@@ -1528,12 +1601,17 @@ private fun CommandsPanel(
                     onValueChange = { draft = it },
                     singleLine = true,
                     textStyle = TextStyle(
-                        color = c.popupText,
-                        fontSize = 13.sp,
+                        color = c.brightText,
+                        fontSize = 12.sp,
                         fontFamily = Mono,
                     ),
                     cursorBrush = SolidColor(c.ac),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                autoCorrect = false,
+                        keyboardType = KeyboardType.Ascii,
+                        imeAction = ImeAction.Done,
+                    ),
                     keyboardActions = KeyboardActions(
                         onDone = {
                             if (draft.isNotBlank()) {
@@ -1547,7 +1625,8 @@ private fun CommandsPanel(
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .focusRequester(formFocus),
+                        .focusRequester(formFocus)
+                        .onFocusChanged { fieldFocused = it.isFocused },
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -1556,10 +1635,11 @@ private fun CommandsPanel(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 // Cancel is a visible button, not bare text: the same fill as every key.
+                // Returns to the saved commands list.
                 Box(
                     Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(40.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(c.keyBg)
                         .clickable(onClick = {
@@ -1574,19 +1654,20 @@ private fun CommandsPanel(
                     Text(
                         text = "Cancel",
                         color = Color.White,
-                        fontSize = 14.sp,
+                        fontSize = 13.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
                     )
                 }
                 // Create stays quiet until there is something to save, then turns blue.
+                // Saves the command and returns to the saved commands list.
                 val ready = draft.isNotBlank()
                 Box(
                     Modifier
-                        .weight(1f)
-                        .height(44.dp)
+                        .weight(1.4f)
+                        .height(40.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (ready) c.runFill else c.panel2)
+                        .background(if (ready) c.runFill else c.keyBg)
                         .clickable(
                             enabled = ready,
                             onClick = {
@@ -1602,8 +1683,8 @@ private fun CommandsPanel(
                 ) {
                     Text(
                         text = "Create",
-                        color = if (ready) Color.White else c.mu,
-                        fontSize = 14.sp,
+                        color = if (ready) Color.White else c.textFaint,
+                        fontSize = 13.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
                     )

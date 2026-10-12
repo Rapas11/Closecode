@@ -141,6 +141,23 @@ class TreeMenuTest {
  */
 class FolderToggleTest {
 
+    private fun folder(path: String) = ProjectFile(
+        name = path.substringAfterLast('/'),
+        kind = FileKind.Folder,
+        language = "",
+        depth = path.count { it == '/' },
+        expandable = true,
+        path = path,
+    )
+
+    private fun file(path: String) = ProjectFile(
+        name = path.substringAfterLast('/'),
+        kind = FileKind.Kotlin,
+        language = "Kotlin",
+        depth = path.count { it == '/' },
+        path = path,
+    )
+
     @Test
     fun tappingAnOpenFolderShutsIt() {
         assertEquals(setOf("app"), toggleCollapsed(emptySet(), "app"))
@@ -165,6 +182,85 @@ class FolderToggleTest {
         val collapsed = toggleCollapsed(emptySet(), "app")
         assertEquals(setOf("app"), collapsed)
         assertFalse("app/src" in collapsed)
+    }
+
+    @Test
+    fun shortNamesAreUntouchedByMiddleEllipsis() {
+        assertEquals("Main.kt", middleEllipsis("Main.kt"))
+        assertEquals("ExampleInstrumentedTest.kt", middleEllipsis("ExampleInstrumentedTest.kt"))
+    }
+
+    @Test
+    fun longNamesKeepTheExtension() {
+        val long = "AReallyLongFileNameThatGoesOnForeverAndEver.kt"
+        val cut = middleEllipsis(long)
+        assertTrue(cut.endsWith(".kt"))
+        assertTrue(cut.contains("…"))
+        assertTrue(cut.length < long.length)
+    }
+
+    @Test
+    fun singleChildFoldersJoinIntoOneRow() {
+        val rows = listOf(
+            folder("app"),
+            folder("app/src"),
+            folder("app/src/main"),
+            file("app/src/main/Main.kt"),
+        )
+        val compacted = compactDrawerRows(rows)
+        assertEquals(2, compacted.size)
+        assertEquals("app/src/main", compacted[0].label)
+        assertEquals("app/src/main", compacted[0].togglePath)
+        assertEquals("Main.kt", compacted[1].label)
+    }
+
+    @Test
+    fun branchingFoldersNeverJoin() {
+        val rows = listOf(
+            folder("app"),
+            folder("app/src"),
+            folder("app/res"),
+        )
+        val compacted = compactDrawerRows(rows)
+        assertEquals(3, compacted.size)
+        assertEquals("app", compacted[0].label)
+    }
+
+    @Test
+    fun aFileChildStopsTheChain() {
+        val rows = listOf(
+            folder("app"),
+            folder("app/src"),
+            file("app/src/Main.kt"),
+        )
+        val compacted = compactDrawerRows(rows)
+        assertEquals(2, compacted.size)
+        assertEquals("app/src", compacted[0].label)
+        assertEquals("app/src", compacted[0].togglePath)
+    }
+
+    @Test
+    fun searchHighlightsEveryPlainHit() {
+        val mode = SearchMode("canvas", caseSensitive = false)
+        val out = highlightedMatch(
+            "Draws on a Canvas with a canvas gradient",
+            mode,
+            androidx.compose.ui.graphics.Color.Red,
+            androidx.compose.ui.graphics.Color.White,
+        )
+        assertEquals("Draws on a Canvas with a canvas gradient", out.text)
+        assertEquals(2, out.spanStyles.size)
+    }
+
+    @Test
+    fun searchWithoutHitsReturnsPlainText() {
+        val out = highlightedMatch(
+            "nothing here",
+            SearchMode("canvas"),
+            androidx.compose.ui.graphics.Color.Red,
+            androidx.compose.ui.graphics.Color.White,
+        )
+        assertTrue(out.spanStyles.isEmpty())
     }
 
     @Test

@@ -537,6 +537,46 @@ class GitServiceTest {
         assertEquals(null, afterGone)
     }
 
+    private fun withUser() {
+        org.eclipse.jgit.api.Git.open(tmp.root).use { git ->
+            val cfg = git.repository.config
+            cfg.setString("user", null, "name", "Tester")
+            cfg.setString("user", null, "email", "tester@localhost")
+            cfg.save()
+        }
+    }
+
+    @Test
+    fun revertUndoesACommitAsANewCommit() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        withUser()
+        write("main.kt", "one\n")
+        git.stage(listOf("main.kt")).getOrThrow()
+        git.commit("first").getOrThrow()
+        write("main.kt", "two\n")
+        git.stage(listOf("main.kt")).getOrThrow()
+        val second = git.commit("second").getOrThrow()
+
+        val reverted = git.revertCommit(second).getOrThrow()
+        assertEquals(40, reverted.length)
+        assertEquals("one\n", File(tmp.root, "main.kt").readText())
+        assertEquals(3, git.history(100).getOrThrow().size)
+    }
+
+    @Test
+    fun checkoutCommitLeavesADetachedHead() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        write("main.kt", "one\n")
+        git.stage(listOf("main.kt")).getOrThrow()
+        val first = git.commit("first").getOrThrow()
+
+        git.checkoutCommit(first).getOrThrow()
+        val snap = git.snapshot().getOrThrow()
+        assertTrue(snap.detached)
+    }
+
     @Test
     fun discardRemovesStagedNewFiles() {
         val git = committedRepo("line1\n")

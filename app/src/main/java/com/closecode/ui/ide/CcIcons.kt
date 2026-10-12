@@ -187,6 +187,21 @@ object CcIcons {
         "external",
         "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6M15 3h6v6M10 14L21 3",
     )
+    // Source Control branch row and More menu: pull (down into a tray), push (up out of
+    // one), stash (an archive box), history search filter (a funnel) and the search
+    // options (sliders).
+    val Plus = icon("plus", "M12 5v14M5 12h14")
+    val Download = icon("download", "M12 3v12M7 10l5 5 5-5M5 21h14")
+    val Upload = icon("upload", "M12 21V9M7 14l5-5 5 5M5 3h14")
+    val Archive = icon(
+        "archive",
+        "M3 5h18v4H3zM5 9v11h14V9M10 13h4",
+    )
+    val Filter = icon("filter", "M4 5h16l-6 7v6l-4 2v-8z")
+    val Sliders = icon(
+        "sliders",
+        "M4 8h10M18 8h2M4 16h4M12 16h8M16 6v4M10 14v4",
+    )
 }
 
 @Composable

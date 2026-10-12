@@ -47,13 +47,21 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
+import com.closecode.ui.components.SpecMenu
+import com.closecode.ui.components.SpecMenuItem
 import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.theme.LocalPageColors
@@ -366,6 +374,52 @@ fun IdeMoreSheet(
 }
 
 /**
+ * One match line with every query occurrence highlighted: matchBg behind matchText,
+ * so the eye lands on why the line matched. Plain queries match case-insensitively
+ * unless asked otherwise; patterns reuse the search's own matcher.
+ */
+internal fun highlightedMatch(
+    text: String,
+    mode: SearchMode,
+    matchBg: androidx.compose.ui.graphics.Color,
+    matchFg: androidx.compose.ui.graphics.Color,
+): AnnotatedString {
+    val ranges: List<IntRange> = runCatching {
+        if (!mode.regex && !mode.wholeWord) {
+            val needle = if (mode.caseSensitive) mode.pattern else mode.pattern.lowercase()
+            if (needle.isEmpty()) return@runCatching emptyList<IntRange>()
+            val haystack = if (mode.caseSensitive) text else text.lowercase()
+            val out = mutableListOf<IntRange>()
+            var from = 0
+            while (true) {
+                val at = haystack.indexOf(needle, from)
+                if (at < 0) break
+                out.add(at until at + needle.length)
+                from = at + needle.length
+            }
+            out
+        } else {
+            val options = if (mode.caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
+            val body = if (mode.regex) "(?:${mode.pattern})" else Regex.escape(mode.pattern)
+            val compiled = Regex("(?<!\\w)$body(?!\\w)", options)
+            compiled.findAll(text).map { it.range }.toList()
+        }
+    }.getOrElse { emptyList() }
+    if (ranges.isEmpty()) return AnnotatedString(text)
+    return buildAnnotatedString {
+        var cursor = 0
+        for (range in ranges) {
+            if (range.first > cursor) append(text.substring(cursor, range.first))
+            withStyle(SpanStyle(background = matchBg, color = matchFg)) {
+                append(text.substring(range.first, (range.last + 1).coerceAtMost(text.length)))
+            }
+            cursor = range.last + 1
+        }
+        if (cursor < text.length) append(text.substring(cursor))
+    }
+}
+
+/**
  * The Search sheet: find in project. It sits above the editor rather than replacing it, so the
  * results and the code they came from are on screen together, and a tap on the scrim dismisses it.
  */
@@ -387,10 +441,15 @@ fun IdeSearchSheet(
     val c = LocalPageColors.current
     var optionsOpen by remember { mutableStateOf(false) }
     IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
+        // Rounded field: search icon, query, sliders options at the end.
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 4.dp),
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(c.fieldBg)
+                .border(1.dp, c.fieldBorder, RoundedCornerShape(10.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -414,21 +473,16 @@ fun IdeSearchSheet(
                         fontFamily = Sans,
                     ),
                     cursorBrush = SolidColor(c.ac),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrect = false,
+                        keyboardType = KeyboardType.Ascii,
+                        imeAction = ImeAction.Search,
+                    ),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            if (query.isNotEmpty()) {
-                Text(
-                    text = "${hits.size}",
-                    color = c.mu,
-                    fontSize = 12.sp,
-                    fontFamily = Mono,
-                    maxLines = 1,
-                )
-            }
-            // The options live behind one icon at the field's end: plain words with check
-            // marks, instead of cryptic Aa and .* buttons beside the field.
+            // The options live behind one sliders icon at the field's end.
             Box {
                 Box(
                     Modifier
@@ -438,25 +492,41 @@ fun IdeSearchSheet(
                         .semantics { contentDescription = "Search options" },
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = "⋯",
-                        color = if (caseSensitive || regex || wholeWord) c.ac else c.mu,
-                        fontSize = 16.sp,
-                        fontFamily = Sans,
-                        fontWeight = FontWeight.Bold,
+                    CcIcon(
+                        CcIcons.Sliders,
+                        if (caseSensitive || regex || wholeWord) c.ac else c.mu,
+                        18.dp,
                     )
                 }
-                androidx.compose.material3.DropdownMenu(
-                    expanded = optionsOpen,
-                    onDismissRequest = { optionsOpen = false },
-                ) {
-                    SearchOptionItem("Match case", caseSensitive) {
-                        onCaseSensitiveChange(!caseSensitive)
+                if (optionsOpen) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { optionsOpen = false },
+                            ),
+                    )
+                    SpecMenu(
+                        modifier = Modifier.align(Alignment.TopEnd),
+                    ) {
+                        SpecMenuItem(
+                            icon = CcIcons.Check,
+                            label = (if (caseSensitive) "✓ " else "") + "Match case",
+                            onClick = { optionsOpen = false; onCaseSensitiveChange(!caseSensitive) },
+                        )
+                        SpecMenuItem(
+                            icon = CcIcons.Check,
+                            label = (if (wholeWord) "✓ " else "") + "Whole word",
+                            onClick = { optionsOpen = false; onWholeWordChange(!wholeWord) },
+                        )
+                        SpecMenuItem(
+                            icon = CcIcons.Check,
+                            label = (if (regex) "✓ " else "") + "Regex",
+                            onClick = { optionsOpen = false; onRegexChange(!regex) },
+                        )
                     }
-                    SearchOptionItem("Whole word", wholeWord) {
-                        onWholeWordChange(!wholeWord)
-                    }
-                    SearchOptionItem("Regex", regex) { onRegexChange(!regex) }
                 }
             }
         }
@@ -492,37 +562,86 @@ fun IdeSearchSheet(
             )
 
             else -> Column(Modifier.heightIn(max = 340.dp).verticalScroll(rememberScrollState())) {
-                hits.forEach { hit ->
+                // "N results in M files", then one group per file: icon, name, folder
+                // and a count badge, with each match line highlighted under it.
+                Text(
+                    text = "${hits.size} results in ${hits.map { it.path }.distinct().size} files",
+                    color = c.mu,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
+                )
+                val mode = SearchMode(query, caseSensitive, regex, wholeWord)
+                hits.groupBy { it.path }.forEach { (path, group) ->
+                    val first = group.first()
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .clickable { onOpen(hit) }
-                            .padding(horizontal = 18.dp, vertical = 9.dp),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            .padding(horizontal = 18.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        CcIcon(CcIcons.Document, c.mu, 15.dp)
+                        Spacer(Modifier.width(8.dp))
                         Text(
-                            text = "${hit.line}",
-                            color = c.mu,
-                            fontSize = 12.sp,
-                            fontFamily = Mono,
-                            modifier = Modifier.width(30.dp),
+                            text = first.fileName,
+                            color = c.tx,
+                            fontSize = 13.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
                         )
-                        Column(Modifier.weight(1f)) {
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = path.substringBeforeLast('/', ""),
+                            color = c.mu,
+                            fontSize = 11.sp,
+                            fontFamily = Sans,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            Modifier
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(c.chipBg)
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
                             Text(
-                                text = hit.fileName,
+                                text = "${group.size}",
                                 color = c.ac,
+                                fontSize = 11.sp,
+                                fontFamily = Sans,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    group.forEach { hit ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onOpen(hit) }
+                                .padding(start = 41.dp, end = 18.dp, top = 3.dp, bottom = 3.dp),
+                            verticalAlignment = Alignment.Top,
+                        ) {
+                            Text(
+                                text = "${hit.line}",
+                                color = c.mu,
                                 fontSize = 12.sp,
                                 fontFamily = Mono,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
+                                modifier = Modifier.width(34.dp),
                             )
                             Text(
-                                text = hit.text,
+                                text = highlightedMatch(hit.text, mode, c.spec.matchBg, c.spec.matchText),
                                 color = c.tx,
                                 fontSize = 13.sp,
                                 fontFamily = Mono,
                                 maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
                             )
                         }
                     }
@@ -676,7 +795,12 @@ fun IdeNameDialog(
                         fontFamily = Mono,
                     ),
                     cursorBrush = SolidColor(c.ac),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrect = false,
+                        keyboardType = KeyboardType.Ascii,
+                        imeAction = ImeAction.Done,
+                    ),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

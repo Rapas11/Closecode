@@ -27,6 +27,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.ui.theme.LocalPageColors
@@ -98,7 +100,12 @@ fun CommandPalette(
                         fontFamily = Sans,
                     ),
                     cursorBrush = SolidColor(c.ac),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrect = false,
+                        keyboardType = KeyboardType.Ascii,
+                        imeAction = ImeAction.Search,
+                    ),
                     keyboardActions = KeyboardActions(
                         onSearch = { matched.getOrNull(selected)?.run() },
                     ),

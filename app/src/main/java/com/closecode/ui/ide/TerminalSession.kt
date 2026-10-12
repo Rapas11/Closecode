@@ -453,6 +453,31 @@ internal fun isErrorLine(line: String): Boolean {
     return false
 }
 
+/**
+ * Short, plain shell errors. Removes the shell path and the script position the shell
+ * prepends (`/system/bin/sh: <stdin>[13]: Ping: inaccessible or not found` becomes
+ * `sh: Ping: command not found`). Everything else stays as the shell gave it. The
+ * result still matches [isErrorLine], so it keeps its red tint.
+ */
+internal fun rewriteShellNoise(line: String): String {
+    var text = line
+    if (text.startsWith("/system/bin/")) {
+        text = text.removePrefix("/system/bin/")
+    }
+    if (StdinTag.containsMatchIn(text)) {
+        text = StdinTag.replaceFirst(text, "")
+        if (!text.startsWith("sh:")) {
+            text = "sh: $text"
+        }
+    }
+    if ("inaccessible or not found" in text) {
+        text = text.replace("inaccessible or not found", "command not found")
+    }
+    return text
+}
+
+private val StdinTag = Regex("<stdin>\\[\\d+\\]: ")
+
 private val ErrorLineHeads = listOf("sh:", "error:", "fatal:", "E ", "FAILED")
 private val ErrorLineFragments = listOf(
     "not found",

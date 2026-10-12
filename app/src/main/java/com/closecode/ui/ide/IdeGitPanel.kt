@@ -4,6 +4,8 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,10 +24,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,15 +45,22 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.closecode.ui.components.HashChip
 import com.closecode.ui.components.OutlineButton
+import com.closecode.ui.components.PageBackButton
 import com.closecode.ui.components.PrimaryButton
 import com.closecode.ui.components.ScreenCard
 import com.closecode.ui.components.ScreenSectionLabel
+import com.closecode.ui.components.SpecMenu
+import com.closecode.ui.components.SpecMenuDivider
+import com.closecode.ui.components.SpecMenuItem
 import com.closecode.ui.components.StatusBadge
 import com.closecode.ui.components.StatusKind
 import com.closecode.ui.components.TextLink
@@ -124,6 +137,9 @@ fun IdeGitPanel(
     onDiff: (String) -> Unit = {},
     // Opens a commit's before/after diff of one file. Same routing: which commit and path.
     onCommitDiff: (commitId: String, path: String) -> Unit = { _, _ -> },
+    // Opens the full history page and one commit's detail page. Routes live at screen level.
+    onHistory: () -> Unit = {},
+    onCommitOpen: (commitId: String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
@@ -295,11 +311,30 @@ fun IdeGitPanel(
                     hasStash = hasStash,
                     hasChanges = !current.snap.isClean,
                     busy = busy,
+                    hasRemote = remoteUrl != null,
+                    toPull = current.snap.behind,
+                    toPush = current.snap.ahead,
                     onRefresh = { scope.launch { reload() } },
+                    onHistory = onHistory,
                     onSwitchBranch = { switchingBranch = true },
                     onNewBranch = { namingBranch = true },
+                    onPull = {
+                        val token = githubToken
+                        val root = projectRoot
+                        if (token != null && root != null) {
+                            githubAct { GitHubRemote(root).pull(token) }
+                        }
+                    },
+                    onPush = {
+                        val token = githubToken
+                        val root = projectRoot
+                        if (token != null && root != null) {
+                            githubAct { GitHubRemote(root).push(token) }
+                        }
+                    },
                     onStash = { actOn { stash() } },
                     onRestoreStash = { actOn { stashPop() } },
+                    onClone = { onCloneRequest() },
                     onDiscardAll = { confirmingDiscard = true },
                 )
 
@@ -358,16 +393,20 @@ fun IdeGitPanel(
                         value = message,
                         busy = busy,
                         staged = current.snap.staged.size,
+                        branches = branches,
+                        currentBranch = current.snap.branch,
                         onChange = { message = it },
                         onCommit = {
                             val text = message
                             actOn { commit(text).onSuccess { message = "" } }
                         },
+                        onSwitchBranch = { name -> actOn { checkout(name) } },
                     )
                 }
 
                 if (current.snap.hasCommits) {
                     HistorySection(
+                        onHistory = onHistory,
                         commits = history,
                         shown = historyShown,
                         openId = historyOpen,
@@ -746,63 +785,89 @@ private fun BranchRow(
     hasStash: Boolean,
     hasChanges: Boolean,
     busy: Boolean,
+    hasRemote: Boolean,
+    toPull: Int,
+    toPush: Int,
     onRefresh: () -> Unit,
+    onHistory: () -> Unit,
     onSwitchBranch: () -> Unit,
     onNewBranch: () -> Unit,
+    onPull: () -> Unit,
+    onPush: () -> Unit,
     onStash: () -> Unit,
     onRestoreStash: () -> Unit,
+    onClone: () -> Unit,
     onDiscardAll: () -> Unit,
 ) {
     val c = LocalPageColors.current
     var menuOpen by remember { mutableStateOf(false) }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(start = 17.dp, end = 8.dp, top = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        CcIcon(CcIcons.Branch, c.textMuted, 16.dp)
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = snap.branch,
-            color = c.text,
-            fontSize = 13.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        if (snap.detached) {
-            Text(
-                text = "detached HEAD",
-                color = c.warning,
-                fontSize = 10.sp,
-                fontFamily = Sans,
-                modifier = Modifier.padding(end = 6.dp),
-            )
-        }
-        // A 30 dp touch box with a 16 dp glyph inside: the thumb gets room, the eye gets the
-        // small icon from the mockup. Passing a big box *as* the icon's own modifier stretches
-        // the glyph to the box, which is how the refresh drew huge.
-        Box(
+    // The menu floats under the row, aligned to the row's right edge. The transparent
+    // layer eats outside taps; there is no dim behind the menu itself.
+    Box(Modifier.fillMaxWidth()) {
+        Row(
             Modifier
-                .size(30.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .clickable(onClick = onRefresh),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .padding(start = 17.dp, end = 8.dp, top = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            CcIcon(CcIcons.Refresh, c.textMuted, 16.dp)
-        }
-        Text(
-            text = status,
-            color = c.textMuted,
-            fontSize = 11.sp,
-            fontFamily = Sans,
-            maxLines = 1,
-            modifier = Modifier.padding(end = 2.dp),
-        )
-        Box {
+            // Branch chip: icon, name and chevron open the switcher.
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(enabled = branches.size > 1, onClick = onSwitchBranch)
+                    .padding(horizontal = 4.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CcIcon(CcIcons.Branch, c.textMuted, 16.dp)
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = snap.branch,
+                    color = c.text,
+                    fontSize = 13.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                CcIcon(CcIcons.Down, c.textMuted, 13.dp)
+            }
+            if (snap.detached) {
+                Text(
+                    text = "detached HEAD",
+                    color = c.warning,
+                    fontSize = 10.sp,
+                    fontFamily = Sans,
+                    modifier = Modifier.padding(end = 6.dp),
+                )
+            }
+            Spacer(Modifier.weight(1f))
+            BranchIconButton(icon = CcIcons.Clock, label = "History", onClick = onHistory)
+            BranchBadgeButton(
+                icon = CcIcons.Download,
+                label = "Pull",
+                count = toPull,
+                enabled = hasRemote && !busy,
+                onClick = onPull,
+            )
+            BranchBadgeButton(
+                icon = CcIcons.Upload,
+                label = "Push",
+                count = toPush,
+                enabled = hasRemote && !busy,
+                onClick = onPush,
+            )
+            // A 30 dp touch box with a 16 dp glyph inside: the thumb gets room, the eye gets the
+            // small icon from the mockup. Passing a big box *as* the icon's own modifier stretches
+            // the glyph to the box, which is how the refresh drew huge.
+            Box(
+                Modifier
+                    .size(30.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onRefresh),
+                contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(CcIcons.Refresh, c.textMuted, 16.dp)
+            }
             Box(
                 Modifier
                     .size(30.dp)
@@ -812,34 +877,126 @@ private fun BranchRow(
             ) {
                 CcIcon(CcIcons.More, c.textMuted, 16.dp)
             }
-            DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
-                    text = { Text("Switch branch", fontFamily = Sans) },
+        }
+        if (menuOpen) {
+            Box(
+                Modifier
+                    .matchParentSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { menuOpen = false },
+                    ),
+            )
+            SpecMenu(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 46.dp, end = 8.dp)
+                    .width(220.dp),
+            ) {
+                SpecMenuItem(
+                    icon = CcIcons.Clock, label = "View history",
+                    onClick = { menuOpen = false; onHistory() },
+                )
+                SpecMenuDivider()
+                SpecMenuItem(
+                    icon = CcIcons.Branch, label = "Switch branch",
                     enabled = branches.size > 1,
                     onClick = { menuOpen = false; onSwitchBranch() },
                 )
-                DropdownMenuItem(
-                    text = { Text("New branch", fontFamily = Sans) },
+                SpecMenuItem(
+                    icon = CcIcons.Plus, label = "New branch",
                     onClick = { menuOpen = false; onNewBranch() },
                 )
+                SpecMenuDivider()
+                SpecMenuItem(
+                    icon = CcIcons.Download, label = "Pull",
+                    enabled = hasRemote && !busy,
+                    onClick = { menuOpen = false; onPull() },
+                )
+                SpecMenuItem(
+                    icon = CcIcons.Upload, label = "Push",
+                    enabled = hasRemote && !busy,
+                    onClick = { menuOpen = false; onPush() },
+                )
                 if (hasChanges && !busy) {
-                    DropdownMenuItem(
-                        text = { Text("Stash changes", fontFamily = Sans) },
+                    SpecMenuItem(
+                        icon = CcIcons.Archive, label = "Stash changes",
                         onClick = { menuOpen = false; onStash() },
                     )
                 }
                 if (hasStash && !busy) {
-                    DropdownMenuItem(
-                        text = { Text("Restore stash", fontFamily = Sans) },
+                    SpecMenuItem(
+                        icon = CcIcons.Archive, label = "Restore stash",
                         onClick = { menuOpen = false; onRestoreStash() },
                     )
                 }
+                SpecMenuItem(
+                    icon = CcIcons.CloudDownload, label = "Clone a repository",
+                    onClick = { menuOpen = false; onClone() },
+                )
+                SpecMenuDivider()
                 if (hasChanges && !busy) {
-                    DropdownMenuItem(
-                        text = { Text("Discard all changes", fontFamily = Sans, color = c.error) },
+                    SpecMenuItem(
+                        icon = CcIcons.Trash, label = "Discard all changes", danger = true,
                         onClick = { menuOpen = false; onDiscardAll() },
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BranchIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .size(30.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        CcIcon(icon, c.textMuted, 16.dp)
+    }
+}
+
+@Composable
+private fun BranchBadgeButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    count: Int,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .size(30.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        CcIcon(icon, if (enabled) c.textMuted else c.textFaint, 16.dp)
+        // The blue count bubble: 16 dp tall, white number. Hidden at zero.
+        if (count > 0) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .clip(CircleShape)
+                    .background(c.runFill)
+                    .padding(horizontal = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (count > 9) "9+" else "$count",
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    fontFamily = Sans,
+                    maxLines = 1,
+                )
             }
         }
     }
@@ -1031,8 +1188,11 @@ private fun CommitBox(
     value: String,
     busy: Boolean,
     staged: Int,
+    branches: List<String>,
+    currentBranch: String,
     onChange: (String) -> Unit,
     onCommit: () -> Unit,
+    onSwitchBranch: (String) -> Unit,
 ) {
     val c = LocalPageColors.current
     Column(
@@ -1071,15 +1231,72 @@ private fun CommitBox(
                 }
             },
         )
-        // The one primary button: gray and dead until a message and a staged file both exist.
-        PrimaryButton(
-            label = when {
-                busy -> "Working…"
-                else -> "Commit $staged ${if (staged == 1) "file" else "files"}"
-            },
-            enabled = staged > 0 && value.isNotBlank() && !busy,
-            onClick = onCommit,
-        )
+        // The one primary button, split: the commit action plus a chevron that shows
+        // the branches to commit onto. Gray and dead until a message and a staged
+        // file both exist.
+        var branchPicker by remember { mutableStateOf(false) }
+        val commitReady = staged > 0 && value.isNotBlank() && !busy
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (commitReady) c.primary else c.chipBg),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable(enabled = commitReady, onClick = onCommit),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = when {
+                        busy -> "Working…"
+                        else -> "Commit $staged ${if (staged == 1) "file" else "files"}"
+                    },
+                    color = if (commitReady) Color.White else c.textFaint,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+            }
+            Box(
+                Modifier
+                    .fillMaxHeight()
+                    .width(1.dp)
+                    .background(
+                        if (commitReady) Color.White.copy(alpha = 0.35f) else c.fieldBorder,
+                    ),
+            )
+            Box(
+                Modifier
+                    .width(48.dp)
+                    .fillMaxHeight()
+                    .clickable(enabled = !busy, onClick = { branchPicker = true })
+                    .semantics { contentDescription = "Choose branch" },
+                contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(
+                    CcIcons.Down,
+                    if (commitReady) Color.White else c.textFaint,
+                    16.dp,
+                )
+            }
+        }
+        if (branchPicker) {
+            BranchDialog(
+                current = currentBranch,
+                branches = branches,
+                onSwitch = { name ->
+                    branchPicker = false
+                    onSwitchBranch(name)
+                },
+                onDismiss = { branchPicker = false },
+            )
+        }
     }
 }
 
@@ -1131,38 +1348,59 @@ private fun GitHubSection(
         )
     }
 
-    if (token == null) {
-        // The card the mockup shows: what is missing, why it matters, connect, and a quiet
-        // clone door underneath. Shown only when not signed in.
+    // The X hides the card for this view; signing in replaces the whole section anyway.
+    var cardHidden by remember { mutableStateOf(false) }
+    if (token == null && !cardHidden) {
+        // Compact card: what is missing, why it matters, Connect and a dismiss X.
+        // Shown only when not signed in.
         Column(Modifier.padding(start = 17.dp, end = 14.dp, top = 16.dp)) {
             ScreenCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CcIcon(CcIcons.Github, c.text, 20.dp)
                     Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "GitHub is not connected",
+                            color = c.text,
+                            fontSize = 13.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = "Back up and sync this project",
+                            color = c.textMuted,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
-                        text = "GitHub is not connected",
-                        color = c.text,
+                        text = "Connect",
+                        color = c.link,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .clickable(onClick = onSignIn)
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                    )
+                    CcIcon(
+                        CcIcons.Close,
+                        c.textMuted,
+                        16.dp,
+                        Modifier
+                            .clickable(onClick = { cardHidden = true })
+                            .padding(4.dp),
                     )
                 }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "Connect it to back up this project online and open it on other devices.",
-                    color = c.textMuted,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    lineHeight = 17.sp,
-                )
-                Spacer(Modifier.height(10.dp))
-                OutlineButton(label = "Connect GitHub", onClick = onSignIn)
-                Spacer(Modifier.height(4.dp))
-                TextLink(label = "Clone a repository", onClick = onClone)
             }
         }
         return
     }
+    if (token == null) return
 
     Row(
         Modifier
@@ -1324,11 +1562,23 @@ private fun GitHubSection(
  * together) while the rows scroll vertically as one.
  */
 @Composable
-internal fun DiffScreen(projectRoot: File?, path: String, onBack: () -> Unit, commitId: String? = null) {
+internal fun DiffScreen(
+    projectRoot: File?,
+    path: String,
+    onBack: () -> Unit,
+    commitId: String? = null,
+    onOpenFile: (() -> Unit)? = null,
+) {
     val c = LocalPageColors.current
     var rows by remember(path, commitId) { mutableStateOf<List<com.closecode.ui.git.DiffRow>?>(null) }
     var failed by remember(path, commitId) { mutableStateOf(false) }
     var binary by remember(path, commitId) { mutableStateOf(false) }
+    // Unified by default; side by side only on wide screens.
+    var unified by remember(path, commitId) { mutableStateOf(true) }
+    var wrapLines by remember(path, commitId) { mutableStateOf(false) }
+    var moreOpen by remember { mutableStateOf(false) }
+    var hint by remember(path, commitId) { mutableStateOf<String?>(null) }
+    val wide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 600
 
     LaunchedEffect(path, commitId) {
         val root = projectRoot
@@ -1386,45 +1636,157 @@ internal fun DiffScreen(projectRoot: File?, path: String, onBack: () -> Unit, co
                 .padding(start = 4.dp, end = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(onClick = onBack),
-                contentAlignment = Alignment.Center,
-            ) {
-                CcIcon(
-                    CcIcons.Chevron,
-                    c.textMuted,
-                    18.dp,
-                    Modifier.graphicsLayer { rotationZ = 180f },
+            PageBackButton(onBack = onBack)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = path.substringAfterLast('/'),
+                    color = c.text,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
+                if (commitId != null) {
+                    Text(
+                        text = commitId.take(7),
+                        color = c.textFaint,
+                        fontSize = 11.sp,
+                        fontFamily = Mono,
+                        maxLines = 1,
+                    )
+                }
             }
-            Text(
-                text = if (commitId == null) path.substringAfterLast('/') else
-                    "${path.substringAfterLast('/')} · ${commitId.take(7)}",
-                color = c.text,
-                fontSize = 14.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
             if (current != null) {
                 Text(
-                    text = "+$added −$removed",
-                    color = c.textFaint,
-                    fontSize = 11.sp,
+                    text = "+$added ",
+                    color = c.success,
+                    fontSize = 12.sp,
+                    fontFamily = Mono,
+                )
+                Text(
+                    text = "−$removed",
+                    color = c.error,
+                    fontSize = 12.sp,
                     fontFamily = Mono,
                 )
             }
+            Box {
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { moreOpen = true }
+                        .semantics { contentDescription = "Diff options" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(CcIcons.More, c.textMuted, 18.dp)
+                }
+                if (moreOpen) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { moreOpen = false },
+                            ),
+                    )
+                    SpecMenu(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .width(220.dp),
+                    ) {
+                        SpecMenuItem(
+                            icon = CcIcons.Check,
+                            label = (if (wrapLines) "✓ " else "") + "Wrap lines",
+                            onClick = { moreOpen = false; wrapLines = !wrapLines },
+                        )
+                    }
+                }
+            }
+        }
+        com.closecode.ui.components.AppSegmentedControl(
+            items = listOf(
+                com.closecode.ui.components.SegmentItem("Unified"),
+                com.closecode.ui.components.SegmentItem("Side by side"),
+            ),
+            selected = if (unified) 0 else 1,
+            onSelect = {
+                if (it == 1) {
+                    if (wide) {
+                        unified = false
+                        hint = null
+                    } else {
+                        hint = "Rotate to use side by side"
+                    }
+                } else {
+                    unified = true
+                    hint = null
+                }
+            },
+            modifier = Modifier.padding(horizontal = 12.dp),
+        )
+        hint?.let {
+            Text(
+                text = it,
+                color = c.textMuted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(start = 16.dp, end = 14.dp, top = 6.dp),
+            )
         }
         when {
             failed -> DiffNote("Could not read the diff.")
             binary -> DiffNote("This file is not text, so there is nothing to show side by side.")
             current == null -> DiffNote("Reading the diff…")
             current.isEmpty() -> DiffNote("No differences.")
+            current.size > 5000 -> {
+                DiffNote("Too large to show here (${current.size} rows).")
+                if (onOpenFile != null) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        com.closecode.ui.components.OutlineButton(
+                            label = "Open the file",
+                            onClick = onOpenFile,
+                            modifier = Modifier.padding(horizontal = 24.dp),
+                        )
+                    }
+                }
+            }
+            unified -> {
+                val unifiedRows = remember(current) { unify(current) }
+                val isNew = unifiedRows.all { it.oldNo == null } && unifiedRows.any { it.added }
+                val isDel = unifiedRows.all { it.newNo == null } && unifiedRows.any { it.removed }
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(vertical = 8.dp),
+                ) {
+                    UnifiedFileCard(
+                        fileName = path.substringAfterLast('/'),
+                        folder = path.substringBeforeLast('/', ""),
+                        tag = when {
+                            isNew -> "New file"
+                            isDel -> "Deleted file"
+                            else -> "+$added −$removed"
+                        },
+                        tagAdded = isNew,
+                        tagDeleted = isDel,
+                        added = added,
+                        removed = removed,
+                        rows = unifiedRows,
+                        wrap = wrapLines,
+                    )
+                }
+            }
             else -> {
                 // One sideways state per side: every row's cell shares its side's state, so a
                 // long line scrolled on one row stays readable while the rows move together.
@@ -1474,9 +1836,26 @@ private fun HistorySection(
     onMore: () -> Unit,
     onToggle: (GitCommit) -> Unit,
     onFile: (commitId: String, path: String) -> Unit = { _, _ -> },
+    onHistory: () -> Unit = {},
 ) {
     val c = LocalPageColors.current
-    SectionLabel("HISTORY · ${commits?.size ?: 0}")
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 17.dp, end = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.weight(1f)) {
+            SectionLabel("HISTORY · ${commits?.size ?: 0}")
+        }
+        Text(
+            text = "View all",
+            color = c.link,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            modifier = Modifier.clickable(onClick = onHistory),
+        )
+    }
     when {
         commits == null -> {
             Text(
@@ -1615,6 +1994,1008 @@ private fun relativeTime(whenMillis: Long): String {
         minutes < 60 -> "$minutes min ago"
         minutes < 24 * 60 -> "${minutes / 60} hr ago"
         else -> "${minutes / (24 * 60)} days ago"
+    }
+}
+
+/**
+ * One unified diff row: old/new line numbers, a sign column and the text.
+ */
+internal data class UnifiedRow(
+    val oldNo: Int?,
+    val newNo: Int?,
+    val sign: Char,
+    val text: String,
+    val added: Boolean,
+    val removed: Boolean,
+)
+
+internal fun unify(rows: List<com.closecode.ui.git.DiffRow>): List<UnifiedRow> {
+    var oldNo = 0
+    var newNo = 0
+    return rows.map { row ->
+        if (row.oldLine != null) oldNo++
+        if (row.newLine != null) newNo++
+        val added = row.newLine != null && row.newLine != row.oldLine
+        val removed = row.oldLine != null && row.oldLine != row.newLine
+        UnifiedRow(
+            oldNo = row.oldLine?.let { oldNo },
+            newNo = row.newLine?.let { newNo },
+            sign = when {
+                added -> '+'
+                removed -> '−'
+                else -> ' '
+            },
+            text = row.newLine ?: row.oldLine.orEmpty(),
+            added = added,
+            removed = removed,
+        )
+    }
+}
+
+internal sealed interface DiffBlock {
+    data class Lines(val rows: List<IndexedValue<UnifiedRow>>) : DiffBlock
+    data class Gap(val id: Int, val hidden: Int) : DiffBlock
+}
+
+/**
+ * Collapses long unchanged runs: 3 lines of context around changes, a `Show N more
+ * lines` bar for the rest (+100 per tap). A new file shows its first 6 lines.
+ */
+internal fun collapseUnified(
+    rows: List<UnifiedRow>,
+    isNew: Boolean,
+    revealed: Map<Int, Int>,
+): List<DiffBlock> {
+    if (rows.isEmpty()) return emptyList()
+    val changed = rows.indices.filter { rows[it].added || rows[it].removed }
+    if (changed.isEmpty()) return listOf(DiffBlock.Lines(rows.withIndex().toList()))
+    if (isNew) {
+        val show = (6 + (revealed[-1] ?: 0)).coerceAtMost(rows.size)
+        val out = mutableListOf<DiffBlock>(
+            DiffBlock.Lines(rows.subList(0, show).mapIndexed { i, r -> IndexedValue(i, r) }),
+        )
+        if (show < rows.size) out.add(DiffBlock.Gap(-1, rows.size - show))
+        return out
+    }
+    val out = mutableListOf<DiffBlock>()
+    var gap = 0
+    fun unchanged(from: Int, until: Int, head: Boolean, tail: Boolean) {
+        val len = until - from
+        if (len <= 0) return
+        val keep = when {
+            head && tail -> len
+            else -> 3
+        }
+        if (len <= keep * 2 && !(head xor tail)) {
+            out.add(DiffBlock.Lines((from until until).map { IndexedValue(it, rows[it]) }))
+            return
+        }
+        val extra = revealed[gap] ?: 0
+        if (head && !tail) {
+            // Leading run: keep the last lines.
+            val keepCount = (3 + extra).coerceAtMost(len)
+            if (keepCount < len) {
+                out.add(DiffBlock.Gap(gap, len - keepCount))
+                gap++
+            }
+            out.add(
+                DiffBlock.Lines(
+                    ((from + len - keepCount) until until).map { IndexedValue(it, rows[it]) },
+                ),
+            )
+        } else {
+            // Middle or trailing run: keep the first lines, tail 3 for middle runs.
+            val keepCount = (3 + extra).coerceAtMost(len)
+            val tailKeep = if (!head && !tail) 3 else 0
+            val headEnd = (from + keepCount).coerceAtMost(until - tailKeep)
+            out.add(DiffBlock.Lines((from until headEnd).map { IndexedValue(it, rows[it]) }))
+            val hidden = (until - tailKeep) - headEnd
+            if (hidden > 0) {
+                out.add(DiffBlock.Gap(gap, hidden))
+                gap++
+            }
+            if (tailKeep > 0) {
+                out.add(
+                    DiffBlock.Lines(
+                        ((until - tailKeep) until until).map { IndexedValue(it, rows[it]) },
+                    ),
+                )
+            }
+        }
+    }
+    // Leading context, changed blocks with middle context between them, then trailing
+    // context: each handled once, so the end of the file can never vanish or repeat.
+    val first = changed.first()
+    val last = changed.last()
+    unchanged(0, first, head = true, tail = false)
+    var cursor = first
+    while (cursor <= last) {
+        var j = cursor
+        while (j <= last && (rows[j].added || rows[j].removed)) j++
+        out.add(DiffBlock.Lines((cursor until j).map { IndexedValue(it, rows[it]) }))
+        cursor = j
+        if (cursor > last) break
+        var k = cursor
+        while (k <= last && !(rows[k].added || rows[k].removed)) k++
+        unchanged(cursor, k, head = false, tail = false)
+        cursor = k
+    }
+    if (last + 1 < rows.size) {
+        unchanged(last + 1, rows.size, head = false, tail = true)
+    }
+    return out
+}
+
+/**
+ * One file's unified diff with collapsing. Used inline on the commit page and,
+ * for a single file, inside the full-screen diff.
+ */
+@Composable
+private fun UnifiedFileCard(
+    fileName: String,
+    folder: String,
+    tag: String,
+    tagAdded: Boolean,
+    tagDeleted: Boolean,
+    added: Int,
+    removed: Int,
+    rows: List<UnifiedRow>?,
+    onOpenFull: (() -> Unit)? = null,
+    wrap: Boolean = false,
+) {
+    val c = LocalPageColors.current
+    var revealed by remember(fileName) { mutableStateOf(emptyMap<Int, Int>()) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(c.fieldBg),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(32.dp)
+                .background(c.panel2)
+                .clickable(enabled = onOpenFull != null, onClick = { onOpenFull?.invoke() })
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CcIcon(CcIcons.Document, c.textMuted, 15.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = fileName,
+                color = c.text,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            val (tagBg, tagFg) = when {
+                tagAdded -> c.spec.diffAddBg to c.success
+                tagDeleted -> c.spec.diffDelBg to c.error
+                else -> c.chipBg to c.textMuted
+            }
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(tagBg)
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(text = tag, color = tagFg, fontSize = 11.sp, fontFamily = Sans, maxLines = 1)
+            }
+        }
+        if (rows == null) {
+            Text(
+                text = "Reading…",
+                color = c.textMuted,
+                fontSize = 11.sp,
+                fontFamily = Mono,
+                modifier = Modifier.padding(10.dp),
+            )
+            return@Column
+        }
+        if (rows.size > 5000) {
+            Text(
+                text = "Too large to show here",
+                color = c.textMuted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(10.dp),
+            )
+            return@Column
+        }
+        val isNew = rows.all { it.newNo != null && it.oldNo == null } && rows.any { it.added }
+        val blocks = remember(rows) { collapseUnified(rows, isNew, emptyMap()) }
+        // Re-collapse when a gap opens: revealed grows, blocks recompute.
+        val live = collapseUnified(rows, isNew, revealed)
+        (if (revealed.isEmpty()) blocks else live).forEach { block ->
+            when (block) {
+                is DiffBlock.Lines -> {
+                    block.rows.forEach { indexed ->
+                        val row = indexed.value
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(
+                                    when {
+                                        row.added -> c.spec.diffAddBg
+                                        row.removed -> c.spec.diffDelBg
+                                        else -> c.fieldBg
+                                    },
+                                )
+                                .then(if (wrap) Modifier else Modifier.horizontalScroll(rememberScrollState()))
+                                .padding(vertical = 1.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = row.oldNo?.toString().orEmpty(),
+                                color = c.textFaint,
+                                fontSize = 11.sp,
+                                fontFamily = Mono,
+                                modifier = Modifier.width(26.dp),
+                                maxLines = 1,
+                            )
+                            if (rows.any { it.oldNo != null } && rows.any { it.newNo != null }) {
+                                Text(
+                                    text = row.newNo?.toString().orEmpty(),
+                                    color = c.textFaint,
+                                    fontSize = 11.sp,
+                                    fontFamily = Mono,
+                                    modifier = Modifier.width(26.dp),
+                                    maxLines = 1,
+                                )
+                            }
+                            Text(
+                                text = "${row.sign} ",
+                                color = when {
+                                    row.added -> c.success
+                                    row.removed -> c.error
+                                    else -> c.spec.diffContext
+                                },
+                                fontSize = 11.sp,
+                                fontFamily = Mono,
+                                modifier = Modifier.width(14.dp),
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = row.text,
+                                color = when {
+                                    row.added || row.removed -> c.text
+                                    else -> c.spec.diffContext
+                                },
+                                fontSize = 11.sp,
+                                fontFamily = Mono,
+                                lineHeight = 20.sp,
+                                softWrap = wrap,
+                                maxLines = if (wrap) Int.MAX_VALUE else 1,
+                            )
+                        }
+                    }
+                }
+                is DiffBlock.Gap -> {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(30.dp)
+                            .background(c.panel2)
+                            .clickable {
+                                revealed = revealed + (block.id to ((revealed[block.id] ?: 0) + 100))
+                            }
+                            .padding(horizontal = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CcIcon(CcIcons.Down, c.link, 14.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Show ${block.hidden} more lines",
+                            color = c.link,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun monthLabel(whenMillis: Long): String {
+    val format = java.text.SimpleDateFormat("MMMM yyyy", java.util.Locale.US)
+    return format.format(java.util.Date(whenMillis)).uppercase()
+}
+
+private fun historyFilterLabel(filter: Int): String = when (filter) {
+    1 -> "This week"
+    2 -> "This month"
+    else -> "All commits"
+}
+
+/**
+ * The full history page: month groups on a timeline rail, author, relative time and
+ * hash/HEAD/branch chips per row. Search matches message, author, hash and file names;
+ * the funnel limits by time.
+ */
+@Composable
+internal fun HistoryPage(
+    projectName: String,
+    branch: String,
+    projectRoot: File?,
+    headId: String?,
+    onBack: () -> Unit,
+    onCommit: (commitId: String) -> Unit,
+) {
+    val c = LocalPageColors.current
+    val scope = rememberCoroutineScope()
+    var commits by remember(projectRoot) { mutableStateOf<List<GitCommit>?>(null) }
+    var query by remember { mutableStateOf("") }
+    var searching by remember { mutableStateOf(false) }
+    var filter by remember { mutableStateOf(0) }
+    var filterOpen by remember { mutableStateOf(false) }
+    var fileIndex by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+
+    LaunchedEffect(projectRoot) {
+        val root = projectRoot ?: return@LaunchedEffect
+        commits = withContext(Dispatchers.IO) {
+            GitService(root).history(100).getOrElse { emptyList() }
+        }
+    }
+    // File names join the search once the query starts: one IO pass over the commits.
+    LaunchedEffect(query, commits) {
+        if (query.length < 2 || commits == null || projectRoot == null) return@LaunchedEffect
+        val root = projectRoot
+        fileIndex = withContext(Dispatchers.IO) {
+            val git = GitService(root)
+            commits.orEmpty().associate { commit ->
+                commit.id to git.commitFiles(commit.id).getOrElse { emptyList() }
+            }
+        }
+    }
+
+    BackHandler(onBack = {
+        com.closecode.ui.ide.BackLog.press("history", "branch=close")
+        onBack()
+    })
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(c.panel),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PageBackButton(onBack = onBack)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "History",
+                    color = c.brightText,
+                    fontSize = 17.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+                Text(
+                    text = "$projectName · $branch",
+                    color = c.textMuted,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (!searching) {
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = { searching = true })
+                        .semantics { contentDescription = "Search history" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(CcIcons.Search, c.textMuted, 18.dp)
+                }
+            }
+            Box {
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = { filterOpen = true })
+                        .semantics { contentDescription = "Filter history" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(CcIcons.Filter, c.textMuted, 18.dp)
+                }
+                if (filterOpen) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { filterOpen = false },
+                            ),
+                    )
+                    SpecMenu(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .width(200.dp),
+                    ) {
+                        listOf("All commits", "This week", "This month").forEachIndexed { i, label ->
+                            SpecMenuItem(
+                                icon = CcIcons.Filter,
+                                label = label + if (filter == i) " ✓" else "",
+                                onClick = { filterOpen = false; filter = i },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (searching) {
+            BasicTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                textStyle = TextStyle(color = c.text, fontSize = 14.sp, fontFamily = Sans),
+                cursorBrush = SolidColor(c.accent),
+                keyboardOptions = KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                    autoCorrect = false,
+                    keyboardType = KeyboardType.Ascii,
+                    imeAction = ImeAction.Search,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(c.fieldBg)
+                    .border(1.dp, c.fieldBorder, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                decorationBox = { inner ->
+                    Box {
+                        if (query.isEmpty()) {
+                            Text(
+                                text = "Search message, author, hash or file…",
+                                color = c.textFaint,
+                                fontSize = 14.sp,
+                                fontFamily = Sans,
+                            )
+                        }
+                        inner()
+                    }
+                },
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+        val all = commits
+        if (all == null) {
+            Text(
+                text = "Reading history…",
+                color = c.textMuted,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(16.dp),
+            )
+            return@Column
+        }
+        val weekAgo = System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000
+        val monthAgo = System.currentTimeMillis() - 30L * 24 * 60 * 60 * 1000
+        val shown = all.filter { commit ->
+            if (filter == 1 && commit.whenMillis < weekAgo) return@filter false
+            if (filter == 2 && commit.whenMillis < monthAgo) return@filter false
+            if (query.isBlank()) return@filter true
+            val q = query.trim().lowercase()
+            commit.summary.lowercase().contains(q) ||
+                commit.author.lowercase().contains(q) ||
+                commit.id.lowercase().startsWith(q) ||
+                (fileIndex[commit.id].orEmpty().any { it.lowercase().contains(q) })
+        }
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            // Newest commit reads as HEAD unless the caller says otherwise.
+            val head = headId ?: all.firstOrNull()?.id
+            var lastMonth = ""
+            shown.forEach { commit ->
+                val isHead = commit.id == head
+                val month = monthLabel(commit.whenMillis)
+                if (month != lastMonth) {
+                    lastMonth = month
+                    Text(
+                        text = month,
+                        color = c.textMuted,
+                        fontSize = 11.sp,
+                        fontFamily = Sans,
+                        modifier = Modifier.padding(start = 16.dp, top = 12.dp, bottom = 4.dp),
+                    )
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = { onCommit(commit.id) })
+                        .padding(start = 16.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+                ) {
+                    // Timeline rail: a 2 dp line with a filled dot for HEAD, hollow below.
+                    Box(
+                        Modifier
+                            .width(20.dp)
+                            .fillMaxHeight(),
+                        contentAlignment = Alignment.TopCenter,
+                    ) {
+                        Box(
+                            Modifier
+                                .width(2.dp)
+                                .fillMaxHeight()
+                                .background(c.spec.railLine),
+                        )
+                        Box(
+                            Modifier
+                                .padding(top = 4.dp)
+                                .size(12.dp)
+                                .clip(CircleShape)
+                                .then(
+                                    if (isHead) {
+                                        Modifier.background(c.runFill)
+                                    } else {
+                                        Modifier.border(2.dp, c.runFill, CircleShape)
+                                    },
+                                ),
+                        )
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = commit.summary,
+                            color = c.text,
+                            fontSize = 14.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                Modifier
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(c.panel2),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = commit.author.take(1).uppercase(),
+                                    color = c.textMuted,
+                                    fontSize = 11.sp,
+                                    fontFamily = Sans,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "${commit.author} · ${relativeTime(commit.whenMillis)}",
+                                color = c.textMuted,
+                                fontSize = 12.sp,
+                                fontFamily = Sans,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            HashChip(commit.shortId)
+                            if (isHead) {
+                                Spacer(Modifier.width(6.dp))
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(9.dp))
+                                        .background(c.spec.diffAddBg)
+                                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                                ) {
+                                    Text(
+                                        text = "HEAD",
+                                        color = c.success,
+                                        fontSize = 11.sp,
+                                        fontFamily = Sans,
+                                    )
+                                }
+                                Spacer(Modifier.width(6.dp))
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(9.dp))
+                                        .background(c.spec.hashChipBg)
+                                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                                ) {
+                                    Text(
+                                        text = branch,
+                                        color = c.spec.hashChipText,
+                                        fontSize = 11.sp,
+                                        fontFamily = Sans,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (shown.isEmpty()) {
+                Text(
+                    text = "No commits match.",
+                    color = c.textMuted,
+                    fontSize = 13.sp,
+                    fontFamily = Sans,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * One commit's detail page: message, author, full hash with copy, file stats, the
+ * changed files with their counts, and each file's unified diff inline. The ⋮ menu
+ * holds Copy full hash, Checkout this version and Revert this commit.
+ */
+@Composable
+internal fun CommitPage(
+    commitId: String,
+    projectRoot: File?,
+    revision: Int,
+    onBack: () -> Unit,
+    onDiff: (commitId: String, path: String) -> Unit,
+    onChanged: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    val scope = rememberCoroutineScope()
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var commit by remember(commitId) { mutableStateOf<GitCommit?>(null) }
+    var files by remember(commitId) { mutableStateOf<List<String>?>(null) }
+    var diffs by remember(commitId) { mutableStateOf<Map<String, List<UnifiedRow>>>(emptyMap()) }
+    var tooLarge by remember(commitId) { mutableStateOf<Set<String>>(emptySet()) }
+    var menuOpen by remember { mutableStateOf(false) }
+    var confirm by remember { mutableStateOf<String?>(null) }
+    var note by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    LaunchedEffect(commitId, projectRoot, revision) {
+        val root = projectRoot ?: return@LaunchedEffect
+        val found = withContext(Dispatchers.IO) {
+            GitService(root).history(100).getOrElse { emptyList() }.firstOrNull { it.id == commitId }
+        }
+        commit = found
+        if (found == null) return@LaunchedEffect
+        val paths = withContext(Dispatchers.IO) {
+            GitService(root).commitFiles(commitId).getOrElse { emptyList() }
+        }
+        files = paths
+        withContext(Dispatchers.IO) {
+            paths.forEach { path ->
+                val sides = GitService(root).commitFileContents(commitId, path).getOrNull()
+                if (sides != null) {
+                    val (before, after) = sides
+                    if ((before?.size ?: 0) + (after?.size ?: 0) > 400_000) {
+                        tooLarge = tooLarge + path
+                    } else {
+                        val rows = unify(
+                            splitDiff(
+                                before?.toString(Charsets.UTF_8).orEmpty(),
+                                after?.toString(Charsets.UTF_8).orEmpty(),
+                            ),
+                        )
+                        diffs = diffs + (path to rows)
+                    }
+                }
+            }
+        }
+    }
+
+    fun runGit(label: String, block: GitService.() -> Result<*>) {
+        val root = projectRoot ?: return
+        if (busy) return
+        busy = true
+        note = null
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching { GitService(root).block().getOrThrow() }
+            }
+            note = outcome.exceptionOrNull()?.message ?: "$label done."
+            busy = false
+            if (outcome.isSuccess) onChanged()
+        }
+    }
+
+    BackHandler(onBack = {
+        com.closecode.ui.ide.BackLog.press("commit", "branch=close")
+        onBack()
+    })
+    confirm?.let { kind ->
+        IdeConfirmDialog(
+            title = if (kind == "checkout") "Go back to this version?" else "Undo this commit?",
+            message = if (kind == "checkout") {
+                "Your files will look exactly like this commit. Uncommitted work stays, " +
+                    "but switch back to your branch to keep working."
+            } else {
+                "A new commit will undo these changes. Conflicts stop it with a message."
+            },
+            confirmLabel = if (kind == "checkout") "Check out" else "Revert",
+            onConfirm = {
+                confirm = null
+                if (kind == "checkout") runGit("Checked out") { checkoutCommit(commitId) }
+                else runGit("Reverted") { revertCommit(commitId) }
+            },
+            onDismiss = { confirm = null },
+        )
+    }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(c.panel),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 12.dp, end = 8.dp, top = 12.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            PageBackButton(onBack = onBack)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Commit",
+                    color = c.brightText,
+                    fontSize = 17.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                )
+                Text(
+                    text = commitId.take(7),
+                    color = c.textMuted,
+                    fontSize = 11.sp,
+                    fontFamily = Mono,
+                    maxLines = 1,
+                )
+            }
+            Box {
+                Box(
+                    Modifier
+                        .size(36.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { menuOpen = true }
+                        .semantics { contentDescription = "Commit actions" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(CcIcons.More, c.textMuted, 18.dp)
+                }
+                if (menuOpen) {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = { menuOpen = false },
+                            ),
+                    )
+                    SpecMenu(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .width(220.dp),
+                    ) {
+                        SpecMenuItem(
+                            icon = CcIcons.Copy, label = "Copy full hash",
+                            onClick = {
+                                menuOpen = false
+                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(commitId))
+                                note = "Copied."
+                            },
+                        )
+                        SpecMenuItem(
+                            icon = CcIcons.Check, label = "Go back to this version",
+                            enabled = !busy,
+                            onClick = { menuOpen = false; confirm = "checkout" },
+                        )
+                        SpecMenuItem(
+                            icon = CcIcons.Undo, label = "Undo this commit", danger = true,
+                            enabled = !busy,
+                            onClick = { menuOpen = false; confirm = "revert" },
+                        )
+                    }
+                }
+            }
+        }
+        val current = commit
+        if (current == null) {
+            Text(
+                text = "Reading commit…",
+                color = c.textMuted,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(16.dp),
+            )
+            return@Column
+        }
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            Text(
+                text = current.summary,
+                color = c.text,
+                fontSize = 15.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(start = 16.dp, end = 14.dp),
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier.padding(start = 16.dp, end = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(20.dp)
+                        .clip(CircleShape)
+                        .background(c.panel2),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = current.author.take(1).uppercase(),
+                        color = c.textMuted,
+                        fontSize = 11.sp,
+                        fontFamily = Sans,
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = "${current.author} · ${relativeTime(current.whenMillis)}",
+                    color = c.textMuted,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier.padding(start = 16.dp, end = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = current.id,
+                    color = c.textFaint,
+                    fontSize = 11.sp,
+                    fontFamily = Mono,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Box(
+                    Modifier
+                        .size(30.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable {
+                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(current.id))
+                            note = "Copied."
+                        }
+                        .semantics { contentDescription = "Copy full hash" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(CcIcons.Copy, c.textMuted, 15.dp)
+                }
+            }
+            note?.let {
+                Text(
+                    text = it,
+                    color = c.success,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    modifier = Modifier.padding(start = 16.dp, end = 14.dp, top = 4.dp),
+                )
+            }
+            val paths = files
+            if (paths == null) {
+                Text(
+                    text = "Reading files…",
+                    color = c.textMuted,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    modifier = Modifier.padding(16.dp),
+                )
+                return@Column
+            }
+            var totalAdded = 0
+            var totalRemoved = 0
+            paths.forEach { path ->
+                diffs[path]?.forEach { row ->
+                    if (row.added) totalAdded++
+                    if (row.removed) totalRemoved++
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(
+                Modifier.padding(start = 16.dp, end = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(c.chipBg)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                ) {
+                    Text(
+                        text = "${paths.size} files",
+                        color = c.text,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                }
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(c.chipBg)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                ) {
+                    Text(
+                        text = "+$totalAdded −$totalRemoved",
+                        color = c.text,
+                        fontSize = 12.sp,
+                        fontFamily = Mono,
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "CHANGED FILES",
+                color = c.textMuted,
+                fontSize = 11.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(start = 16.dp, end = 14.dp),
+            )
+            Spacer(Modifier.height(6.dp))
+            paths.forEach { path ->
+                val rows = diffs[path]
+                val isLarge = path in tooLarge
+                val added = rows?.count { it.added } ?: 0
+                val removed = rows?.count { it.removed } ?: 0
+                val isNew = rows != null && rows.all { it.oldNo == null } && rows.any { it.added }
+                val isDel = rows != null && rows.all { it.newNo == null } && rows.any { it.removed }
+                val tag = when {
+                    isLarge -> "Large file"
+                    isNew -> "New file"
+                    isDel -> "Deleted file"
+                    else -> "+$added −$removed"
+                }
+                UnifiedFileCard(
+                    fileName = path.substringAfterLast('/'),
+                    folder = path.substringBeforeLast('/', ""),
+                    tag = tag,
+                    tagAdded = isNew,
+                    tagDeleted = isDel,
+                    added = added,
+                    removed = removed,
+                    rows = if (isLarge) emptyList() else rows,
+                    onOpenFull = { onDiff(commitId, path) },
+                )
+                if (isLarge) {
+                    Text(
+                        text = "Too large to show here — tap the card to open the full diff.",
+                        color = c.textMuted,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                        modifier = Modifier.padding(start = 16.dp, end = 14.dp, top = 4.dp),
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+            Spacer(Modifier.height(16.dp))
+        }
     }
 }
 

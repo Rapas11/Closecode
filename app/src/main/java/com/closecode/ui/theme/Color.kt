@@ -212,6 +212,29 @@ data class PageColors(
     val keyBg: Color,           // editor + terminal key background (#1A1F2B)
     val cmdButtonBg: Color,      // commands panel Keyboard button
     val cmdAddBg: Color,         // commands panel Add background
+    // -- Screens update spec tokens, grouped: one constructor parameter keeps the
+    // data class under the JVM method-size limit no matter how many tokens join it.
+    val spec: SpecColors,
+)
+
+/**
+ * Screens update spec tokens: shared menu, search, diff and history colors.
+ * Dark values verbatim from the spec; light values adapted to read on near-white.
+ */
+@Immutable
+data class SpecColors(
+    val menuBg: Color,          // popup menu background
+    val menuBorder: Color,      // popup menu border
+    val menuDivider: Color,     // lines between menu groups
+    val menuDanger: Color,      // destructive menu item
+    val matchBg: Color,         // highlighted search match background
+    val matchText: Color,       // highlighted search match text
+    val diffAddBg: Color,       // added line background
+    val diffDelBg: Color,       // removed line background
+    val diffContext: Color,     // unchanged line text
+    val railLine: Color,        // history timeline line
+    val hashChipBg: Color,      // short commit code chip
+    val hashChipText: Color,    // short commit code text
 )
 
 /**
@@ -395,6 +418,20 @@ val LightColors = PageColors(
     keyBg = Color(0xFFE0E5EE),
     cmdButtonBg = Color(0xFFE8ECF3),
     cmdAddBg = Color(0xFFE3EAFF),
+    spec = SpecColors(
+        menuBg = Color(0xFFFFFFFF),
+        menuBorder = Color(0xFFDDE2EA),
+        menuDivider = Color(0xFFDDE2EA),
+        menuDanger = Color(0xFFD1344B),
+        matchBg = Color(0xFFFFF0CF),
+        matchText = Color(0xFF8A5A00),
+        diffAddBg = Color(0xFFDFF5E9),
+        diffDelBg = Color(0xFFFDE3E6),
+        diffContext = Color(0xFF66728A),
+        railLine = Color(0xFFDDE2EA),
+        hashChipBg = Color(0xFFE3EAFF),
+        hashChipText = Color(0xFF2457FF),
+    ),
 )
 
 val DarkColors = PageColors(
@@ -526,6 +563,20 @@ val DarkColors = PageColors(
     keyRowBg = Color(0xFF12151D),
     cmdButtonBg = Color(0xFF1A1F2B),
     cmdAddBg = Color(0xFF12172A),
+    spec = SpecColors(
+        menuBg = Color(0xFF1C2230),
+        menuBorder = Color(0xFF2F3749),
+        menuDivider = Color(0xFF2A3142),
+        menuDanger = Color(0xFFEF7B7B),
+        matchBg = Color(0xFF4A3D14),
+        matchText = Color(0xFFFFD97D),
+        diffAddBg = Color(0xFF12281F),
+        diffDelBg = Color(0xFF2A1519),
+        diffContext = Color(0xFF7D869A),
+        railLine = Color(0xFF232938),
+        hashChipBg = Color(0xFF161F3A),
+        hashChipText = Color(0xFF7FB0FF),
+    ),
 )
 
 val LocalPageColors = staticCompositionLocalOf { LightColors }

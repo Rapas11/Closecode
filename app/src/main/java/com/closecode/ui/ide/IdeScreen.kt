@@ -116,6 +116,8 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -332,7 +334,8 @@ internal fun IdeScreen(
     // most of the width so files are readable, while the tab strip's chevron and the first
     // characters of code stay visible behind it.
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val drawerFullWidth = if (screenWidthDp >= 760) 320.dp else (screenWidthDp * 0.72f).dp
+    // Spec drawer: 288 dp, or 80% of the screen, at most 320 dp.
+    val drawerFullWidth = (screenWidthDp * 0.8f).dp.coerceAtMost(320.dp)
     val drawerWidth by animateDpAsState(
         targetValue = if (explorerOpen) drawerFullWidth else 0.dp,
         animationSpec = tween(200),
@@ -366,6 +369,10 @@ internal fun IdeScreen(
     // A commit's before/after diff opened from a History row. Same full-screen treatment:
     // commit id plus path, closed by the same Back order as the working-tree diff.
     var commitDiff by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // The full history page and one commit's detail page, stacked: a commit opens over
+    // the history, and Back walks back down the stack.
+    var historyOpen by remember { mutableStateOf(false) }
+    var commitOpen by remember { mutableStateOf<String?>(null) }
     // The full build log over everything, for the same reason: errors want the whole screen.
     var buildLogOpen by remember { mutableStateOf(false) }
     // Written by that route when it re-authenticates. The drawer caches the token for as long as
@@ -389,15 +396,20 @@ internal fun IdeScreen(
     // (and every move nobody asked for) is mirrored into the Logcat panel, so the phone
     // itself produces the log — no adb needed. Off otherwise, so ordinary scrolling never
     // spams the panel builds use.
-    // Diagnostics mirroring is unconditional for now: the More bar (and with it the Frame
-    // stats toggle) can be unreachable exactly when these logs are needed, so the Logcat
-    // panel always carries the scroll/back/keyboard forensics. Re-gate once the row is fixed.
-    LaunchedEffect(Unit) {
-        ScrollLog.mirror = { message ->
-            logLines.appendCapped(LogLine(LogLevel.DEBUG, "Scroll", message))
-        }
-        BackLog.mirror = { message ->
-            logLines.appendCapped(LogLine(LogLevel.DEBUG, "Back", message))
+    // Debug logs behind a switch in More, off by default: with it off, ordinary
+    // scrolling never spams the Logcat panel.
+    var debugLogs by remember { mutableStateOf(kvStore.getInt("debug_logs", 0) == 1) }
+    LaunchedEffect(debugLogs) {
+        if (debugLogs) {
+            ScrollLog.mirror = { message ->
+                logLines.appendCapped(LogLine(LogLevel.DEBUG, "Scroll", message))
+            }
+            BackLog.mirror = { message ->
+                logLines.appendCapped(LogLine(LogLevel.DEBUG, "Back", message))
+            }
+        } else {
+            ScrollLog.mirror = null
+            BackLog.mirror = null
         }
     }
     // True while the suggestion popup is up. It is the tool row's other reason to hide: the popup
@@ -1128,6 +1140,8 @@ internal fun IdeScreen(
             "explorer".takeIf { explorerOpen },
             "diff".takeIf { diffPath != null },
             "commitDiff".takeIf { commitDiff != null },
+            "commit".takeIf { commitOpen != null },
+            "history".takeIf { historyOpen },
             "buildLog".takeIf { buildLogOpen },
             "findReturn".takeIf { findReturn },
         ).joinToString("+").ifEmpty { "none" }
@@ -1193,6 +1207,14 @@ internal fun IdeScreen(
                 BackLog.press("main", "${backState()} branch=commitDiff")
                 commitDiff = null
             }
+            commitOpen != null -> {
+                BackLog.press("main", "${backState()} branch=commit")
+                commitOpen = null
+            }
+            historyOpen -> {
+                BackLog.press("main", "${backState()} branch=history")
+                historyOpen = false
+            }
             buildLogOpen -> {
                 BackLog.press("main", "${backState()} branch=buildLog")
                 buildLogOpen = false
@@ -1255,10 +1277,9 @@ internal fun IdeScreen(
             val activePath = activeFile?.path ?: active
             // Terminal owns its chrome: no app top bar there — drawer, undo, save and run are
             // editor actions, and the drawer still opens from the left edge. Everywhere else
-            // the bar stays exactly as it is. The bar slides with the drawer so header,
-            // editor and bottom bar flow as one and the drawer keeps its own screen.
+            // the bar stays exactly as it is. The drawer is a full-height modal over all of
+            // this, so nothing here shifts when it opens.
             if (activePanel != "Terminal") {
-            Box(Modifier.fillMaxWidth().padding(start = drawerWidth)) {
             IdeTopBar(
                 projectName = projectName,
                 dirty = isDirtyTab(active),
@@ -1284,7 +1305,6 @@ internal fun IdeScreen(
                 onMore = { menuOpen = true },
                 menuActive = menuOpen,
             )
-            }
             }
 
             when (activePanel) {
@@ -1367,8 +1387,7 @@ internal fun IdeScreen(
                 )
                 else -> {
                     // Code, the block editor and Preview share one path bar, so the way back to the
-                    // code is always one `<>` tap away. Slides with the drawer like the top bar.
-                    Box(Modifier.fillMaxWidth().padding(start = drawerWidth)) {
+                    // code is always one `<>` tap away.
                     IdePathBar(
                         filePath = activeFile?.path ?: active,
                         previewable = isPreviewable(activeFile?.kind, active),
@@ -1387,7 +1406,6 @@ internal fun IdeScreen(
                             activePanel = "Preview"
                         },
                     )
-                    }
                     when (activePanel) {
                         "Preview" -> IdePreviewPanel(
                             fileName = activeName,
@@ -1454,54 +1472,6 @@ internal fun IdeScreen(
                         // this Box. Deleting this line puts that back exactly as it was.
                         else -> Box(Modifier.weight(1f).fillMaxWidth()) {
                             Row(Modifier.matchParentSize()) {
-                                IdeExplorer(
-                                    expanded = explorerOpen,
-                                    fullWidth = drawerFullWidth,
-                                    width = drawerWidth,
-                                    projectName = projectName,
-                                    slug = slug,
-                                    tree = diskTree,
-                                    activePath = activeFile?.path,
-                                    revealPath = selectedPath,
-                                    collapsed = collapsedFolders,
-                                    query = explorerFilter,
-                                    tab = explorerTab,
-                                    gitRevision = gitRevision,
-                                    onTab = { explorerTab = it },
-                                    onCreateFile = { prompt = TreePrompt.New(isFolder = false) },
-                                    onCreateFolder = { prompt = TreePrompt.New(isFolder = true) },
-                                    onRefresh = { refreshTree() },
-                                    onCollapseAll = {
-                                        collapsedFolders = diskTree
-                                            .filter { it.kind == FileKind.Folder }
-                                            .map { it.path }.toSet()
-                                    },
-                                    gitLetters = gitLetters,
-                                    dirtyPaths = dirtyPaths,
-                                    hintVisible = drawerOpens <= 3,
-                                    // One letter per changed path, so the map's size is the tab's
-                                    // count bubble: no second source to drift apart from.
-                                    changeCount = gitLetters.size,
-                                    onDiff = { diffPath = it },
-                                    onCommitDiff = { id, path -> commitDiff = id to path },
-                                    onAction = { action, file -> onTreeAction(action, file) },
-                                    onSelect = { file ->
-                                        // The row is the working point for the next creation whether it
-                                        // is a folder or a file, so it is recorded either way; only a
-                                        // file also becomes the file being read.
-                                        selectedPath = file.path
-                                        if (file.kind == FileKind.Folder) {
-                                            collapsedFolders = toggleCollapsed(collapsedFolders, file.path)
-                                        } else {
-                                            openFile(file)
-                                            explorerOpen = false
-                                        }
-                                    },
-                                    onCloneRequest = { cloneOpen = true },
-                                    githubTokenEpoch = githubTokenEpoch,
-                                    projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
-                                )
-
                                 IdeEditorArea(
                                     modifier = Modifier.weight(1f),
                                     tabs = tabs,
@@ -1582,18 +1552,6 @@ internal fun IdeScreen(
                                 )
                             }
 
-                            // The drawer's own shadow. It starts where the drawer ends, so the
-                            // file list underneath stays tappable, and a tap anywhere else closes
-                            // the drawer — the gesture that opened it has no mirror on the way back.
-                            if (explorerOpen) {
-                                Box(
-                                    Modifier
-                                        .matchParentSize()
-                                        .padding(start = drawerWidth)
-                                        .background(c.scrim)
-                                        .clickable { explorerOpen = false },
-                                )
-                            }
                         }
                     }
                 }
@@ -1620,12 +1578,75 @@ internal fun IdeScreen(
                             "More" -> moreOpen = true
                         }
                     },
-                    // Slides with the drawer like the top bar so all three flow as one.
-                    modifier = Modifier.onSizeChanged { navBarHeightPx = it.height }
-                        .padding(start = drawerWidth),
+                    modifier = Modifier.onSizeChanged { navBarHeightPx = it.height },
                 )
             }
         }
+
+        // Full-height modal drawer: covers the status area down to the bottom bar with
+        // a 60% black scrim over the rest. Sibling of the content column, so no bar
+        // shifts when it opens and the drawer keeps its own screen.
+        if (drawerWidth > 0.dp) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color(0x99000000))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { explorerOpen = false },
+                    ),
+            )
+        }
+        IdeExplorer(
+            expanded = explorerOpen,
+            fullWidth = drawerFullWidth,
+            width = drawerWidth,
+            projectName = projectName,
+            slug = slug,
+            tree = diskTree,
+            activePath = activeFile?.path,
+            revealPath = selectedPath,
+            collapsed = collapsedFolders,
+            query = explorerFilter,
+            tab = explorerTab,
+            gitRevision = gitRevision,
+            onTab = { explorerTab = it },
+            onCreateFile = { prompt = TreePrompt.New(isFolder = false) },
+            onCreateFolder = { prompt = TreePrompt.New(isFolder = true) },
+            onRefresh = { refreshTree() },
+            onCollapseAll = {
+                collapsedFolders = diskTree
+                    .filter { it.kind == FileKind.Folder }
+                    .map { it.path }.toSet()
+            },
+            gitLetters = gitLetters,
+            dirtyPaths = dirtyPaths,
+            hintVisible = drawerOpens <= 3,
+            // One letter per changed path, so the map's size is the tab's
+            // count bubble: no second source to drift apart from.
+            changeCount = gitLetters.size,
+                                    onDiff = { diffPath = it },
+                                    onCommitDiff = { id, path -> commitDiff = id to path },
+                                    onHistory = { historyOpen = true },
+                                    onCommitOpen = { commitOpen = it },
+            onAction = { action, file -> onTreeAction(action, file) },
+            onSelect = { file ->
+                // The row is the working point for the next creation whether it
+                // is a folder or a file, so it is recorded either way; only a
+                // file also becomes the file being read.
+                selectedPath = file.path
+                if (file.kind == FileKind.Folder) {
+                    collapsedFolders = toggleCollapsed(collapsedFolders, file.path)
+                } else {
+                    openFile(file)
+                    explorerOpen = false
+                }
+            },
+            onCloneRequest = { cloneOpen = true },
+            githubTokenEpoch = githubTokenEpoch,
+            projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+        )
 
         AnimatedVisibility(
             visible = searchOpen,
@@ -1845,6 +1866,10 @@ internal fun IdeScreen(
                     MoreAction("Build", "✓") { activePanel = "Build" },
                     MoreAction("Settings", "⚙") { onOpenSettings() },
                     MoreAction("Toggle theme", "◐") { onToggleTheme() },
+                    MoreAction(if (debugLogs) "Debug logs: on" else "Debug logs: off", "◆") {
+                        debugLogs = !debugLogs
+                        kvStore.putInt("debug_logs", if (debugLogs) 1 else 0)
+                    },
                 ),
                 onDismiss = { moreOpen = false },
                 barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
@@ -1928,6 +1953,12 @@ internal fun IdeScreen(
                 projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                 path = path,
                 onBack = ::handleBackPress,
+                onOpenFile = {
+                    diskTree.firstOrNull { it.path == path }?.let { file ->
+                        openFile(file)
+                        diffPath = null
+                    }
+                },
             )
         }
 
@@ -1937,6 +1968,31 @@ internal fun IdeScreen(
                 path = path,
                 onBack = ::handleBackPress,
                 commitId = id,
+            )
+        }
+
+        if (historyOpen) {
+            HistoryPage(
+                projectName = projectName,
+                branch = runCatching {
+                    com.closecode.ui.git.GitService(repository.projectDir(slug))
+                        .snapshot().getOrNull()?.branch
+                }.getOrNull() ?: "main",
+                projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                headId = null,
+                onBack = ::handleBackPress,
+                onCommit = { commitOpen = it },
+            )
+        }
+
+        commitOpen?.let { id ->
+            CommitPage(
+                commitId = id,
+                projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                revision = gitRevision,
+                onBack = ::handleBackPress,
+                onDiff = { commitId, path -> commitDiff = commitId to path },
+                onChanged = { gitRevision++ },
             )
         }
 
@@ -2280,6 +2336,76 @@ internal fun toggleCollapsed(collapsed: Set<String>, path: String): Set<String> 
     if (path in collapsed) collapsed - path else collapsed + path
 
 /**
+ * Cuts a long name in the middle so the extension stays visible:
+ * `ExampleInstrumentedTest.kt` becomes `ExampleInstrumentedT….kt`.
+ */
+internal fun middleEllipsis(name: String, head: Int = 20, tail: Int = 10): String {
+    if (name.length <= head + tail + 1) return name
+    return name.take(head) + "…" + name.takeLast(tail)
+}
+
+/**
+ * Compact folders: a folder whose only visible child is another folder joins it into
+ * one row (`androidTest/java/com/example`), repeated down the chain. Returns display
+ * entries carrying the label to draw and the last folder's path, which is what the
+ * chevron toggles and the long-press menu acts on. A joined name that is still too
+ * long cuts at the start so the last folder stays visible.
+ */
+internal data class DrawerRow(val file: ProjectFile, val label: String, val togglePath: String)
+
+internal fun compactDrawerRows(rows: List<ProjectFile>): List<DrawerRow> {
+    // Children by index, in draw order: the flat list is depth-first, so the rows
+    // between a folder and the next row at its depth or shallower are its subtree.
+    fun childrenOf(index: Int): List<Int> {
+        val parent = rows[index]
+        val out = mutableListOf<Int>()
+        var i = index + 1
+        while (i < rows.size && rows[i].depth > parent.depth) {
+            if (rows[i].depth == parent.depth + 1) out.add(i)
+            i++
+        }
+        return out
+    }
+    fun parentOf(index: Int): Int? {
+        val depth = rows[index].depth
+        if (depth == 0) return null
+        for (i in index - 1 downTo 0) {
+            if (rows[i].depth == depth - 1) return i
+            if (rows[i].depth < depth - 1) return null
+        }
+        return null
+    }
+    val out = mutableListOf<DrawerRow>()
+    rows.forEachIndexed { index, file ->
+        if (file.kind != FileKind.Folder) {
+            out.add(DrawerRow(file, middleEllipsis(file.name), file.path))
+            return@forEachIndexed
+        }
+        // A middle link has a folder parent with no other children: skip it, the chain
+        // head draws the whole run.
+        val parent = parentOf(index)
+        if (parent != null && rows[parent].kind == FileKind.Folder && childrenOf(parent).size == 1) {
+            return@forEachIndexed
+        }
+        // Walk down single-folder chains from here.
+        val parts = mutableListOf(file.name)
+        var last = index
+        while (true) {
+            val kids = childrenOf(last)
+            if (kids.size != 1 || rows[kids[0]].kind != FileKind.Folder) break
+            parts.add(rows[kids[0]].name)
+            last = kids[0]
+        }
+        val lastPath = rows[last].path
+        val full = parts.joinToString("/")
+        // Too long: cut at the start so the last folder stays visible.
+        val label = if (full.length > 40) "…/" + full.takeLast(38) else full
+        out.add(DrawerRow(file.copy(path = lastPath), label, lastPath))
+    }
+    return out
+}
+
+/**
  * The one field a tree operation asks for before it happens. Creating starts blank, renaming
  * starts on the leaf and moving starts on the whole path — the same dialog three ways, because
  * they are three ways of typing a name.
@@ -2516,6 +2642,9 @@ private fun IdeExplorer(
     onDiff: (String) -> Unit = {},
     // Opens a commit's before/after diff of one history file. Same routing.
     onCommitDiff: (commitId: String, path: String) -> Unit = { _, _ -> },
+    // Opens the history page and one commit's page. Same routing.
+    onHistory: () -> Unit = {},
+    onCommitOpen: (commitId: String) -> Unit = {},
     // How many times the stored GitHub token has been replaced. Passed on so the panel re-reads it
     // instead of going on with the copy it took when it was composed.
     githubTokenEpoch: Int,
@@ -2545,15 +2674,23 @@ private fun IdeExplorer(
         out
     }
 
+    // Display rows: compact folder chains on the full tree, plain middle-ellipsis
+    // labels on search hits (which are not hierarchical, so joining them would lie).
+    val drawerRows = remember(rows, q) {
+        if (q.isEmpty()) compactDrawerRows(rows) else rows.map {
+            DrawerRow(it, middleEllipsis(it.name), it.path)
+        }
+    }
+
     // Bring the row that was just created or just opened into view. It only fires when the row is
     // off screen, so tapping a file that is already showing never jumps the list, and it waits for
     // the row count to change because a new entry lands in the tree one frame after the tap that
     // asked for it. Without this the file opens in a tab and stays invisible in the drawer, which
     // reads as "nothing happened".
     val headerRows = TreeListHeaderItems
-    LaunchedEffect(revealPath, rows.size) {
+    LaunchedEffect(revealPath, drawerRows.size) {
         val path = revealPath ?: return@LaunchedEffect
-        val index = rows.indexOfFirst { it.path == path }
+        val index = drawerRows.indexOfFirst { it.togglePath == path || it.file.path == path }
         if (index < 0) return@LaunchedEffect
         val position = index + headerRows
         if (listState.layoutInfo.visibleItemsInfo.none { it.index == position }) {
@@ -2575,11 +2712,38 @@ private fun IdeExplorer(
         Modifier
             .width(width)
             .fillMaxHeight()
-            .background(c.panel)
+            .background(c.surface)
+            .drawBehind {
+                drawLine(
+                    color = c.surfaceBorder,
+                    start = androidx.compose.ui.geometry.Offset(size.width - 0.5f, 0f),
+                    end = androidx.compose.ui.geometry.Offset(size.width - 0.5f, size.height),
+                    strokeWidth = 1f,
+                )
+            }
             .clipToBounds(),
     ) {
-        // The tab switch first, then the project row: the switch says which half is showing,
-        // and the project row says where its buttons act.
+        // Header: folder icon plus project name. Then the tab switch, then the project
+        // row: the switch says which half is showing, and the row says where its
+        // buttons act.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, end = 14.dp, top = 16.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CcIcon(CcIcons.FolderOpen, c.codeFunction, 18.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = projectName,
+                color = c.brightText,
+                fontSize = 16.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         com.closecode.ui.components.AppSegmentedControl(
             items = listOf(
                 com.closecode.ui.components.SegmentItem("Files"),
@@ -2587,7 +2751,7 @@ private fun IdeExplorer(
             ),
             selected = if (tab == SourceControlTab) 1 else 0,
             onSelect = { onTab(if (it == 1) SourceControlTab else FilesTab) },
-            modifier = Modifier.padding(top = 8.dp),
+            modifier = Modifier.padding(horizontal = 12.dp),
         )
         Row(
             Modifier
@@ -2689,11 +2853,12 @@ private fun IdeExplorer(
                         }
                     }
                 }
-                itemsIndexed(rows, key = { _, f -> "tree-${f.path}" }) { _, file ->
+                itemsIndexed(drawerRows, key = { _, r -> "tree-${r.file.path}" }) { _, row ->
+                    val file = row.file
                     val open = file.kind == FileKind.Folder
                     val closed = open && file.path in collapsed
                     TreeRow(
-                        label = file.name,
+                        label = row.label,
                         depth = file.depth + 1,
                         bold = false,
                         icon = if (open) CcIcons.FolderOpen else CcIcons.Document,
@@ -2741,6 +2906,8 @@ private fun IdeExplorer(
                 tokenEpoch = githubTokenEpoch,
                 onDiff = onDiff,
                 onCommitDiff = onCommitDiff,
+                onHistory = onHistory,
+                onCommitOpen = onCommitOpen,
                 // One modifier or the other, never both. Appending `size(0.dp)` after
                 // `width(...).fillMaxHeight()` could not work: those hand the child an incoming
                 // minimum of full width by full height, `size` is enforce-incoming, so the zero was
@@ -2885,9 +3052,9 @@ private fun TreeRow(
                 Modifier.width(15.dp).height(15.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                if (chevron != null) CcIcon(chevron, chevronTint, 13.dp)
+                if (chevron != null) CcIcon(chevron, chevronTint, 14.dp)
             }
-            CcIcon(icon, iconTint, 16.dp, Modifier.padding(start = 2.dp, end = 8.dp))
+            CcIcon(icon, iconTint, 16.dp, Modifier.padding(start = 2.dp, end = 7.dp))
             Text(
                 text = label,
                 color = if (active) c.tx else c.tx.copy(alpha = 0.86f),
@@ -4567,17 +4734,6 @@ val applySuggestion: (Int) -> Unit = { index ->
                     viewportHeightPx = it.height.toFloat()
                 },
         ) {
-            // Scroll forensics, temporary and always on for one build: a 2 dp red line exactly
-            // at the bottom edge of the measured visible area. If it does not sit directly
-            // above the key row with the keyboard open, the container is not shrinking for the
-            // keyboard. Removed once the tapped-line evidence lands.
-            Box(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .background(Color.Red),
-            )
             // One vertical scroll for the whole editor. The line numbers and the code are both
             // children of this box, so they share a coordinate space and cannot drift apart.
             // A press can land between characters, so the offset settles onto whole
@@ -4808,8 +4964,14 @@ val applySuggestion: (Int) -> Unit = { index ->
                             cursorBrush = SolidColor(c.ac),
                             // ImeAction.Default with no KeyboardActions, so Enter always inserts a
                             // newline even while the suggestion popup is open. Only Tab or tapping
-                            // a row accepts a suggestion.
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                            // a row accepts a suggestion. No capitals or corrections: code must
+                            // arrive as typed, like terminal commands.
+                            keyboardOptions = KeyboardOptions(
+                                capitalization = KeyboardCapitalization.None,
+                                autoCorrect = false,
+                                keyboardType = KeyboardType.Ascii,
+                                imeAction = ImeAction.Default,
+                            ),
                             modifier = Modifier
                                 .fillMaxSize()
                                 // Spec 4.1: the palette advertises Ctrl S, and the reference binds

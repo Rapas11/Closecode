@@ -238,6 +238,22 @@ class TerminalTest {
     }
 
     @Test
+    fun shellNoiseRewritesToShortPlainErrors() {
+        assertEquals(
+            "sh: Ping: command not found",
+            rewriteShellNoise("/system/bin/sh: <stdin>[13]: Ping: inaccessible or not found"),
+        )
+        assertEquals("sh: foo: not found", rewriteShellNoise("sh: foo: not found"))
+        assertEquals("total 70", rewriteShellNoise("total 70"))
+    }
+
+    @Test
+    fun rewrittenErrorsStillReadAsFailures() {
+        assertTrue(isErrorLine(rewriteShellNoise("/system/bin/sh: <stdin>[13]: Ping: inaccessible or not found")))
+        assertFalse(isErrorLine(rewriteShellNoise("total 70")))
+    }
+
+    @Test
     fun plainLsIsAColorAskingFunction() {
         // Folders draw blue because `ls` always asks for color; the panel parses the escapes.
         // Same for git, so status and diffs arrive colored.

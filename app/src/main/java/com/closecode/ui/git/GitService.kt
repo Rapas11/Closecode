@@ -111,17 +111,23 @@ class GitService(private val root: File) {
             val repo = git.repository
             val status = git.status().call()
             val hasCommits = repo.resolve(Constants.HEAD) != null
+            // Detached HEAD reads as the object id, not a ref, so the short branch name
+            // alone can never say it: a full ref outside refs/heads is the tell.
+            val fullBranch = runCatching { repo.fullBranch }.getOrNull()
+            val isDetached = fullBranch != null &&
+                !fullBranch.startsWith("refs/heads/") &&
+                !fullBranch.startsWith("refs/tags/")
             val rawBranch = repo.branch
             var ahead = 0
             var behind = 0
-            if (hasCommits && rawBranch != null) {
+            if (hasCommits && !isDetached && rawBranch != null) {
                 val tracking = BranchTrackingStatus.of(repo, rawBranch)
                 ahead = tracking?.aheadCount ?: 0
                 behind = tracking?.behindCount ?: 0
             }
             GitSnapshot(
-                branch = rawBranch ?: DETACHED,
-                detached = rawBranch == null,
+                branch = if (isDetached) DETACHED else (rawBranch ?: DETACHED),
+                detached = isDetached,
                 hasCommits = hasCommits,
                 ahead = ahead,
                 behind = behind,
@@ -357,6 +363,28 @@ class GitService(private val root: File) {
                 }
             }
         }
+
+    /**
+     * Moves the working tree to one commit. Detached HEAD on purpose: history is for
+     * looking, and the branch row keeps showing the state plainly afterwards.
+     */
+    fun checkoutCommit(id: String): Result<Unit> = runCatching {
+        open().use { git ->
+            git.checkout().setName(id).call()
+        }
+    }
+
+    /**
+     * Undoes one commit by applying its inverse as a new commit. Fails loudly on
+     * conflicts instead of leaving the tree half-reverted.
+     */
+    fun revertCommit(id: String): Result<String> = runCatching {
+        open().use { git ->
+            git.revert().include(git.repository.resolve(id)).call()
+            git.repository.resolve("HEAD")?.name
+                ?: throw IllegalStateException("Revert did not move HEAD.")
+        }
+    }
 
     fun branches(): Result<List<String>> = runCatching {
         open().use { git ->
