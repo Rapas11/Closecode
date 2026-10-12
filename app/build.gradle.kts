@@ -69,6 +69,9 @@ dependencies {
     // GitHub's Device Flow and REST responses are JSON. Parsed with JsonParser rather than
     // with mapped classes so nothing on this path depends on reflection.
     implementation("com.google.code.gson:gson:2.11.0")
+    // On-device APK signing: apksig is a zero-dependency library (+0.5 MB) driven through
+    // ApkSigner.Builder with the AndroidKeyStore debug key. Proven with 8.13.0.
+    implementation("com.android.tools.build:apksig:8.13.0")
     // The GitHub token lives in EncryptedSharedPreferences (Keystore-backed), and the
     // device-flow step opens github.com/login/device in a Chrome Custom Tab.
     implementation("androidx.security:security-crypto:1.1.0-alpha06")

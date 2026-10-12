@@ -116,6 +116,64 @@ class ToolchainProofTest {
     }
 
     @Test
+    fun engineCompilesThroughRealKotlinc() {
+        // Same code path as on-device: ToolRunner + manifest jars, no DriverExec.
+        val propDir = System.getProperty("toolchain.dir") ?: System.getenv("TOOLCHAIN_DIR")
+        org.junit.Assume.assumeTrue(propDir != null)
+        val store = ToolchainStore(
+            java.io.File(propDir),
+            com.closecode.ui.settings.InMemoryKeyValueStore(),
+        )
+        kotlinx.coroutines.runBlocking { store.ensureAll() }
+        org.junit.Assert.assertTrue(store.isReady())
+        val project = java.io.File(tmp.root, "engine-proj").apply { mkdirs() }
+        java.io.File(project, "app/src/main/AndroidManifest.xml").apply {
+            parentFile.mkdirs()
+            writeText("<manifest package=\"com.example.biz\"></manifest>")
+        }
+        java.io.File(project, "app/src/main/java/com/example/biz/Main.kt").apply {
+            parentFile.mkdirs()
+            writeText("package com.example.biz\nfun main() { println(\"hi\") }\n")
+        }
+        val outcome = kotlinx.coroutines.runBlocking {
+            BuildEngine(store).build(project, "biz")
+        }
+        // Imported package passes the contract; compilation succeeds; packaging waits
+        // for the SDK pair, which this test deliberately withholds.
+        org.junit.Assert.assertTrue("got $outcome", outcome is BuildOutcome.DriverPending)
+        org.junit.Assert.assertTrue(
+            java.io.File(project, "build/closecode/classes/com/example/biz/MainKt.class").isFile,
+        )
+    }
+
+    @Test
+    fun engineSurfacesRealCompilerErrors() {
+        val propDir = System.getProperty("toolchain.dir") ?: System.getenv("TOOLCHAIN_DIR")
+        org.junit.Assume.assumeTrue(propDir != null)
+        val store = ToolchainStore(
+            java.io.File(propDir),
+            com.closecode.ui.settings.InMemoryKeyValueStore(),
+        )
+        kotlinx.coroutines.runBlocking { store.ensureAll() }
+        org.junit.Assume.assumeTrue(store.isReady())
+        val project = java.io.File(tmp.root, "engine-bad").apply { mkdirs() }
+        java.io.File(project, "app/src/main/AndroidManifest.xml").apply {
+            parentFile.mkdirs()
+            writeText("<manifest package=\"com.example.biz\"></manifest>")
+        }
+        java.io.File(project, "app/src/main/java/com/example/biz/Main.kt").apply {
+            parentFile.mkdirs()
+            writeText("package com.example.biz\nfun main() { nosuchthing() }\n")
+        }
+        val outcome = kotlinx.coroutines.runBlocking {
+            BuildEngine(store).build(project, "biz")
+        }
+        org.junit.Assert.assertTrue("got $outcome", outcome is BuildOutcome.CompileFailed)
+        val errors = (outcome as BuildOutcome.CompileFailed).diagnostics
+        org.junit.Assert.assertTrue(errors.isNotEmpty())
+    }
+
+    @Test
     fun fullChainToLinkedApk() {
         val kit = kitOrSkip()
         val work = File(tmp.root, "chain").apply { mkdirs() }

@@ -57,6 +57,58 @@ object ToolchainManifest {
             sizeBytes = 506_969L,
             sha256 = "c070ed1394629d74641aa0906f60b2ffa1ee77e6366a1f93437f59717b1aeb89",
         ),
+        // Compiler launch classpath: kotlin-compiler-embeddable refuses to start without
+        // these beside it (verified: each missing jar named itself in turn).
+        ToolComponent(
+            id = "kotlin-stdlib",
+            version = "2.4.0",
+            fileName = "kotlin-stdlib-2.4.0.jar",
+            url = "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/" +
+                "kotlin-stdlib/2.4.0/kotlin-stdlib-2.4.0.jar",
+            sizeBytes = 1_841_929L,
+            sha256 = "ccb14ff83fabcb11458b798dbc9824748ccdffeec79c9aba789e6ed1cda86b1c",
+        ),
+        ToolComponent(
+            id = "kotlin-reflect",
+            version = "2.4.0",
+            fileName = "kotlin-reflect-2.4.0.jar",
+            url = "https://repo.maven.apache.org/maven2/org/jetbrains/kotlin/" +
+                "kotlin-reflect/2.4.0/kotlin-reflect-2.4.0.jar",
+            sizeBytes = 3_750_099L,
+            sha256 = "f0d8e8908624eb4478bb131e9f887366680d2e239741195e548fa5c906963b90",
+        ),
+        ToolComponent(
+            id = "trove4j",
+            version = "1.0.20200330",
+            fileName = "trove4j-1.0.20200330.jar",
+            url = "https://repo.maven.apache.org/maven2/org/jetbrains/intellij/deps/" +
+                "trove4j/1.0.20200330/trove4j-1.0.20200330.jar",
+            sizeBytes = 572_985L,
+            sha256 = "c5fd725bffab51846bf3c77db1383c60aaaebfe1b7fe2f00d23fe1b7df0a439d",
+        ),
+        ToolComponent(
+            id = "annotations",
+            version = "13.0",
+            fileName = "annotations-13.0.jar",
+            url = "https://repo.maven.apache.org/maven2/org/jetbrains/annotations/" +
+                "13.0/annotations-13.0.jar",
+            sizeBytes = 17_536L,
+            sha256 = "ace2a10dc8e2d5fd34925ecac03e4988b2c0f851650c94b8cef49ba1bd111478",
+        ),
+        ToolComponent(
+            id = "coroutines",
+            version = "1.9.0",
+            fileName = "kotlinx-coroutines-core-jvm-1.9.0.jar",
+            url = "https://repo.maven.apache.org/maven2/org/jetbrains/kotlinx/" +
+                "kotlinx-coroutines-core-jvm/1.9.0/kotlinx-coroutines-core-jvm-1.9.0.jar",
+            sizeBytes = 1_463_587L,
+            sha256 = "ad89c2892235e670f222d819cb3d81188143cb19a05b59df9889ae4269f5c70a",
+        ),
+    )
+
+    /** Jar ids forming the kotlinc launch classpath, in order. */
+    val kotlincLaunchIds: List<String> = listOf(
+        "kotlin-compiler", "kotlin-stdlib", "kotlin-reflect", "trove4j", "annotations", "coroutines",
     )
 
     /**

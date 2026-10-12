@@ -182,6 +182,17 @@ class BuildModuleTest {
     }
 
     @Test
+    fun toolRunnerRefusesMissingJars() {
+        val result = ToolRunner.runMain(
+            jars = listOf(File(tmp.root, "nope.jar")),
+            mainClass = "Nope",
+            args = emptyList(),
+        )
+        assertEquals(1, result.code)
+        assertTrue("missing" in result.output.lowercase())
+    }
+
+    @Test
     fun engineReportsContractFailureHonestly() = runBlocking {
         val toolchain = ToolchainStore(File(tmp.root, "toolchain"), InMemoryKeyValueStore())
         val outcome = BuildEngine(toolchain).build(tmp.root, "biz")

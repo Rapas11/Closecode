@@ -1148,6 +1148,17 @@ internal fun IdeScreen(
                             ),
                         )
                     }
+                    is com.closecode.build.BuildOutcome.CompileFailed -> {
+                        outcome.diagnostics.take(20).forEach { diagnostic ->
+                            logLines.appendCapped(
+                                LogLine(
+                                    LogLevel.ERROR,
+                                    "Kotlin",
+                                    "${diagnostic.path}:${diagnostic.line}: ${diagnostic.message}",
+                                ),
+                            )
+                        }
+                    }
                     else -> Unit
                 }
             }
