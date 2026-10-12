@@ -3,15 +3,22 @@ package com.closecode.build
 import java.io.File
 
 /**
- * Milestone (a) drivers, pure argument builders. The engine will execute these against
- * the verified jars; until then every flag here is unit-tested, so the first on-device
- * run assembles from known-good pieces rather than guesses.
+ * Milestone (a) drivers, pure argument builders. Proven end to end on JVM 2026-10-12:
+ * kotlinc → ECJ → D8 → aapt2 link → zip-pack → apksig sign → verify, all green.
  *
- * Entry points (all stable across the pinned versions):
- * - kotlinc: org.jetbrains.kotlin.cli.jvm.K2JVMCompiler
- * - ECJ: org.eclipse.jdt.internal.compiler.batch.Main
- * - D8: com.android.tools.r8.D8Main
- * - apksigner: com.android.apksig.ApkSignerTool
+ * Entry points (verified against the pinned jars):
+ * - kotlinc: org.jetbrains.kotlin.cli.jvm.K2JVMCompiler, launched with stdlib,
+ *   reflect, trove4j, annotations and coroutines beside the embeddable jar
+ * - ECJ: org.eclipse.jdt.internal.compiler.batch.Main (platform jar on -cp;
+ *   -bootclasspath is rejected at compliance 9+)
+ * - D8: com.android.tools.r8.D8 (there is no D8Main in r8 8.13.x)
+ * - apksig: library only (com.android.apksig.ApkSigner.Builder) — there is no CLI
+ *   in the artifact, so signing calls the API with the app-generated debug key
+ *
+ * On-device correction: ART runs dex, not JVM bytecode, so the setup ships these
+ * jars pre-dexed (converted here at release time); the app loads them through a
+ * DexClassLoader. The hashes in [ToolchainManifest] cover the jars; dexed artifacts
+ * get their own manifest entries before milestone (a) closes.
  */
 object CompileDriver {
 
@@ -39,21 +46,23 @@ object CompileDriver {
         sources.forEach { add(it.absolutePath) }
     }
 
-    /** ECJ arguments for R.java and any Java sources: Java 17, errors to stdout. */
+    /**
+     * ECJ arguments for R.java and any Java sources. The platform jar rides on -cp:
+     * -bootclasspath is rejected at compliance 9+, and the platform is a library
+     * here, not a boot runtime.
+     */
     fun ecjArgs(
         sources: List<File>,
         classpath: List<File>,
         outputDir: File,
-        bootClasspath: File,
+        platformJar: File,
     ): List<String> = buildList {
         add("-17")
         add("-nowarn")
         add("-d")
         add(outputDir.absolutePath)
         add("-cp")
-        add(classpath.joinToString(File.pathSeparator) { it.absolutePath })
-        add("-bootclasspath")
-        add(bootClasspath.absolutePath)
+        add((classpath + platformJar).joinToString(File.pathSeparator) { it.absolutePath })
         sources.forEach { add(it.absolutePath) }
     }
 
@@ -75,14 +84,11 @@ object CompileDriver {
         classes.forEach { add(it.absolutePath) }
     }
 
-    /** apksigner sign arguments for the debug keypair the app generates itself. */
-    fun signArgs(apk: File, key: File, cert: File, out: File): List<String> = listOf(
-        "sign",
-        "--ks", key.absolutePath,
-        "--ks-type", "PKCS12",
-        "--out", out.absolutePath,
-        apk.absolutePath,
-    )
+    /**
+     * Signing runs through ApkSigner.Builder with the [com.closecode.build.DebugKey]
+     * pair (v1+v2+v3). No CLI exists in the artifact, so there are no arg lists here —
+     * the proof run signed and verified with exactly that API.
+     */
 
     /** A compiler diagnostic with a file and line the UI can jump to. */
     data class Diagnostic(
@@ -96,6 +102,33 @@ object CompileDriver {
 
     private val KotlincLine = Regex("^(.+\\.kt):(\\d+):\\d+: (warning|error): (.*)$")
     private val EcjJavacLine = Regex("^(.+\\.java):(\\d+): (warning|error): (.*)$")
+
+    /**
+     * A parsed diagnostic as the Build panel's error cards read it: same file+line
+     * tap-to-jump as the analyzer cards, fed by real compiler output.
+     */
+    internal fun toProjectDiagnostic(
+        parsed: Diagnostic,
+        fileName: (String) -> String,
+    ): com.closecode.ui.ide.ProjectDiagnostic {
+        val severity = if (parsed.kind == Diagnostic.Kind.Error) {
+            com.closecode.lang.Severity.ERROR
+        } else {
+            com.closecode.lang.Severity.WARNING
+        }
+        return com.closecode.ui.ide.ProjectDiagnostic(
+            fileName = fileName(parsed.path),
+            diagnostic = com.closecode.lang.Diagnostic(
+                severity = severity,
+                message = parsed.message,
+                offset = 0,
+                length = 0,
+                line = parsed.line,
+                column = 1,
+                code = if (severity == com.closecode.lang.Severity.ERROR) "E0001" else "W0001",
+            ),
+        )
+    }
 
     /**
      * Parses one kotlinc/ECJ output line (`path.kt:12:8: error: message`) into a

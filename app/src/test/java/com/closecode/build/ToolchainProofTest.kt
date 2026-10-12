@@ -1,0 +1,205 @@
+package com.closecode.build
+
+import java.io.File
+import java.nio.file.FileSystems
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+
+/**
+ * Milestone (a) proof: the pinned toolchain end to end — kotlinc, ECJ, D8, aapt2
+ * link, dex packing and a diagnostics failure case. Runs only when the jars and an
+ * SDK are pointed at it (`-Dtoolchain.dir=… -Daapt2.bin=… -Dandroid.jar=…` plus a
+ * `stdlib.jar` beside the compiler); anywhere else it skips silently instead of
+ * failing a machine that was never asked to prove anything.
+ */
+class ToolchainProofTest {
+
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    private data class Kit(
+        val dir: File,
+        val kotlinc: File,
+        val launchCp: List<File>,
+        val ecj: File,
+        val r8: File,
+        val stdlib: File,
+        val javaBin: String,
+        val aapt2: File,
+        val androidJar: File,
+    )
+
+    private fun kitOrSkip(): Kit {
+        val dir = (System.getProperty("toolchain.dir") ?: System.getenv("TOOLCHAIN_DIR"))
+            ?.let { File(it) }
+        assumeTrue("toolchain.dir not set", dir != null && dir!!.isDirectory)
+        val root = dir!!
+        val kotlinc = File(root, "kotlin-compiler-embeddable-2.4.0.jar")
+        val stdlib = File(
+            System.getProperty("stdlib.jar")
+                ?: "/tmp/proof/kotlin-stdlib-2.4.0.jar",
+        )
+        val launchCp = listOf(
+            kotlinc,
+            stdlib,
+            File(root, "kotlin-reflect-2.4.0.jar"),
+            File(root, "trove4j-1.0.20200330.jar"),
+            File(root, "annotations-13.0.jar"),
+            File(root, "coroutines-1.9.0.jar"),
+        )
+        val ecj = File(root, "ecj-3.46.0.jar")
+        val r8 = File(root, "r8-8.13.25.jar")
+        val aapt2 = File(System.getProperty("aapt2.bin") ?: "/opt/android_sdk/build-tools/34.0.0/aapt2")
+        val androidJar = File(
+            System.getProperty("android.jar")
+                ?: "/opt/android_sdk/platforms/android-34/android.jar",
+        )
+        for (file in launchCp + listOf(ecj, r8, aapt2, androidJar)) {
+            assumeTrue("missing ${file.path}", file.isFile)
+        }
+        val javaBin = System.getProperty("java.home") + File.separator + "bin" +
+            File.separator + "java"
+        return Kit(dir, kotlinc, launchCp, ecj, r8, stdlib, javaBin, aapt2, androidJar)
+    }
+
+    @Test
+    fun kotlincCompilesHelloWorld() {
+        val kit = kitOrSkip()
+        val src = File(tmp.root, "Hello.kt").apply { writeText("fun main() { println(\"proof\") }\n") }
+        val out = File(tmp.root, "out").apply { mkdirs() }
+        val result = DriverExec.runJava(
+            kit.javaBin,
+            kit.launchCp,
+            "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+            CompileDriver.kotlincArgs(
+                sources = listOf(src),
+                classpath = listOf(kit.stdlib),
+                outputDir = out,
+                composePluginJar = null,
+            ),
+            tmp.root,
+            timeoutMs = 300_000,
+        )
+        assertEquals(result.output.takeLast(2000), 0, result.code)
+        assertTrue(File(out, "HelloKt.class").isFile)
+    }
+
+    @Test
+    fun kotlincFailuresParseToFileAndLine() {
+        val kit = kitOrSkip()
+        val src = File(tmp.root, "Bad.kt").apply { writeText("fun main() { nosuchthing() }\n") }
+        val out = File(tmp.root, "out-bad").apply { mkdirs() }
+        val result = DriverExec.runJava(
+            kit.javaBin,
+            kit.launchCp,
+            "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+            CompileDriver.kotlincArgs(
+                sources = listOf(src),
+                classpath = listOf(kit.stdlib),
+                outputDir = out,
+                composePluginJar = null,
+            ),
+            tmp.root,
+            timeoutMs = 300_000,
+        )
+        assertTrue("exit=${result.code}", result.code != 0)
+        val diagnostic = result.output.lines().mapNotNull { CompileDriver.parseDiagnostic(it) }
+            .firstOrNull { it.kind == CompileDriver.Diagnostic.Kind.Error }
+        assertTrue("no parsed error in:\n${result.output.takeLast(1000)}", diagnostic != null)
+        assertEquals(1, diagnostic?.line)
+    }
+
+    @Test
+    fun fullChainToLinkedApk() {
+        val kit = kitOrSkip()
+        val work = File(tmp.root, "chain").apply { mkdirs() }
+        // 1. Kotlin source.
+        val src = File(work, "Hello.kt").apply { writeText("fun main() { println(\"proof\") }\n") }
+        val classes = File(work, "classes").apply { mkdirs() }
+        var result = DriverExec.runJava(
+            kit.javaBin, kit.launchCp, "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+            CompileDriver.kotlincArgs(listOf(src), listOf(kit.stdlib), classes, null),
+            work, timeoutMs = 300_000,
+        )
+        assertEquals(result.output.takeLast(2000), 0, result.code)
+        // 2. Resources: manifest + strings, compiled and linked.
+        File(work, "res/values").apply { mkdirs() }
+        File(work, "res/values/strings.xml").writeText(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+                "<resources>\n    <string name=\"app_name\">Proof</string>\n</resources>\n",
+        )
+        File(work, "AndroidManifest.xml").writeText(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n" +
+                "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\" " +
+                "package=\"com.closecode.proof\">\n" +
+                "    <application android:label=\"@string/app_name\" />\n</manifest>\n",
+        )
+        val compiled = File(work, "compiled").apply { mkdirs() }
+        result = DriverExec.runNative(
+            kit.aapt2,
+            listOf("compile", "--dir", File(work, "res").absolutePath, "-o", compiled.absolutePath),
+            work,
+        )
+        assertEquals(result.output.takeLast(2000), 0, result.code)
+        val gen = File(work, "gen").apply { mkdirs() }
+        val base = File(work, "base.apk")
+        val flats = compiled.walkTopDown().filter { it.isFile && it.extension == "flat" }.toList()
+        assertTrue("aapt2 compiled nothing", flats.isNotEmpty())
+        result = DriverExec.runNative(
+            kit.aapt2,
+            listOf(
+                "link", "-o", base.absolutePath, "-I", kit.androidJar.absolutePath,
+                "--manifest", File(work, "AndroidManifest.xml").absolutePath,
+                "--java", gen.absolutePath,
+                "--min-sdk-version", "29", "--target-sdk-version", "34",
+            ) + flats.map { it.absolutePath },
+            work,
+        )
+        assertEquals(result.output.takeLast(2000), 0, result.code)
+        assertTrue(base.isFile)
+        // 3. ECJ on the generated R.java.
+        val rJava = gen.walkTopDown().first { it.isFile && it.name == "R.java" }
+        val rClasses = File(work, "rclasses").apply { mkdirs() }
+        result = DriverExec.runJava(
+            kit.javaBin, listOf(kit.ecj), "org.eclipse.jdt.internal.compiler.batch.Main",
+            CompileDriver.ecjArgs(listOf(rJava), emptyList(), rClasses, kit.androidJar),
+            work, timeoutMs = 180_000,
+        )
+        assertEquals(result.output.takeLast(2000), 0, result.code)
+        // 4. D8 everything to dex.
+        val program = classes.walkTopDown().filter { it.isFile && it.extension == "class" }.toList() +
+            rClasses.walkTopDown().filter { it.isFile && it.extension == "class" }.toList()
+        val dexOut = File(work, "dex").apply { mkdirs() }
+        result = DriverExec.runJava(
+            kit.javaBin, listOf(kit.r8), "com.android.tools.r8.D8",
+            CompileDriver.d8Args(program, listOf(kit.androidJar, kit.stdlib), dexOut),
+            work, timeoutMs = 300_000,
+        )
+        assertEquals(result.output.takeLast(2000), 0, result.code)
+        val dex = File(dexOut, "classes.dex")
+        assertTrue(dex.isFile)
+        // 5. Pack the dex into the APK and check the entries.
+        FileSystems.newFileSystem(
+            java.net.URI.create("jar:" + base.toURI()),
+            mapOf("create" to "false"),
+        ).use { zip ->
+            Files.copy(
+                dex.toPath(), zip.getPath("classes.dex"),
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        }
+        val entries = FileSystems.newFileSystem(
+            java.net.URI.create("jar:" + base.toURI()), emptyMap<String, Any>(),
+        ).use { zip ->
+            Files.walk(zip.getPath("/")).map { it.toString() }.toList()
+        }
+        assertTrue(entries.any { it.endsWith("classes.dex") })
+        assertTrue(entries.any { it.endsWith("AndroidManifest.xml") })
+    }
+}

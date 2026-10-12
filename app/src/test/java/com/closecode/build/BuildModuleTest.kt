@@ -127,6 +127,33 @@ class BuildModuleTest {
     }
 
     @Test
+    fun driverDiagnosticsBecomePanelCards() {
+        val parsed = CompileDriver.parseDiagnostic("Main.kt:12:8: error: unresolved reference: foo")
+        val card = CompileDriver.toProjectDiagnostic(parsed!!) { it.substringAfterLast('/') }
+        assertEquals("Main.kt", card.fileName)
+        assertEquals(12, card.diagnostic.line)
+    }
+
+    @Test
+    fun previewIndexReadsEntriesAndErrors() {
+        val root = File(tmp.root, "previews").apply { mkdirs() }
+        File(root, "previews.json").writeText(
+            "{\"function\":\"Home\",\"png\":\"home.png\",\"widthPx\":132,\"heightPx\":268}," +
+                "{\"function\":\"Broken\",\"png\":\"\",\"widthPx\":0,\"heightPx\":0,\"error\":\"boom\"}",
+        )
+        val entries = PreviewContract.readIndex(root)
+        assertEquals(2, entries.size)
+        assertEquals("home.png", entries[0].png)
+        assertEquals("boom", entries[1].error)
+        assertTrue(PreviewContract.readIndex(tmp.root).isEmpty())
+    }
+
+    @Test
+    fun runnerPackageDerivesFromApp() {
+        assertEquals("com.closecode.biz.previewrunner", PreviewContract.runnerPackage("com.closecode.biz"))
+    }
+
+    @Test
     fun engineReportsContractFailureHonestly() = runBlocking {
         val toolchain = ToolchainStore(File(tmp.root, "toolchain"), InMemoryKeyValueStore())
         val outcome = BuildEngine(toolchain).build(tmp.root, "biz")

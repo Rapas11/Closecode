@@ -379,5 +379,10 @@ tasks.withType<Test>().configureEach {
     inputs.file(generatedIndex)
     doFirst {
         systemProperty("closecode.androidApiIndex", generatedIndex.get().asFile.absolutePath)
+        // Milestone (a) proof: toolchain jars, aapt2 and android.jar reach the workers
+        // from the environment, so the proof runs where they exist and skips elsewhere.
+        for (key in listOf("toolchain.dir", "stdlib.jar", "aapt2.bin", "android.jar")) {
+            System.getenv(key.replace('.', '_').uppercase())?.let { systemProperty(key, it) }
+        }
     }
 }
