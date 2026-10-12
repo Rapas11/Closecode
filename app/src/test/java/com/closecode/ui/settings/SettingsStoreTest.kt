@@ -136,13 +136,11 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun theScreenIsElevenSectionsAndFiftyFiveRows() {
-        // Eleven sections throughout, and the frame-stats switch is the fifty-fifth row: the
-        // terminal's own section existed before it had anything real
-        // in it; wiring its colours and size replaced a placeholder with two working rows rather than
-        // adding a section, so only the row count moved.
+    fun theScreenIsElevenSectionsAndFiftySevenRows() {
+        // Eleven sections throughout; the on-device toolchain group added two rows
+        // (status + download) to the build section.
         assertEquals(11, sections(SettingsLive()).size)
-        assertEquals(55, rowCount())
+        assertEquals(57, rowCount())
     }
 
     @Test

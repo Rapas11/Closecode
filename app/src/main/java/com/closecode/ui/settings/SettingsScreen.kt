@@ -88,7 +88,18 @@ private class SettingsFacts(
             version = runCatching {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
             }.getOrNull() ?: "1.0.0",
+            toolchainStatus = toolchainStatus(),
         )
+    }
+
+    /** Ready only when every pinned file sits at its manifest size. */
+    private fun toolchainStatus(): String {
+        val dir = java.io.File(context.filesDir, "toolchain")
+        val missing = com.closecode.build.ToolchainManifest.components.count { component ->
+            val file = java.io.File(dir, component.fileName)
+            !(file.isFile && file.length() == component.sizeBytes)
+        }
+        return if (missing == 0) "Ready" else "$missing files missing"
     }
 
     /** Only ever touches directories the platform owns; nothing under `filesDir` is touched. */
@@ -119,6 +130,24 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     var live by remember { mutableStateOf(SettingsLive()) }
     LaunchedEffect(facts) { live = facts.measure() }
+    // On-device toolchain setup: full-screen over settings, dismissed back to it.
+    var setupOpen by remember { mutableStateOf(false) }
+    val toolchainStore = remember(context) {
+        com.closecode.build.ToolchainStore(
+            java.io.File(context.filesDir, "toolchain"),
+            SharedPreferencesKeyValueStore(context),
+        )
+    }
+    if (setupOpen) {
+        ToolchainSetupScreen(
+            store = toolchainStore,
+            onClose = {
+                setupOpen = false
+                scope.launch { live = facts.measure() }
+            },
+        )
+        return
+    }
 
     val allSections = sections(live)
     val current = allSections.firstOrNull { it.id == activeId } ?: allSections.first()
@@ -156,6 +185,9 @@ fun SettingsScreen(
                         if (action == SettingsAction.CLEAR_CACHES) {
                             scope.launch { live = facts.clearCaches() }
                         }
+                        if (action == SettingsAction.DOWNLOAD_TOOLCHAIN) {
+                            setupOpen = true
+                        }
                     },
                     modifier = Modifier.weight(1f),
                 )
@@ -183,6 +215,9 @@ fun SettingsScreen(
                     onAction = { action ->
                         if (action == SettingsAction.CLEAR_CACHES) {
                             scope.launch { live = facts.clearCaches() }
+                        }
+                        if (action == SettingsAction.DOWNLOAD_TOOLCHAIN) {
+                            setupOpen = true
                         }
                     },
                     modifier = Modifier.weight(1f),

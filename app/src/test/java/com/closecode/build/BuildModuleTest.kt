@@ -93,6 +93,40 @@ class BuildModuleTest {
     }
 
     @Test
+    fun kotlincArgsPinJvm17AndCompose() {
+        val args = CompileDriver.kotlincArgs(
+            sources = listOf(File("A.kt")),
+            classpath = listOf(File("android.jar")),
+            outputDir = File("out"),
+            composePluginJar = File("compose.jar"),
+        )
+        assertTrue(args.containsAll(listOf("-jvm-target", "17")))
+        assertTrue(args.any { it.startsWith("-Xplugin=") && it.endsWith("compose.jar") })
+        assertTrue(args.last().endsWith("A.kt"))
+    }
+
+    @Test
+    fun d8TargetsMinSdk29() {
+        val args = CompileDriver.d8Args(
+            classes = listOf(File("classes")),
+            libs = listOf(File("android.jar")),
+            outputDir = File("dex"),
+        )
+        assertTrue(args.containsAll(listOf("--min-api", "29", "--lib")))
+    }
+
+    @Test
+    fun diagnosticsParseToFileAndLine() {
+        val error = CompileDriver.parseDiagnostic("Main.kt:12:8: error: unresolved reference: foo")
+        assertEquals("Main.kt", error?.path)
+        assertEquals(12, error?.line)
+        assertEquals(CompileDriver.Diagnostic.Kind.Error, error?.kind)
+        val warning = CompileDriver.parseDiagnostic("R.java:3: warning: [deprecation] old()")
+        assertEquals(CompileDriver.Diagnostic.Kind.Warning, warning?.kind)
+        assertEquals(null, CompileDriver.parseDiagnostic("warming up the compiler…"))
+    }
+
+    @Test
     fun engineReportsContractFailureHonestly() = runBlocking {
         val toolchain = ToolchainStore(File(tmp.root, "toolchain"), InMemoryKeyValueStore())
         val outcome = BuildEngine(toolchain).build(tmp.root, "biz")

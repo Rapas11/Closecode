@@ -90,6 +90,7 @@ sealed interface Row {
 /** The actions [Row.Action] can ask for. Named, so nothing matches on a row's display text. */
 enum class SettingsAction {
     CLEAR_CACHES,
+    DOWNLOAD_TOOLCHAIN,
 }
 
 @Immutable
@@ -124,6 +125,7 @@ data class SettingsLive(
     val projectsSize: String = "…",
     val cachesSize: String = "…",
     val version: String = "1.0.0",
+    val toolchainStatus: String = "…",
 )
 
 /**
@@ -269,6 +271,23 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                     Row.Status("Android SDK", null, "SDK 35"),
                     Row.Status("Build Tools", null, "35.0.0"),
                     Row.Value("Gradle", null, "Managed"),
+                ),
+            ),
+            Group(
+                "On-device build tools",
+                listOf(
+                    Row.Status(
+                        "Compiler pack",
+                        "Kotlin, Java, dex and signer. One Wi-Fi download, then offline.",
+                        live.toolchainStatus,
+                        ok = live.toolchainStatus == "Ready",
+                    ),
+                    Row.Action(
+                        "Download build tools",
+                        "About 80 MB over Wi-Fi. Resumes if interrupted.",
+                        "Download",
+                        SettingsAction.DOWNLOAD_TOOLCHAIN,
+                    ),
                 ),
             ),
             Group(
