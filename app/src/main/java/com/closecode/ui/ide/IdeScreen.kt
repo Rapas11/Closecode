@@ -143,6 +143,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.closecode.BuildConfig
+import com.closecode.CrashReport
+import com.closecode.debug.BuildInfo
+import com.closecode.debug.DebugLog
+import com.closecode.debug.DebugReport
+import com.closecode.debug.SelfTest
+import com.closecode.debug.sharePlainText
 import com.closecode.lang.AndroidApiAssets
 import com.closecode.lang.CompletionItem
 import com.closecode.lang.CompletionKind
@@ -425,6 +432,10 @@ internal fun IdeScreen(
                     installState,
                     com.closecode.build.InstallEvent.SystemStatus(status, packageName, message),
                 )
+                DebugLog.crumb(
+                    "INSTALL",
+                    "status=$status pkg=${packageName.ifEmpty { "?" }} msg=${message.take(120)}",
+                )
             }
         }
         val filter = android.content.IntentFilter(
@@ -443,10 +454,12 @@ internal fun IdeScreen(
     // (and every move nobody asked for) is mirrored into the Logcat panel, so the phone
     // itself produces the log — no adb needed. Off otherwise, so ordinary scrolling never
     // spams the panel builds use.
-    // Debug logs behind a switch in More, off by default: with it off, ordinary
-    // scrolling never spams the Logcat panel.
-    var debugLogs by remember { mutableStateOf(kvStore.getInt("debug_logs", 0) == 1) }
+    // Debug log: off at every start (spec, Debug tools 2), turned on per session from
+    // More > Developer. Off, the lambda in every DebugLog.line stays unbuilt, the file is
+    // untouched, and ordinary scrolling never spams the Logcat panel either.
+    var debugLogs by remember { mutableStateOf(false) }
     LaunchedEffect(debugLogs) {
+        DebugLog.setEnabled(debugLogs)
         if (debugLogs) {
             ScrollLog.mirror = { message ->
                 logLines.appendCapped(LogLine(LogLevel.DEBUG, "Scroll", message))
@@ -459,6 +472,19 @@ internal fun IdeScreen(
             BackLog.mirror = null
         }
     }
+    // More > Developer state: the developer sheet, the self-test sheet, the crash viewer and
+    // the two destructive questions behind it.
+    var developerOpen by remember { mutableStateOf(false) }
+    var selfTestOpen by remember { mutableStateOf(false) }
+    var selfTestFacts by remember { mutableStateOf("") }
+    var selfTestChecks by remember { mutableStateOf<List<SelfTest.Check>>(emptyList()) }
+    var selfTestRunning by remember { mutableStateOf(false) }
+    var crashView by remember { mutableStateOf<String?>(null) }
+    var confirmClearCache by remember { mutableStateOf(false) }
+    var confirmDeleteTools by remember { mutableStateOf(false) }
+    // Stored like the other preferences; the PTY backend that will read it is not built yet,
+    // so the row says so and the pipe terminal runs either way for now.
+    var usePipeTerminal by remember { mutableStateOf(kvStore.getInt("terminal_use_pipe", 1) == 1) }
     // True while the suggestion popup is up. It is the tool row's other reason to hide: the popup
     // covers the row, and a row under a popup only steals taps.
     var suggestionsOpen by remember { mutableStateOf(false) }
@@ -478,6 +504,10 @@ internal fun IdeScreen(
             (if (imeOpen) "ime-open" else "ime-closed") +
                 " wInsets=$imeInsetOpen bottom=$imeBottomPx",
         )
+        DebugLog.line("KEYBOARD") {
+            "ime=${if (imeOpen) "open" else "closed"} height=${KeyboardVisibility.heightPx}px " +
+                "windowInsets=$imeInsetOpen bottom=${imeBottomPx}px"
+        }
     }
     // Tapping outside the code — a tab, the bar, the drawer, another panel — puts the
     // keyboard away: the key row follows the keyboard, so it follows these taps too, within
@@ -1105,6 +1135,7 @@ internal fun IdeScreen(
             toast = "No Kotlin files to build"
             return@LaunchedEffect
         }
+        DebugLog.crumb("BUILD", "checks started · ${sources.size} files")
         val started = System.nanoTime()
         val result = withContext(Dispatchers.Default) {
             buildPhase = BuildPhase.FILES
@@ -1151,6 +1182,10 @@ internal fun IdeScreen(
                 ),
             )
             toast = "Checks failed · $errors errors"
+            DebugLog.crumb(
+                "BUILD",
+                "checks failed · $errors errors, $warnings warnings in ${formatBuildTime(buildElapsedMs)}",
+            )
         } else {
             logLines.appendCapped(
                 LogLine(
@@ -1160,6 +1195,10 @@ internal fun IdeScreen(
                 ),
             )
             toast = "Checks passed · 0 errors"
+            DebugLog.crumb(
+                "BUILD",
+                "checks passed · $warnings warnings in ${formatBuildTime(buildElapsedMs)}",
+            )
             // On-device packaging (Part B): contract check now, toolchain-gated steps
             // report setup instead of pretending. Analysis passing is not an APK.
             val engine = com.closecode.build.BuildEngine(
@@ -1173,6 +1212,7 @@ internal fun IdeScreen(
                 when (val outcome = engine.build(projectRoot, slug)) {
                     is com.closecode.build.BuildOutcome.ContractFailed -> {
                         val first = outcome.violations.first()
+                        DebugLog.crumb("BUILD", "not packable: ${first.path} — ${first.message}")
                         logLines.appendCapped(
                             LogLine(
                                 LogLevel.ERROR,
@@ -1182,6 +1222,7 @@ internal fun IdeScreen(
                         )
                     }
                     is com.closecode.build.BuildOutcome.NeedsSetup -> {
+                        DebugLog.crumb("BUILD", "engine: build tools are not downloaded")
                         outcome.warnings.forEach { warning ->
                             logLines.appendCapped(
                                 LogLine(LogLevel.WARN, "Package", warning.message),
@@ -1196,6 +1237,10 @@ internal fun IdeScreen(
                         )
                     }
                     is com.closecode.build.BuildOutcome.CompileFailed -> {
+                        DebugLog.crumb(
+                            "BUILD",
+                            "engine: compile failed · ${outcome.diagnostics.size} diagnostics",
+                        )
                         outcome.diagnostics.take(20).forEach { diagnostic ->
                             logLines.appendCapped(
                                 LogLine(
@@ -1478,6 +1523,7 @@ internal fun IdeScreen(
                         val session = com.closecode.build.InstallHelper.install(context, apk)
                         if (session < 0) {
                             installState = com.closecode.build.InstallState.NeedsPermission
+                            DebugLog.crumb("INSTALL", "install permission missing — opened the settings screen")
                             // Android 12+: one-time allow-this-source toggle the app opens
                             // settings for but can never flip itself.
                             val settingsIntent = android.content.Intent(
@@ -1486,6 +1532,7 @@ internal fun IdeScreen(
                             )
                             runCatching { context.startActivity(settingsIntent) }
                         } else {
+                            DebugLog.crumb("INSTALL", "session opened id=$session · ${apk.name} · ${apk.length()} bytes")
                             installState = com.closecode.build.nextInstallState(
                                 installState,
                                 com.closecode.build.InstallEvent.SessionOpened(session),
@@ -1497,6 +1544,7 @@ internal fun IdeScreen(
                             ?.let { diskContents[it.path] }.orEmpty()
                         val pkg = com.closecode.build.TemplateContract.manifestPackage(manifest)
                             ?: com.closecode.build.TemplateContract.packageForSlug(slug)
+                        DebugLog.crumb("INSTALL", "open requested · pkg=$pkg")
                         com.closecode.build.InstallHelper.launchIntent(context, pkg)
                             ?.let { runCatching { context.startActivity(it) } }
                     },
@@ -2025,13 +2073,160 @@ internal fun IdeScreen(
                     MoreAction("Build", "✓") { activePanel = "Build" },
                     MoreAction("Settings", "⚙") { onOpenSettings() },
                     MoreAction("Toggle theme", "◐") { onToggleTheme() },
-                    MoreAction(if (debugLogs) "Debug logs: on" else "Debug logs: off", "◆") {
-                        debugLogs = !debugLogs
-                        kvStore.putInt("debug_logs", if (debugLogs) 1 else 0)
-                    },
+                    MoreAction("Developer", "◆") { developerOpen = true },
                 ),
                 onDismiss = { moreOpen = false },
+                versionLabel = BuildInfo.label,
                 barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
+            )
+        }
+
+        if (developerOpen) {
+            IdeDeveloperSheet(
+                debugLogOn = debugLogs,
+                usePipe = usePipeTerminal,
+                crashAvailable = CrashReport.readLast(context.filesDir) != null,
+                debugBuild = BuildConfig.DEBUG,
+                onToggleDebugLog = { debugLogs = it },
+                onCopyLog = {
+                    val text = DebugLog.snapshot().joinToString("\n")
+                    if (text.isEmpty()) {
+                        toast = "The debug log is empty"
+                    } else {
+                        treeClipboard.setText(androidx.compose.ui.text.AnnotatedString(text))
+                        toast = "Log copied"
+                    }
+                },
+                onShareLog = {
+                    val text = DebugLog.snapshot().joinToString("\n")
+                    if (text.isEmpty()) {
+                        toast = "The debug log is empty — turn it on first"
+                    } else if (!sharePlainText(context, "CloseCode debug log", text)) {
+                        toast = "No app accepted the share"
+                    }
+                },
+                onClearLog = {
+                    DebugLog.clear()
+                    toast = "Debug log cleared"
+                },
+                onSelfTest = {
+                    selfTestFacts = SelfTest.facts(context)
+                    selfTestChecks = emptyList()
+                    selfTestOpen = true
+                },
+                onViewCrash = {
+                    val report = CrashReport.readLast(context.filesDir)
+                    if (report == null) toast = "No crash is recorded" else crashView = report
+                },
+                onShareReport = {
+                    if (!sharePlainText(context, "CloseCode debug report", DebugReport.compose(context))) {
+                        toast = "No app accepted the share"
+                    }
+                },
+                onClearBuildCache = { confirmClearCache = true },
+                onDeleteTools = { confirmDeleteTools = true },
+                onToggleUsePipe = {
+                    usePipeTerminal = it
+                    kvStore.putInt("terminal_use_pipe", if (it) 1 else 0)
+                },
+                onCrashTest = {
+                    // A breadcrumb first, so the report shows the test was on purpose.
+                    DebugLog.crumb("CRASH", "crash test started from More > Developer")
+                    android.os.Handler(android.os.Looper.getMainLooper()).post {
+                        throw RuntimeException("Crash test from More > Developer")
+                    }
+                },
+                onDismiss = { developerOpen = false },
+                barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
+            )
+        }
+
+        if (selfTestOpen) {
+            IdeSelfTestSheet(
+                facts = selfTestFacts,
+                checks = selfTestChecks,
+                running = selfTestRunning,
+                onRun = {
+                    if (!selfTestRunning) {
+                        selfTestFacts = SelfTest.facts(context)
+                        selfTestChecks = emptyList()
+                        selfTestRunning = true
+                        fileScope.launch {
+                            SelfTest.run(context) { check ->
+                                selfTestChecks = selfTestChecks + check
+                            }
+                            selfTestRunning = false
+                        }
+                    }
+                },
+                onCopyReport = {
+                    val report = SelfTest.lastReport
+                    if (report == null) {
+                        toast = "Run the self-test first"
+                    } else {
+                        treeClipboard.setText(androidx.compose.ui.text.AnnotatedString(report))
+                        toast = "Self-test report copied"
+                    }
+                },
+                onDismiss = { selfTestOpen = false },
+                barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
+            )
+        }
+
+        crashView?.let { report ->
+            IdeCrashSheet(
+                text = report,
+                onCopy = {
+                    treeClipboard.setText(androidx.compose.ui.text.AnnotatedString(report))
+                    crashView = null
+                    toast = "Crash report copied"
+                },
+                onShare = { sharePlainText(context, "CloseCode crash report", report) },
+                onDismiss = { crashView = null },
+                barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
+            )
+        }
+
+        if (confirmClearCache) {
+            IdeConfirmDialog(
+                title = "Clear build cache",
+                message = "Delete this project's build output? It is always safe — the next check creates it again.",
+                confirmLabel = "Clear",
+                onConfirm = {
+                    confirmClearCache = false
+                    val root = runCatching { repository.projectDir(slug) }.getOrNull()
+                    val cache = root?.let { java.io.File(it, "build/closecode") }?.takeIf { it.exists() }
+                    val bytes = cache?.let { com.closecode.ui.settings.dirSize(it) } ?: 0L
+                    val removed = cache?.deleteRecursively() ?: false
+                    toast = when {
+                        root == null -> "No project is open"
+                        cache == null || bytes == 0L -> "Build cache is already empty"
+                        removed -> "Build cache cleared · " + com.closecode.ui.settings.humanSize(bytes)
+                        else -> "Could not clear the build cache"
+                    }
+                },
+                onDismiss = { confirmClearCache = false },
+            )
+        }
+
+        if (confirmDeleteTools) {
+            IdeConfirmDialog(
+                title = "Delete build tools",
+                message = "The compiler pack will be deleted. It can be downloaded again from Settings > Build & Toolchain.",
+                confirmLabel = "Delete",
+                onConfirm = {
+                    confirmDeleteTools = false
+                    val store = com.closecode.build.ToolchainStore(
+                        java.io.File(context.filesDir, "toolchain"),
+                        kvStore,
+                    )
+                    toast = if (store.deleteAll()) {
+                        "Build tools deleted"
+                    } else {
+                        "Could not delete the build tools"
+                    }
+                },
+                onDismiss = { confirmDeleteTools = false },
             )
         }
 

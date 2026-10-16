@@ -136,11 +136,12 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun theScreenIsElevenSectionsAndFiftySevenRows() {
-        // Eleven sections throughout; the on-device toolchain group added two rows
-        // (status + download) to the build section.
+    fun theScreenIsElevenSectionsAndFiftyFourRows() {
+        // Eleven sections throughout. The fictional JDK / Android SDK / Build Tools / Gradle rows
+        // are gone; the toolchain group now shows the compiler pack, its pinned versions and the
+        // download row — all of them real.
         assertEquals(11, sections(SettingsLive()).size)
-        assertEquals(57, rowCount())
+        assertEquals(54, rowCount())
     }
 
     @Test

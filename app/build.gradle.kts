@@ -8,6 +8,15 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// The build number is raised for every APK handed to the user. The More sheet, every log
+// and every report print it beside the version name and the short commit, so whichever
+// APK is installed says which one it is. ("unknown" only when git is not reachable.)
+val closecodeBuild = 3
+val closecodeGitCommit: String = runCatching {
+    providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }
+        .standardOutput.asText.get().trim()
+}.getOrElse { "unknown" }
+
 android {
     namespace = "com.closecode"
     compileSdk = closecodeCompileSdk
@@ -16,8 +25,9 @@ android {
         applicationId = "com.closecode"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
+        versionCode = closecodeBuild
         versionName = "1.0"
+        buildConfigField("String", "GIT_COMMIT", "\"$closecodeGitCommit\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -45,6 +55,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

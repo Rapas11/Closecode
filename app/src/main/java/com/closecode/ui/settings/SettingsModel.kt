@@ -2,6 +2,7 @@ package com.closecode.ui.settings
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import com.closecode.build.ToolchainManifest
 
 /**
  * One row of the settings screen.
@@ -124,9 +125,20 @@ data class SettingsLive(
     val projectRoot: String = "…",
     val projectsSize: String = "…",
     val cachesSize: String = "…",
+    val buildToolsSize: String = "…",
+    val debugFilesSize: String = "…",
+    val freeSpace: String = "…",
     val version: String = "1.0.0",
     val toolchainStatus: String = "…",
 )
+
+/**
+ * The versions the compiler pack is pinned to, straight from the manifest the download checks
+ * against, so the row cannot drift from what actually lands on the phone.
+ */
+private val pinnedToolchainLine: String = listOf("kotlin-compiler", "ecj", "r8", "apksig")
+    .mapNotNull { id -> ToolchainManifest.components.firstOrNull { it.id == id }?.version }
+    .joinToString(" · ")
 
 /**
  * The settings screen: every row, across every section, built as a function of [live].
@@ -267,20 +279,16 @@ fun sections(live: SettingsLive): List<Section> = listOf(
             Group(
                 "Toolchain",
                 listOf(
-                    Row.Status("JDK", "Java runtime used for Android builds.", "Java 17"),
-                    Row.Status("Android SDK", null, "SDK 35"),
-                    Row.Status("Build Tools", null, "35.0.0"),
-                    Row.Value("Gradle", null, "Managed"),
-                ),
-            ),
-            Group(
-                "On-device build tools",
-                listOf(
                     Row.Status(
                         "Compiler pack",
                         "Kotlin, Java, dex and signer. One Wi-Fi download, then offline.",
                         live.toolchainStatus,
                         ok = live.toolchainStatus == "Ready",
+                    ),
+                    Row.Value(
+                        "Pinned versions",
+                        "Kotlin · Java · dex · signer, from the manifest the download checks against.",
+                        pinnedToolchainLine,
                     ),
                     Row.Action(
                         "Download build tools",
@@ -411,10 +419,10 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                 "Storage Usage",
                 listOf(
                     Row.Value("Projects", "Everything Closecode has on this device.", live.projectsSize),
+                    Row.Value("Build tools", "The compiler pack, once downloaded.", live.buildToolsSize),
+                    Row.Value("Debug files", "Debug logs and crash reports.", live.debugFilesSize),
                     Row.Value("Cache", "Temporary files. Deleting them is always safe.", live.cachesSize),
-                    Row.Value("Android SDK", null, "2.2 GB"),
-                    Row.Value("Gradle cache", null, "640 MB"),
-                    Row.Value("Build cache", null, "420 MB"),
+                    Row.Value("Free space", "What the phone can still write.", live.freeSpace),
                 ),
             ),
             Group(

@@ -80,6 +80,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.closecode.debug.DebugLog
 import com.closecode.ui.components.PageBackButton
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.settings.LocalSettings
@@ -214,6 +215,7 @@ internal class ShellProcess(
         }.getOrNull() ?: return
         process = started
         stdin = started.outputStream.bufferedWriter()
+        DebugLog.line("TERMINAL") { "shell started in ${directory?.absolutePath ?: "no folder"}" }
         Thread {
             runCatching {
                 // Chunked reader, not line-blocked: a line is drawn after its newline
@@ -295,8 +297,12 @@ internal class ShellProcess(
      * [start], so a resize is never lost — only delayed until the shell is alive to hear it.
      */
     fun setSize(cols: Int, lines: Int = 24) {
-        columns = cols.coerceIn(20, 512)
-        rows = lines.coerceIn(10, 512)
+        val newCols = cols.coerceIn(20, 512)
+        val newRows = lines.coerceIn(10, 512)
+        val changed = newCols != columns || newRows != rows
+        columns = newCols
+        rows = newRows
+        if (changed) DebugLog.line("TERMINAL") { "size ${columns}x$rows" }
         val writer = stdin
         if (process?.isAlive == true && writer != null) {
             runCatching {
@@ -327,6 +333,7 @@ internal class ShellProcess(
         runCatching { process?.destroy() }
         stdin = null
         process = null
+        DebugLog.line("TERMINAL") { "shell closed" }
     }
 }
 

@@ -11,6 +11,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
+import com.closecode.debug.BuildInfo
+import com.closecode.debug.DebugLog
+import com.closecode.debug.sharePlainText
 import com.closecode.ui.ide.TerminalSessions
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -78,9 +81,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        CrashReport.install(filesDir)
-        // A crash leaves its trace in a file; the next launch offers it up for copying instead
-        // of swallowing it. There is no logcat on a phone, so this dialog is the whole report.
+        // The debug log gets its file and its version line before anything can record an event.
+        // The switch stays off — it is turned on per session, and every start begins off.
+        DebugLog.attach(filesDir, BuildInfo.label)
+        CrashReport.install(filesDir) { BuildInfo.label }
+        // A crash leaves its report in a file; the next launch offers it up for copying or
+        // sharing instead of swallowing it. There is no logcat on a phone, so this dialog is
+        // the whole report.
         val pendingCrash = CrashReport.readLast(filesDir)
         setContent {
             var crashText by rememberSaveable { mutableStateOf(pendingCrash) }
@@ -281,15 +288,17 @@ class MainActivity : ComponentActivity() {
 }
 
 /**
- * The previous run's crash, offered for copying. Plain Material styling on purpose: this shows
- * above every screen including a broken one, so it reads nothing from the app's own theme.
+ * The previous run's crash, offered for copying or sharing. Plain Material styling on purpose:
+ * this shows above every screen including a broken one, so it reads nothing from the app's own
+ * theme. The report already starts with the version line and ends with the last breadcrumbs.
  */
 @Composable
 private fun CrashDialog(trace: String, onClose: () -> Unit) {
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text("The app crashed", fontSize = 17.sp) },
+        title = { Text("CloseCode stopped last time", fontSize = 17.sp) },
         text = {
             Text(
                 text = trace.take(2000),
@@ -307,10 +316,17 @@ private fun CrashDialog(trace: String, onClose: () -> Unit) {
                     clipboard.setText(AnnotatedString(trace))
                     onClose()
                 },
-            ) { Text("Copy") }
+            ) { Text("Copy report") }
         },
         dismissButton = {
-            TextButton(onClick = onClose) { Text("Close") }
+            androidx.compose.foundation.layout.Row {
+                TextButton(
+                    onClick = {
+                        sharePlainText(context, "CloseCode crash report", trace)
+                    },
+                ) { Text("Share") }
+                TextButton(onClick = onClose) { Text("Dismiss") }
+            }
         },
     )
 }

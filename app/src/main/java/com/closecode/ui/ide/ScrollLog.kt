@@ -1,5 +1,6 @@
 package com.closecode.ui.ide
 
+import com.closecode.debug.DebugLog
 import java.util.ArrayDeque
 
 /**
@@ -53,6 +54,7 @@ object ScrollLog {
         if (events.size >= MAX_EVENTS) events.removeFirst()
         events.addLast(event)
         val line = "scroll $axis $from->$to $reason\n${event.origin}"
+        DebugLog.line("SCROLL") { "scroll $axis $from->$to $reason" }
         try {
             android.util.Log.d(TAG, line)
         } catch (_: Throwable) {

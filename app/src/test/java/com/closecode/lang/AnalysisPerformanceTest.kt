@@ -41,6 +41,11 @@ class AnalysisPerformanceTest {
         val source = buildLargeSource(190_000)
         assertTrue("test source too small: ${source.length}", source.length > 150_000)
 
+        // One warm-up pass, the same way the editor warms up: the first large analysis in a
+        // fresh JVM pays JIT compilation, which the phone has long paid by the time a file is
+        // real. Measuring the second pass is the honest steady-state number.
+        KotlinAnalyzer.analyze(source, AndroidApiIndex.EMPTY)
+
         val started = System.nanoTime()
         val result = KotlinAnalyzer.analyze(source, AndroidApiIndex.EMPTY)
         val elapsedMs = (System.nanoTime() - started) / 1_000_000

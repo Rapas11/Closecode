@@ -210,7 +210,29 @@ class ForgeUiSpecTest {
 
     @Test
     fun theBottomMoreSheetOffersThePanelsAndThePreferences() {
-        assertEquals(listOf("Logcat", "Build", "Settings", "Toggle theme"), MoreLabels)
+        assertEquals(
+            listOf("Logcat", "Build", "Settings", "Toggle theme", "Developer"),
+            MoreLabels,
+        )
+    }
+
+    @Test
+    fun theDeveloperSheetListsTheDebugToolsInOrder() {
+        // The spec's Developer menu, minus the crash test, which is debug-only and so is not
+        // part of a pin that must hold for release builds too.
+        assertEquals(
+            listOf(
+                "Debug log",
+                "Self-test",
+                "View last crash",
+                "Share debug report",
+                "Clear build cache",
+                "Delete build tools",
+                "Use pipe terminal",
+            ),
+            DeveloperLabels,
+        )
+        assertFalse(DeveloperCrashTestLabel in DeveloperLabels)
     }
 
     @Test

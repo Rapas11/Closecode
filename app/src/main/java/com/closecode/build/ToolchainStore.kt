@@ -1,5 +1,6 @@
 package com.closecode.build
 
+import com.closecode.debug.DebugLog
 import com.closecode.ui.settings.KeyValueStore
 import java.io.File
 import java.io.RandomAccessFile
@@ -40,6 +41,9 @@ class ToolchainStore(
     suspend fun ensureAll(): Boolean = withContext(Dispatchers.IO) {
         try {
             dir.mkdirs()
+            DebugLog.line("TOOLS") {
+                "setup started · ${missing().size} of ${ToolchainManifest.components.size} files to download"
+            }
             val pending = ToolchainManifest.components
             for (component in pending) {
                 val file = componentFile(component)
@@ -49,21 +53,26 @@ class ToolchainStore(
                 _state.value = ToolchainState.Verifying(component.fileName)
                 if (!matchesSha256(file, component.sha256)) {
                     file.delete()
+                    DebugLog.crumb("TOOLS", "hash mismatch, file deleted: ${component.fileName}")
                     _state.value = ToolchainState.Failed(
                         "${component.fileName} did not match its hash and was deleted. " +
                             "Check the connection and try again.",
                     )
                     return@withContext false
                 }
+                DebugLog.line("TOOLS") { "verified ${component.fileName}" }
             }
             kv.putInt(KEY_READY, 1)
             _state.value = ToolchainState.Ready
+            DebugLog.crumb("TOOLS", "setup finished · ${ToolchainManifest.components.size} files verified")
             true
         } catch (error: InterruptedException) {
             Thread.currentThread().interrupt()
+            DebugLog.crumb("TOOLS", "setup stopped by the user")
             _state.value = ToolchainState.Failed("Download stopped.")
             false
         } catch (error: Exception) {
+            DebugLog.crumb("TOOLS", "setup failed: ${error.message ?: error.javaClass.simpleName}")
             _state.value = ToolchainState.Failed(
                 "Setup failed: ${error.message ?: error.javaClass.simpleName}",
             )
@@ -74,6 +83,19 @@ class ToolchainStore(
     fun jar(id: String): File? =
         ToolchainManifest.components.firstOrNull { it.id == id }?.let { componentFile(it) }
             ?.takeIf { it.isFile }
+
+    /**
+     * Deletes every downloaded file (including `.part` halves) and forgets that the pack was
+     * ready, so the next setup starts from zero. Returns false only when nothing could be
+     * removed at all — a missing folder is already the wanted state.
+     */
+    fun deleteAll(): Boolean = runCatching {
+        dir.listFiles()?.forEach { it.delete() }
+        kv.putInt(KEY_READY, 0)
+        _state.value = ToolchainState.NotStarted
+        DebugLog.crumb("TOOLS", "build tools deleted")
+        true
+    }.getOrDefault(false)
 
     private fun componentFile(component: ToolComponent): File = File(dir, component.fileName)
 
@@ -99,6 +121,9 @@ class ToolchainStore(
         } else if (code != HttpURLConnection.HTTP_OK && code != HttpURLConnection.HTTP_PARTIAL) {
             throw java.io.IOException("Server answered $code for ${component.fileName}.")
         }
+        DebugLog.line("TOOLS") {
+            "downloading ${component.fileName} · $code · from $done of ${component.sizeBytes} bytes"
+        }
         RandomAccessFile(part, "rw").use { out ->
             out.seek(done)
             val buffer = ByteArray(64 * 1024)
@@ -116,6 +141,7 @@ class ToolchainStore(
             target.delete()
             if (!part.renameTo(target)) throw java.io.IOException("Could not store ${component.fileName}.")
         }
+        DebugLog.line("TOOLS") { "stored ${component.fileName} · ${target.length()} bytes" }
     }
 
     companion object {

@@ -317,6 +317,7 @@ internal val MoreLabels = listOf(
     "Build",
     "Settings",
     "Toggle theme",
+    "Developer",
 )
 
 /**
@@ -328,6 +329,7 @@ internal val MoreLabels = listOf(
 fun IdeMoreSheet(
     actions: List<MoreAction>,
     onDismiss: () -> Unit,
+    versionLabel: String = "",
     barHeight: androidx.compose.ui.unit.Dp = 0.dp,
 ) {
     val c = LocalPageColors.current
@@ -369,6 +371,23 @@ fun IdeMoreSheet(
                     maxLines = 1,
                 )
             }
+        }
+        // The version line (spec, Debug tools 1): whichever APK is installed says which one.
+        if (versionLabel.isNotEmpty()) {
+            Box(
+                Modifier
+                    .padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 4.dp)
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(c.ln),
+            )
+            Text(
+                text = versionLabel,
+                color = c.mu,
+                fontSize = 11.sp,
+                fontFamily = Mono,
+                modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 6.dp),
+            )
         }
     }
 }

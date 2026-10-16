@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.closecode.debug.DebugLog
 
 /**
  * Where the GitHub access token lives between launches.
@@ -51,11 +52,14 @@ class TokenStore(context: Context) {
 
     fun write(token: String) {
         (encrypted ?: plain).edit().putString(KEY, token).apply()
+        // A fact for the debug log's GITHUB area — the token itself never gets near it.
+        DebugLog.crumb("GITHUB", "token saved (hidden)")
     }
 
     fun clear() {
         encrypted?.edit()?.remove(KEY)?.apply()
         plain.edit().remove(KEY).apply()
+        DebugLog.crumb("GITHUB", "token cleared")
     }
 
     private companion object {

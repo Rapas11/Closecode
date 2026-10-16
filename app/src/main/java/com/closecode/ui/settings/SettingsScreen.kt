@@ -72,7 +72,7 @@ private fun Modifier.leftRule(color: Color) = drawBehind {
 }
 
 /**
- * Reads the three facts the Storage and About rows report, and clears the cache when asked.
+ * Reads the facts the Storage and About rows report, and clears the cache when asked.
  *
  * Every line of it is I/O — a recursive directory walk is the expensive one — so it all sits on
  * [Dispatchers.IO] and the screen renders `…` until an answer comes back.
@@ -82,13 +82,18 @@ private class SettingsFacts(
     private val repository: ProjectRepository,
 ) {
     suspend fun measure(): SettingsLive = withContext(Dispatchers.IO) {
+        val buildToolsBytes = dirSize(java.io.File(context.filesDir, "toolchain"))
         SettingsLive(
             projectRoot = runCatching { repository.projectsDir().absolutePath }.getOrDefault("—"),
             projectsSize = humanSize(dirSize(repository.projectsDir())),
             cachesSize = humanSize(dirSize(context.cacheDir) + dirSize(context.codeCacheDir)),
-            version = runCatching {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            }.getOrNull() ?: "1.0.0",
+            buildToolsSize = if (buildToolsBytes == 0L) "Not installed" else humanSize(buildToolsBytes),
+            debugFilesSize = humanSize(
+                dirSize(java.io.File(context.filesDir, "debug")) +
+                    dirSize(java.io.File(context.filesDir, "crash")),
+            ),
+            freeSpace = humanSize(android.os.StatFs(context.filesDir.path).availableBytes),
+            version = com.closecode.debug.BuildInfo.label,
             toolchainStatus = toolchainStatus(),
         )
     }

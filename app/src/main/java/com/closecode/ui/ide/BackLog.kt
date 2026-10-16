@@ -1,5 +1,7 @@
 package com.closecode.ui.ide
 
+import com.closecode.debug.DebugLog
+
 /**
  * Forensics for one question: when Back is pressed, who consumes it.
  *
@@ -7,7 +9,8 @@ package com.closecode.ui.ide
  * when it fires, together with the state that armed it. The screen stack is recorded from the
  * navigation host beside it. If a press produces no line here at all, no handler ran — which is
  * itself the answer. Always cheap (one logcat line per press); mirrored into the app's own
- * Logcat panel while Frame stats is on, so the phone produces the log with no adb.
+ * Logcat panel while Frame stats is on, so the phone produces the log with no adb. Every press
+ * and every route change is also a breadcrumb in the debug log, so a report shows the path.
  */
 object BackLog {
     private const val TAG = "ClosecodeBack"
@@ -29,6 +32,7 @@ object BackLog {
             stack.addLast(route)
             while (stack.size > 8) stack.removeFirst()
         }
+        DebugLog.crumb("BACK", "route=[${stack.joinToString(" > ")}]")
     }
 
     @Synchronized
@@ -36,6 +40,7 @@ object BackLog {
         val line = "back stack=[${stack.joinToString(" > ")}] consumed=$consumedBy $detail"
         if (events.size >= MAX_EVENTS) events.removeFirst()
         events.addLast(line)
+        DebugLog.crumb("BACK", line)
         try {
             android.util.Log.d(TAG, line)
         } catch (_: Throwable) {
