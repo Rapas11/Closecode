@@ -297,6 +297,12 @@ fun IdeLogcatPanel(
     }
 }
 
+/** What the build panel shows when the project check stopped a build. */
+data class BlockedInfo(
+    val title: String,
+    val lines: List<String>,
+)
+
 /**
  * Spec 7 Build panel: the app header, a result bar, one row per phase of the compile check
  * with its measured time, and the actions that mean something.
@@ -328,6 +334,9 @@ internal fun IdeBuildPanel(
     filesMs: Long = 0L,
     hasBuilt: Boolean = false,
     errors: List<ProjectDiagnostic> = emptyList(),
+    blocked: BlockedInfo? = null,
+    onCopyBlockedList: () -> Unit = {},
+    onOpenProjectSettings: () -> Unit = {},
     onRun: () -> Unit,
     onCancel: () -> Unit = {},
     onViewErrors: () -> Unit = {},
@@ -424,7 +433,60 @@ internal fun IdeBuildPanel(
                 }
             }
 
-            if (hasBuilt && !building) {
+            if (blocked != null && !building) {
+                // The project check stopped the build: what the app is missing, listed, with
+                // the two things the reader can do about it — copy the list, or open the
+                // settings that hold the fix.
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0xFF2A1519))
+                        .padding(12.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CcIcon(CcIcons.Warning, Color(0xFFF2A0A0), 16.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = blocked.title,
+                            color = Color(0xFFF2A0A0),
+                            fontSize = 13.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                    blocked.lines.take(12).forEach { line ->
+                        Text(
+                            text = "· $line",
+                            color = c.text,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                            lineHeight = 17.sp,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                    if (blocked.lines.size > 12) {
+                        Text(
+                            text = "… and ${blocked.lines.size - 12} more",
+                            color = c.textMuted,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                            modifier = Modifier.padding(top = 6.dp),
+                        )
+                    }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        BlockedButton(label = "Copy list", onClick = onCopyBlockedList)
+                        BlockedButton(label = "Open project settings", onClick = onOpenProjectSettings)
+                    }
+                }
+            }
+
+            if (hasBuilt && !building && blocked == null) {
                 // The result bar: green success or dark-red failure with what it found and
                 // how long honesty took.
                 Row(
@@ -530,13 +592,15 @@ internal fun IdeBuildPanel(
                             fontFamily = Mono,
                         )
                     }
-                    Text(
-                        text = "Last check · ${formatBuildTime(elapsedMs)} · " +
-                            "$errorCount ${if (errorCount == 1) "error" else "errors"}",
-                        color = c.textFaint,
-                        fontSize = 11.sp,
-                        fontFamily = Sans,
-                    )
+                    if (blocked == null) {
+                        Text(
+                            text = "Last check · ${formatBuildTime(elapsedMs)} · " +
+                                "$errorCount ${if (errorCount == 1) "error" else "errors"}",
+                            color = c.textFaint,
+                            fontSize = 11.sp,
+                            fontFamily = Sans,
+                        )
+                    }
                 }
                 // Failed builds list every error as a card: plain words, a file-and-line link,
                 // and a door to the AI panel. Capped — a hundred-error project needs the log,
@@ -558,6 +622,29 @@ internal fun IdeBuildPanel(
                 }
             }
         }
+    }
+}
+
+/** A small outline pill for the blocked card's two actions. */
+@Composable
+private fun BlockedButton(label: String, onClick: () -> Unit) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, c.ln, RoundedCornerShape(8.dp))
+            .background(c.panel2)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = label,
+            color = c.text,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+        )
     }
 }
 

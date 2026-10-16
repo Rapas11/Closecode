@@ -19,22 +19,25 @@ class BuildEngine(
     val state: StateFlow<BuildState> = _state
 
     /**
-     * Full build. [aapt2Bin] and [androidJar] come from the SDK download (a separate
+     * Full build. [checkInput] carries what the project check needs besides the files:
+     * the saved package and SDK levels, the packages other projects use and the free
+     * space. [aapt2Bin] and [androidJar] come from the SDK download (a separate
      * setup from the compiler pack); null means packaging stays honestly pending.
      * [stdlibJar] is the Kotlin stdlib for user code to link against.
      */
     suspend fun build(
         projectDir: File,
         slug: String,
+        checkInput: ProjectCheck.Input = ProjectCheck.Input(),
         aapt2Bin: File? = null,
         androidJar: File? = null,
         stdlibJar: File? = null,
     ): BuildOutcome = withContext(Dispatchers.Default) {
         _state.value = BuildState.Running(Step.ValidateContract, 0f)
-        val report = TemplateContract.check(projectDir, slug)
+        val report = ProjectCheck.check(projectDir, slug, checkInput)
         if (!report.ok) {
-            _state.value = BuildState.Failed(Step.ValidateContract, report.violations.first().message)
-            return@withContext BuildOutcome.ContractFailed(report.violations)
+            _state.value = BuildState.Failed(Step.ValidateContract, report.errors.first().message)
+            return@withContext BuildOutcome.Blocked(report.findings)
         }
         _state.value = BuildState.Running(Step.ResolveDeps, 0.15f)
         val ktSources = projectDir.walkTopDown()
@@ -118,9 +121,10 @@ sealed interface BuildState {
 }
 
 sealed interface BuildOutcome {
-    data class ContractFailed(val violations: List<TemplateContract.Violation>) : BuildOutcome
+    /** The project check stopped the build: every finding, errors first, ready to list. */
+    data class Blocked(val findings: List<ProjectCheck.Finding>) : BuildOutcome
     data object NoSources : BuildOutcome
-    data class NeedsSetup(val warnings: List<TemplateContract.Violation> = emptyList()) : BuildOutcome
+    data class NeedsSetup(val warnings: List<ProjectCheck.Finding> = emptyList()) : BuildOutcome
     data class CompileFailed(val diagnostics: List<CompileDriver.Diagnostic>) : BuildOutcome
     data object DriverPending : BuildOutcome
     data class Installed(val apk: File) : BuildOutcome

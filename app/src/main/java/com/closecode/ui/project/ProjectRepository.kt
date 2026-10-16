@@ -5,6 +5,7 @@ import com.closecode.ui.model.ProjectConfig
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.model.TemplateTab
+import java.io.File
 import org.json.JSONObject
 
 data class ProjectRecord(
@@ -16,6 +17,11 @@ data class ProjectRecord(
     val config: ProjectConfig,
     val createdAt: Long,
     val lastOpened: Long,
+    /**
+     * A project that came from somewhere else (a clone, an import). Its package and
+     * settings are read from its own build files and are never rewritten.
+     */
+    val imported: Boolean = false,
 ) {
     fun toJson(): String = JSONObject().apply {
         put("name", name)
@@ -25,6 +31,7 @@ data class ProjectRecord(
         put("config", config.encode())
         put("createdAt", createdAt)
         put("lastOpened", lastOpened)
+        put("imported", imported)
     }.toString()
 
     companion object {
@@ -39,6 +46,7 @@ data class ProjectRecord(
                 config = ProjectConfig.decode(json.getString("config")),
                 createdAt = json.getLong("createdAt"),
                 lastOpened = json.getLong("lastOpened"),
+                imported = json.optBoolean("imported", false),
             )
         }.getOrNull()
     }
@@ -125,9 +133,38 @@ class ProjectRepository(context: Context) {
             config = ProjectConfig(),
             createdAt = now,
             lastOpened = now,
+            imported = true,
         )
         store.createFile(slug, ProjectStore.METADATA, record.toJson())
         return record
+    }
+
+    /** Rewrites the stored config (project settings); the files are the caller's job. */
+    fun updateConfig(slug: String, config: ProjectConfig): ProjectRecord? {
+        val record = find(slug) ?: return null
+        val updated = record.copy(config = config)
+        store.createFile(slug, ProjectStore.METADATA, updated.toJson())
+        return updated
+    }
+
+    /**
+     * The package a project builds under. A CloseCode-created project says it in its
+     * record; an imported one is read from its own files, because the record's default
+     * package is not its name.
+     */
+    fun packageOf(record: ProjectRecord): String? {
+        if (!record.imported && record.tab == TemplateTab.App) {
+            record.config.packageName.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        val dir = store.projectDir(record.slug)
+        val manifest = File(dir, "app/src/main/AndroidManifest.xml")
+        if (manifest.isFile) {
+            val text = runCatching { manifest.readText() }.getOrNull()
+            if (text != null) {
+                com.closecode.build.TemplateContract.manifestPackage(text)?.let { return it }
+            }
+        }
+        return com.closecode.build.GradleReader.read(dir).packageName
     }
 
     fun touch(slug: String, now: Long = System.currentTimeMillis()): ProjectRecord? {

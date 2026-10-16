@@ -315,6 +315,7 @@ fun IdeAnchoredSheet(
 internal val MoreLabels = listOf(
     "Logcat",
     "Build",
+    "Project settings",
     "Settings",
     "Toggle theme",
     "Developer",

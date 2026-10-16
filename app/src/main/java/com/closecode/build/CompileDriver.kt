@@ -66,12 +66,12 @@ object CompileDriver {
         sources.forEach { add(it.absolutePath) }
     }
 
-    /** D8 arguments: program classes plus deps, min API 29, one dex output dir. */
+    /** D8 arguments: program classes plus deps, the project's min API, one dex output dir. */
     fun d8Args(
         classes: List<File>,
         libs: List<File>,
         outputDir: File,
-        minApi: Int = TemplateContract.MIN_SDK,
+        minApi: Int = ProjectPins.MIN_SDK_FLOOR,
     ): List<String> = buildList {
         add("--min-api")
         add("$minApi")

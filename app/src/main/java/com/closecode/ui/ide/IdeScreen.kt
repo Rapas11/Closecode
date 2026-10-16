@@ -482,6 +482,21 @@ internal fun IdeScreen(
     var crashView by remember { mutableStateOf<String?>(null) }
     var confirmClearCache by remember { mutableStateOf(false) }
     var confirmDeleteTools by remember { mutableStateOf(false) }
+    // Project settings: the package and Android versions the project check validates, and
+    // the check itself. The record is read once when the project opens (and again after a
+    // save), and the report is what the settings sheet and the build panel's blocked state
+    // both show — the same check, not two guesses that could disagree.
+    var projectSettingsOpen by remember { mutableStateOf(false) }
+    var projectCheckBusy by remember { mutableStateOf(false) }
+    var projectRecord by remember(slug) { mutableStateOf(repository.find(slug)) }
+    var projectPackageName by remember(slug) { mutableStateOf<String?>(null) }
+    var projectReport by remember(slug) {
+        mutableStateOf<com.closecode.build.ProjectCheck.Report?>(null)
+    }
+    // What the build panel shows when the project check stopped a build.
+    var buildBlocked by remember(slug) {
+        mutableStateOf<com.closecode.ui.ide.BlockedInfo?>(null)
+    }
     // Stored like the other preferences; the PTY backend that will read it is not built yet,
     // so the row says so and the pipe terminal runs either way for now.
     var usePipeTerminal by remember { mutableStateOf(kvStore.getInt("terminal_use_pipe", 1) == 1) }
@@ -723,6 +738,53 @@ internal fun IdeScreen(
     }
 
     /**
+     * The project check, run when a project opens and after every settings save. It reads
+     * the project's own files, so it happens off the main thread; the report lands in
+     * state for the settings sheet and the build panel's blocked state — one check, so
+     * the two can never disagree.
+     */
+    fun runProjectCheck() {
+        val dir = runCatching { repository.projectDir(slug) }.getOrNull() ?: return
+        projectCheckBusy = true
+        fileScope.launch {
+            val (input, packageOnScreen) = withContext(Dispatchers.IO) {
+                val templateValue = projectRecord?.takeIf { !it.imported }
+                val input = com.closecode.build.ProjectCheck.Input(
+                    savedPackage = templateValue?.config?.packageName?.takeIf { it.isNotBlank() },
+                    savedMinSdk = templateValue?.config?.minSdk?.toIntOrNull(),
+                    savedTargetSdk = templateValue?.config?.targetSdk?.toIntOrNull(),
+                    savedCompileSdk = templateValue?.config?.compileSdk?.toIntOrNull(),
+                    otherPackages = repository.listProjects()
+                        .filter { it.slug != slug }
+                        .mapNotNull { runCatching { repository.packageOf(it) }.getOrNull() }
+                        .toSet(),
+                    freeBytes = context.filesDir.usableSpace,
+                )
+                val shown = templateValue?.config?.packageName
+                    ?: projectRecord?.let {
+                        runCatching { repository.packageOf(it) }.getOrNull()
+                    }
+                input to shown
+            }
+            projectPackageName = packageOnScreen
+            val report = withContext(Dispatchers.IO) {
+                runCatching {
+                    com.closecode.build.ProjectCheck.check(dir, slug, input)
+                }.getOrNull()
+            }
+            if (report != null) {
+                projectReport = report
+                DebugLog.crumb(
+                    "BUILD",
+                    "project check · ${report.errors.size} errors · ${report.warnings.size} warnings",
+                )
+            }
+            projectCheckBusy = false
+        }
+    }
+    LaunchedEffect(slug, projectRecord) { runProjectCheck() }
+
+    /**
      * Unsaved changes: the buffer in memory differs from the last thing read from disk. The answer
      * is kept beside the write that could have changed it — see [noteContent] — so a miss is the
      * only thing that pays for the comparison, and a miss still falls through to the honest one.
@@ -785,6 +847,85 @@ internal fun IdeScreen(
         previewRefresh++
         gitRevision++
         return ok
+    }
+
+    /**
+     * Saves what Project settings edited: the files first — the build files, the manifest
+     * and the source folder for a package change — then the record that names them. Dirty
+     * buffers land on disk before a folder moves, and the open tabs are dropped after a
+     * package change because every path in them belongs to the old folder.
+     */
+    fun saveProjectSettings(newPackage: String, newMinSdk: Int, newTargetSdk: Int, newCompileSdk: Int) {
+        val record = projectRecord ?: return
+        if (record.imported) {
+            toast = "Imported projects keep their own package"
+            return
+        }
+        val before = record.config
+        val packageChanged = newPackage != before.packageName
+        val sdkChanged = newMinSdk.toString() != before.minSdk ||
+            newTargetSdk.toString() != before.targetSdk ||
+            newCompileSdk.toString() != before.compileSdk
+        if (!packageChanged && !sdkChanged) {
+            projectSettingsOpen = false
+            return
+        }
+        projectCheckBusy = true
+        fileScope.launch {
+            saveAllDirty()
+            val dir = runCatching { repository.projectDir(slug) }.getOrNull()
+            val problems = if (dir == null) {
+                listOf("The project folder could not be opened.")
+            } else {
+                withContext(Dispatchers.IO) {
+                    val results = mutableListOf<com.closecode.build.ProjectFiles.Result>()
+                    if (sdkChanged) {
+                        results += com.closecode.build.ProjectFiles.applySdks(
+                            dir,
+                            newMinSdk,
+                            newTargetSdk,
+                            newCompileSdk,
+                        )
+                    }
+                    if (packageChanged) {
+                        results += com.closecode.build.ProjectFiles.applyPackage(
+                            dir,
+                            before.packageName,
+                            newPackage,
+                        )
+                    }
+                    results.flatMap { it.problems }
+                }
+            }
+            val updated = repository.updateConfig(
+                slug,
+                before.copy(
+                    packageName = newPackage,
+                    minSdk = newMinSdk.toString(),
+                    targetSdk = newTargetSdk.toString(),
+                    compileSdk = newCompileSdk.toString(),
+                ),
+            )
+            projectRecord = updated
+            if (packageChanged) {
+                tabs = emptyList()
+                active = ""
+            }
+            refreshTree()
+            DebugLog.crumb(
+                "BUILD",
+                "project settings saved · pkg=$newPackage min=$newMinSdk target=$newTargetSdk " +
+                    "compile=$newCompileSdk" +
+                    if (problems.isEmpty()) "" else " · ${problems.size} file problems",
+            )
+            toast = when {
+                problems.isNotEmpty() -> problems.first()
+                packageChanged -> "Package changed to $newPackage"
+                else -> "Project settings saved"
+            }
+            projectCheckBusy = false
+            runProjectCheck()
+        }
     }
 
     // Set when a search result opens a file: the next Back returns to the results sheet with
@@ -1116,6 +1257,7 @@ internal fun IdeScreen(
     // files it would have frozen the editor for as long as it took.
     LaunchedEffect(building) {
         if (!building) return@LaunchedEffect
+        buildBlocked = null
         val sources = diskTree
             .filter { it.kind == FileKind.Kotlin }
             .take(PROJECT_ANALYSIS_MAX_FILES)
@@ -1209,15 +1351,48 @@ internal fun IdeScreen(
             )
             val projectRoot = runCatching { repository.projectDir(slug) }.getOrNull()
             if (projectRoot != null) {
-                when (val outcome = engine.build(projectRoot, slug)) {
-                    is com.closecode.build.BuildOutcome.ContractFailed -> {
-                        val first = outcome.violations.first()
-                        DebugLog.crumb("BUILD", "not packable: ${first.path} — ${first.message}")
+                val checkInput = withContext(Dispatchers.IO) {
+                    val record = projectRecord?.takeIf { !it.imported }
+                    com.closecode.build.ProjectCheck.Input(
+                        savedPackage = record?.config?.packageName?.takeIf { it.isNotBlank() },
+                        savedMinSdk = record?.config?.minSdk?.toIntOrNull(),
+                        savedTargetSdk = record?.config?.targetSdk?.toIntOrNull(),
+                        savedCompileSdk = record?.config?.compileSdk?.toIntOrNull(),
+                        otherPackages = repository.listProjects()
+                            .filter { it.slug != slug }
+                            .mapNotNull { runCatching { repository.packageOf(it) }.getOrNull() }
+                            .toSet(),
+                        freeBytes = context.filesDir.usableSpace,
+                    )
+                }
+                when (val outcome = engine.build(projectRoot, slug, checkInput)) {
+                    is com.closecode.build.BuildOutcome.Blocked -> {
+                        val errors = outcome.findings
+                            .filter { it.severity == com.closecode.build.ProjectCheck.Severity.Error }
+                        val warnings = outcome.findings
+                            .filter { it.severity == com.closecode.build.ProjectCheck.Severity.Warning }
+                        DebugLog.crumb(
+                            "BUILD",
+                            "blocked: ${errors.size} errors · ${errors.firstOrNull()?.message.orEmpty()}",
+                        )
+                        buildBlocked = BlockedInfo(
+                            title = "$projectName can't be built yet",
+                            lines = errors.map { finding ->
+                                if (finding.where.isEmpty()) finding.message
+                                else "${finding.message} (${finding.where})"
+                            },
+                        )
+                        warnings.forEach { warning ->
+                            logLines.appendCapped(
+                                LogLine(LogLevel.WARN, "Package", warning.message),
+                            )
+                        }
                         logLines.appendCapped(
                             LogLine(
                                 LogLevel.ERROR,
-                                "Package",
-                                "Not packable: ${first.path} — ${first.message}",
+                                "Check",
+                                "$projectName can't be built yet: " +
+                                    "${errors.size} ${if (errors.size == 1) "item" else "items"} missing",
                             ),
                         )
                     }
@@ -1275,6 +1450,10 @@ internal fun IdeScreen(
             "clone".takeIf { cloneOpen },
             "problems".takeIf { problemSheet.value != null },
             "more".takeIf { moreOpen },
+            "developer".takeIf { developerOpen },
+            "selfTest".takeIf { selfTestOpen },
+            "crash".takeIf { crashView != null },
+            "projectSettings".takeIf { projectSettingsOpen },
             "find".takeIf { findOpen },
             "search".takeIf { searchOpen },
             "menu".takeIf { menuOpen },
@@ -1317,6 +1496,22 @@ internal fun IdeScreen(
             moreOpen -> {
                 BackLog.press("main", "${backState()} branch=more")
                 moreOpen = false
+            }
+            developerOpen -> {
+                BackLog.press("main", "${backState()} branch=developer")
+                developerOpen = false
+            }
+            selfTestOpen -> {
+                BackLog.press("main", "${backState()} branch=selfTest")
+                selfTestOpen = false
+            }
+            crashView != null -> {
+                BackLog.press("main", "${backState()} branch=crash")
+                crashView = null
+            }
+            projectSettingsOpen -> {
+                BackLog.press("main", "${backState()} branch=projectSettings")
+                projectSettingsOpen = false
             }
             findOpen -> {
                 BackLog.press("main", "${backState()} branch=find")
@@ -1457,8 +1652,9 @@ internal fun IdeScreen(
                 )
                 "Build" -> IdeBuildPanel(
                     appName = projectName,
-                    packageName = diskTree.firstOrNull { it.path.endsWith("AndroidManifest.xml") }
-                        ?.let { manifestPackageOf(diskContents[it.path]) },
+                    packageName = projectPackageName
+                        ?: diskTree.firstOrNull { it.path.endsWith("AndroidManifest.xml") }
+                            ?.let { manifestPackageOf(diskContents[it.path]) },
                     version = diskTree.filter { it.path.endsWith("build.gradle.kts") }
                         .firstNotNullOfOrNull { gradleVersionOf(diskContents[it.path]) },
                     building = building,
@@ -1472,6 +1668,24 @@ internal fun IdeScreen(
                     filesMs = buildFilesMs,
                     hasBuilt = hasBuilt,
                     errors = projectErrorList,
+                    blocked = buildBlocked,
+                    onCopyBlockedList = {
+                        val info = buildBlocked
+                        if (info == null) {
+                            toast = "Nothing to copy"
+                        } else {
+                            treeClipboard.setText(
+                                androidx.compose.ui.text.AnnotatedString(
+                                    buildString {
+                                        appendLine(info.title)
+                                        info.lines.forEach { appendLine("· $it") }
+                                    }.trimEnd(),
+                                ),
+                            )
+                            toast = "List copied"
+                        }
+                    },
+                    onOpenProjectSettings = { projectSettingsOpen = true },
                     onRun = {
                         // Spec 7: build and run are blocked while any error exists.
                         if (projectErrors > 0) {
@@ -2071,12 +2285,35 @@ internal fun IdeScreen(
                 actions = listOf(
                     MoreAction("Logcat", "≡") { activePanel = "Logcat" },
                     MoreAction("Build", "✓") { activePanel = "Build" },
+                    MoreAction("Project settings", "▤") { projectSettingsOpen = true },
                     MoreAction("Settings", "⚙") { onOpenSettings() },
                     MoreAction("Toggle theme", "◐") { onToggleTheme() },
                     MoreAction("Developer", "◆") { developerOpen = true },
                 ),
                 onDismiss = { moreOpen = false },
                 versionLabel = BuildInfo.label,
+                barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
+            )
+        }
+
+        if (projectSettingsOpen) {
+            val record = projectRecord
+            IdeProjectSettingsSheet(
+                imported = record?.imported == true,
+                packageName = if (record?.imported == true) {
+                    projectPackageName.orEmpty()
+                } else {
+                    record?.config?.packageName ?: projectPackageName.orEmpty()
+                },
+                minSdk = record?.config?.minSdk ?: "",
+                targetSdk = record?.config?.targetSdk ?: "",
+                compileSdk = record?.config?.compileSdk ?: "",
+                report = projectReport,
+                busy = projectCheckBusy,
+                onSave = { newPackage, minSdk, targetSdk, compileSdk ->
+                    saveProjectSettings(newPackage, minSdk, targetSdk, compileSdk)
+                },
+                onDismiss = { projectSettingsOpen = false },
                 barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
             )
         }

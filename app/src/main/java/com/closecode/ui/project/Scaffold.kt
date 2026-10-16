@@ -1,5 +1,6 @@
 package com.closecode.ui.project
 
+import com.closecode.build.ProjectPins
 import com.closecode.ui.model.ProjectConfig
 import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.model.TemplateTab
@@ -44,7 +45,7 @@ object Scaffold {
             add(
                 ScaffoldFile(
                     "app/src/main/AndroidManifest.xml",
-                    manifest(config.packageName),
+                    manifest(),
                 )
             )
             add(
@@ -197,7 +198,7 @@ object Scaffold {
     private fun rootGradle(): String = """
         plugins {
             id("com.android.application") version "8.12.0" apply false
-            id("org.jetbrains.kotlin.android") version "${KOTLIN_PLUGIN}" apply false
+            id("org.jetbrains.kotlin.android") version "${ProjectPins.KOTLIN}" apply false
         }
     """.trimIndent() + "\n"
 
@@ -241,25 +242,29 @@ object Scaffold {
                     sourceCompatibility = JavaVersion.VERSION_17
                     targetCompatibility = JavaVersion.VERSION_17
                 }
+
+                composeOptions {
+                    kotlinCompilerExtensionVersion = "${ProjectPins.COMPOSE_COMPILER}"
+                }
             }
 
             dependencies {
                 implementation("androidx.core:core-ktx:1.13.1")
                 implementation("androidx.activity:activity-compose:1.9.3")
-                implementation(platform("androidx.compose:compose-bom:2024.04.01"))
+                implementation(platform("androidx.compose:compose-bom:${ProjectPins.COMPOSE_BOM}"))
                 implementation("androidx.compose.ui:ui")
                 implementation("androidx.compose.material3:material3")
             }
         """.trimIndent() + "\n"
     }
 
-    private fun manifest(packageName: String): String = """
+    private fun manifest(): String = """
         <?xml version="1.0" encoding="utf-8"?>
         <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
             <application
                 android:label="@string/app_name"
-                android:theme="@style/Theme.${simpleName(packageName)}">
+                android:theme="@style/Theme.App">
                 <activity
                     android:name=".MainActivity"
                     android:exported="true">
@@ -461,9 +466,6 @@ object Scaffold {
         Created with Closecode from the $templateName template.
     """.trimIndent() + "\n"
 
-    private fun simpleName(packageName: String): String =
-        packageName.substringAfterLast('.').replaceFirstChar { it.uppercase() }
-
     private fun slugify(value: String): String = value
         .lowercase()
         .filter { it.isLetterOrDigit() || it == '-' }
@@ -481,6 +483,4 @@ object Scaffold {
         .replace("<", "&lt;")
         .replace(">", "&gt;")
         .replace("\"", "\\\"")
-
-    private const val KOTLIN_PLUGIN = "1.9.24"
 }

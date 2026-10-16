@@ -211,7 +211,7 @@ class ForgeUiSpecTest {
     @Test
     fun theBottomMoreSheetOffersThePanelsAndThePreferences() {
         assertEquals(
-            listOf("Logcat", "Build", "Settings", "Toggle theme", "Developer"),
+            listOf("Logcat", "Build", "Project settings", "Settings", "Toggle theme", "Developer"),
             MoreLabels,
         )
     }

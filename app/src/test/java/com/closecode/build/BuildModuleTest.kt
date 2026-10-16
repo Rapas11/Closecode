@@ -55,43 +55,35 @@ class BuildModuleTest {
     }
 
     @Test
-    fun emptyDirectoryFailsTheContract() {
-        val report = TemplateContract.check(tmp.root, "biz")
-        assertTrue(report.violations.any { it.path.endsWith("AndroidManifest.xml") })
+    fun emptyDirectoryIsBlockedByTheCheck() {
+        val report = ProjectCheck.check(tmp.root, "biz")
+        assertFalse(report.ok)
+        assertTrue(report.errors.any { it.file?.endsWith("AndroidManifest.xml") == true })
     }
 
     @Test
-    fun templateProjectPassesTheContract() {
-        val pkg = "com.closecode.biz"
-        File(tmp.root, "app/src/main/AndroidManifest.xml").apply {
-            parentFile.mkdirs()
-            writeText("<manifest package=\"$pkg\"></manifest>")
-        }
-        File(tmp.root, "app/src/main/java/com/closecode/biz/Main.kt").apply {
-            parentFile.mkdirs()
-            writeText("package $pkg\n")
-        }
-        val report = TemplateContract.check(tmp.root, "biz")
-        assertTrue(report.ok)
-        assertTrue(report.warnings.isEmpty())
+    fun templateProjectPassesTheCheck() {
+        ProjectFixtures.template(tmp.root)
+        val report = ProjectCheck.check(tmp.root, "biz", ProjectFixtures.templateInput())
+        assertTrue(report.errors.toString(), report.ok)
+        assertTrue(report.warnings.toString(), report.warnings.isEmpty())
     }
 
     @Test
-    fun rogueScriptsAndDepsFailClosed() {
-        val pkg = "com.closecode.biz"
-        File(tmp.root, "app/src/main/AndroidManifest.xml").apply {
-            parentFile.mkdirs()
-            writeText("<manifest package=\"$pkg\"></manifest>")
-        }
-        File(tmp.root, "app/src/main/java/com/closecode/biz/Main.kt").apply {
-            parentFile.mkdirs()
-            writeText("package $pkg\n")
-        }
-        File(tmp.root, "app/build.gradle.kts").writeText(
-            "implementation(\"com.evil:lib:1.0\")\n",
+    fun unsupportedDependenciesAreNamed() {
+        ProjectFixtures.template(tmp.root)
+        val gradle = File(tmp.root, "app/build.gradle.kts")
+        gradle.writeText(
+            gradle.readText().replace(
+                "dependencies {",
+                "dependencies {\n    implementation(\"com.evil:lib:1.0\")",
+            ),
         )
-        val report = TemplateContract.check(tmp.root, "biz")
-        assertTrue(report.violations.any { "allowlist" in it.message })
+        val report = ProjectCheck.check(tmp.root, "biz", ProjectFixtures.templateInput())
+        assertFalse(report.ok)
+        assertTrue(
+            report.errors.any { it.message == "Library com.evil:lib is not supported yet." },
+        )
     }
 
     @Test
@@ -108,13 +100,13 @@ class BuildModuleTest {
     }
 
     @Test
-    fun d8TargetsMinSdk29() {
+    fun d8TargetsTheMinimumSdkFloor() {
         val args = CompileDriver.d8Args(
             classes = listOf(File("classes")),
             libs = listOf(File("android.jar")),
             outputDir = File("dex"),
         )
-        assertTrue(args.containsAll(listOf("--min-api", "29", "--lib")))
+        assertTrue(args.containsAll(listOf("--min-api", "${ProjectPins.MIN_SDK_FLOOR}", "--lib")))
     }
 
     @Test
@@ -152,28 +144,29 @@ class BuildModuleTest {
 
     @Test
     fun importedProjectKeepsItsOwnPackageWithAWarning() {
-        File(tmp.root, "app/src/main/AndroidManifest.xml").apply {
-            parentFile.mkdirs()
-            writeText("<manifest package=\"com.example.biz\"></manifest>")
-        }
-        File(tmp.root, "app/src/main/java/com/example/biz/Main.kt").apply {
-            parentFile.mkdirs()
-            writeText("package com.example.biz\n")
-        }
-        val report = TemplateContract.check(tmp.root, "biz")
-        assertTrue(report.ok)
+        ProjectFixtures.imported(tmp.root)
+        val report = ProjectCheck.check(tmp.root, "biz")
+        assertTrue(report.errors.toString(), report.ok)
         assertEquals(1, report.warnings.size)
-        assertTrue("clash" in report.warnings.single().message)
+        assertEquals(
+            "This app will be installed as com.example.biz.",
+            report.warnings.single().message,
+        )
     }
 
     @Test
-    fun manifestWithoutAnyPackageFails() {
-        File(tmp.root, "app/src/main/AndroidManifest.xml").apply {
-            parentFile.mkdirs()
-            writeText("<manifest></manifest>")
-        }
-        val report = TemplateContract.check(tmp.root, "biz")
-        assertTrue(report.violations.any { "No package declared" in it.message })
+    fun aProjectWithoutAPackageIsNamed() {
+        ProjectFixtures.imported(tmp.root)
+        val gradle = File(tmp.root, "app/build.gradle.kts")
+        gradle.writeText(
+            gradle.readText()
+                .replace("        applicationId = \"com.example.biz\"\n", "")
+                .replace("    namespace = \"com.example.biz\"\n", ""),
+        )
+        val report = ProjectCheck.check(tmp.root, "biz")
+        assertTrue(
+            report.errors.any { it.message.startsWith("No package is set.") },
+        )
     }
 
     @Test
@@ -222,23 +215,16 @@ class BuildModuleTest {
     fun engineReportsContractFailureHonestly() = runBlocking {
         val toolchain = ToolchainStore(File(tmp.root, "toolchain"), InMemoryKeyValueStore())
         val outcome = BuildEngine(toolchain).build(tmp.root, "biz")
-        assertTrue(outcome is BuildOutcome.ContractFailed)
+        assertTrue(outcome is BuildOutcome.Blocked)
     }
 
     @Test
     fun engineReportsMissingToolchainAsSetup() = runBlocking {
-        val pkg = "com.closecode.biz"
-        File(tmp.root, "app/src/main/AndroidManifest.xml").apply {
-            parentFile.mkdirs()
-            writeText("<manifest package=\"$pkg\"></manifest>")
-        }
-        File(tmp.root, "app/src/main/java/com/closecode/biz/Main.kt").apply {
-            parentFile.mkdirs()
-            writeText("package $pkg\n")
-        }
+        ProjectFixtures.template(tmp.root)
         val toolchain = ToolchainStore(File(tmp.root, "toolchain"), InMemoryKeyValueStore())
         val engine = BuildEngine(toolchain)
-        assertTrue(engine.build(tmp.root, "biz") is BuildOutcome.NeedsSetup)
+        val outcome = engine.build(tmp.root, "biz", ProjectFixtures.templateInput())
+        assertTrue(outcome.toString(), outcome is BuildOutcome.NeedsSetup)
         // And the state says so too — never a fake green bar.
         assertTrue(engine.state.value is BuildState.RequiresSetup)
     }
