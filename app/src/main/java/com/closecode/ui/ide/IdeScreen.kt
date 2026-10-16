@@ -39,9 +39,11 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -399,13 +401,9 @@ internal fun IdeScreen(
         )
     }
     // A plain stat per composition (microseconds): always fresh after a build without
-    // depending on declaration order. The engine will set builtApkPath when packaging
-    // lands; until then the conventional output path is probed directly.
-    val builtApk: java.io.File? =
-        builtApkPath?.let { java.io.File(it) }?.takeIf { it.isFile }
-            ?: runCatching { repository.projectDir(slug) }.getOrNull()
-                ?.let { java.io.File(it, "build/closecode/app-debug.apk") }
-                ?.takeIf { it.isFile }
+    // depending on declaration order. Only the engine's own record counts: nothing probes
+    // the project tree, because a file a clone happens to carry is not a build result.
+    val builtApk: java.io.File? = resolveBuiltApk(builtApkPath)
     // The system's answer to our install session, wired into the state machine.
     DisposableEffect(slug) {
         val receiver = object : android.content.BroadcastReceiver() {
@@ -1149,19 +1147,19 @@ internal fun IdeScreen(
                 LogLine(
                     LogLevel.ERROR,
                     "Build",
-                    "BUILD FAILED · $errors errors, $warnings warnings in ${formatBuildTime(buildElapsedMs)}",
+                    "CHECKS FAILED · $errors errors, $warnings warnings in ${formatBuildTime(buildElapsedMs)}",
                 ),
             )
-            toast = "Build failed · $errors errors"
+            toast = "Checks failed · $errors errors"
         } else {
             logLines.appendCapped(
                 LogLine(
                     LogLevel.INFO,
                     "Build",
-                    "BUILD SUCCESSFUL · 0 errors in ${formatBuildTime(buildElapsedMs)}",
+                    "CHECKS PASSED · 0 errors in ${formatBuildTime(buildElapsedMs)}",
                 ),
             )
-            toast = "Build successful · 0 errors"
+            toast = "Checks passed · 0 errors"
             // On-device packaging (Part B): contract check now, toolchain-gated steps
             // report setup instead of pretending. Analysis passing is not an APK.
             val engine = com.closecode.build.BuildEngine(
@@ -2295,8 +2293,13 @@ private fun IdeTopBar(
     Row(
         Modifier
             .fillMaxWidth()
-            .height(52.dp)
+            // Android 15+ draws the window under the phone's status bar. Without this inset the
+            // row's buttons sat against it; now the panel colour extends behind the bar and the
+            // 52 dp of content starts below it. Where the system already insets the window, the
+            // value is zero and nothing moves.
             .background(c.panel)
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .height(52.dp)
             .drawBehind {
                 drawLine(
                     color = c.divider,
@@ -2882,6 +2885,10 @@ private fun IdeExplorer(
                     strokeWidth = 1f,
                 )
             }
+            // The drawer is a full-height modal, so its own header would sit under the phone's
+            // status bar. The surface colour still extends up behind the bar; the 16 dp header
+            // and everything below it start under it.
+            .windowInsetsPadding(WindowInsets.statusBars)
             .clipToBounds(),
     ) {
         // Header: folder icon plus project name. Then the tab switch, then the project

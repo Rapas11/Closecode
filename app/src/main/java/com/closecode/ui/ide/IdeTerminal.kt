@@ -16,8 +16,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.wrapContentHeight
@@ -833,6 +836,10 @@ internal fun IdeTerminal(
             Modifier
                 .fillMaxWidth()
                 .background(c.bg)
+                // The terminal owns the whole screen here, so its header is what the phone's
+                // status bar would otherwise sit on top of. Same inset as the app top bar, and
+                // zero on phones where the system already insets the window.
+                .windowInsetsPadding(WindowInsets.statusBars)
                 .drawBehind {
                     drawLine(
                         color = c.divider,

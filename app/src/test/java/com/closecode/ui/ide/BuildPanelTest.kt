@@ -63,21 +63,22 @@ class BuildPanelTest {
     // -- The result line ------------------------------------------------------
 
     @Test
-    fun aCleanBuildSaysSoAndSaysHowLongItTook() {
-        assertEquals("BUILD SUCCESSFUL · 0 errors in 412 ms", buildResultLine(0, 0, 412))
+    fun aCleanSweepSaysSoAndSaysHowLongItTook() {
+        // The sweep checks code; it builds no APK, so the line never says "build" any more.
+        assertEquals("CHECKS PASSED · 0 errors in 412 ms", buildResultLine(0, 0, 412))
     }
 
     @Test
-    fun aFailedBuildReportsBothCountsAndPointsAtTheFix() {
+    fun aFailedSweepReportsBothCountsAndPointsAtTheFix() {
         val line = buildResultLine(3, 1, 900)
-        assertTrue(line, line.startsWith("BUILD FAILED · 3 errors, 1 warning"))
+        assertTrue(line, line.startsWith("CHECKS FAILED · 3 errors, 1 warning"))
         assertTrue(line, line.contains("marked lines"))
     }
 
     @Test
-    fun aCleanBuildWithWarningsStillSaysSuccessful() {
+    fun aCleanSweepWithWarningsStillSaysPassed() {
         val line = buildResultLine(0, 2, 120)
-        assertTrue(line, line.startsWith("BUILD SUCCESSFUL · 2 warnings"))
+        assertTrue(line, line.startsWith("CHECKS PASSED · 2 warnings"))
     }
 
     @Test
@@ -138,6 +139,50 @@ class BuildPanelTest {
     fun noVersionMeansNoVersion() {
         assertNull(gradleVersionOf(null))
         assertNull(gradleVersionOf("applicationId \"com.x\""))
+    }
+
+    // -- The install rows ------------------------------------------------------
+
+    @Test
+    fun onlyTheEnginesRecordedFileCounts() {
+        val dir = java.nio.file.Files.createTempDirectory("closecode-apk").toFile()
+        try {
+            val apk = java.io.File(dir, "app-debug.apk").apply { writeText("built") }
+            assertEquals(apk, resolveBuiltApk(apk.absolutePath))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aRecordedFileThatIsGoneIsNoApk() {
+        val dir = java.nio.file.Files.createTempDirectory("closecode-gone").toFile()
+        try {
+            assertNull(resolveBuiltApk(java.io.File(dir, "app-debug.apk").absolutePath))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aStrayApkInTheProjectsBuildFolderIsNotABuildResult() {
+        // The old panel probed <project>/build/closecode/app-debug.apk directly, so any apk a
+        // clone happened to carry there was treated as installable — one user installed a
+        // stray app believing it was their build. With the stray file right there on disk and
+        // no engine record, the resolver still says null: nothing outside the record counts.
+        val project = java.nio.file.Files.createTempDirectory("closecode-stray").toFile()
+        try {
+            val stray = java.io.File(
+                java.io.File(java.io.File(project, "build"), "closecode"),
+                "app-debug.apk",
+            )
+            stray.parentFile?.mkdirs()
+            stray.writeText("not a build")
+            assertTrue(stray.isFile)
+            assertNull(resolveBuiltApk(null))
+        } finally {
+            project.deleteRecursively()
+        }
     }
 
 }

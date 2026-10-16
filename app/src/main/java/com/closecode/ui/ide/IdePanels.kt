@@ -153,21 +153,36 @@ private fun countOf(n: Int, one: String, many: String): String =
     "$n ${if (n == 1) one else many}"
 
 /**
- * The one line that says whether the project compiled.
+ * The one line that says whether the project's checks passed.
  *
  * Counts and time come from the sweep that just ran, so this is a report rather than a mood. The
  * failing case says the errors are in the marked lines, because that is where they can be acted on
  * — the panel opens the Problems sheet from a tap, and the editor has already underlined them.
+ *
+ * The sweep is the app's own code check, not a build: it produces no APK, so the line says
+ * "checks" rather than promising a build the run never made.
  */
 internal fun buildResultLine(errorCount: Int, warningCount: Int, elapsedMs: Long): String {
     val time = formatBuildTime(elapsedMs)
     return when {
-        errorCount > 0 -> "BUILD FAILED · ${countOf(errorCount, "error", "errors")}, " +
+        errorCount > 0 -> "CHECKS FAILED · ${countOf(errorCount, "error", "errors")}, " +
             "${countOf(warningCount, "warning", "warnings")} in $time. Open the marked lines to fix."
-        warningCount > 0 -> "BUILD SUCCESSFUL · ${countOf(warningCount, "warning", "warnings")} in $time"
-        else -> "BUILD SUCCESSFUL · 0 errors in $time"
+        warningCount > 0 -> "CHECKS PASSED · ${countOf(warningCount, "warning", "warnings")} in $time"
+        else -> "CHECKS PASSED · 0 errors in $time"
     }
 }
+
+/**
+ * The APK the install rows may touch: the file the build engine recorded, and only while that
+ * file still exists on disk.
+ *
+ * Nothing is guessed from the project tree. A cloned project can carry any apk at the
+ * conventional output path, and an earlier version of this screen treated exactly that file as
+ * a build result — one user installed a stray apk from a clone believing it was the app they
+ * had asked to build. With no record from the engine there is no install, open or share row.
+ */
+internal fun resolveBuiltApk(recordedPath: String?): java.io.File? =
+    recordedPath?.let { java.io.File(it) }?.takeIf { it.isFile }
 
 /**
  * The way out of Logcat and Build. Neither panel has a path bar, so without this the bottom
@@ -428,9 +443,9 @@ internal fun IdeBuildPanel(
                     Spacer(Modifier.width(10.dp))
                     Text(
                         text = if (failed) {
-                            "Build failed · $errorCount ${if (errorCount == 1) "error" else "errors"}"
+                            "Checks failed · $errorCount ${if (errorCount == 1) "error" else "errors"}"
                         } else {
-                            "Build successful · ${formatBuildTime(elapsedMs)}"
+                            "Checks passed · ${formatBuildTime(elapsedMs)}"
                         },
                         color = if (failed) Color(0xFFF2A0A0) else Color(0xFF5FD19A),
                         fontSize = 13.sp,
@@ -516,7 +531,7 @@ internal fun IdeBuildPanel(
                         )
                     }
                     Text(
-                        text = "Last build · ${formatBuildTime(elapsedMs)} · " +
+                        text = "Last check · ${formatBuildTime(elapsedMs)} · " +
                             "$errorCount ${if (errorCount == 1) "error" else "errors"}",
                         color = c.textFaint,
                         fontSize = 11.sp,
