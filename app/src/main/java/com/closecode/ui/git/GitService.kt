@@ -81,7 +81,14 @@ class GitService(private val root: File) {
 
     fun init(initialBranch: String = "main"): Result<Unit> = runCatching {
         if (isVersioned()) return@runCatching
-        Git.init().setDirectory(root).setInitialBranch(initialBranch).call()
+        Git.init().setDirectory(root).setInitialBranch(initialBranch).call().use { git ->
+            // Line endings are pinned to LF in every repository the app creates. JGit would
+            // otherwise obey the machine's global git config, and a desktop with Git for
+            // Windows sets core.autocrlf=true there — which rewrote checked-out files to
+            // CRLF and made stash, discard and revert behave differently machine to machine.
+            git.repository.config.setString("core", null, "autocrlf", "false")
+            git.repository.config.save()
+        }
     }
 
     /**
