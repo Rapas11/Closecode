@@ -563,9 +563,13 @@ fun IdeGitPanel(
     if (signInOpen) {
         GitHubSignIn(
             onSignedIn = { token ->
-                tokenStore.write(token)
                 githubToken = token
                 signInOpen = false
+                if (!tokenStore.write(token)) {
+                    // The Keystore is broken: this sign-in lives in memory only. Saying so now
+                    // beats a silent sign-out on the next launch.
+                    githubNote = "Signed in. This phone cannot keep sign-ins safely, so it will ask again next time."
+                }
             },
             onDismiss = { signInOpen = false },
         )
@@ -1336,7 +1340,18 @@ private fun GitHubSection(
     // button, and saying so saves the tap that finds that out.
     SectionLabel(if (token == null) "GITHUB · NOT CONNECTED" else "GITHUB")
 
-    error?.let { ErrorLine(it) }
+    error?.let { message ->
+        ErrorLine(message)
+        // A push rejected because the remote has newer commits has one fix, so the fix is a
+        // button under the sentence instead of an explanation the user has to translate.
+        if (message.contains("Pull first")) {
+            TextLink(
+                label = "Pull first",
+                onClick = onPull,
+                modifier = Modifier.padding(start = 17.dp, top = 7.dp),
+            )
+        }
+    }
     note?.let {
         Text(
             text = it,

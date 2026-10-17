@@ -560,10 +560,14 @@ fun HeroScreen(
     if (signInOpen) {
         GitHubSignIn(
             onSignedIn = { token ->
-                tokenStore.write(token)
                 githubToken = token
                 signInOpen = false
-                toast = "Signed in to GitHub."
+                toast = if (tokenStore.write(token)) {
+                    "Signed in to GitHub."
+                } else {
+                    // The Keystore is broken: this sign-in lives in memory only.
+                    "Signed in. This phone cannot keep sign-ins safely, so it will ask again next time."
+                }
             },
             onDismiss = { signInOpen = false },
         )

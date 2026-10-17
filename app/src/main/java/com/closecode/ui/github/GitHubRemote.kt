@@ -105,6 +105,11 @@ class GitHubRemote(private val root: File) {
         if (updates.isEmpty()) return "Nothing to push."
         val rejected = updates.filter { it.status != RemoteRefUpdate.Status.OK }
         if (rejected.isNotEmpty()) {
+            // A non-fast-forward is just "the remote moved on", and pulling is the fix — the
+            // sentence says exactly that so the panel can put the button under the error.
+            if (rejected.any { it.status == RemoteRefUpdate.Status.REJECTED_NONFASTFORWARD }) {
+                throw GitHubException("The remote has newer commits. Pull first, then push again.")
+            }
             val detail = rejected.joinToString("; ") { update ->
                 "${update.remoteName}: ${update.message ?: update.status.name}"
             }

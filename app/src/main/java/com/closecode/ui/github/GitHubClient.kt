@@ -74,6 +74,9 @@ class GitHubClient(private val http: HttpTransport = UrlConnectionTransport()) {
             mapOf("client_id" to CLIENT_ID, "scope" to SCOPE),
         )
         val json = bodyOrThrow(resp, "start the sign-in")
+        // A 200 can still be a refusal ("device_flow_disabled", "incorrect_client_credentials"):
+        // GitHub answers the device-code request with an error body, not an HTTP failure.
+        describeError(json)?.let { throw GitHubException("GitHub could not start the sign-in: $it") }
         DeviceCode(
             deviceCode = json.requireString("device_code"),
             userCode = json.requireString("user_code"),
@@ -176,11 +179,24 @@ class GitHubClient(private val http: HttpTransport = UrlConnectionTransport()) {
 
     private fun check(resp: HttpResponse, doing: String) {
         if (resp.code in 200..299) return
-        val parsed = runCatching { JsonParser.parseString(resp.body) }.getOrNull()
-        val message = (parsed as? JsonObject)?.let {
-            it.optionalString("message") ?: it.optionalString("error_description") ?: it.optionalString("error")
+        val json = runCatching { JsonParser.parseString(resp.body) }.getOrNull() as? JsonObject
+        val detail = json?.let { describeError(it) } ?: "HTTP ${resp.code}"
+        throw GitHubException("GitHub could not $doing: $detail", resp.code)
+    }
+
+    /**
+     * GitHub's error body as one sentence. The exact error name ("device_flow_disabled",
+     * "incorrect_client_credentials") is the one fact that tells the user what to change, so it
+     * survives into the sentence even when GitHub also sent one — or sent none.
+     */
+    private fun describeError(json: JsonObject): String? {
+        val name = json.optionalString("error")
+        val sentence = json.optionalString("error_description") ?: json.optionalString("message")
+        return when {
+            sentence != null && name != null && name != sentence -> "$sentence ($name)"
+            sentence != null -> sentence
+            else -> name
         }
-        throw GitHubException("GitHub could not $doing: ${message ?: "HTTP ${resp.code}"}", resp.code)
     }
 
     private fun bodyOrThrow(resp: HttpResponse, doing: String): JsonObject {

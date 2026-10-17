@@ -205,6 +205,34 @@ class GitHubClientTest {
     }
 
     @Test
+    fun aDisabledDeviceFlowIsShownByItsExactName() {
+        val transport = FakeTransport().apply {
+            onForm = { _, _, _ ->
+                json(
+                    200,
+                    """{"error":"device_flow_disabled","error_description":"Device flow is disabled for this app."}""",
+                )
+            }
+        }
+        val failure = GitHubClient(transport).requestDeviceCode()
+        assertTrue(failure.isFailure)
+        val message = failure.exceptionOrNull()?.message.orEmpty()
+        assertTrue(message, message.contains("Device flow is disabled for this app."))
+        assertTrue("the exact name survives", message.contains("device_flow_disabled"))
+    }
+
+    @Test
+    fun wrongClientCredentialsAreShownByTheirExactName() {
+        val transport = FakeTransport().apply {
+            onForm = { _, _, _ -> json(200, """{"error":"incorrect_client_credentials"}""") }
+        }
+        val failure = GitHubClient(transport).requestDeviceCode()
+        assertTrue(failure.isFailure)
+        val message = failure.exceptionOrNull()?.message.orEmpty()
+        assertTrue(message, message.contains("incorrect_client_credentials"))
+    }
+
+    @Test
     fun anUnreadableResponseFailsWithASentenceNotAStack() {
         val transport = FakeTransport().apply {
             onForm = { _, _, _ -> json(200, "<html>rate limited</html>") }

@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.closecode.debug.DebugLog
 import com.closecode.ui.components.OutlineButton
 import com.closecode.ui.components.PrimaryButton
 import com.closecode.ui.components.SheetHeader
@@ -213,12 +214,18 @@ internal fun GitHubSignInBody(
         // offline separately instead of printing a bare exception sentence.
         val requested = withContext(Dispatchers.IO) { client.requestDeviceCode() }
         val start = requested.getOrElse { error ->
-            if (isOfflineFailure(error)) offline = true
-            else failure = describeFailure(error, "GitHub could not start the sign-in.")
+            if (isOfflineFailure(error)) {
+                offline = true
+                DebugLog.crumb("GITHUB", "sign-in offline")
+            } else {
+                failure = describeFailure(error, "GitHub could not start the sign-in.")
+                DebugLog.crumb("GITHUB", "sign-in could not start")
+            }
             return@LaunchedEffect
         }
         code = start
         waiting = true
+        DebugLog.crumb("GITHUB", "sign-in code shown")
         // GitHub names its own pace; never ask faster than every 5 seconds.
         var interval = maxOf(start.intervalSec, 5)
         while (true) {
@@ -226,8 +233,13 @@ internal fun GitHubSignInBody(
             val polled = withContext(Dispatchers.IO) { client.pollForToken(start.deviceCode) }
             val step = polled.getOrElse { error ->
                 waiting = false
-                if (isOfflineFailure(error)) offline = true
-                else failure = describeFailure(error, "GitHub could not finish the sign-in.")
+                if (isOfflineFailure(error)) {
+                    offline = true
+                    DebugLog.crumb("GITHUB", "sign-in offline")
+                } else {
+                    failure = describeFailure(error, "GitHub could not finish the sign-in.")
+                    DebugLog.crumb("GITHUB", "sign-in failed")
+                }
                 return@LaunchedEffect
             }
             when (step) {
@@ -238,6 +250,7 @@ internal fun GitHubSignInBody(
                     }
                     waiting = false
                     username = login ?: "your account"
+                    DebugLog.crumb("GITHUB", "sign-in approved")
                     delay(1_500)
                     onSignedIn(step.accessToken)
                     return@LaunchedEffect
@@ -247,11 +260,13 @@ internal fun GitHubSignInBody(
                 DevicePoll.Expired -> {
                     waiting = false
                     expired = true
+                    DebugLog.crumb("GITHUB", "sign-in code expired")
                     return@LaunchedEffect
                 }
                 is DevicePoll.Refused -> {
                     waiting = false
                     refused = step.reason
+                    DebugLog.crumb("GITHUB", "sign-in refused")
                     return@LaunchedEffect
                 }
             }
