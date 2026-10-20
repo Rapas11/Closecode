@@ -22,7 +22,12 @@ object InstallHelper {
      * session id, or -1 when the caller lacks install permission (prompt the user
      * to allow this source first).
      */
-    fun install(context: Context, apk: File, action: String = ACTION_INSTALL_STATUS): Int {
+    fun install(
+        context: Context,
+        apk: File,
+        packageName: String = "",
+        action: String = ACTION_INSTALL_STATUS,
+    ): Int {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !context.packageManager.canRequestPackageInstalls()
         ) {
@@ -30,6 +35,7 @@ object InstallHelper {
         }
         val installer = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        if (packageName.isNotBlank()) params.setAppPackageName(packageName)
         val sessionId = installer.createSession(params)
         installer.openSession(sessionId).use { session ->
             apk.inputStream().use { input ->

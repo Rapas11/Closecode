@@ -17,7 +17,22 @@
          leaving the screen; its notification shows the percent and carries Cancel. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Only for the Back to editor pill over a built app. Android asks once, in the
+         system settings screen; the panel explains why before sending the user there,
+         and a notification with the same action is the fallback when it is refused. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Android 11+ only reports apps this app can see. The built app is launched with
+         the package manager's launch intent, so the launcher query is required. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
 
     <!-- The GitHub token is kept in this app's private preferences. Disabling backup stops it
          leaving the device through adb backup or cloud restore. -->
@@ -59,6 +74,29 @@
             android:name=".build.ToolchainDownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- A build keeps its process and its notification while the user is away. -->
+        <service
+            android:name=".build.BuildService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Compiling and signing an app on the phone" />
+        </service>
+        <receiver
+            android:name=".build.BuildCancelReceiver"
+            android:exported="false" />
+
+        <!-- The floating Back to editor pill over the user's built app. -->
+        <service
+            android:name=".overlay.BackToEditorService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Back to editor button over a launched app" />
+        </service>
     </application>
 
 </manifest>

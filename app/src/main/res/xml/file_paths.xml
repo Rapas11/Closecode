@@ -6,4 +6,6 @@
 -->
 <paths>
     <files-path name="projects" path="projects/" />
+    <!-- The renamed APK handed to the share sheet: a copy, not the build output. -->
+    <cache-path name="share" path="share/" />
 </paths>

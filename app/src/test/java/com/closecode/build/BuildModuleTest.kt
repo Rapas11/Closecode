@@ -223,11 +223,38 @@ class BuildModuleTest {
             InstallState.NeedsPermission,
             nextInstallState(InstallState.Idle, InstallEvent.StartDenied),
         )
+        val failed = nextInstallState(
+            InstallState.Installing(1),
+            InstallEvent.SystemStatus(-7, "", ""),
+        ) as InstallState.Failed
+        assertTrue(failed.message.startsWith("Install failed (-7)"))
+        assertEquals(InstallState.FailureKind.Other, failed.kind)
+    }
+
+    @Test
+    fun installStatusesTurnIntoPlainWords() {
+        fun failed(code: Int, message: String = "") = nextInstallState(
+            InstallState.Installing(1),
+            InstallEvent.SystemStatus(code, "com.x", message),
+        ) as InstallState.Failed
+
+        assertEquals(InstallState.FailureKind.Cancelled, failed(3).kind)
+        assertEquals("Install cancelled.", failed(3).message)
+        assertEquals(InstallState.FailureKind.Conflict, failed(5).kind)
+        assertTrue("another key" in failed(5).message)
+        assertEquals(InstallState.FailureKind.Storage, failed(6).kind)
+        assertTrue("storage" in failed(6).message.lowercase())
+        assertEquals(InstallState.FailureKind.Incompatible, failed(7).kind)
+        assertEquals(InstallState.FailureKind.Invalid, failed(4).kind)
+        assertTrue("Android refused this app" in failed(4, "bad manifest").message)
+        assertTrue("bad manifest" in failed(4, "bad manifest").message)
+        assertEquals("The install timed out. Try again.", failed(8).message)
+        // The system's own confirmation screen is not a result.
         assertEquals(
-            InstallState.Failed("Install failed (-7)."),
+            InstallState.Installing(1),
             nextInstallState(
                 InstallState.Installing(1),
-                InstallEvent.SystemStatus(-7, "", ""),
+                InstallEvent.SystemStatus(-1, "com.x", ""),
             ),
         )
     }
