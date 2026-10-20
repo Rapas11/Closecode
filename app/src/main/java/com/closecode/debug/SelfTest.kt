@@ -25,7 +25,7 @@ import com.closecode.build.ToolchainHolder
 import com.closecode.build.ToolchainManifest
 import com.closecode.build.matchesSha256
 import com.closecode.ui.github.TokenStore
-import com.closecode.ui.ide.ShellProcess
+import com.closecode.ui.ide.openShell
 import com.closecode.ui.settings.humanSize
 import java.io.File
 import java.util.zip.ZipEntry
@@ -695,7 +695,11 @@ object SelfTest {
     private suspend fun checkShell(context: Context): Check {
         val dir = File(context.cacheDir, "selftest-shell").apply { mkdirs() }
         val heard = java.util.Collections.synchronizedList(ArrayList<String>())
-        val shell = ShellProcess(directory = dir, onLine = { line -> heard.add(line) })
+        val shell = openShell(
+            directory = dir,
+            onLine = { line -> heard.add(line) },
+            usePipe = false,
+        )
         return try {
             shell.start()
             shell.run("echo closecode-selftest-ok")
@@ -704,14 +708,21 @@ object SelfTest {
                 true
             } == true
             when {
-                !shell.isRunning && !echoed ->
-                    Check(15, names[14], Status.Fail, "The shell did not start.")
-                echoed -> Check(
+                echoed && shell.isPty -> Check(
                     15,
                     names[14],
-                    Status.Skipped,
-                    "The pipe terminal echoed the test word. The real PTY is not built yet.",
+                    Status.Pass,
+                    "A real PTY started the shell and the test word came back.",
                 )
+                echoed ->
+                    Check(
+                        15,
+                        names[14],
+                        Status.Fail,
+                        "The PTY library did not start, so the pipe answered instead.",
+                    )
+                !shell.isRunning && !echoed ->
+                    Check(15, names[14], Status.Fail, "The shell did not start.")
                 else ->
                     Check(15, names[14], Status.Fail, "The shell started but did not answer within 8 seconds.")
             }

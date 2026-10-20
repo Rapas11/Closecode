@@ -359,6 +359,8 @@ internal fun IdeTerminal(
     // Held outside this panel on purpose — see TerminalSessions.
     sessions: TerminalSessions = TerminalSessions(),
     tree: List<ProjectFile> = emptyList(),
+    // The hidden Developer switch. New shells honour it; running ones keep their engine.
+    usePipe: Boolean = false,
     onOpenPath: (ProjectFile) -> Unit = {},
     onFilesChanged: () -> Unit = {},
     onBack: () -> Unit = {},
@@ -366,6 +368,7 @@ internal fun IdeTerminal(
 ) {
     val c = LocalPageColors.current
     val context = LocalContext.current
+    TerminalEnvironment.configure(context)
     val density = LocalDensity.current
     var ctrl by remember { mutableStateOf(ModifierLatch.OFF) }
     var alt by remember { mutableStateOf(ModifierLatch.OFF) }
@@ -471,7 +474,7 @@ internal fun IdeTerminal(
     LaunchedEffect(sessions) {
         sessions.sessions.forEach { session ->
             launch {
-                withContext(Dispatchers.IO) { session.start(projectRoot) }
+                withContext(Dispatchers.IO) { session.start(projectRoot, usePipe) }
                 if (!session.isRunning) {
                     session.lines.appendTerminalLine(
                         if (projectRoot == null) {

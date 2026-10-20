@@ -685,7 +685,7 @@ internal fun IdeScreen(
     }
     // Stored like the other preferences; the PTY backend that will read it is not built yet,
     // so the row says so and the pipe terminal runs either way for now.
-    var usePipeTerminal by remember { mutableStateOf(kvStore.getInt("terminal_use_pipe", 1) == 1) }
+    var usePipeTerminal by remember { mutableStateOf(kvStore.getInt("terminal_use_pipe", 0) == 1) }
     // True while the suggestion popup is up. It is the tool row's other reason to hide: the popup
     // covers the row, and a row under a popup only steals taps.
     var suggestionsOpen by remember { mutableStateOf(false) }
@@ -2061,6 +2061,7 @@ internal fun IdeScreen(
                     // not the shells: leaving the terminal and coming back finds the same processes
                     // with the same output, and so does opening Settings.
                     sessions = terminalSessions,
+                    usePipe = usePipeTerminal,
                     // The project tree, so Tab completes paths from what the project actually
                     // holds rather than by listing a directory the shell may not even be in.
                     tree = diskTree,

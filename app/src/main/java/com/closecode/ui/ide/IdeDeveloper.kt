@@ -139,7 +139,8 @@ fun IdeDeveloperSheet(
             }
             DeveloperSwitchRow(
                 label = "Use pipe terminal",
-                note = "The real PTY is not built yet — the terminal uses the pipe either way for now.",
+                note = "Fallback: the plain pipe shell, without colors or Ctrl+C signals. " +
+                    "Applies to new shells. Off means the real PTY.",
                 checked = usePipe,
                 onCheckedChange = onToggleUsePipe,
             )

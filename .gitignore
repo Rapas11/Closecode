@@ -16,6 +16,9 @@
 /build-toolchain/
 *.log
 
-# Placed by the pack script, ~4.5 MB of arm64 aapt2. Rebuilt, never committed.
-/app/src/main/jniLibs/
+# Placed by the pack script, ~4.5 MB of arm64 aapt2. Rebuilt, never committed. The PTY
+# bridge is the exception: it is 10 KB, built by scripts/build-pty.ps1, and the APK needs it.
+/app/src/main/jniLibs/**
+!/app/src/main/jniLibs/arm64-v8a/
+!/app/src/main/jniLibs/arm64-v8a/libclosepty.so
 
