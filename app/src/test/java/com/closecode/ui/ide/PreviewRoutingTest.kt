@@ -120,17 +120,17 @@ class PreviewRoutingTest {
 
     @Test
     fun previewFunctionsAreFoundInOrder() {
-        val source = "@Preview\n@Composable\nfun HomeScreen() {\n}\n\n@Preview\nfun LoginScreen() {\n}\n"
+        val source = "@Preview\n@Composable\nfun HomeScreen() {\n}\n\n@Preview\n@Composable\nfun LoginScreen() {\n}\n"
         assertEquals(
-            listOf(PreviewFunction("HomeScreen", 3), PreviewFunction("LoginScreen", 7)),
+            listOf(PreviewFunction("HomeScreen", 3), PreviewFunction("LoginScreen", 8)),
             previewFunctionsOf(source),
         )
     }
 
     @Test
     fun stackedAnnotationsStillCount() {
-        val source = "@Preview\n@MyTheme\nfun A() {\n}\n"
-        assertEquals(listOf(PreviewFunction("A", 3)), previewFunctionsOf(source))
+        val source = "@Preview\n@MyTheme\n@Composable\nfun A() {\n}\n"
+        assertEquals(listOf(PreviewFunction("A", 4)), previewFunctionsOf(source))
     }
 
     @Test

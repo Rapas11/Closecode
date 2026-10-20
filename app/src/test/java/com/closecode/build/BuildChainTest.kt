@@ -1,11 +1,14 @@
 package com.closecode.build
 
 import com.android.apksig.ApkVerifier
+import com.closecode.ui.ide.PreviewBuild
 import java.io.File
 import java.security.KeyStore
 import java.security.cert.X509Certificate
 import java.util.zip.ZipFile
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -47,9 +50,11 @@ class BuildChainTest {
             ?.let { File(it) }
         val libraries = (System.getProperty("libraries.dir") ?: System.getenv("LIBRARIES_DIR"))
             ?.let { File(it) }
-        val aapt2 = System.getProperty("aapt2.bin")?.let { File(it) }
-        val androidJar = System.getProperty("android.jar")?.let { File(it) }
-        val composePlugin = System.getProperty("compose.plugin")?.let { File(it) }
+        val aapt2 = (System.getProperty("aapt2.bin") ?: System.getenv("AAPT2_BIN"))?.let { File(it) }
+        val androidJar =
+            (System.getProperty("android.jar") ?: System.getenv("ANDROID_JAR"))?.let { File(it) }
+        val composePlugin =
+            (System.getProperty("compose.plugin") ?: System.getenv("COMPOSE_PLUGIN"))?.let { File(it) }
         assumeTrue("toolchain.dir not set", downloads != null && downloads.isDirectory)
         assumeTrue("libraries.dir not set", libraries != null && libraries.isDirectory)
         assumeTrue("aapt2.bin not set", aapt2 != null && aapt2.isFile)
@@ -184,6 +189,94 @@ class BuildChainTest {
         val buildJson = File(project, "build/build.json")
         assertTrue("build.json missing", buildJson.isFile)
         assertTrue(buildJson.readText().contains("\"status\": \"success\""))
+    }
+
+    @Test
+    fun previewBuildCompilesHarnessesIntoItsOwnApkAndCachesPictures() {
+        val kit = kitOrSkip()
+        val index = LibraryIndex.load(kit.libraries)
+        assertTrue("the library index did not load", index != null && index.libraries.isNotEmpty())
+        val project = tmp.newFolder("preview-project")
+        writeProject(project)
+        val tools = BuildTools(
+            aapt2 = kit.aapt2,
+            androidJar = kit.androidJar,
+            stdlib = kit.stdlib,
+            libraries = index!!,
+            signer = testSigner(),
+            toolFiles = kit.toolFiles,
+            composePlugin = kit.composePlugin,
+        )
+        val config = BuildConfigValues(
+            packageName = "com.example.buildtest",
+            minSdk = 29,
+            targetSdk = 35,
+            versionCode = 7,
+            versionName = "1.2",
+            useCompose = true,
+        )
+        val sourcePath = "app/src/main/java/com/example/buildtest/MainActivity.kt"
+        val files = listOf(sourcePath to File(project, sourcePath).readText())
+        val cache = tmp.newFolder("preview-cache")
+
+        val first = PreviewBuild.prepare(
+            projectDir = project,
+            config = config,
+            tools = tools,
+            files = files,
+            widthDp = 412,
+            heightDp = 915,
+            dark = false,
+            cacheDir = cache,
+        )
+        assertNull(first.error, first.error)
+        assertTrue("the preview APK was not built", first.needsRender)
+        val apk = requireNotNull(first.apk) { "no preview APK" }
+        assertTrue("preview APK missing", apk.isFile && apk.length() > 100_000)
+        assertEquals(1, first.plan.harnesses.size)
+        assertEquals("GreetingPreview", first.plan.harnesses.single().function)
+        assertTrue(File(first.outputDir, PreviewBuild.PLAN_NAME).isFile)
+        // The user's installable APK was not touched by the preview build.
+        assertFalse(File(project, "build/outputs/apk/debug/app-debug.apk").exists())
+
+        ZipFile(apk).use { zip ->
+            val dexText = zip.entries().asSequence()
+                .filter { it.name.endsWith(".dex") }
+                .map { String(zip.getInputStream(it).readBytes(), Charsets.ISO_8859_1) }
+                .joinToString("")
+            assertTrue(
+                "the harness class is not in the preview APK",
+                dexText.contains("com/closecode/preview/gen/P"),
+            )
+            assertTrue(
+                "the harness does not implement PreviewHost",
+                dexText.contains("com/closecode/preview/PreviewHost"),
+            )
+        }
+
+        // A rendered picture is a cache: prepare returns the index without building again.
+        val harness = first.plan.harnesses.single()
+        val png = File(first.outputDir, "${harness.id}.png").apply {
+            writeBytes(byteArrayOf(1, 2, 3))
+        }
+        File(first.outputDir, PreviewBuild.INDEX_NAME).writeText(
+            """[{"id":"${harness.id}","function":"GreetingPreview","png":"${png.name}",""" +
+                """"widthPx":540,"heightPx":1200}]""",
+        )
+        val second = PreviewBuild.prepare(
+            projectDir = project,
+            config = config,
+            tools = tools,
+            files = files,
+            widthDp = 412,
+            heightDp = 915,
+            dark = false,
+            cacheDir = cache,
+        )
+        assertNull(second.error, second.error)
+        assertFalse("a cached render rebuilt the APK", second.needsRender)
+        assertEquals(1, second.entries.size)
+        assertEquals(harness.id, second.entries.single().id)
     }
 
     private fun writeProject(project: File) {

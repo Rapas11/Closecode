@@ -63,8 +63,23 @@ object BuildChain {
         tools: BuildTools,
         onStep: (Step) -> Unit = {},
         cancelled: () -> Boolean = { false },
+        // Preview rendering compiles one generated harness alongside the project and writes
+        // its APK away from the real build, so a preview can never replace the app the user
+        // installs and the two builds cannot delete each other's working files.
+        extraSources: List<File> = emptyList(),
+        buildDirectory: File? = null,
+        outputApk: File? = null,
     ): Result {
-        val run = Run(projectDir, config, tools, onStep, cancelled)
+        val run = Run(
+            projectDir = projectDir,
+            config = config,
+            tools = tools,
+            onStep = onStep,
+            cancelled = cancelled,
+            extraSources = extraSources,
+            buildDirectory = buildDirectory ?: File(projectDir, "build"),
+            outputApk = outputApk,
+        )
         return run.execute()
     }
 
@@ -74,8 +89,11 @@ object BuildChain {
         val tools: BuildTools,
         val onStep: (Step) -> Unit,
         val cancelled: () -> Boolean,
+        val extraSources: List<File>,
+        val buildDirectory: File,
+        val outputApk: File?,
     ) {
-        private val buildDir = File(projectDir, "build")
+        private val buildDir = buildDirectory
         private val resFlatDir = File(buildDir, "res_flat")
         private val genDir = File(buildDir, "gen")
         private val classesDir = File(buildDir, "classes")
@@ -294,8 +312,9 @@ object BuildChain {
 
         private fun code(libraries: List<CachedLibrary>) {
             val sourceRoot = File(projectDir, "app/src/main/java")
-            val kotlin = sourceRoot.walkTopDown()
-                .filter { it.isFile && it.extension == "kt" }.sortedBy { it.path }.toList()
+            val kotlin = (sourceRoot.walkTopDown()
+                .filter { it.isFile && it.extension == "kt" }.sortedBy { it.path }.toList() +
+                extraSources.filter { it.isFile && it.extension == "kt" }.sortedBy { it.path })
             val java = sourceRoot.walkTopDown()
                 .filter { it.isFile && it.extension == "java" }.sortedBy { it.path }.toList()
             val buildConfig = writeBuildConfig()
@@ -442,7 +461,7 @@ object BuildChain {
         }
 
         private fun sign(unsigned: File): File {
-            val output = File(projectDir, "build/outputs/apk/debug/app-debug.apk")
+            val output = outputApk ?: File(projectDir, "build/outputs/apk/debug/app-debug.apk")
             output.parentFile?.mkdirs()
             val temp = File(output.parentFile, "${output.name}.tmp")
             temp.delete()

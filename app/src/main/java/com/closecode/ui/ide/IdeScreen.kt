@@ -553,6 +553,11 @@ internal fun IdeScreen(
     var projectRecord by remember(slug) { mutableStateOf(repository.find(slug)) }
     val projectRoot = remember(slug) { runCatching { repository.projectDir(slug) }.getOrNull() }
     var projectPackageName by remember(slug) { mutableStateOf<String?>(null) }
+    // The toolchain and package settings a real preview render needs. Loaded once when the
+    // Preview panel opens (never on the compose's first frame), then reused across saves.
+    var previewSetup by remember(slug, projectPackageName) {
+        mutableStateOf<PreviewSetup?>(null)
+    }
     var projectReport by remember(slug) {
         mutableStateOf<com.closecode.build.ProjectCheck.Report?>(null)
     }
@@ -580,6 +585,20 @@ internal fun IdeScreen(
         ?: diskTree.firstOrNull { it.path.endsWith("AndroidManifest.xml") }
             ?.let { manifestPackageOf(diskContents[it.path]) }
         ?: com.closecode.build.TemplateContract.packageForSlug(slug)
+
+    LaunchedEffect(activePanel, slug, projectPackageName) {
+        if (activePanel != "Preview" || previewSetup != null) return@LaunchedEffect
+        val root = projectRoot ?: return@LaunchedEffect
+        previewSetup = withContext(Dispatchers.IO) {
+            loadPreviewSetup(
+                context = context,
+                projectRoot = root,
+                packageName = packageOfProject(),
+                savedMinSdk = projectRecord?.config?.minSdk?.toIntOrNull(),
+                savedTargetSdk = projectRecord?.config?.targetSdk?.toIntOrNull(),
+            )
+        }
+    }
 
     fun launchBuiltApp(packageName: String) {
         lastOpenedPackage = packageName
@@ -2114,6 +2133,7 @@ internal fun IdeScreen(
                             refreshToken = previewRefresh,
                             onRefresh = { previewRefresh++ },
                             projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                            previewSetup = previewSetup,
                             // A console source link closes the preview and lands the caret on
                             // its line, through the same reseed every other jump uses.
                             onOpenFile = { path, line ->

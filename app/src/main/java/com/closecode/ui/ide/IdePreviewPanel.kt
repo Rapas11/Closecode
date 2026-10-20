@@ -655,6 +655,7 @@ internal fun IdePreviewPanel(
     refreshToken: Int = 0,
     onRefresh: () -> Unit = {},
     projectRoot: java.io.File? = null,
+    previewSetup: PreviewSetup? = null,
     // Tapping a console source link lands here with the project path and 1-based line.
     onOpenFile: (String, Int) -> Unit = { _, _ -> },
     // Project errors for the preview cards' Failed state, matched by file name.
@@ -758,6 +759,7 @@ internal fun IdePreviewPanel(
                 activePath = projectPath,
                 errors = previewErrors,
                 onOpenFile = onOpenFile,
+                previewSetup = previewSetup,
             )
 
             PreviewRoute.Static -> StaticPreview(

@@ -3,11 +3,10 @@ package com.closecode.build
 import java.io.File
 
 /**
- * Milestone (d) contract between the IDE and the preview runner APK. The runner is a
- * tiny generated harness compiled with the user's own classes, installed beside the
- * app, and launched in a separate `:preview` process: it draws each `@Preview` on the
- * real runtime with drawToBitmap and writes PNGs plus this index. Until the runner
- * exists, cards keep their sketches with the "Approximate preview" label.
+ * Contract between the IDE and the preview renderer. The renderer is a generated harness
+ * compiled with the user's own classes and resources into `build/previews/<key>/preview.apk`,
+ * then loaded in CloseCode's `:preview` process, where it draws each `@Preview` on the real
+ * runtime with drawToBitmap and writes PNGs plus this index.
  */
 object PreviewContract {
     const val RUNNER_SUFFIX = ".previewrunner"
@@ -23,6 +22,7 @@ object PreviewContract {
         val widthPx: Int,
         val heightPx: Int,
         val error: String? = null,
+        val id: String = "",
     )
 
     /**
@@ -46,6 +46,7 @@ object PreviewContract {
                 widthPx = number("widthPx"),
                 heightPx = number("heightPx"),
                 error = field("error"),
+                id = field("id").orEmpty(),
             )
         }
     }
