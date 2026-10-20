@@ -1,0 +1,113 @@
+﻿{
+    "version":  "1",
+    "kotlin":  "1.9.24",
+    "composeCompiler":  "1.5.14",
+    "compileSdk":  35,
+    "minSdkFloor":  24,
+    "aapt2":  {
+                  "version":  "34.0.4",
+                  "license":  "Apache-2.0 (AOSP aapt2); arm64 build from AndroidIDEOfficial/androidide-tools (GPL-3.0 repository)",
+                  "source":  "https://github.com/AndroidIDEOfficial/androidide-tools/releases/tag/v34.0.4"
+              },
+    "files":  [
+                  {
+                      "id":  "kotlin-compiler",
+                      "version":  "1.9.24",
+                      "fileName":  "kotlin-compiler-1.9.24-dex.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/kotlin-compiler-1.9.24-dex.jar",
+                      "sizeBytes":  21111812,
+                      "sha256":  "0ca209cde7fa3a07b9685c82d830f3d06830b87eb9d0227c426dc830df347672",
+                      "license":  "Apache-2.0"
+                  },
+                  {
+                      "id":  "kotlin-stdlib",
+                      "version":  "1.9.24",
+                      "fileName":  "kotlin-stdlib-1.9.24.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/kotlin-stdlib-1.9.24.jar",
+                      "sizeBytes":  1718956,
+                      "sha256":  "858b902696da9cf585ab9d98ffc1c2712269828354dfe9107e3711b084a36468",
+                      "license":  "Apache-2.0"
+                  },
+                  {
+                      "id":  "kotlin-reflect",
+                      "version":  "1.9.24",
+                      "fileName":  "kotlin-reflect-1.9.24-dex.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/kotlin-reflect-1.9.24-dex.jar",
+                      "sizeBytes":  889002,
+                      "sha256":  "e73ec61fda799cf5c1c81cbb3c51e0d2076db4366dccfb5307c1b6936bb7a57f",
+                      "license":  "Apache-2.0"
+                  },
+                  {
+                      "id":  "kotlin-script-runtime",
+                      "version":  "1.9.24",
+                      "fileName":  "kotlin-script-runtime-1.9.24-dex.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/kotlin-script-runtime-1.9.24-dex.jar",
+                      "sizeBytes":  14150,
+                      "sha256":  "d0f7adb4705c5ca4ae19fcc823adfdee2dfa2bb846283ddf50e9b943b8b78155",
+                      "license":  "Apache-2.0"
+                  },
+                  {
+                      "id":  "kotlin-daemon-embeddable",
+                      "version":  "1.9.24",
+                      "fileName":  "kotlin-daemon-embeddable-1.9.24-dex.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/kotlin-daemon-embeddable-1.9.24-dex.jar",
+                      "sizeBytes":  148315,
+                      "sha256":  "566cc5a44e0211584b989df3ebaf9b94e85ce08f4c1cfea1eb9d27c36aa038ba",
+                      "license":  "Apache-2.0"
+                  },
+                  {
+                      "id":  "trove4j",
+                      "version":  "1.0.20200330",
+                      "fileName":  "trove4j-1.0.20200330-dex.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/trove4j-1.0.20200330-dex.jar",
+                      "sizeBytes":  137709,
+                      "sha256":  "387f9c05eceb26ea2339e6df15b22110eaacb94a1188d39b33856cac78a8aed7",
+                      "license":  "LGPL-2.1"
+                  },
+                  {
+                      "id":  "annotations",
+                      "version":  "13.0",
+                      "fileName":  "annotations-13.0-dex.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/annotations-13.0-dex.jar",
+                      "sizeBytes":  3331,
+                      "sha256":  "af77642f2e9aab85d5f76bacc8a16e0eb780e84c6c656c31c2a6721ca1f6f535",
+                      "license":  "Apache-2.0"
+                  },
+                  {
+                      "id":  "coroutines",
+                      "version":  "1.9.0",
+                      "fileName":  "coroutines-1.9.0-dex.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/coroutines-1.9.0-dex.jar",
+                      "sizeBytes":  445815,
+                      "sha256":  "ae1746401e88cefcbefde8024fb22f52bca8c8196260cadc611aa31b6b3ec4ea",
+                      "license":  "Apache-2.0"
+                  },
+                  {
+                      "id":  "ecj",
+                      "version":  "3.46.0",
+                      "fileName":  "ecj-3.46.0-dex.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/ecj-3.46.0-dex.jar",
+                      "sizeBytes":  1481576,
+                      "sha256":  "969c20a303960e9304aa120f43fece86609025fe094a5140e9cfbabfd8f666f6",
+                      "license":  "EPL-2.0"
+                  },
+                  {
+                      "id":  "r8",
+                      "version":  "8.13.25",
+                      "fileName":  "r8-8.13.25-dex.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/r8-8.13.25-dex.jar",
+                      "sizeBytes":  3696197,
+                      "sha256":  "987496e3572d96b8bcf47c9fc1b17d687e6af767258ed54ee6ab69d052fae12e",
+                      "license":  "BSD-3-Clause"
+                  },
+                  {
+                      "id":  "android-jar",
+                      "version":  "35",
+                      "fileName":  "android-35.jar",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/android-35.jar",
+                      "sizeBytes":  27092450,
+                      "sha256":  "4566663c3876e022b4fa4ced8c8697c4ab1688267f090114fd92d027b32e619b",
+                      "license":  "Android SDK License"
+                  }
+              ]
+}

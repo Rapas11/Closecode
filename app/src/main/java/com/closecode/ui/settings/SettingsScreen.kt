@@ -95,13 +95,23 @@ private class SettingsFacts(
             freeSpace = humanSize(android.os.StatFs(context.filesDir.path).availableBytes),
             version = com.closecode.debug.BuildInfo.label,
             toolchainStatus = toolchainStatus(),
+            toolchainVersions = toolchainVersions(),
         )
+    }
+
+    /** `1.9.24 · 3.46.0 · 8.13.25` — Kotlin, ECJ, R8, from the shipped pack descriptor. */
+    private fun toolchainVersions(): String {
+        val toolchain = com.closecode.build.ToolchainManifest.load(context)
+        return listOf("kotlin-compiler", "ecj", "r8")
+            .mapNotNull { id -> toolchain.byId(id)?.version }
+            .joinToString(" · ")
     }
 
     /** Ready only when every pinned file sits at its manifest size. */
     private fun toolchainStatus(): String {
-        val dir = java.io.File(context.filesDir, "toolchain")
-        val missing = com.closecode.build.ToolchainManifest.components.count { component ->
+        val toolchain = com.closecode.build.ToolchainManifest.load(context)
+        val dir = java.io.File(context.filesDir, "toolchain/${toolchain.version}")
+        val missing = toolchain.files.count { component ->
             val file = java.io.File(dir, component.fileName)
             !(file.isFile && file.length() == component.sizeBytes)
         }
@@ -139,10 +149,7 @@ fun SettingsScreen(
     // On-device toolchain setup: full-screen over settings, dismissed back to it.
     var setupOpen by remember { mutableStateOf(false) }
     val toolchainStore = remember(context) {
-        com.closecode.build.ToolchainStore(
-            java.io.File(context.filesDir, "toolchain"),
-            SharedPreferencesKeyValueStore(context),
-        )
+        com.closecode.build.ToolchainHolder.store(context)
     }
     if (setupOpen) {
         ToolchainSetupScreen(

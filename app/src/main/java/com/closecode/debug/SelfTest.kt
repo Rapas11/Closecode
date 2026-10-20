@@ -11,7 +11,12 @@ import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.android.apksig.ApkSigner
 import com.android.apksig.ApkVerifier
+import com.closecode.build.CompileDriver
 import com.closecode.build.DebugKey
+import com.closecode.build.ToolExec
+import com.closecode.build.ToolRunner
+import com.closecode.build.Toolchain
+import com.closecode.build.ToolchainHolder
 import com.closecode.build.ToolchainManifest
 import com.closecode.build.matchesSha256
 import com.closecode.ui.github.TokenStore
@@ -54,6 +59,9 @@ object SelfTest {
         private set
 
     private const val CHECK_TIMEOUT_MS = 30_000L
+
+    /** The compilers' first run includes one-time system work; everything after is quick. */
+    private const val TOOL_TIMEOUT_MS = 300_000L
     private const val MIN_FREE_BYTES = 1_500_000_000L
 
     private val names = listOf(
@@ -82,34 +90,38 @@ object SelfTest {
      */
     suspend fun run(context: Context, onCheck: (Check) -> Unit): List<Check> =
         withContext(Dispatchers.IO) {
-            @Suppress("UNCHECKED_CAST")
-            val checks: List<suspend () -> Check> = listOf(
-                { check64Bit() },
-                { checkFreeStorage(context) },
-                { checkToolsInstalled(context) },
-                { checkChecksums(context) },
-                { checkAapt2() },
-                { checkPendingTool(context, 6, "The Kotlin compiler") },
-                { checkPendingTool(context, 7, "The Java compiler") },
-                { checkPendingTool(context, 8, "The dex step") },
-                { checkSigning(context) },
-                { checkFullBuild() },
-                { checkInstallPermission(context) },
-                { checkOverlay(context) },
-                { checkNotifications(context) },
-                { checkNetwork(context) },
-                { checkShell(context) },
-                { checkGitHub(context) },
+            // Each entry is (how long the check may take, the check itself). The three
+            // compilers get much longer than everything else: their first run on a phone
+            // includes the system's one-time conversion of the tool jars, which can take
+            // minutes; every later run is fast.
+            val checks: List<Pair<Long, suspend () -> Check>> = listOf(
+                CHECK_TIMEOUT_MS to { check64Bit() },
+                CHECK_TIMEOUT_MS to { checkFreeStorage(context) },
+                CHECK_TIMEOUT_MS to { checkToolsInstalled(context) },
+                CHECK_TIMEOUT_MS to { checkChecksums(context) },
+                CHECK_TIMEOUT_MS to { checkAapt2(context) },
+                TOOL_TIMEOUT_MS to { checkKotlinCompiler(context) },
+                TOOL_TIMEOUT_MS to { checkEcj(context) },
+                TOOL_TIMEOUT_MS to { checkD8(context) },
+                CHECK_TIMEOUT_MS to { checkSigning(context) },
+                CHECK_TIMEOUT_MS to { checkFullBuild() },
+                CHECK_TIMEOUT_MS to { checkInstallPermission(context) },
+                CHECK_TIMEOUT_MS to { checkOverlay(context) },
+                CHECK_TIMEOUT_MS to { checkNotifications(context) },
+                CHECK_TIMEOUT_MS to { checkNetwork(context) },
+                CHECK_TIMEOUT_MS to { checkShell(context) },
+                CHECK_TIMEOUT_MS to { checkGitHub(context) },
             )
             val results = ArrayList<Check>(checks.size)
-            for ((index, check) in checks.withIndex()) {
+            for ((index, entry) in checks.withIndex()) {
+                val (timeoutMs, check) = entry
                 val result = try {
-                    withTimeoutOrNull(CHECK_TIMEOUT_MS) { check() }
+                    withTimeoutOrNull(timeoutMs) { check() }
                         ?: Check(
                             index + 1,
                             names[index],
                             Status.Fail,
-                            "The check did not finish within 30 seconds.",
+                            "The check did not finish within ${timeoutLabel(timeoutMs)}.",
                         )
                 } catch (error: Exception) {
                     Check(
@@ -187,14 +199,14 @@ object SelfTest {
         }
     }
 
-    private fun toolsFolder(context: Context): File = File(context.filesDir, "toolchain")
+    private fun toolsFolder(context: Context): File = ToolchainHolder.store(context).directory
 
     private fun isPresent(folder: File, component: com.closecode.build.ToolComponent): Boolean =
         File(folder, component.fileName).let { it.isFile && it.length() == component.sizeBytes }
 
     private fun checkToolsInstalled(context: Context): Check {
         val folder = toolsFolder(context)
-        val components = ToolchainManifest.components
+        val components = ToolchainManifest.load(context).files
         val present = components.count { isPresent(folder, it) }
         return when {
             present == 0 -> Check(
@@ -214,21 +226,24 @@ object SelfTest {
                 3,
                 names[2],
                 Status.Pass,
-                "${versionsLine()} — the versions this app pins.",
+                "${versionsLine(ToolchainManifest.load(context))} — the versions this app pins.",
             )
         }
     }
 
-    /** `Kotlin 2.4.0, ECJ 3.46.0, ...` for the ids the manifest actually lists. */
-    private fun versionsLine(): String = listOf("kotlin-compiler", "ecj", "r8", "apksig")
-        .mapNotNull { id ->
-            ToolchainManifest.components.firstOrNull { it.id == id }?.let { "${it.id} ${it.version}" }
-        }
-        .joinToString(", ")
+    /** `Kotlin 1.9.24, ECJ 3.46.0, R8 8.13.25` for the ids the pack actually lists. */
+    private fun versionsLine(toolchain: Toolchain): String =
+        listOf("kotlin-compiler" to "Kotlin", "ecj" to "ECJ", "r8" to "R8")
+            .mapNotNull { (id, name) -> toolchain.byId(id)?.let { "$name ${it.version}" } }
+            .joinToString(", ")
+
+    /** `30 seconds` / `5 minutes` for the timeout line of a check that ran too long. */
+    private fun timeoutLabel(timeoutMs: Long): String =
+        if (timeoutMs % 60_000 == 0L) "${timeoutMs / 60_000} minutes" else "${timeoutMs / 1000} seconds"
 
     private fun checkChecksums(context: Context): Check {
         val folder = toolsFolder(context)
-        val components = ToolchainManifest.components
+        val components = ToolchainManifest.load(context).files
         val installed = components.filter { isPresent(folder, it) }
         if (installed.size < components.size) {
             return Check(4, names[3], Status.Skipped, "Not all files are installed yet, so there is nothing to compare.")
@@ -246,36 +261,155 @@ object SelfTest {
         }
     }
 
-    private fun checkAapt2(): Check = Check(
-        5,
-        names[4],
-        Status.Skipped,
-        "The app does not carry aapt2 yet — it arrives with the real build step.",
-    )
+    /**
+     * The real thing: run the aapt2 that ships inside this APK as a lib file and read its
+     * version line. A binary that cannot start is a plain Fail with the reason.
+     */
+    private fun checkAapt2(context: Context): Check {
+        val binary = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
+        if (!binary.isFile) {
+            return Check(
+                5,
+                names[4],
+                Status.Skipped,
+                "No aapt2 inside this APK build — the shipped APK carries it.",
+            )
+        }
+        val output = try {
+            val process = ProcessBuilder(binary.absolutePath, "--version")
+                .redirectErrorStream(true)
+                .start()
+            val text = process.inputStream.bufferedReader().readText().trim()
+            process.waitFor()
+            text
+        } catch (error: Exception) {
+            return Check(
+                5,
+                names[4],
+                Status.Fail,
+                "aapt2 could not start: ${error.message ?: error.javaClass.simpleName}",
+            )
+        }
+        val line = output.lines().firstOrNull { it.contains("Android Asset Packaging Tool") }
+        return if (line != null) {
+            Check(5, names[4], Status.Pass, line.trim().take(120))
+        } else {
+            Check(5, names[4], Status.Fail, "aapt2 ran but said: ${output.take(160)}")
+        }
+    }
 
     /**
-     * Checks 6-8 ask the downloaded pack to run. The pack on the wire is desktop bytecode;
-     * a phone runs dex, and the converted pack is not built yet. Saying that is the honest
-     * answer — the alternative would be a check that passes without running anything.
+     * The real thing: compile a tiny Kotlin file with the downloaded compiler and check that
+     * a class file appeared. This is the check the whole build depends on — a compiler that
+     * cannot run on the phone makes every build step a lie.
      */
-    private fun checkPendingTool(context: Context, number: Int, what: String): Check {
+    private fun checkKotlinCompiler(context: Context): Check {
+        val toolchain = ToolchainManifest.load(context)
         val folder = toolsFolder(context)
-        val allPresent = ToolchainManifest.components.all { isPresent(folder, it) }
-        return if (!allPresent) {
-            Check(
-                number,
-                names[number - 1],
+        val jars = ToolchainManifest.KOTLINC_LAUNCH_IDS.mapNotNull { id ->
+            toolchain.byId(id)?.let { File(folder, it.fileName) }?.takeIf { it.isFile }
+        }
+        if (jars.size < ToolchainManifest.KOTLINC_LAUNCH_IDS.size) {
+            return Check(
+                6,
+                names[5],
                 Status.Skipped,
                 "Build tools are not installed yet, so there is nothing to run.",
             )
-        } else {
-            Check(
-                number,
-                names[number - 1],
-                Status.Skipped,
-                "$what is in the pack, but the pack is desktop bytecode. The phone-ready pack is not built yet.",
-            )
         }
+        val dir = File(context.cacheDir, "selftest-tools").apply { deleteRecursively(); mkdirs() }
+        val source = File(dir, "Hello.kt").apply { writeText("fun hello(): String = \"hello\"\n") }
+        val classes = File(dir, "classes").apply { mkdirs() }
+        val stdlib = toolchain.byId("kotlin-stdlib")?.let { File(folder, it.fileName) }
+        val args = CompileDriver.kotlincArgs(
+            sources = listOf(source),
+            classpath = listOfNotNull(stdlib),
+            outputDir = classes,
+            composePluginJar = null,
+        )
+        val result = ToolExec.kotlinc(jars, args, dexOptDir = dexOptDir(context))
+        return if (result.code == 0 && File(classes, "HelloKt.class").isFile) {
+            Check(6, names[5], Status.Pass, "Compiled a test file with Kotlin ${toolchain.kotlin}.")
+        } else {
+            Check(6, names[5], Status.Fail, toolFailure("The Kotlin compiler did not finish", result))
+        }
+    }
+
+    /** The real thing: ECJ compiles a tiny Java file against the downloaded platform jar. */
+    private fun checkEcj(context: Context): Check {
+        val toolchain = ToolchainManifest.load(context)
+        val folder = toolsFolder(context)
+        val ecj = toolchain.byId("ecj")?.let { File(folder, it.fileName) }?.takeIf { it.isFile }
+            ?: return Check(
+                7,
+                names[6],
+                Status.Skipped,
+                "Build tools are not installed yet, so there is nothing to run.",
+            )
+        val androidJar = toolchain.byId("android-jar")?.let { File(folder, it.fileName) }?.takeIf { it.isFile }
+            ?: return Check(
+                7,
+                names[6],
+                Status.Skipped,
+                "The Android platform file is not installed yet, so there is nothing to compile against.",
+            )
+        val dir = File(context.cacheDir, "selftest-tools").apply { mkdirs() }
+        val source = File(dir, "Hello.java").apply {
+            writeText("class Hello { static String hello() { return \"hello\"; } }\n")
+        }
+        val classes = File(dir, "java-classes").apply { deleteRecursively(); mkdirs() }
+        val args = CompileDriver.ecjArgs(
+            sources = listOf(source),
+            classpath = emptyList(),
+            outputDir = classes,
+            platformJar = androidJar,
+        )
+        val result = ToolExec.ecj(listOf(ecj), args, dexOptDir = dexOptDir(context))
+        return if (result.code == 0 && File(classes, "Hello.class").isFile) {
+            Check(7, names[6], Status.Pass, "Compiled a test file with ECJ ${toolchain.byId("ecj")?.version}.")
+        } else {
+            Check(7, names[6], Status.Fail, toolFailure("The Java compiler did not finish", result))
+        }
+    }
+
+    /**
+     * The real thing: D8 turns the class file the Kotlin check produced into classes.dex.
+     * Without a class to dex it says so, rather than pretending.
+     */
+    private fun checkD8(context: Context): Check {
+        val toolchain = ToolchainManifest.load(context)
+        val folder = toolsFolder(context)
+        val r8 = toolchain.byId("r8")?.let { File(folder, it.fileName) }?.takeIf { it.isFile }
+            ?: return Check(
+                8,
+                names[7],
+                Status.Skipped,
+                "Build tools are not installed yet, so there is nothing to run.",
+            )
+        val klass = File(context.cacheDir, "selftest-tools/classes/HelloKt.class")
+        if (!klass.isFile) {
+            return Check(8, names[7], Status.Skipped, "The Kotlin step above did not produce a class file to dex.")
+        }
+        val androidJar = toolchain.byId("android-jar")?.let { File(folder, it.fileName) }?.takeIf { it.isFile }
+            ?: return Check(8, names[7], Status.Skipped, "The Android platform file is not installed.")
+        val dexOut = File(context.cacheDir, "selftest-tools/dex").apply { deleteRecursively(); mkdirs() }
+        val args = CompileDriver.d8Args(listOf(klass), listOf(androidJar), dexOut)
+        val result = ToolExec.d8(listOf(r8), args, dexOptDir = dexOptDir(context))
+        return if (result.code == 0 && File(dexOut, "classes.dex").isFile) {
+            Check(8, names[7], Status.Pass, "D8 turned the class into classes.dex.")
+        } else {
+            Check(8, names[7], Status.Fail, toolFailure("D8 did not finish", result))
+        }
+    }
+
+    /** Where the system is left to convert tool dex; the conversion is cached here. */
+    private fun dexOptDir(context: Context): File = File(context.codeCacheDir, "toolchain-dex")
+
+    /** `What did not finish (exit N): the last lines it printed.` — the real error text. */
+    private fun toolFailure(what: String, result: ToolRunner.Result): String {
+        val tail = result.output.trim().lines().filter { it.isNotBlank() }
+            .takeLast(4).joinToString(" ").take(300)
+        return if (tail.isEmpty()) "$what (exit ${result.code})." else "$what (exit ${result.code}): $tail"
     }
 
     /**

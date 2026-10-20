@@ -40,18 +40,20 @@ class ToolchainProofTest {
             ?.let { File(it) }
         assumeTrue("toolchain.dir not set", dir != null && dir!!.isDirectory)
         val root = dir!!
-        val kotlinc = File(root, "kotlin-compiler-embeddable-2.4.0.jar")
+        val kotlinc = File(root, "kotlin-compiler-embeddable-1.9.24.jar")
         val stdlib = File(
             System.getProperty("stdlib.jar")
-                ?: "/tmp/proof/kotlin-stdlib-2.4.0.jar",
+                ?: File(root, "kotlin-stdlib-1.9.24.jar").path,
         )
         val launchCp = listOf(
             kotlinc,
             stdlib,
-            File(root, "kotlin-reflect-2.4.0.jar"),
+            File(root, "kotlin-reflect-1.9.24.jar"),
+            File(root, "kotlin-script-runtime-1.9.24.jar"),
+            File(root, "kotlin-daemon-embeddable-1.9.24.jar"),
             File(root, "trove4j-1.0.20200330.jar"),
             File(root, "annotations-13.0.jar"),
-            File(root, "coroutines-1.9.0.jar"),
+            File(root, "kotlinx-coroutines-core-jvm-1.9.0.jar"),
         )
         val ecj = File(root, "ecj-3.46.0.jar")
         val r8 = File(root, "r8-8.13.25.jar")
@@ -66,6 +68,46 @@ class ToolchainProofTest {
         val javaBin = System.getProperty("java.home") + File.separator + "bin" +
             File.separator + "java"
         return Kit(dir, kotlinc, launchCp, ecj, r8, stdlib, javaBin, aapt2, androidJar)
+    }
+
+    /**
+     * The original (non-dexed) jars the pack script downloads, wired up as a ready store:
+     * this is how the JVM side of the engine gets real compilers without a download.
+     */
+    private fun downloadsStore(): ToolchainStore {
+        val root = (System.getProperty("toolchain.dir") ?: System.getenv("TOOLCHAIN_DIR"))
+            ?.let { File(it) }
+        assumeTrue("toolchain.dir not set", root != null && root!!.isDirectory)
+        val names = mapOf(
+            "kotlin-compiler" to "kotlin-compiler-embeddable-1.9.24.jar",
+            "kotlin-stdlib" to "kotlin-stdlib-1.9.24.jar",
+            "kotlin-reflect" to "kotlin-reflect-1.9.24.jar",
+            "kotlin-script-runtime" to "kotlin-script-runtime-1.9.24.jar",
+            "kotlin-daemon-embeddable" to "kotlin-daemon-embeddable-1.9.24.jar",
+            "trove4j" to "trove4j-1.0.20200330.jar",
+            "annotations" to "annotations-13.0.jar",
+            "coroutines" to "kotlinx-coroutines-core-jvm-1.9.0.jar",
+            "ecj" to "ecj-3.46.0.jar",
+            "r8" to "r8-8.13.25.jar",
+        )
+        val files = names.mapNotNull { (id, name) ->
+            File(root!!, name).takeIf { it.isFile }?.let { file ->
+                ToolComponent(
+                    id = id,
+                    version = "local",
+                    fileName = name,
+                    url = "https://example.invalid/$name",
+                    sizeBytes = file.length(),
+                    sha256 = "",
+                    license = "",
+                )
+            }
+        }
+        assumeTrue("missing jars under ${root!!.path}", files.size == names.size)
+        val toolchain = Toolchain("local", "1.9.24", "1.5.14", 35, Aapt2Info("", "", ""), files)
+        val kv = com.closecode.ui.settings.InMemoryKeyValueStore()
+        kv.putString("toolchain_pack_version", toolchain.version)
+        return ToolchainStore(toolchain, root, kv)
     }
 
     @Test
@@ -117,22 +159,16 @@ class ToolchainProofTest {
 
     @Test
     fun engineCompilesThroughRealKotlinc() {
-        // Same code path as on-device: ToolRunner + manifest jars, no DriverExec.
-        val propDir = System.getProperty("toolchain.dir") ?: System.getenv("TOOLCHAIN_DIR")
-        org.junit.Assume.assumeTrue(propDir != null)
-        val store = ToolchainStore(
-            java.io.File(propDir),
-            com.closecode.ui.settings.InMemoryKeyValueStore(),
-        )
-        kotlinx.coroutines.runBlocking { store.ensureAll() }
+        // Same code path as on-device: ToolRunner + ToolExec + manifest jars, no DriverExec.
+        val store = downloadsStore()
         org.junit.Assert.assertTrue(store.isReady())
         val project = java.io.File(tmp.root, "engine-proj").apply { mkdirs() }
         java.io.File(project, "app/src/main/AndroidManifest.xml").apply {
-            parentFile.mkdirs()
+            parentFile?.mkdirs()
             writeText("<manifest package=\"com.example.biz\"></manifest>")
         }
         java.io.File(project, "app/src/main/java/com/example/biz/Main.kt").apply {
-            parentFile.mkdirs()
+            parentFile?.mkdirs()
             writeText("package com.example.biz\nfun main() { println(\"hi\") }\n")
         }
         val outcome = kotlinx.coroutines.runBlocking {
@@ -148,21 +184,15 @@ class ToolchainProofTest {
 
     @Test
     fun engineSurfacesRealCompilerErrors() {
-        val propDir = System.getProperty("toolchain.dir") ?: System.getenv("TOOLCHAIN_DIR")
-        org.junit.Assume.assumeTrue(propDir != null)
-        val store = ToolchainStore(
-            java.io.File(propDir),
-            com.closecode.ui.settings.InMemoryKeyValueStore(),
-        )
-        kotlinx.coroutines.runBlocking { store.ensureAll() }
+        val store = downloadsStore()
         org.junit.Assume.assumeTrue(store.isReady())
         val project = java.io.File(tmp.root, "engine-bad").apply { mkdirs() }
         java.io.File(project, "app/src/main/AndroidManifest.xml").apply {
-            parentFile.mkdirs()
+            parentFile?.mkdirs()
             writeText("<manifest package=\"com.example.biz\"></manifest>")
         }
         java.io.File(project, "app/src/main/java/com/example/biz/Main.kt").apply {
-            parentFile.mkdirs()
+            parentFile?.mkdirs()
             writeText("package com.example.biz\nfun main() { nosuchthing() }\n")
         }
         val outcome = kotlinx.coroutines.runBlocking {

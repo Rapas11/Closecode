@@ -21,21 +21,42 @@ class BuildModuleTest {
     val tmp = TemporaryFolder()
 
     @Test
-    fun manifestPinsVersionsSizesAndHashes() {
-        val byId = ToolchainManifest.components.associateBy { it.id }
-        assertEquals("2.4.0", byId.getValue("kotlin-compiler").version)
-        assertEquals("3.46.0", byId.getValue("ecj").version)
-        assertEquals("8.13.25", byId.getValue("r8").version)
-        assertEquals("8.13.0", byId.getValue("apksig").version)
-        for (component in ToolchainManifest.components) {
-            assertTrue(component.sizeBytes > 0)
-            assertEquals(64, component.sha256.length)
-            assertTrue(component.url.startsWith("https://"))
+    fun shippedPackDescriptorPinsVersionsSizesAndHashes() {
+        // The descriptor the app ships, read straight from the module (unit tests run in app/).
+        val toolchain = ToolchainManifest.parse(File("src/main/assets/toolchain.json").readText())
+        assertEquals("1", toolchain.version)
+        assertEquals(ProjectPins.KOTLIN, toolchain.kotlin)
+        assertEquals(ProjectPins.COMPOSE_COMPILER, toolchain.composeCompiler)
+        assertEquals(ProjectPins.COMPILE_SDK, toolchain.compileSdk)
+        val byId = toolchain.files.associateBy { it.id }
+        for (id in ToolchainManifest.KOTLINC_LAUNCH_IDS + listOf("ecj", "r8", "android-jar")) {
+            assertTrue("missing $id", byId.containsKey(id))
         }
-        assertEquals(
-            ToolchainManifest.components.sumOf { it.sizeBytes },
-            ToolchainManifest.totalBytes,
+        for (component in toolchain.files) {
+            assertTrue("${component.id} size", component.sizeBytes > 0)
+            assertTrue(
+                "${component.id} hash",
+                Regex("^[0-9a-f]{64}$").matches(component.sha256),
+            )
+            assertTrue("${component.id} url", component.url.startsWith("https://"))
+            assertTrue("${component.id} license", component.license.isNotBlank())
+        }
+        assertEquals(toolchain.files.sumOf { it.sizeBytes }, toolchain.totalBytes)
+        assertTrue(toolchain.aapt2.version.isNotBlank())
+    }
+
+    @Test
+    fun brokenDescriptorIsAnEmptyPackNotACrash() {
+        assertTrue(ToolchainManifest.parse("{}").files.isEmpty())
+        assertTrue(ToolchainManifest.parse("{\"files\":[]}").files.isEmpty())
+        val toolchain = ToolchainManifest.parse(
+            "{\"version\":\"7\",\"kotlin\":\"9.9.9\",\"files\":[{\"id\":\"x\"," +
+                "\"fileName\":\"x.jar\",\"url\":\"https://e/x.jar\",\"sizeBytes\":5," +
+                "\"sha256\":\"ab\",\"license\":\"MIT\"}]}",
         )
+        assertEquals("7", toolchain.version)
+        assertEquals(1, toolchain.files.size)
+        assertEquals(5L, toolchain.files[0].sizeBytes)
     }
 
     @Test
@@ -213,7 +234,11 @@ class BuildModuleTest {
 
     @Test
     fun engineReportsContractFailureHonestly() = runBlocking {
-        val toolchain = ToolchainStore(File(tmp.root, "toolchain"), InMemoryKeyValueStore())
+        val toolchain = ToolchainStore(
+            ToolchainManifest.empty(),
+            File(tmp.root, "toolchain"),
+            InMemoryKeyValueStore(),
+        )
         val outcome = BuildEngine(toolchain).build(tmp.root, "biz")
         assertTrue(outcome is BuildOutcome.Blocked)
     }
@@ -221,7 +246,11 @@ class BuildModuleTest {
     @Test
     fun engineReportsMissingToolchainAsSetup() = runBlocking {
         ProjectFixtures.template(tmp.root)
-        val toolchain = ToolchainStore(File(tmp.root, "toolchain"), InMemoryKeyValueStore())
+        val toolchain = ToolchainStore(
+            ToolchainManifest.empty(),
+            File(tmp.root, "toolchain"),
+            InMemoryKeyValueStore(),
+        )
         val engine = BuildEngine(toolchain)
         val outcome = engine.build(tmp.root, "biz", ProjectFixtures.templateInput())
         assertTrue(outcome.toString(), outcome is BuildOutcome.NeedsSetup)

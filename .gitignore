@@ -11,3 +11,11 @@
 .externalNativeBuild
 .kotlin/
 
+# The pack script's work: downloads, dexed files, unpacked aapt2. Every file it produces
+# is rebuilt by scripts/prepare-toolchain.ps1; nothing here belongs in the repository.
+/build-toolchain/
+*.log
+
+# Placed by the pack script, ~4.5 MB of arm64 aapt2. Rebuilt, never committed.
+/app/src/main/jniLibs/
+

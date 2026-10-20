@@ -1344,10 +1344,7 @@ internal fun IdeScreen(
             // On-device packaging (Part B): contract check now, toolchain-gated steps
             // report setup instead of pretending. Analysis passing is not an APK.
             val engine = com.closecode.build.BuildEngine(
-                com.closecode.build.ToolchainStore(
-                    java.io.File(context.filesDir, "toolchain"),
-                    kvStore,
-                ),
+                com.closecode.build.ToolchainHolder.store(context),
             )
             val projectRoot = runCatching { repository.projectDir(slug) }.getOrNull()
             if (projectRoot != null) {
@@ -2453,11 +2450,7 @@ internal fun IdeScreen(
                 confirmLabel = "Delete",
                 onConfirm = {
                     confirmDeleteTools = false
-                    val store = com.closecode.build.ToolchainStore(
-                        java.io.File(context.filesDir, "toolchain"),
-                        kvStore,
-                    )
-                    toast = if (store.deleteAll()) {
+                    toast = if (com.closecode.build.ToolchainHolder.deleteEverything(context)) {
                         "Build tools deleted"
                     } else {
                         "Could not delete the build tools"

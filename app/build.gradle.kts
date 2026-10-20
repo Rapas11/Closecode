@@ -11,7 +11,7 @@ plugins {
 // The build number is raised for every APK handed to the user. The More sheet, every log
 // and every report print it beside the version name and the short commit, so whichever
 // APK is installed says which one it is. ("unknown" only when git is not reachable.)
-val closecodeBuild = 5
+val closecodeBuild = 6
 val closecodeGitCommit: String = runCatching {
     providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }
         .standardOutput.asText.get().trim()
@@ -56,6 +56,14 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    // aapt2 is a real executable, not something to dlopen: legacy packaging makes the
+    // installer extract libaapt2.so into nativeLibraryDir, the one place Android still
+    // lets an app run it from.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 

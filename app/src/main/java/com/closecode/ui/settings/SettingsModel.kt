@@ -2,7 +2,6 @@ package com.closecode.ui.settings
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
-import com.closecode.build.ToolchainManifest
 
 /**
  * One row of the settings screen.
@@ -130,15 +129,8 @@ data class SettingsLive(
     val freeSpace: String = "…",
     val version: String = "1.0.0",
     val toolchainStatus: String = "…",
+    val toolchainVersions: String = "…",
 )
-
-/**
- * The versions the compiler pack is pinned to, straight from the manifest the download checks
- * against, so the row cannot drift from what actually lands on the phone.
- */
-private val pinnedToolchainLine: String = listOf("kotlin-compiler", "ecj", "r8", "apksig")
-    .mapNotNull { id -> ToolchainManifest.components.firstOrNull { it.id == id }?.version }
-    .joinToString(" · ")
 
 /**
  * The settings screen: every row, across every section, built as a function of [live].
@@ -287,12 +279,12 @@ fun sections(live: SettingsLive): List<Section> = listOf(
                     ),
                     Row.Value(
                         "Pinned versions",
-                        "Kotlin · Java · dex · signer, from the manifest the download checks against.",
-                        pinnedToolchainLine,
+                        "Kotlin, Java and dex, from the pack descriptor the download checks against.",
+                        live.toolchainVersions,
                     ),
                     Row.Action(
                         "Download build tools",
-                        "About 80 MB over Wi-Fi. Resumes if interrupted.",
+                        "One Wi-Fi download, then builds work offline. Resumes if interrupted.",
                         "Download",
                         SettingsAction.DOWNLOAD_TOOLCHAIN,
                     ),

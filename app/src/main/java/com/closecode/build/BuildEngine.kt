@@ -60,15 +60,14 @@ class BuildEngine(
         // Kotlin first: real diagnostics become file+line cards on failure.
         if (ktSources.isNotEmpty()) {
             _state.value = BuildState.Running(Step.CompileKotlin, 0.35f)
-            val launchJars = ToolchainManifest.kotlincLaunchIds.mapNotNull { toolchain.jar(it) }
+            val launchJars = ToolchainManifest.KOTLINC_LAUNCH_IDS.mapNotNull { toolchain.jar(it) }
             val stdlib = stdlibJar ?: toolchain.jar("kotlin-stdlib")
-            if (launchJars.size < ToolchainManifest.kotlincLaunchIds.size || stdlib == null) {
+            if (launchJars.size < ToolchainManifest.KOTLINC_LAUNCH_IDS.size || stdlib == null) {
                 _state.value = BuildState.RequiresSetup(Step.CompileKotlin)
                 return@withContext BuildOutcome.NeedsSetup(report.warnings)
             }
-            val result = ToolRunner.runMain(
+            val result = ToolExec.kotlinc(
                 launchJars,
-                "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
                 CompileDriver.kotlincArgs(ktSources, listOfNotNull(stdlib), classesDir, null),
             )
             val diagnostics = result.output.lines()
