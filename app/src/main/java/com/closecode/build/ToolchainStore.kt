@@ -181,6 +181,15 @@ class ToolchainStore(
                 }
                 DebugLog.line("TOOLS") { "verified ${component.fileName}" }
             }
+            if (toolchain.byId("libraries") != null) {
+                _state.value = ToolchainState.Verifying("libraries.zip")
+                if (librariesDir() == null) {
+                    _state.value = ToolchainState.Failed(
+                        "Could not unpack the library cache. Try again later.",
+                    )
+                    return@withContext false
+                }
+            }
             kv.putString(KEY_PACK_VERSION, toolchain.version)
             _state.value = ToolchainState.Ready
             DebugLog.crumb("TOOLS", "setup finished · ${toolchain.files.size} files verified")
@@ -230,6 +239,53 @@ class ToolchainStore(
 
     fun jar(id: String): File? =
         toolchain.byId(id)?.let { componentFile(it) }?.takeIf { it.isFile }
+
+    /**
+     * The extracted library cache. `libraries.zip` is one verified download; unpacking
+     * it is done here, once, and marked with the zip's hash so a new pack unpacks again.
+     * A missing index or an unsafe entry is null — the build then says the cache is
+     * missing instead of using half of it.
+     */
+    fun librariesDir(): File? {
+        val component = toolchain.byId("libraries") ?: return null
+        val zip = componentFile(component).takeIf { it.isFile } ?: return null
+        val target = File(dir, "libraries")
+        val marker = File(target, ".packed")
+        if (marker.isFile && File(target, "libs.json").isFile &&
+            runCatching { marker.readText().trim() }.getOrNull() == component.sha256
+        ) {
+            return target
+        }
+        return runCatching {
+            val temp = File(dir, "libraries.tmp")
+            temp.deleteRecursively()
+            temp.mkdirs()
+            java.util.zip.ZipFile(zip).use { archive ->
+                val entries = archive.entries()
+                while (entries.hasMoreElements()) {
+                    val entry = entries.nextElement()
+                    if (entry.isDirectory) continue
+                    val out = File(temp, entry.name).canonicalFile
+                    if (!out.path.startsWith(temp.canonicalPath + File.separator)) {
+                        throw IOException("Unsafe path in libraries.zip: ${entry.name}")
+                    }
+                    out.parentFile?.mkdirs()
+                    archive.getInputStream(entry).use { input ->
+                        out.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
+            }
+            File(temp, ".packed").writeText(component.sha256)
+            target.deleteRecursively()
+            if (!temp.renameTo(target)) {
+                temp.copyRecursively(target, overwrite = true)
+                temp.deleteRecursively()
+            }
+            if (!File(target, "libs.json").isFile) return null
+            DebugLog.crumb("TOOLS", "library cache unpacked")
+            target
+        }.getOrDefault(null)
+    }
 
     /**
      * Deletes every downloaded file (including `.part` halves) and forgets that the pack was

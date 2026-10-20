@@ -11,8 +11,13 @@ import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.android.apksig.ApkSigner
 import com.android.apksig.ApkVerifier
+import com.closecode.build.BuildChain
+import com.closecode.build.BuildConfigValues
+import com.closecode.build.BuildTools
 import com.closecode.build.CompileDriver
 import com.closecode.build.DebugKey
+import com.closecode.build.LibraryIndex
+import com.closecode.build.SigningIdentity
 import com.closecode.build.ToolExec
 import com.closecode.build.ToolRunner
 import com.closecode.build.Toolchain
@@ -104,7 +109,7 @@ object SelfTest {
                 TOOL_TIMEOUT_MS to { checkEcj(context) },
                 TOOL_TIMEOUT_MS to { checkD8(context) },
                 CHECK_TIMEOUT_MS to { checkSigning(context) },
-                CHECK_TIMEOUT_MS to { checkFullBuild() },
+                600_000L to { checkFullBuild(context) },
                 CHECK_TIMEOUT_MS to { checkInstallPermission(context) },
                 CHECK_TIMEOUT_MS to { checkOverlay(context) },
                 CHECK_TIMEOUT_MS to { checkNotifications(context) },
@@ -455,12 +460,189 @@ object SelfTest {
         }
     }
 
-    private fun checkFullBuild(): Check = Check(
-        10,
-        names[9],
-        Status.Skipped,
-        "The full test build arrives with the real build step.",
-    )
+    /**
+     * The real thing: a tiny Compose project is written to the cache, built through the
+     * exact chain the Build panel uses (resources, Compose, dex, pack, sign), and the APK
+     * is verified with apksig. This is the check that proves the phone can build, not just
+     * run the individual tools.
+     */
+    private fun checkFullBuild(context: Context): Check {
+        val store = ToolchainHolder.store(context)
+        if (!store.isReady()) {
+            return Check(
+                10, names[9], Status.Skipped,
+                "Build tools are not installed yet, so there is nothing to build with.",
+            )
+        }
+        val librariesDir = store.librariesDir()
+            ?: return Check(
+                10, names[9], Status.Fail,
+                "The library cache is missing. Open Build tools and download the tools again.",
+            )
+        val libraries = LibraryIndex.load(librariesDir)
+            ?: return Check(10, names[9], Status.Fail, "The library cache has no readable index.")
+        val aapt2 = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
+        if (!aapt2.isFile) {
+            return Check(10, names[9], Status.Fail, "aapt2 is missing from this build of the app.")
+        }
+        val androidJar = store.jar("android-jar")
+            ?: return Check(10, names[9], Status.Fail, "android.jar is missing from the tools.")
+        val stdlib = store.jar("kotlin-stdlib")
+            ?: return Check(10, names[9], Status.Fail, "The Kotlin stdlib is missing from the tools.")
+        val ids = ToolchainManifest.KOTLINC_LAUNCH_IDS + listOf("ecj", "r8")
+        val toolFiles = ids.distinct()
+            .mapNotNull { id -> store.jar(id)?.let { id to it } }
+            .toMap()
+        if (toolFiles.size != ids.distinct().size) {
+            return Check(10, names[9], Status.Fail, "A build tool file is missing. Download the tools again.")
+        }
+        val signer = runCatching { DebugKey.ensure(context) }.getOrElse { error ->
+            return Check(
+                10, names[9], Status.Fail,
+                "The debug key is not available: ${error.message ?: "the Keystore refused it"}.",
+            )
+        }
+        val project = File(context.cacheDir, "self-test/build-app")
+        return try {
+            project.deleteRecursively()
+            writeSelfTestProject(project)
+            val started = System.currentTimeMillis()
+            val result = BuildChain.build(
+                projectDir = project,
+                config = BuildConfigValues(
+                    packageName = "com.closecode.selftest",
+                    minSdk = 29,
+                    targetSdk = 35,
+                    versionCode = 1,
+                    versionName = "1.0",
+                    useCompose = true,
+                ),
+                tools = BuildTools(
+                    aapt2 = aapt2,
+                    androidJar = androidJar,
+                    stdlib = stdlib,
+                    libraries = libraries,
+                    signer = SigningIdentity(signer.key, signer.chain),
+                    toolFiles = toolFiles,
+                    composePlugin = store.jar("kotlin-compiler"),
+                    dexOptDir = File(context.codeCacheDir, "self-test-dex"),
+                ),
+            )
+            val seconds = (System.currentTimeMillis() - started) / 1000
+            val apk = result.apk
+            if (result.ok && apk != null) {
+                val verification = ApkVerifier.Builder(apk).build().verify()
+                if (!verification.isVerified) {
+                    Check(
+                        10, names[9], Status.Fail,
+                        "The full build made an APK but its signature did not verify.",
+                    )
+                } else {
+                    Check(
+                        10, names[9], Status.Pass,
+                        "Built, signed and verified a Compose app with the on-phone chain " +
+                            "in ${seconds}s (${apk.length() / 1024} KB).",
+                    )
+                }
+            } else {
+                val where = result.failure?.step?.label ?: "Build"
+                val message = result.failure?.message ?: "it made no APK"
+                Check(10, names[9], Status.Fail, "$where: $message".take(300))
+            }
+        } catch (error: Exception) {
+            Check(
+                10, names[9], Status.Fail,
+                "The full build stopped: ${error.message ?: error.javaClass.simpleName}".take(300),
+            )
+        }
+    }
+
+    /** The smallest real Compose app: a screen, a theme and a preview. */
+    private fun writeSelfTestProject(project: File) {
+        File(project, "app/build.gradle.kts").apply {
+            parentFile?.mkdirs()
+            writeText(
+                """
+                plugins {
+                    id("com.android.application")
+                    id("org.jetbrains.kotlin.android")
+                }
+                android {
+                    namespace = "com.closecode.selftest"
+                    compileSdk = 35
+                    defaultConfig {
+                        applicationId = "com.closecode.selftest"
+                        minSdk = 29
+                        targetSdk = 35
+                        versionCode = 1
+                        versionName = "1.0"
+                    }
+                }
+                """.trimIndent() + "\n",
+            )
+        }
+        File(project, "app/src/main/AndroidManifest.xml").apply {
+            parentFile?.mkdirs()
+            writeText(
+                """
+                <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+                    <application android:label="@string/app_name">
+                        <activity android:name=".MainActivity" android:exported="true">
+                            <intent-filter>
+                                <action android:name="android.intent.action.MAIN" />
+                                <category android:name="android.intent.category.LAUNCHER" />
+                            </intent-filter>
+                        </activity>
+                    </application>
+                </manifest>
+                """.trimIndent() + "\n",
+            )
+        }
+        File(project, "app/src/main/res/values/strings.xml").apply {
+            parentFile?.mkdirs()
+            writeText(
+                """
+                <resources>
+                    <string name="app_name">Self test</string>
+                </resources>
+                """.trimIndent() + "\n",
+            )
+        }
+        File(project, "app/src/main/java/com/closecode/selftest/MainActivity.kt").apply {
+            parentFile?.mkdirs()
+            writeText(
+                """
+                package com.closecode.selftest
+
+                import android.os.Bundle
+                import androidx.activity.ComponentActivity
+                import androidx.activity.compose.setContent
+                import androidx.compose.material3.MaterialTheme
+                import androidx.compose.material3.Text
+                import androidx.compose.runtime.Composable
+                import androidx.compose.ui.tooling.preview.Preview
+
+                class MainActivity : ComponentActivity() {
+                    override fun onCreate(savedInstanceState: Bundle?) {
+                        super.onCreate(savedInstanceState)
+                        setContent { MaterialTheme { Hello() } }
+                    }
+                }
+
+                @Composable
+                fun Hello() {
+                    Text("CloseCode built me")
+                }
+
+                @Preview(showBackground = true)
+                @Composable
+                fun HelloPreview() {
+                    MaterialTheme { Hello() }
+                }
+                """.trimIndent() + "\n",
+            )
+        }
+    }
 
     private fun checkInstallPermission(context: Context): Check {
         val granted = context.packageManager.canRequestPackageInstalls()

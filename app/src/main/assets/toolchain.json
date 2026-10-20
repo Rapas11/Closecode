@@ -108,6 +108,15 @@
                       "sizeBytes":  27092450,
                       "sha256":  "4566663c3876e022b4fa4ced8c8697c4ab1688267f090114fd92d027b32e619b",
                       "license":  "Android SDK License"
+                  },
+                  {
+                      "id":  "libraries",
+                      "version":  "1",
+                      "fileName":  "libraries.zip",
+                      "url":  "https://github.com/Rapas11/Closecode/releases/download/tools-v1/libraries.zip",
+                      "sizeBytes":  24459026,
+                      "sha256":  "d8d907740c23783fb1b5cfafcb657edc2e22b92cbdb60b254b30f3cae14c91c0",
+                      "license":  "Apache-2.0 (AndroidX, Kotlin, Guava)"
                   }
               ]
 }

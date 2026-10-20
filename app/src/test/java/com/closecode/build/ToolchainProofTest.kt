@@ -157,51 +157,9 @@ class ToolchainProofTest {
         assertEquals(1, diagnostic?.line)
     }
 
-    @Test
-    fun engineCompilesThroughRealKotlinc() {
-        // Same code path as on-device: ToolRunner + ToolExec + manifest jars, no DriverExec.
-        val store = downloadsStore()
-        org.junit.Assert.assertTrue(store.isReady())
-        val project = java.io.File(tmp.root, "engine-proj").apply { mkdirs() }
-        java.io.File(project, "app/src/main/AndroidManifest.xml").apply {
-            parentFile?.mkdirs()
-            writeText("<manifest package=\"com.example.biz\"></manifest>")
-        }
-        java.io.File(project, "app/src/main/java/com/example/biz/Main.kt").apply {
-            parentFile?.mkdirs()
-            writeText("package com.example.biz\nfun main() { println(\"hi\") }\n")
-        }
-        val outcome = kotlinx.coroutines.runBlocking {
-            BuildEngine(store).build(project, "biz")
-        }
-        // Imported package passes the contract; compilation succeeds; packaging waits
-        // for the SDK pair, which this test deliberately withholds.
-        org.junit.Assert.assertTrue("got $outcome", outcome is BuildOutcome.DriverPending)
-        org.junit.Assert.assertTrue(
-            java.io.File(project, "build/closecode/classes/com/example/biz/MainKt.class").isFile,
-        )
-    }
-
-    @Test
-    fun engineSurfacesRealCompilerErrors() {
-        val store = downloadsStore()
-        org.junit.Assume.assumeTrue(store.isReady())
-        val project = java.io.File(tmp.root, "engine-bad").apply { mkdirs() }
-        java.io.File(project, "app/src/main/AndroidManifest.xml").apply {
-            parentFile?.mkdirs()
-            writeText("<manifest package=\"com.example.biz\"></manifest>")
-        }
-        java.io.File(project, "app/src/main/java/com/example/biz/Main.kt").apply {
-            parentFile?.mkdirs()
-            writeText("package com.example.biz\nfun main() { nosuchthing() }\n")
-        }
-        val outcome = kotlinx.coroutines.runBlocking {
-            BuildEngine(store).build(project, "biz")
-        }
-        org.junit.Assert.assertTrue("got $outcome", outcome is BuildOutcome.CompileFailed)
-        val errors = (outcome as BuildOutcome.CompileFailed).diagnostics
-        org.junit.Assert.assertTrue(errors.isNotEmpty())
-    }
+    // The old engine-level compile tests were replaced by BuildChainTest, which runs the
+    // whole chain (resources, Compose, dex, signing) with the same jars and a real aapt2.
+    // The engine itself is covered by BuildModuleTest's contract and setup cases.
 
     @Test
     fun fullChainToLinkedApk() {

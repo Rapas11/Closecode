@@ -5,7 +5,9 @@
 #   2. converts the Java libraries to dex with D8 (desktop build-tools),
 #   3. copies android.jar for API 35 out of the installed Android SDK,
 #   4. extracts arm64 aapt2 into app/src/main/jniLibs/arm64-v8a (ships inside the APK),
-#   5. writes app/src/main/assets/toolchain.json with id, version, address, size,
+#   5. resolves the supported AndroidX libraries with Gradle, extracts every AAR's
+#      classes.jar, res folder and manifest, and packs them into libraries.zip,
+#   6. writes app/src/main/assets/toolchain.json with id, version, address, size,
 #      SHA-256 and license for every downloaded file.
 #
 # Outputs:
@@ -39,6 +41,10 @@ $D8 = Join-Path $SdkRoot 'build-tools/35.0.0/lib/d8.jar'
 $ANDROID_JAR = Join-Path $SdkRoot 'platforms/android-35/android.jar'
 $JAVA = Join-Path $JdkHome 'bin/java.exe'
 $JAR = Join-Path $JdkHome 'bin/jar.exe'
+
+function Get-Sha256($path) {
+    (Get-FileHash -Algorithm SHA256 -Path $path).Hash.ToLowerInvariant()
+}
 
 foreach ($needed in @($D8, $ANDROID_JAR, $JAVA, $JAR)) {
     if (-not (Test-Path $needed)) { throw "Missing on this PC: $needed" }
@@ -143,12 +149,12 @@ function Invoke-D8($inputs, $outFile, $servicesFrom = $null) {
 }
 
 Write-Host ''
-Write-Host '1/4 downloading originals'
+Write-Host '1/5 downloading originals'
 $originals = @{}
 foreach ($file in @($files + $extra)) { $originals[$file.id] = Get-Original $file }
 
 Write-Host ''
-Write-Host '2/4 dexing for the phone'
+Write-Host '2/5 dexing for the phone'
 $produced = @{}
 foreach ($file in $files) {
     if (-not $file.dex) { continue }
@@ -169,7 +175,7 @@ foreach ($file in $files) {
 }
 
 Write-Host ''
-Write-Host '3/4 android.jar and aapt2'
+Write-Host '3/5 android.jar and aapt2'
 $androidOut = Join-Path $out 'android-35.jar'
 Copy-Item $ANDROID_JAR $androidOut -Force
 Write-Host "copied android-35.jar"
@@ -195,11 +201,132 @@ Copy-Item $aapt2.FullName (Join-Path $jniLibs 'libaapt2.so') -Force
 Write-Host ("placed libaapt2.so from " + $aapt2.Name)
 
 Write-Host ''
-Write-Host '4/4 toolchain.json'
-
-function Get-Sha256($path) {
-    (Get-FileHash -Algorithm SHA256 -Path $path).Hash.ToLowerInvariant()
+Write-Host '4/5 libraries'
+# The supported libraries are resolved by Gradle at pack time — the phone never runs
+# Gradle. Each AAR's classes.jar, res folder and manifest are stored separately, which
+# is exactly what the on-device build needs for aapt2, kotlinc, ECJ and D8.
+$resolveDir = Join-Path $work 'library-pack'
+$resolveOut = Join-Path $resolveDir 'out'
+if (-not (Test-Path (Join-Path $resolveOut 'modules.tsv'))) {
+    Write-Host 'resolving the supported libraries with Gradle'
+    & (Join-Path $repo 'gradlew.bat') -p $resolveDir copyLibraries --console=plain
+    if ($LASTEXITCODE -ne 0) { throw "library resolution failed (Gradle exit $LASTEXITCODE)" }
 }
+if (-not (Test-Path (Join-Path $resolveOut 'modules.tsv'))) {
+    throw 'Gradle produced no modules.tsv; the library pack cannot be built'
+}
+
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+$libStage = Join-Path $work 'libraries'
+if (Test-Path $libStage) { Remove-Item $libStage -Recurse -Force }
+New-Item -ItemType Directory -Force -Path (Join-Path $libStage 'jars'),
+    (Join-Path $libStage 'res'), (Join-Path $libStage 'manifests') | Out-Null
+
+$modules = New-Object System.Collections.Generic.List[object]
+$seen = @{}
+$number = 0
+foreach ($line in Get-Content (Join-Path $resolveOut 'modules.tsv')) {
+    if (-not $line.Trim()) { continue }
+    $cols = $line -split "`t"
+    if ($cols.Count -lt 3) { continue }
+    $coords = $cols[0] -split ':'
+    if ($coords.Count -lt 3) { continue }
+    $module = "$($coords[0]):$($coords[1])"
+    $version = $coords[2]
+    # The toolchain ships one Kotlin stdlib (1.9.24); a second copy in the app would both
+    # conflict with the compiler and duplicate every stdlib class in the dex.
+    if ($module -eq 'org.jetbrains.kotlin:kotlin-stdlib') { continue }
+    if ($seen.ContainsKey($module)) { continue }
+    $seen[$module] = $true
+    $number++
+    $n = '{0:D3}' -f $number
+    $source = Join-Path $resolveOut $cols[2]
+    if (-not (Test-Path $source)) { throw "resolved library missing: $source" }
+    $info = [ordered]@{ module = $module; version = $version }
+    if ($source -like '*.aar') {
+        $archive = [System.IO.Compression.ZipFile]::OpenRead($source)
+        try {
+            foreach ($entry in $archive.Entries) {
+                $name = $entry.FullName -replace '\\', '/'
+                if ($name.EndsWith('/')) { continue }
+                if ($name -eq 'classes.jar') {
+                    $target = Join-Path $libStage "jars/$n.jar"
+                    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+                    $info.jar = "jars/$n.jar"
+                } elseif ($name -eq 'AndroidManifest.xml') {
+                    $target = Join-Path $libStage "manifests/$n.xml"
+                    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+                    $info.manifest = "manifests/$n.xml"
+                } elseif ($name.StartsWith('res/')) {
+                    $relative = $name.Substring(4)
+                    if (-not $relative) { continue }
+                    $target = Join-Path $libStage "res/$n/$relative"
+                    $parent = Split-Path $target -Parent
+                    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+                    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true)
+                    $info.res = "res/$n"
+                }
+            }
+        } finally {
+            $archive.Dispose()
+        }
+    } else {
+        Copy-Item $source (Join-Path $libStage "jars/$n.jar") -Force
+        $info.jar = "jars/$n.jar"
+    }
+    $modules.Add($info)
+}
+
+# The libraries are dexed ONCE, here. On the phone, dexing every library on every build
+# would take minutes and hundreds of megabytes; these classes never change between builds.
+# The app dexes only its own classes and appends these as classes2.dex, classes3.dex...
+# --min-api 24 is the lowest Android the build supports, so the dex runs on every target.
+$libDex = Join-Path $work 'libdex'
+$dexMarker = Join-Path $libDex 'inputs.txt'
+$stdlibOriginal = Join-Path $downloads 'kotlin-stdlib-1.9.24.jar'
+$dexInputs = Get-ChildItem (Join-Path $libStage 'jars') -Filter *.jar |
+    Sort-Object Name | ForEach-Object { $_.Name + ':' + $_.Length }
+$dexSignature = ($dexInputs -join '|') +
+    '|stdlib:' + (Get-Sha256 $stdlibOriginal) +
+    '|android:' + (Get-Sha256 $ANDROID_JAR)
+$dexCurrent = (Test-Path (Join-Path $libDex 'classes.dex')) -and
+    (Test-Path $dexMarker) -and
+    ((Get-Content $dexMarker -Raw).Trim() -eq $dexSignature)
+if (-not $dexCurrent) {
+    Write-Host 'dexing the library cache (one time; a few minutes)'
+    $libDexTemp = Join-Path $work 'libdex.tmp'
+    if (Test-Path $libDexTemp) { Remove-Item $libDexTemp -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $libDexTemp | Out-Null
+    $d8args = @('-Xmx4g', '-cp', $D8, 'com.android.tools.r8.D8',
+        '--min-api', '24', '--lib', $ANDROID_JAR, '--output', $libDexTemp) +
+        (Get-ChildItem (Join-Path $libStage 'jars') -Filter *.jar | ForEach-Object { $_.FullName }) +
+        $stdlibOriginal
+    & $JAVA @d8args
+    if ($LASTEXITCODE -ne 0) { throw "D8 failed for the library cache (exit $LASTEXITCODE)" }
+    if (-not (Test-Path (Join-Path $libDexTemp 'classes.dex'))) {
+        throw 'D8 produced no classes.dex for the library cache'
+    }
+    if (Test-Path $libDex) { Remove-Item $libDex -Recurse -Force }
+    Move-Item $libDexTemp $libDex
+    Set-Content -Path $dexMarker -Value $dexSignature -Encoding UTF8
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $libStage 'dex') | Out-Null
+Copy-Item (Join-Path $libDex 'classes*.dex') (Join-Path $libStage 'dex') -Force
+Write-Host ("library dex: " + ((Get-ChildItem (Join-Path $libStage 'dex')).Count) + ' files')
+
+$index = [ordered]@{ version = 1; modules = $modules }
+$indexJson = $index | ConvertTo-Json -Depth 5
+Set-Content -Path (Join-Path $libStage 'libs.json') -Value $indexJson -Encoding UTF8
+
+$libsZip = Join-Path $out 'libraries.zip'
+if (Test-Path $libsZip) { Remove-Item $libsZip -Force }
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $libStage, $libsZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+Write-Host ("packed libraries.zip (" + $modules.Count + ' modules, ' +
+    [Math]::Round((Get-Item $libsZip).Length / 1MB, 1) + ' MB)')
+
+Write-Host ''
+Write-Host '5/5 toolchain.json'
 
 $entries = New-Object System.Collections.Generic.List[object]
 foreach ($file in $files) {
@@ -232,6 +359,16 @@ $entries.Add([ordered]@{
     sizeBytes = $androidItem.Length
     sha256 = (Get-Sha256 $androidOut)
     license = 'Android SDK License'
+})
+$libsItem = Get-Item $libsZip
+$entries.Add([ordered]@{
+    id = 'libraries'
+    version = '1'
+    fileName = 'libraries.zip'
+    url = "$($BaseUrl)libraries.zip"
+    sizeBytes = $libsItem.Length
+    sha256 = (Get-Sha256 $libsZip)
+    license = 'Apache-2.0 (AndroidX, Kotlin, Guava)'
 })
 
 $manifest = [ordered]@{

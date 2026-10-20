@@ -67,6 +67,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -411,6 +412,15 @@ internal fun IdeScreen(
     // depending on declaration order. Only the engine's own record counts: nothing probes
     // the project tree, because a file a clone happens to carry is not a build result.
     val builtApk: java.io.File? = resolveBuiltApk(builtApkPath)
+    // One engine per project: the chain reports its seven steps through this stream.
+    val buildEngine = remember(slug) {
+        com.closecode.build.BuildEngine(com.closecode.build.ToolchainHolder.store(context))
+    }
+    val engineState by buildEngine.state.collectAsState()
+    val buildPanel = buildPanelModel(engineState)
+    var buildErrorCards by remember(slug) {
+        mutableStateOf<List<ProjectDiagnostic>>(emptyList())
+    }
     // The system's answer to our install session, wired into the state machine.
     DisposableEffect(slug) {
         val receiver = object : android.content.BroadcastReceiver() {
@@ -1248,185 +1258,202 @@ internal fun IdeScreen(
             toast = null
         }
     }
-    // A real build: the app's own Kotlin analyser is run across the project's files and what it finds
-    // is reported. There is no Gradle daemon inside an Android app, so this is a compile check and
-    // the panel says so — but every number here is measured rather than timed out on a schedule.
-    //
-    // The whole sweep runs on Dispatchers.Default. It was on the main thread while the panel showed
-    // a timer, where it was harmless because the work was fake; with real work over up to sixty
-    // files it would have frozen the editor for as long as it took.
+    // The real build. The engine's chain does the work — resources, Compose, dex, pack,
+    // sign — and the panel draws its seven steps from the state stream. Every row is work
+    // that actually ran, with the milliseconds it took; there is no Gradle and no timer.
     LaunchedEffect(building) {
         if (!building) return@LaunchedEffect
         buildBlocked = null
-        val sources = diskTree
-            .filter { it.kind == FileKind.Kotlin }
-            .take(PROJECT_ANALYSIS_MAX_FILES)
-            .map { it.name to (liveBuffers[it.path] ?: diskContents[it.path].orEmpty()) }
-        buildFileCount = sources.size
-        buildPhase = BuildPhase.SYMBOLS
+        buildErrorCards = emptyList()
+        hasBuilt = false
         buildProgress = 0f
-        if (sources.isEmpty()) {
-            // Nothing to check is not the same as a project that compiles, so the panel is left in
-            // the idle state rather than being handed a clean bill of health it never earned.
+        buildPhase = BuildPhase.SYMBOLS
+        val store = com.closecode.build.ToolchainHolder.store(context)
+        val projectRoot = runCatching { repository.projectDir(slug) }.getOrNull()
+        if (projectRoot == null) {
             building = false
-            buildPhase = BuildPhase.IDLE
-            buildProgress = 0f
-            buildElapsedMs = 0L
-            buildErrorCount = 0
-            buildWarningCount = 0
-            toast = "No Kotlin files to build"
+            toast = "The project folder is missing"
             return@LaunchedEffect
         }
-        DebugLog.crumb("BUILD", "checks started · ${sources.size} files")
-        val started = System.nanoTime()
-        val result = withContext(Dispatchers.Default) {
-            buildPhase = BuildPhase.FILES
-            val index = AndroidApiAssets.cached()
-            val symbolsDone = System.nanoTime()
-            buildSymbolsMs = (symbolsDone - started) / 1_000_000
-            val declared = KotlinAnalyzer.projectSymbols(sources.map { it.second })
-            var errors = 0
-            var warnings = 0
-            // One file at a time, so the bar moves as the work is done rather than jumping at the
-            // end — and so a slow file cannot make the panel look hung.
-            for ((fileIndex, source) in sources.withIndex()) {
-                val text = source.second
-                if (text.isNotBlank() && text.length <= MAX_ANALYZED_CHARS) {
-                    val analysis = runCatching {
-                        KotlinAnalyzer.analyze(text, index, declared)
-                    }.getOrNull()
-                    analysis?.diagnostics?.forEach { d ->
-                        when (d.severity) {
-                            Severity.ERROR -> errors++
-                            Severity.WARNING -> warnings++
-                        }
-                    }
-                }
-                buildProgress = (fileIndex + 1).toFloat() / sources.size.toFloat()
-            }
-            Triple(errors, warnings, (System.nanoTime() - started) / 1_000_000)
+        // Every piece the chain needs. A missing piece is setup, and the engine says so;
+        // nothing here guesses at a tool that is not on disk.
+        val libraries = withContext(Dispatchers.IO) {
+            store.librariesDir()?.let { com.closecode.build.LibraryIndex.load(it) }
         }
-        val (errors, warnings, elapsedMs) = result
-        buildElapsedMs = elapsedMs.coerceAtMost(MAX_REPORTED_BUILD_MS)
-        buildFilesMs = (elapsedMs - buildSymbolsMs).coerceAtLeast(0L)
-        buildErrorCount = errors
-        buildWarningCount = warnings
-        buildProgress = 1f
-        buildPhase = BuildPhase.DONE
-        building = false
-        hasBuilt = true
-        if (errors > 0) {
-            logLines.appendCapped(
-                LogLine(
-                    LogLevel.ERROR,
-                    "Build",
-                    "CHECKS FAILED · $errors errors, $warnings warnings in ${formatBuildTime(buildElapsedMs)}",
-                ),
-            )
-            toast = "Checks failed · $errors errors"
-            DebugLog.crumb(
-                "BUILD",
-                "checks failed · $errors errors, $warnings warnings in ${formatBuildTime(buildElapsedMs)}",
+        val record = projectRecord?.takeIf { !it.imported }
+        val checkInput = com.closecode.build.ProjectCheck.Input(
+            savedPackage = record?.config?.packageName?.takeIf { it.isNotBlank() },
+            savedMinSdk = record?.config?.minSdk?.toIntOrNull(),
+            savedTargetSdk = record?.config?.targetSdk?.toIntOrNull(),
+            savedCompileSdk = record?.config?.compileSdk?.toIntOrNull(),
+            otherPackages = repository.listProjects()
+                .filter { it.slug != slug }
+                .mapNotNull { runCatching { repository.packageOf(it) }.getOrNull() }
+                .toSet(),
+            freeBytes = context.filesDir.usableSpace,
+            cacheModules = libraries?.cacheModules.orEmpty(),
+        )
+        val ids = com.closecode.build.ToolchainManifest.KOTLINC_LAUNCH_IDS + listOf("ecj", "r8")
+        val toolFiles = ids.distinct()
+            .mapNotNull { id -> store.jar(id)?.let { id to it } }
+            .toMap()
+        val aapt2 = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
+            .takeIf { it.isFile }
+        val androidJar = store.jar("android-jar")
+        val stdlib = store.jar("kotlin-stdlib")
+        val signer = withContext(Dispatchers.IO) {
+            runCatching { com.closecode.build.DebugKey.ensure(context) }.getOrNull()
+        }
+        val tools = if (
+            aapt2 != null && androidJar != null && stdlib != null &&
+            libraries != null && signer != null &&
+            toolFiles.size == ids.distinct().size
+        ) {
+            com.closecode.build.BuildTools(
+                aapt2 = aapt2,
+                androidJar = androidJar,
+                stdlib = stdlib,
+                libraries = libraries,
+                signer = com.closecode.build.SigningIdentity(signer.key, signer.chain),
+                toolFiles = toolFiles,
+                composePlugin = store.jar("kotlin-compiler"),
+                dexOptDir = File(context.codeCacheDir, "build-dex"),
             )
         } else {
-            logLines.appendCapped(
-                LogLine(
-                    LogLevel.INFO,
-                    "Build",
-                    "CHECKS PASSED · 0 errors in ${formatBuildTime(buildElapsedMs)}",
-                ),
-            )
-            toast = "Checks passed · 0 errors"
-            DebugLog.crumb(
-                "BUILD",
-                "checks passed · $warnings warnings in ${formatBuildTime(buildElapsedMs)}",
-            )
-            // On-device packaging (Part B): contract check now, toolchain-gated steps
-            // report setup instead of pretending. Analysis passing is not an APK.
-            val engine = com.closecode.build.BuildEngine(
-                com.closecode.build.ToolchainHolder.store(context),
-            )
-            val projectRoot = runCatching { repository.projectDir(slug) }.getOrNull()
-            if (projectRoot != null) {
-                val checkInput = withContext(Dispatchers.IO) {
-                    val record = projectRecord?.takeIf { !it.imported }
-                    com.closecode.build.ProjectCheck.Input(
-                        savedPackage = record?.config?.packageName?.takeIf { it.isNotBlank() },
-                        savedMinSdk = record?.config?.minSdk?.toIntOrNull(),
-                        savedTargetSdk = record?.config?.targetSdk?.toIntOrNull(),
-                        savedCompileSdk = record?.config?.compileSdk?.toIntOrNull(),
-                        otherPackages = repository.listProjects()
-                            .filter { it.slug != slug }
-                            .mapNotNull { runCatching { repository.packageOf(it) }.getOrNull() }
-                            .toSet(),
-                        freeBytes = context.filesDir.usableSpace,
+            null
+        }
+        val outcome = buildEngine.build(projectRoot, slug, checkInput, tools)
+        when (outcome) {
+            is com.closecode.build.BuildOutcome.Blocked -> {
+                val errors = outcome.findings
+                    .filter { it.severity == com.closecode.build.ProjectCheck.Severity.Error }
+                val warnings = outcome.findings
+                    .filter { it.severity == com.closecode.build.ProjectCheck.Severity.Warning }
+                DebugLog.crumb(
+                    "BUILD",
+                    "blocked: ${errors.size} errors · ${errors.firstOrNull()?.message.orEmpty()}",
+                )
+                buildBlocked = BlockedInfo(
+                    title = "$projectName can't be built yet",
+                    lines = errors.map { finding ->
+                        if (finding.where.isEmpty()) finding.message
+                        else "${finding.message} (${finding.where})"
+                    },
+                )
+                warnings.forEach { warning ->
+                    logLines.appendCapped(
+                        LogLine(LogLevel.WARN, "Package", warning.message),
                     )
                 }
-                when (val outcome = engine.build(projectRoot, slug, checkInput)) {
-                    is com.closecode.build.BuildOutcome.Blocked -> {
-                        val errors = outcome.findings
-                            .filter { it.severity == com.closecode.build.ProjectCheck.Severity.Error }
-                        val warnings = outcome.findings
-                            .filter { it.severity == com.closecode.build.ProjectCheck.Severity.Warning }
-                        DebugLog.crumb(
-                            "BUILD",
-                            "blocked: ${errors.size} errors · ${errors.firstOrNull()?.message.orEmpty()}",
-                        )
-                        buildBlocked = BlockedInfo(
-                            title = "$projectName can't be built yet",
-                            lines = errors.map { finding ->
-                                if (finding.where.isEmpty()) finding.message
-                                else "${finding.message} (${finding.where})"
-                            },
-                        )
-                        warnings.forEach { warning ->
-                            logLines.appendCapped(
-                                LogLine(LogLevel.WARN, "Package", warning.message),
-                            )
-                        }
-                        logLines.appendCapped(
-                            LogLine(
-                                LogLevel.ERROR,
-                                "Check",
-                                "$projectName can't be built yet: " +
-                                    "${errors.size} ${if (errors.size == 1) "item" else "items"} missing",
-                            ),
-                        )
-                    }
-                    is com.closecode.build.BuildOutcome.NeedsSetup -> {
-                        DebugLog.crumb("BUILD", "engine: build tools are not downloaded")
-                        outcome.warnings.forEach { warning ->
-                            logLines.appendCapped(
-                                LogLine(LogLevel.WARN, "Package", warning.message),
-                            )
-                        }
-                        logLines.appendCapped(
-                            LogLine(
-                                LogLevel.INFO,
-                                "Package",
-                                "Build tools are not downloaded yet — one Wi-Fi setup, then offline.",
-                            ),
-                        )
-                    }
-                    is com.closecode.build.BuildOutcome.CompileFailed -> {
-                        DebugLog.crumb(
-                            "BUILD",
-                            "engine: compile failed · ${outcome.diagnostics.size} diagnostics",
-                        )
-                        outcome.diagnostics.take(20).forEach { diagnostic ->
-                            logLines.appendCapped(
-                                LogLine(
-                                    LogLevel.ERROR,
-                                    "Kotlin",
-                                    "${diagnostic.path}:${diagnostic.line}: ${diagnostic.message}",
-                                ),
-                            )
-                        }
-                    }
-                    else -> Unit
+                logLines.appendCapped(
+                    LogLine(
+                        LogLevel.ERROR,
+                        "Check",
+                        "$projectName can't be built yet: " +
+                            "${errors.size} ${if (errors.size == 1) "item" else "items"} missing",
+                    ),
+                )
+                buildPhase = BuildPhase.IDLE
+                buildProgress = 0f
+            }
+            is com.closecode.build.BuildOutcome.NeedsSetup -> {
+                DebugLog.crumb("BUILD", "engine: build tools are not ready")
+                outcome.warnings.forEach { warning ->
+                    logLines.appendCapped(
+                        LogLine(LogLevel.WARN, "Package", warning.message),
+                    )
                 }
+                logLines.appendCapped(
+                    LogLine(
+                        LogLevel.INFO,
+                        "Package",
+                        if (!store.isReady()) {
+                            "Build tools are not downloaded yet — one Wi-Fi setup, then offline."
+                        } else {
+                            "The build tools are incomplete. Open Build tools and download them again."
+                        },
+                    ),
+                )
+                buildPhase = BuildPhase.IDLE
+                buildProgress = 0f
+            }
+            is com.closecode.build.BuildOutcome.CompileFailed -> {
+                DebugLog.crumb(
+                    "BUILD",
+                    "engine: compile failed · ${outcome.diagnostics.size} diagnostics",
+                )
+                buildErrorCards = outcome.diagnostics.map { diagnostic ->
+                    com.closecode.build.CompileDriver.toProjectDiagnostic(diagnostic) { path ->
+                        path.replace('\\', '/').substringAfterLast('/')
+                    }
+                }
+                outcome.diagnostics.take(20).forEach { diagnostic ->
+                    logLines.appendCapped(
+                        LogLine(
+                            LogLevel.ERROR,
+                            "Code",
+                            "${diagnostic.path}:${diagnostic.line}: ${diagnostic.message}",
+                        ),
+                    )
+                }
+                hasBuilt = true
+                buildPhase = BuildPhase.DONE
+                buildProgress = 1f
+                toast = "Build failed · see the errors"
+            }
+            is com.closecode.build.BuildOutcome.Failed -> {
+                DebugLog.crumb("BUILD", "failed · ${outcome.message}")
+                buildErrorCards = outcome.diagnostics.map { diagnostic ->
+                    com.closecode.build.CompileDriver.toProjectDiagnostic(diagnostic) { path ->
+                        path.replace('\\', '/').substringAfterLast('/')
+                    }
+                }
+                outcome.diagnostics.take(20).forEach { diagnostic ->
+                    logLines.appendCapped(
+                        LogLine(
+                            LogLevel.ERROR,
+                            "Build",
+                            "${diagnostic.path}:${diagnostic.line}: ${diagnostic.message}",
+                        ),
+                    )
+                }
+                logLines.appendCapped(LogLine(LogLevel.ERROR, "Build", outcome.message))
+                hasBuilt = true
+                buildPhase = BuildPhase.DONE
+                buildProgress = 1f
+                toast = "Build failed · see the log"
+            }
+            is com.closecode.build.BuildOutcome.Built -> {
+                builtApkPath = outcome.apk.absolutePath
+                installState = com.closecode.build.InstallState.Idle
+                buildBlocked = null
+                hasBuilt = true
+                buildPhase = BuildPhase.DONE
+                buildProgress = 1f
+                buildElapsedMs = outcome.seconds * 1000
+                val mb = outcome.sizeBytes / (1024.0 * 1024.0)
+                logLines.appendCapped(
+                    LogLine(
+                        LogLevel.INFO,
+                        "Build",
+                        "BUILD SUCCESSFUL · app-debug.apk · %.1f MB · %d s".format(mb, outcome.seconds),
+                    ),
+                )
+                toast = "Build finished"
+                DebugLog.crumb(
+                    "BUILD",
+                    "success · ${outcome.sizeBytes} bytes · ${outcome.seconds}s",
+                )
+            }
+            com.closecode.build.BuildOutcome.Cancelled -> {
+                logLines.appendCapped(LogLine(LogLevel.WARN, "Build", "BUILD CANCELLED"))
+                toast = "Build cancelled"
+                buildPhase = BuildPhase.IDLE
+                buildProgress = 0f
+                DebugLog.crumb("BUILD", "cancelled")
             }
         }
+        building = false
     }
     // The Android back button closes what is open, newest first, in one fixed order, and only
     // leaves the project when there is nothing left to close. One function, called by the system
@@ -1655,17 +1682,22 @@ internal fun IdeScreen(
                     version = diskTree.filter { it.path.endsWith("build.gradle.kts") }
                         .firstNotNullOfOrNull { gradleVersionOf(diskContents[it.path]) },
                     building = building,
-                    errorCount = buildErrorCount,
-                    warningCount = buildWarningCount,
+                    errorCount = buildErrorCards.size,
+                    warningCount = 0,
                     elapsedMs = buildElapsedMs,
-                    phase = buildPhase,
-                    fileCount = buildFileCount,
-                    progress = buildProgress,
-                    symbolsMs = buildSymbolsMs,
-                    filesMs = buildFilesMs,
+                    phase = BuildPhase.IDLE,
+                    fileCount = 0,
+                    progress = buildPanel.progress,
+                    symbolsMs = 0,
+                    filesMs = 0,
                     hasBuilt = hasBuilt,
-                    errors = projectErrorList,
+                    errors = buildErrorCards,
                     blocked = buildBlocked,
+                    buildSteps = buildPanel.rows,
+                    buildFailed = buildPanel.failed,
+                    buildResult = buildPanel.result,
+                    buildResultOk = buildPanel.resultOk,
+                    primaryLabel = buildPanel.primaryLabel,
                     onCopyBlockedList = {
                         val info = buildBlocked
                         if (info == null) {
@@ -1692,7 +1724,10 @@ internal fun IdeScreen(
                             building = true
                         }
                     },
-                    onCancel = { building = false },
+                    onCancel = {
+                        buildEngine.cancel()
+                        toast = "Cancelling…"
+                    },
                     onViewErrors = {
                         problemSheetScope = ProblemScope.PROJECT
                         problemSheet.value = problemSheet.value ?: 1

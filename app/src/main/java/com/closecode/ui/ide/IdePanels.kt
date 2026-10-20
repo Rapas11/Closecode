@@ -89,7 +89,7 @@ fun MutableList<LogLine>.appendCapped(line: LogLine) {
  * red cross beside a step that actually finished would be a second lie on top of the first one.
  * Whether the project compiled is the result line's business, not a step's.
  */
-internal enum class StepState { PENDING, RUNNING, DONE }
+internal enum class StepState { PENDING, RUNNING, DONE, FAILED }
 
 /** Which part of the sweep a build is in, in the order it happens. */
 enum class BuildPhase { IDLE, SYMBOLS, FILES, DONE }
@@ -303,6 +303,13 @@ data class BlockedInfo(
     val lines: List<String>,
 )
 
+/** One step of the real build, already timed and stated. */
+internal data class BuildStepUi(
+    val label: String,
+    val state: StepState,
+    val millis: Long? = null,
+)
+
 /**
  * Spec 7 Build panel: the app header, a result bar, one row per phase of the compile check
  * with its measured time, and the actions that mean something.
@@ -335,6 +342,13 @@ internal fun IdeBuildPanel(
     hasBuilt: Boolean = false,
     errors: List<ProjectDiagnostic> = emptyList(),
     blocked: BlockedInfo? = null,
+    // The real build's state. Ignored only by older callers that still draw the
+    // analysis sweep; the Build screen always passes all of these.
+    buildSteps: List<BuildStepUi> = emptyList(),
+    buildFailed: Boolean = false,
+    buildResult: String? = null,
+    buildResultOk: Boolean = false,
+    primaryLabel: String? = null,
     onCopyBlockedList: () -> Unit = {},
     onOpenProjectSettings: () -> Unit = {},
     onRun: () -> Unit,
@@ -355,7 +369,7 @@ internal fun IdeBuildPanel(
     onShareApk: () -> Unit = {},
 ) {
     val c = LocalPageColors.current
-    val failed = errorCount > 0
+    val failed = errorCount > 0 || buildFailed
     // While nothing is running the bar shows the whole sweep: full on a clean project, and stopped
     // where it got to on one that failed, so the last state is still visible rather than snapping
     // back to empty the moment the button is released.
@@ -486,7 +500,32 @@ internal fun IdeBuildPanel(
                 }
             }
 
-            if (hasBuilt && !building && blocked == null) {
+            if (buildResult != null && !building) {
+                // The real build's result: one sentence with its time and size, green only
+                // when an APK was signed.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (buildResultOk) Color(0xFF12281F) else Color(0xFF2A1519))
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (buildResultOk) {
+                        CcIcon(CcIcons.Check, Color(0xFF5FD19A), 16.dp)
+                    } else {
+                        CcIcon(CcIcons.Warning, Color(0xFFF2A0A0), 16.dp)
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = buildResult,
+                        color = if (buildResultOk) Color(0xFF5FD19A) else Color(0xFFF2A0A0),
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            } else if (hasBuilt && !building && blocked == null) {
                 // The result bar: green success or dark-red failure with what it found and
                 // how long honesty took.
                 Row(
@@ -517,19 +556,31 @@ internal fun IdeBuildPanel(
                 }
             }
 
-            // One row per sweep phase with its measured time: checks while running, times
-            // once done, gray for whatever a failure never reached.
+            // One row per build step with its measured time. The real chain's rows win;
+            // the analysis sweep's rows remain the fallback for older callers.
             val labels = buildStepLabels(fileCount)
             val times = listOf(symbolsMs, filesMs)
-            buildStepStates(phase).forEachIndexed { index, state ->
+            val rows = if (buildSteps.isNotEmpty()) {
+                buildSteps
+            } else {
+                buildStepStates(phase).mapIndexed { index, state ->
+                    BuildStepUi(
+                        label = labels[index],
+                        state = state,
+                        millis = if (hasBuilt) times.getOrElse(index) { 0L } else null,
+                    )
+                }
+            }
+            rows.forEach { row ->
                 Row(
                     Modifier
                         .fillMaxWidth()
                         .height(30.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    when (state) {
+                    when (row.state) {
                         StepState.DONE -> CcIcon(CcIcons.Check, c.success, 15.dp)
+                        StepState.FAILED -> CcIcon(CcIcons.Warning, Color(0xFFF2A0A0), 15.dp)
                         StepState.RUNNING -> CircularProgressIndicator(
                             modifier = Modifier.size(14.dp),
                             color = c.text,
@@ -544,21 +595,27 @@ internal fun IdeBuildPanel(
                     }
                     Spacer(Modifier.width(10.dp))
                     Text(
-                        text = labels[index],
-                        color = if (state == StepState.PENDING) c.textFaint else c.text,
+                        text = row.label,
+                        color = when (row.state) {
+                            StepState.PENDING -> c.textFaint
+                            StepState.FAILED -> Color(0xFFF2A0A0)
+                            else -> c.text
+                        },
                         fontSize = 13.sp,
                         fontFamily = Sans,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
-                    if (state == StepState.DONE && hasBuilt) {
-                        Text(
-                            text = formatBuildTime(times.getOrElse(index) { 0L }),
-                            color = c.textMuted,
-                            fontSize = 12.sp,
-                            fontFamily = Mono,
-                        )
+                    if (row.state == StepState.DONE) {
+                        row.millis?.let { millis ->
+                            Text(
+                                text = formatBuildTime(millis),
+                                color = c.textMuted,
+                                fontSize = 12.sp,
+                                fontFamily = Mono,
+                            )
+                        }
                     }
                 }
             }
@@ -568,7 +625,11 @@ internal fun IdeBuildPanel(
                 TextLink(label = "Cancel", color = c.error, onClick = onCancel)
             } else {
                 PrimaryButton(
-                    label = if (failed) "View errors" else "Run checks",
+                    label = primaryLabel ?: when {
+                        failed -> "View errors"
+                        hasBuilt -> "Build again"
+                        else -> "Run checks"
+                    },
                     onClick = if (failed) onViewErrors else onRun,
                 )
                 if (hasBuilt) {
@@ -592,7 +653,7 @@ internal fun IdeBuildPanel(
                             fontFamily = Mono,
                         )
                     }
-                    if (blocked == null) {
+                    if (blocked == null && buildResult == null) {
                         Text(
                             text = "Last check · ${formatBuildTime(elapsedMs)} · " +
                                 "$errorCount ${if (errorCount == 1) "error" else "errors"}",
