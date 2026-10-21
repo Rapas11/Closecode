@@ -55,6 +55,7 @@ internal class PtyOutputBuffer(private val emit: (String) -> Unit) {
     private var pendingCr = false
     private var lastDataAt = 0L
 
+    @Synchronized
     fun feed(text: String) {
         for (character in text) {
             if (pendingCr) {
@@ -76,6 +77,7 @@ internal class PtyOutputBuffer(private val emit: (String) -> Unit) {
     }
 
     /** Emits the unfinished line after a quiet moment, like the pipe reader does. */
+    @Synchronized
     fun flushIfIdle(now: Long = System.currentTimeMillis(), idleMs: Long = 50) {
         if (line.isEmpty()) return
         if (now - lastDataAt < idleMs) return
@@ -84,6 +86,7 @@ internal class PtyOutputBuffer(private val emit: (String) -> Unit) {
     }
 
     /** Emits whatever is left when the stream ends. */
+    @Synchronized
     fun flushAll() {
         if (pendingCr) {
             pendingCr = false
@@ -171,19 +174,32 @@ internal class PtyShellBackend(
         DebugLog.line("TERMINAL") {
             "pty started pid=$pid size=${columns}x$rows in ${folder.absolutePath}"
         }
+        // A PTY master reports no bytes as "available" even when the shell has written
+        // output, so polling ready() never drains it. Block in read(); the flush thread
+        // keeps an unfinished line (progress reported with a bare carriage return)
+        // appearing without waiting for a newline.
         Thread {
             val input = InputStreamReader(stream, StandardCharsets.UTF_8)
             val chunk = CharArray(4096)
+            Thread {
+                while (alive) {
+                    try {
+                        Thread.sleep(50)
+                    } catch (_: InterruptedException) {
+                        break
+                    }
+                    buffer.flushIfIdle()
+                }
+            }.apply {
+                isDaemon = true
+                name = "closepty-flush-$pid"
+                start()
+            }
             runCatching {
                 while (true) {
-                    if (input.ready()) {
-                        val count = input.read(chunk)
-                        if (count < 0) break
-                        buffer.feed(String(chunk, 0, count))
-                    } else {
-                        buffer.flushIfIdle()
-                        Thread.sleep(10)
-                    }
+                    val count = input.read(chunk)
+                    if (count < 0) break
+                    if (count > 0) buffer.feed(String(chunk, 0, count))
                 }
             }
             buffer.flushAll()

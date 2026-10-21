@@ -1387,6 +1387,9 @@ private fun PromptRow(
                 fontSize = fontSp,
             ),
             visualTransformation = transformation,
+            // A command is one line. singleLine also makes a hardware Enter trigger the
+            // Send action instead of inserting a newline, so a Bluetooth keyboard works.
+            singleLine = true,
             cursorBrush = SolidColor(Color.Transparent),
             // Commands must arrive as typed: the keyboard once turned ls into Ls and
             // ping into Ping, so capitalization, auto-correct and suggestions stay off.
