@@ -132,6 +132,23 @@ class PreviewBuildTest {
     }
 
     @Test
+    fun planNamesTheFullyQualifiedHarnessClass() {
+        val plan = PreviewBuild.planFor(
+            listOf("app/src/main/java/com/example/ui/Screens.kt" to packageSource),
+        )
+        val dir = tmp.newFolder("plan")
+        val apk = File(dir, "preview.apk").apply { writeText("apk") }
+        PreviewBuild.writePlan(dir, apk, plan)
+        val text = File(dir, PreviewBuild.PLAN_NAME).readText()
+        val harness = plan.harnesses.first()
+        assertTrue(
+            "The plan must name the harness by its package-qualified class, " +
+                "because the renderer loads it with Class.forName.",
+            text.contains("\"harness\":\"com.closecode.preview.gen.${harness.className}\""),
+        )
+    }
+
+    @Test
     fun harnessIdIsTheSameEverywhereAndUniquePerLocation() {
         val first = PreviewBuild.harnessId("A.kt", 4, "Home")
         assertEquals(first, PreviewBuild.harnessId("A.kt", 4, "Home"))

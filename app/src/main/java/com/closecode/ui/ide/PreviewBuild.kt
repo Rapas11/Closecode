@@ -27,7 +27,7 @@ import java.security.MessageDigest
 internal object PreviewBuild {
 
     /** Bumped when the harness format or renderer changes in a way old PNGs must not survive. */
-    private const val CACHE_VERSION = 1
+    private const val CACHE_VERSION = 2
 
     const val PLAN_NAME = "plan.json"
     const val INDEX_NAME = "previews.json"
@@ -221,9 +221,9 @@ internal object PreviewBuild {
         return listOf(host, harnesses)
     }
 
-    private fun writePlan(outputDir: File, apk: File, plan: Plan) {
+    internal fun writePlan(outputDir: File, apk: File, plan: Plan) {
         val entries = plan.harnesses.joinToString(",") { harness ->
-            """{"id":"${harness.id}","function":"${harness.function}","harness":"${harness.className}","png":"${harness.id}.png"}"""
+            """{"id":"${harness.id}","function":"${harness.function}","harness":"com.closecode.preview.gen.${harness.className}","png":"${harness.id}.png"}"""
         }
         File(outputDir, PLAN_NAME).writeText(
             """{"apk":"${jsonEscape(apk.absolutePath)}","entries":[$entries]}""" + "\n",

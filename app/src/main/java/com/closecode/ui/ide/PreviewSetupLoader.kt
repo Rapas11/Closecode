@@ -1,10 +1,12 @@
 package com.closecode.ui.ide
 
 import android.content.Context
+import com.closecode.build.Aapt2Runtime
 import com.closecode.build.BuildConfigValues
 import com.closecode.build.BuildTools
 import com.closecode.build.DebugKey
 import com.closecode.build.GradleReader
+import com.closecode.build.KotlinCompat
 import com.closecode.build.LibraryIndex
 import com.closecode.build.SigningIdentity
 import com.closecode.build.ToolchainHolder
@@ -44,6 +46,8 @@ internal fun loadPreviewSetup(
         toolFiles = toolFiles,
         composePlugin = store.jar("kotlin-compiler"),
         dexOptDir = File(context.codeCacheDir, "preview-build-dex"),
+        aapt2Env = Aapt2Runtime.environment(context),
+        kotlinResources = KotlinCompat.resources(context),
     )
     val facts = GradleReader.read(projectRoot)
     val useCompose = facts.composeBom != null ||

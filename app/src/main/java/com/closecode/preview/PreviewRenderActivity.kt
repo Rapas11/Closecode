@@ -126,6 +126,9 @@ class PreviewRenderActivity : ComponentActivity() {
                     }
                     container.removeAllViews()
                     container.addView(view)
+                    // ComposeView needs a window before it can find its recomposer; the
+                    // activity's decor is attached after onCreate returns, so wait for it.
+                    awaitAttached(view)
                     view.setContent {
                         PreviewSurface(dark) { host.Content() }
                     }
@@ -202,6 +205,22 @@ class PreviewRenderActivity : ComponentActivity() {
             Choreographer.getInstance().postFrameCallback {
                 if (continuation.isActive) continuation.resume(Unit)
             }
+        }
+    }
+
+    /**
+     * A ComposeView asks its window for the recomposer when setContent runs. The activity's
+     * decor is attached a traversal after onCreate, so composing immediately fails with
+     * "Cannot locate windowRecomposer". Wait for attachment, with a hard stop so a window
+     * that never attaches produces a sentence instead of a frozen render.
+     */
+    private suspend fun awaitAttached(view: View) {
+        var frames = 0
+        while (!view.isAttachedToWindow) {
+            if (++frames > 120) {
+                throw IllegalStateException("The preview window did not attach.")
+            }
+            awaitFrame()
         }
     }
 
