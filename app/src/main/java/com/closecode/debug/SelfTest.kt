@@ -13,9 +13,12 @@ import com.android.apksig.ApkSigner
 import com.android.apksig.ApkVerifier
 import com.closecode.build.BuildChain
 import com.closecode.build.BuildConfigValues
+import com.closecode.build.Aapt2Runtime
 import com.closecode.build.BuildTools
 import com.closecode.build.CompileDriver
 import com.closecode.build.DebugKey
+import com.closecode.build.KotlinCompat
+import com.closecode.build.KotlinHome
 import com.closecode.build.LibraryIndex
 import com.closecode.build.SigningIdentity
 import com.closecode.build.ToolExec
@@ -281,8 +284,9 @@ object SelfTest {
             )
         }
         val output = try {
-            val process = ProcessBuilder(binary.absolutePath, "--version")
+            val process = ProcessBuilder(binary.absolutePath, "version")
                 .redirectErrorStream(true)
+                .apply { environment().putAll(Aapt2Runtime.environment(context)) }
                 .start()
             val text = process.inputStream.bufferedReader().readText().trim()
             process.waitFor()
@@ -331,8 +335,13 @@ object SelfTest {
             classpath = listOfNotNull(stdlib),
             outputDir = classes,
             composePluginJar = null,
+            kotlinHome = stdlib?.let { KotlinHome.ensure(it) },
         )
-        val result = ToolExec.kotlinc(jars, args, dexOptDir = dexOptDir(context))
+        val result = ToolExec.kotlinc(
+            jars + listOfNotNull(KotlinCompat.resources(context)),
+            args,
+            dexOptDir = dexOptDir(context),
+        )
         return if (result.code == 0 && File(classes, "HelloKt.class").isFile) {
             Check(6, names[5], Status.Pass, "Compiled a test file with Kotlin ${toolchain.kotlin}.")
         } else {
@@ -369,7 +378,15 @@ object SelfTest {
             outputDir = classes,
             platformJar = androidJar,
         )
-        val result = ToolExec.ecj(listOf(ecj), args, dexOptDir = dexOptDir(context))
+        val result = ToolExec.ecj(
+            // The compiler loads its message bundle and parser tables by resource name. ECJ's
+            // dex file carries neither, so the sidecar that holds them rides along exactly as
+            // it does in BuildChain — without it this check fails while real builds succeed.
+            listOfNotNull(ecj, KotlinCompat.resources(context)),
+            args,
+            dexOptDir = dexOptDir(context),
+            platformJar = androidJar,
+        )
         return if (result.code == 0 && File(classes, "Hello.class").isFile) {
             Check(7, names[6], Status.Pass, "Compiled a test file with ECJ ${toolchain.byId("ecj")?.version}.")
         } else {
@@ -526,6 +543,8 @@ object SelfTest {
                     toolFiles = toolFiles,
                     composePlugin = store.jar("kotlin-compiler"),
                     dexOptDir = File(context.codeCacheDir, "self-test-dex"),
+                    aapt2Env = Aapt2Runtime.environment(context),
+                    kotlinResources = KotlinCompat.resources(context),
                 ),
             )
             val seconds = (System.currentTimeMillis() - started) / 1000

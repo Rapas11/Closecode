@@ -22,6 +22,13 @@ object ToolRunner {
 
     private val lock = Any()
 
+    /**
+     * Tool output is trimmed only to keep a runaway log from filling memory. It must stay
+     * large enough that a compiler exception's header and first stack frames survive — a
+     * truncated header hides the cause and makes a device-only failure undiagnosable.
+     */
+    private const val MAX_OUTPUT_CHARS = 64_000
+
     private class ExitCall(val code: Int) : SecurityException("exit:$code")
 
     /**
@@ -102,16 +109,31 @@ object ToolRunner {
         try {
             System.setOut(PrintStream(out, true))
             System.setErr(PrintStream(out, true))
-            val future = executor.submit<Int> { call(loader) }
+            val future = executor.submit<Int> {
+                // Service lookups (StAX factories, compiler plugins) follow the context
+                // class loader; the executor's is the app's, not the toolchain's.
+                val thread = Thread.currentThread()
+                val previousContext = thread.contextClassLoader
+                thread.contextClassLoader = loader
+                try {
+                    call(loader)
+                } finally {
+                    thread.contextClassLoader = previousContext
+                }
+            }
             return try {
-                Result(future.get(timeoutMs, TimeUnit.MILLISECONDS), out.toString().takeLast(8000))
+                Result(future.get(timeoutMs, TimeUnit.MILLISECONDS), out.toString().takeLast(MAX_OUTPUT_CHARS))
             } catch (error: TimeoutException) {
                 future.cancel(true)
-                Result(-1, (out.toString() + "\nTimed out.").takeLast(8000))
+                Result(-1, (out.toString() + "\nTimed out.").takeLast(MAX_OUTPUT_CHARS))
             } catch (error: java.util.concurrent.ExecutionException) {
                 // A tool throwing (bad arguments, a broken project) is a failed run, not a crash.
-                val cause = error.cause ?: error
-                Result(1, (out.toString() + "\n" + (cause.message ?: cause.javaClass.simpleName)).takeLast(8000))
+                // Reflection wraps every tool exception twice; unwrap so the log shows the real
+                // cause and its stack instead of a bare InvocationTargetException.
+                val cause = ((error.cause as? java.lang.reflect.InvocationTargetException)?.targetException
+                    ?: error.cause ?: error)
+                cause.printStackTrace()
+                Result(1, (out.toString() + "\n" + (cause.message ?: cause.javaClass.name)).takeLast(MAX_OUTPUT_CHARS))
             }
         } finally {
             System.setOut(previousOut)
@@ -145,9 +167,10 @@ object ToolRunner {
      * classes.dex; ART runs it through DexClassLoader, and a plain URLClassLoader cannot.
      */
     private fun openLoader(jars: List<File>, dexOptDir: File?): ClassLoader {
-        // The parent is the boot loader: the toolchain must not see the app's own classes,
-        // and the app's classes must not shadow the toolchain's.
-        val parent = ClassLoader.getSystemClassLoader().parent
+        // The toolchain stays isolated from the app, except for the few compatibility
+        // classes the compiler cannot load on Android (see ToolchainParent).
+        val boot = ClassLoader.getSystemClassLoader().parent
+        val parent: ClassLoader = ToolchainParent(boot)
         return if (jars.isNotEmpty() && containsDex(jars.first())) {
             val opt = (dexOptDir ?: File(System.getProperty("java.io.tmpdir") ?: ".")).apply { mkdirs() }
             val ctor = Class.forName("dalvik.system.DexClassLoader").getConstructor(
@@ -166,6 +189,31 @@ object ToolRunner {
             URLClassLoader(jars.map { it.toURI().toURL() }.toTypedArray(), parent)
         }
     }
+
+    /**
+     * Three classes from the app's own dex are visible to the toolchain; everything else
+     * still comes from the boot loader. The Kotlin 1.9.24 compiler's long-key map probes
+     * `sun.misc.Unsafe.getAndAddInt` through MethodHandles, which Android refuses, so its
+     * class initializer kills every compile. The app ships a ConcurrentHashMap-backed
+     * implementation of the same interface; this parent makes it win the parent-first
+     * lookup without exposing the rest of the app (its stdlib, Compose, and so on).
+     */
+    private class ToolchainParent(private val boot: ClassLoader) : ClassLoader(boot) {
+        override fun loadClass(name: String, resolve: Boolean): Class<*> {
+            if (name in compatibilityClasses) {
+                val app = ToolRunner::class.java.classLoader
+                    ?: return super.loadClass(name, resolve)
+                return app.loadClass(name)
+            }
+            return super.loadClass(name, resolve)
+        }
+    }
+
+    private val compatibilityClasses = setOf(
+        "org.jetbrains.kotlin.com.intellij.util.containers.ConcurrentLongObjectMap",
+        "org.jetbrains.kotlin.com.intellij.util.containers.ConcurrentLongObjectMap\$LongEntry",
+        "org.jetbrains.kotlin.com.intellij.util.containers.ConcurrentLongObjectHashMap",
+    )
 
     /** True when the file is a zip with classes.dex at its root. */
     private fun containsDex(file: File): Boolean = runCatching {

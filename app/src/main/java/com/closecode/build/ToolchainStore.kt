@@ -251,8 +251,13 @@ class ToolchainStore(
         val zip = componentFile(component).takeIf { it.isFile } ?: return null
         val target = File(dir, "libraries")
         val marker = File(target, ".packed")
+        // The layout number makes a cache written by an older unpacker be rebuilt. The first
+        // one wrote the zip's names as-is, and a zip made on Windows has backslashes in them,
+        // which are ordinary characters to Linux: every entry landed in the root as one
+        // unwieldy file name and the index found no dex.
+        val stamp = component.sha256 + ":" + LIBRARY_LAYOUT
         if (marker.isFile && File(target, "libs.json").isFile &&
-            runCatching { marker.readText().trim() }.getOrNull() == component.sha256
+            runCatching { marker.readText().trim() }.getOrNull() == stamp
         ) {
             return target
         }
@@ -265,7 +270,13 @@ class ToolchainStore(
                 while (entries.hasMoreElements()) {
                     val entry = entries.nextElement()
                     if (entry.isDirectory) continue
-                    val out = File(temp, entry.name).canonicalFile
+                    // A zip stores "/" separators; a Windows archiver may still hand us "\",
+                    // and on Linux that is not a separator at all. Normalise before the path
+                    // check so both kinds unpack into real folders and the index's
+                    // "jars/001.jar" resolves.
+                    val name = entry.name.replace('\\', '/')
+                    if (name.isEmpty()) continue
+                    val out = File(temp, name).canonicalFile
                     if (!out.path.startsWith(temp.canonicalPath + File.separator)) {
                         throw IOException("Unsafe path in libraries.zip: ${entry.name}")
                     }
@@ -275,7 +286,7 @@ class ToolchainStore(
                     }
                 }
             }
-            File(temp, ".packed").writeText(component.sha256)
+            File(temp, ".packed").writeText(stamp)
             target.deleteRecursively()
             if (!temp.renameTo(target)) {
                 temp.copyRecursively(target, overwrite = true)
@@ -418,6 +429,9 @@ class ToolchainStore(
         const val KEY_MOBILE_ALLOWED = "toolchain_mobile_allowed"
 
         private const val KEY_PACK_VERSION = "toolchain_pack_version"
+
+        /** Bumped when the way `libraries.zip` is unpacked changes; old caches rebuild. */
+        private const val LIBRARY_LAYOUT = 2
 
         private fun noInternet(error: IOException): Boolean =
             error is UnknownHostException ||

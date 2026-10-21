@@ -25,6 +25,13 @@ data class BuildTools(
     val composePlugin: File? = null,
     /** Where the system may cache dex it converts for the tools; null uses the JVM default. */
     val dexOptDir: File? = null,
+    /**
+     * Extra environment for the native aapt2 (LD_LIBRARY_PATH for libc++ and libz on
+     * Android). Empty in desktop proof builds.
+     */
+    val aapt2Env: Map<String, String> = emptyMap(),
+    /** Resource sidecar the Kotlin compiler needs on Android, beside its dexed jar. */
+    val kotlinResources: File? = null,
     /** The project's minSdk: D8 desugars to this API and APK signing v1 follows it. */
     val minApi: Int = 29,
 )

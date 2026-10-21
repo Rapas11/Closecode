@@ -36,33 +36,100 @@ object ToolExec {
             if (name == "OK") 0 else 1
         }
 
-    fun ecj(jars: List<File>, args: List<String>, dexOptDir: File? = null): ToolRunner.Result =
+    fun ecj(
+        jars: List<File>,
+        args: List<String>,
+        dexOptDir: File? = null,
+        platformJar: File? = null,
+    ): ToolRunner.Result =
         ToolRunner.runCall(jars, dexOptDir = dexOptDir, allowWithoutTrap = true) { loader ->
-            val mainClass = loader.loadClass("org.eclipse.jdt.internal.compiler.batch.Main")
-            val ctor = mainClass.constructors.firstOrNull { candidate ->
-                candidate.parameterTypes.contentEquals(
-                    arrayOf(
-                        PrintWriter::class.java,
-                        PrintWriter::class.java,
-                        Boolean::class.javaPrimitiveType,
-                        Map::class.java,
-                    ),
-                )
-            } ?: return@runCall report("This ECJ build has no no-exit constructor.")
-            // Auto-flushing writer: ECJ writes diagnostics with println.
-            val writer = PrintWriter(System.err, true)
-            val instance = ctor.newInstance(writer, writer, false, null)
-            // ECJ 3.46 calls it compile(); older builds called it execute(). Both return
-            // true when everything compiled and never exit with the flag above.
-            val run = mainClass.methods.firstOrNull {
-                (it.name == "compile" || it.name == "execute") &&
-                    it.parameterTypes.size == 1 &&
-                    it.parameterTypes[0] == Array<String>::class.java
-            } ?: return@runCall report("This ECJ build has no compile() entry point.")
-            val ok = run.invoke(instance, args.toTypedArray()) as? Boolean ?: false
-            writer.flush()
-            if (ok) 0 else 1
+            // ECJ collects the running VM's bootclasspath when none is given. Android's
+            // boot path lists native libraries beside the core jars, and ECJ tries every
+            // entry as a zip. Point the boot-class properties at android.jar for this call;
+            // the platform jar is what a phone build resolves java.lang against.
+            val bootKeys = listOf(
+                "sun.boot.class.path",
+                "vm.boot.class.path",
+                "org.apache.harmony.boot.class.path",
+            )
+            val previousBoot = bootKeys.associateWith { System.getProperty(it) }
+            if (platformJar != null && platformJar.isFile) {
+                bootKeys.forEach { System.setProperty(it, platformJar.absolutePath) }
+            }
+            try {
+                ecjCall(loader, args)
+            } finally {
+                previousBoot.forEach { (key, value) ->
+                    if (value == null) System.clearProperty(key) else System.setProperty(key, value)
+                }
+            }
         }
+
+    private fun ecjCall(loader: ClassLoader, args: List<String>): Int {
+        val mainClass = loader.loadClass("org.eclipse.jdt.internal.compiler.batch.Main")
+        val ctor = mainClass.constructors.firstOrNull { candidate ->
+            candidate.parameterTypes.contentEquals(
+                arrayOf(
+                    PrintWriter::class.java,
+                    PrintWriter::class.java,
+                    Boolean::class.javaPrimitiveType,
+                    Map::class.java,
+                ),
+            )
+        } ?: return report("This ECJ build has no no-exit constructor.")
+        // Auto-flushing writer: ECJ writes diagnostics with println.
+        val writer = PrintWriter(System.err, true)
+        val instance = ctor.newInstance(writer, writer, false, null)
+        // ECJ 3.46 uses configure() + performCompilation(); older builds called it
+        // execute(). The no-exit constructor guarantees neither path exits.
+        val configure = mainClass.methods.firstOrNull {
+            it.name == "configure" && it.parameterTypes.size == 1 &&
+                it.parameterTypes[0] == Array<String>::class.java
+        }
+        val perform = mainClass.methods.firstOrNull {
+            it.name == "performCompilation" && it.parameterTypes.isEmpty()
+        }
+        if (configure != null && perform != null) {
+            configure.invoke(instance, args.toTypedArray())
+            val proceed = mainClass.getField("proceed").getBoolean(instance)
+            if (!proceed) {
+                writer.flush()
+                return 1
+            }
+            // Main starts from a default source level and records the requested one.
+            // ECJ 3.46 checks that request with java.lang.Runtime.Version, which Android
+            // lacks. Dropping the key lets CompilerOptions use its default source level
+            // and leaves requestedSourceVersion null, so the check never runs.
+            @Suppress("UNCHECKED_CAST")
+            val options = mainClass.getField("options").get(instance) as? MutableMap<String, String>
+            options?.remove("org.eclipse.jdt.core.compiler.source")
+            // In case configure() already built CompilerOptions, clear the recorded
+            // request there too.
+            val compilerOptions = runCatching {
+                mainClass.getField("compilerOptions").get(instance)
+            }.getOrNull()
+            if (compilerOptions != null) {
+                runCatching {
+                    compilerOptions.javaClass.getField("requestedSourceVersion")
+                        .set(compilerOptions, null)
+                }
+            }
+            perform.invoke(instance)
+            writer.flush()
+            val errors = runCatching {
+                mainClass.getField("globalErrorsCount").getInt(instance)
+            }.getOrDefault(0)
+            return if (errors == 0) 0 else 1
+        }
+        val run = mainClass.methods.firstOrNull {
+            (it.name == "compile" || it.name == "execute") &&
+                it.parameterTypes.size == 1 &&
+                it.parameterTypes[0] == Array<String>::class.java
+        } ?: return report("This ECJ build has no compile() entry point.")
+        val ok = run.invoke(instance, args.toTypedArray()) as? Boolean ?: false
+        writer.flush()
+        return if (ok) 0 else 1
+    }
 
     fun d8(jars: List<File>, args: List<String>, dexOptDir: File? = null): ToolRunner.Result =
         ToolRunner.runCall(jars, dexOptDir = dexOptDir, allowWithoutTrap = true) { loader ->

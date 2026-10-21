@@ -231,7 +231,9 @@ object BuildChain {
                 // absolute paths alone would overflow the argument list.
                 flat.forEach { add(it.relativeTo(resFlatDir).path) }
             }
-            val result = DriverExec.runNative(tools.aapt2, args, resFlatDir, timeoutMs = 180_000)
+            val result = DriverExec.runNative(
+                tools.aapt2, args, resFlatDir, timeoutMs = 180_000, env = tools.aapt2Env,
+            )
             log.append(result.output)
             if (result.timedOut) throw Stop(Step.CompileResources, "aapt2 did not finish in time.")
             if (result.code != 0 || !output.isFile) {
@@ -244,13 +246,47 @@ object BuildChain {
                     parsed,
                 )
             }
+            writeLibraryRClasses(libraries)
             return manifest
+        }
+
+        /**
+         * Android Gradle builds generate an R class for every library, not just the app.
+         * AAPT2 writes the app's R.java with every merged resource id, so the same file
+         * with a different package line gives each library the R fields its own code
+         * compiled against. Without this, the first `androidx...R$id` reference throws
+         * NoClassDefFoundError even though the library classes are present.
+         */
+        private fun writeLibraryRClasses(libraries: List<CachedLibrary>) {
+            val appR = File(genDir, config.packageName.replace('.', '/') + "/R.java")
+            if (!appR.isFile) {
+                log.appendLine("R.java was not generated; library R classes are skipped")
+                return
+            }
+            val text = appR.readText()
+            val packagePattern = Regex("(?m)^package\\s+[^;]+;")
+            libraries.forEach { library ->
+                if (library.res == null) return@forEach
+                val manifest = library.manifest ?: return@forEach
+                val libraryPackage = runCatching {
+                    Regex("""<manifest\b[^>]*\bpackage\s*=\s*"([^"]+)""")
+                        .find(manifest.readText())
+                        ?.groupValues
+                        ?.get(1)
+                }.getOrNull() ?: return@forEach
+                if (libraryPackage == config.packageName) return@forEach
+                val out = File(genDir, libraryPackage.replace('.', '/') + "/R.java")
+                out.parentFile?.mkdirs()
+                out.writeText(text.replaceFirst(packagePattern, "package $libraryPackage;"))
+            }
         }
 
         private fun compileRes(directory: File, output: File) {
             output.mkdirs()
             val args = listOf("compile", "--dir", directory.absolutePath, "-o", output.absolutePath)
-            val result = DriverExec.runNative(tools.aapt2, args, projectDir, timeoutMs = 120_000)
+            val result = DriverExec.runNative(
+                tools.aapt2, args, projectDir, timeoutMs = 120_000, env = tools.aapt2Env,
+            )
             log.append(result.output)
             if (result.timedOut) throw Stop(Step.CompileResources, "aapt2 did not finish in time.")
             if (result.code != 0) {
@@ -332,11 +368,12 @@ object BuildChain {
                     classpath = classpath,
                     outputDir = classesDir,
                     composePluginJar = plugin,
+                    kotlinHome = KotlinHome.ensure(tools.stdlib),
                 )
                 val result = ToolExec.kotlinc(
                     ToolchainManifest.KOTLINC_LAUNCH_IDS.map { id ->
                         toolFor(id) ?: throw Stop(Step.CompileCode, "A build tool file is missing: $id.")
-                    },
+                    } + listOfNotNull(tools.kotlinResources),
                     args,
                     dexOptDir = tools.dexOptDir,
                 )
@@ -365,7 +402,12 @@ object BuildChain {
                 outputDir = classesDir,
                 platformJar = tools.androidJar,
             )
-            val ecjResult = ToolExec.ecj(listOf(ecj), ecjArgs, dexOptDir = tools.dexOptDir)
+            val ecjResult = ToolExec.ecj(
+                listOf(ecj) + listOfNotNull(tools.kotlinResources),
+                ecjArgs,
+                dexOptDir = tools.dexOptDir,
+                platformJar = tools.androidJar,
+            )
             log.append(ecjResult.output)
             val ecjParsed = ecjResult.output.lineSequence().mapNotNull { CompileDriver.parseDiagnostic(it) }
                 .map { it.copy(path = normalizePath(it.path)) }.toList()

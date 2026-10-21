@@ -29,13 +29,20 @@ object DriverExec {
         args: List<String>,
         workDir: File,
         timeoutMs: Long = 120_000,
-    ): Result = run(listOf(bin.absolutePath) + args, workDir, timeoutMs)
+        env: Map<String, String> = emptyMap(),
+    ): Result = run(listOf(bin.absolutePath) + args, workDir, timeoutMs, env)
 
-    private fun run(command: List<String>, workDir: File, timeoutMs: Long): Result {
-        val process = ProcessBuilder(command)
+    private fun run(
+        command: List<String>,
+        workDir: File,
+        timeoutMs: Long,
+        env: Map<String, String> = emptyMap(),
+    ): Result {
+        val builder = ProcessBuilder(command)
             .directory(workDir)
             .redirectErrorStream(true)
-            .start()
+        builder.environment().putAll(env)
+        val process = builder.start()
         val output = StringBuilder()
         val reader = Thread {
             runCatching {

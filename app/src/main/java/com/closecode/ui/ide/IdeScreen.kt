@@ -867,6 +867,18 @@ internal fun IdeScreen(
         loaded.forEach { (path, text) ->
             diskContents[path] = text
             noteContent(path)
+            // An empty buffer for a file that has text is the editor's opening seed, not an
+            // edit. Drop it so the reseed below can show the text that just arrived.
+            if (liveBuffers[path].isNullOrEmpty() && text.isNotEmpty()) liveBuffers.remove(path)
+        }
+        // The editor composes before this read lands and seeds from an empty buffer. If the
+        // reader has not typed into it, reseed now: otherwise the empty seed stays on screen,
+        // differs from the text that just arrived, and auto save writes the empty buffer over
+        // the file. A slow device makes that race wide enough to lose a real file. An empty
+        // live buffer counts as "not typed into": it is the seed, and must not win over disk.
+        val live = liveBuffers[active]
+        if (live == null || (live.isEmpty() && diskContents[active]?.isNotEmpty() == true)) {
+            sourceRevision++
         }
     }
 
@@ -1150,7 +1162,10 @@ internal fun IdeScreen(
         selectedPath = file.path
         if (tabs.none { it.path == file.path }) tabs = tabs + file
         tabs = retainTabs(tabs, active, ::isDirtyTab)
-        if (diskContents[file.path] == null) {
+        // A cached empty copy is not proof that the file is empty: the first read can land
+        // before the template's own write finishes, or before an outside edit. Re-read in that
+        // case so opening the file recovers instead of showing a stale "Empty file".
+        if (diskContents[file.path].isNullOrEmpty()) {
             // Off the main thread: this runs from a tap on a drawer row, and a cold read of a big
             // file used to be the frame that opened it. The tab shows nothing until it lands rather
             // than freezing — and a freshly opened buffer is never dirty, so no dot flashes.
@@ -1159,13 +1174,16 @@ internal fun IdeScreen(
                 val text = withContext(Dispatchers.IO) {
                     runCatching { repository.readFile(slug, path) }.getOrNull()
                 }
-                if (text != null && diskContents[path] == null) {
-                    diskContents[path] = text
-                    noteContent(path)
-                    // The editor seeds from an empty buffer while this read is in flight, so tell
-                    // it to seed again now that there is something to seed with. A tab the reader
-                    // has already typed into is left alone: that buffer is theirs, not ours.
-                    if (active == path && liveBuffers[path] == null) sourceRevision++
+                if (text != null) {
+                    val live = liveBuffers[path]
+                    // Replace a missing copy or an empty opening seed. A buffer the reader has
+                    // actually typed into is theirs and is never overwritten by this read.
+                    if (live == null || (live.isEmpty() && text.isNotEmpty())) {
+                        diskContents[path] = text
+                        noteContent(path)
+                        if (live != null) liveBuffers.remove(path)
+                        if (active == path) sourceRevision++
+                    }
                 }
             }
         }
@@ -1525,6 +1543,8 @@ internal fun IdeScreen(
                 toolFiles = toolFiles,
                 composePlugin = store.jar("kotlin-compiler"),
                 dexOptDir = File(context.codeCacheDir, "build-dex"),
+                aapt2Env = com.closecode.build.Aapt2Runtime.environment(context),
+                kotlinResources = com.closecode.build.KotlinCompat.resources(context),
             )
         } else {
             null
@@ -2215,8 +2235,16 @@ internal fun IdeScreen(
                                         selectedPath = null
                                     },
                                     onBufferChange = { text ->
-                                        liveBuffers[active] = text
-                                        noteContent(active)
+                                        // The editor reports its opening seed too. An empty
+                                        // report is only the reader's edit when this buffer
+                                        // already held text and they deleted all of it. At any
+                                        // other time it is a seed, and keeping it would let auto
+                                        // save overwrite the file once the read lands.
+                                        val edited = liveBuffers[active]?.isNotEmpty() == true
+                                        if (text.isNotEmpty() || edited) {
+                                            liveBuffers[active] = text
+                                            noteContent(active)
+                                        }
                                     },
                                     onToast = { text -> toast = text },
                                     dirtyOf = ::isDirtyTab,
@@ -4162,7 +4190,11 @@ formatRequest: Int = 0,
     // the code column says so: a template would be written straight back by the next save into a
     // file the user never edited. The editor used to seed one and let `LaunchedEffect(active)`
     // below throw it away a frame later, which is why an empty file flickered a Kotlin header.
-    val fromDisk = remember(active, contentFor) { contentFor(active) }
+    // Read on every composition, never remembered behind the `contentFor` lambda. Compose is free
+    // to reuse that lambda instance, and when it did, the cache below kept the empty opening seed
+    // even after the disk read landed: the file showed "Empty file" with its text sitting in
+    // `diskContents`. Reading the map here subscribes this composable to the write instead.
+    val fromDisk = contentFor(active)
     // Where each file was left: caret offset and both scroll positions, keyed by file name in
     // plain maps. Plain, because reading them seeds the field below during composition, and
     // mutating snapshot state mid-composition would schedule another one.
@@ -4229,6 +4261,18 @@ formatRequest: Int = 0,
                 },
             ),
         )
+    }
+    // The disk read can land after this editor has already seeded from an empty buffer. Adopt
+    // the text as soon as it arrives, but only while both the buffer and the field are still
+    // empty: once the reader has typed, the buffer is theirs and this must never overwrite it.
+    LaunchedEffect(active, fromDisk) {
+        if (sourceText.isEmpty() && fromDisk.isNotEmpty() && fieldValue.text.isEmpty()) {
+            sourceText = fromDisk
+            fieldValue = TextFieldValue(
+                text = fromDisk,
+                selection = TextRange(caretOffsetAtEndOfCode(fromDisk)),
+            )
+        }
     }
     // Spec 4.1 Undo and Redo. Every text change goes through commit(), which records the value being
     // replaced, so the header can step back through the editor's own history without a native undo

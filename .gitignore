@@ -16,6 +16,16 @@
 /build-toolchain/
 *.log
 
+# Local device-test captures, pulled files and logs. They document a test run on one
+# machine; they are not part of the app and would bury a review of the real diff.
+/cc*.png
+/shots/
+/window.xml
+/mumu-*.png
+/disp0.png
+/curdisplay.txt
+/shared-*.apk
+
 # Placed by the pack script, ~4.5 MB of arm64 aapt2. Rebuilt, never committed. The PTY
 # bridge is the exception: it is 10 KB, built by scripts/build-pty.ps1, and the APK needs it.
 /app/src/main/jniLibs/**

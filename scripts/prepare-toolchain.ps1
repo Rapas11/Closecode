@@ -320,8 +320,22 @@ Set-Content -Path (Join-Path $libStage 'libs.json') -Value $indexJson -Encoding 
 
 $libsZip = Join-Path $out 'libraries.zip'
 if (Test-Path $libsZip) { Remove-Item $libsZip -Force }
-[System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $libStage, $libsZip, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+# CreateFromDirectory on Windows writes "\" separators into the entry names. A zip is
+# supposed to use "/", and the phone (Linux) treats a backslash as part of the file name,
+# so the whole cache would unpack as a flat pile and the index would find no dex. Write
+# the entries ourselves with forward slashes.
+$zip = [System.IO.Compression.ZipFile]::Open(
+    $libsZip, [System.IO.Compression.ZipArchiveMode]::Create)
+try {
+    Get-ChildItem -Path $libStage -Recurse -File | ForEach-Object {
+        $rel = $_.FullName.Substring($libStage.Length + 1).Replace('\', '/')
+        [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+            $zip, $_.FullName, $rel,
+            [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+    }
+} finally {
+    $zip.Dispose()
+}
 Write-Host ("packed libraries.zip (" + $modules.Count + ' modules, ' +
     [Math]::Round((Get-Item $libsZip).Length / 1MB, 1) + ' MB)')
 

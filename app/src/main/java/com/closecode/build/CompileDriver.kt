@@ -31,8 +31,15 @@ object CompileDriver {
         classpath: List<File>,
         outputDir: File,
         composePluginJar: File?,
+        kotlinHome: File? = null,
     ): List<String> = buildList {
         add("-no-stdlib")
+        if (kotlinHome != null) {
+            add("-no-jdk")
+            add("-no-reflect")
+            add("-kotlin-home")
+            add(kotlinHome.absolutePath)
+        }
         add("-jvm-target")
         add("17")
         add("-d")
@@ -57,7 +64,13 @@ object CompileDriver {
         outputDir: File,
         platformJar: File,
     ): List<String> = buildList {
-        add("-17")
+        // No -source/-target: ECJ's explicit source-version check calls
+        // java.lang.Runtime.Version, which Android does not have. Without the flag ECJ
+        // uses its first supported level (Java 8); D8 dexes the result for the project's
+        // min API. Kotlin sources are unaffected and still target JVM 17.
+        // Android has no javax.annotation.processing API, and this build has no
+        // processor path anyway. Turning processing off keeps ECJ out of that API.
+        add("-proc:none")
         add("-nowarn")
         add("-d")
         add(outputDir.absolutePath)
