@@ -663,11 +663,11 @@ private fun StatusDot(color: Color) {
     )
 }
 
-/** A card: 8 dp corners, a 1 dp border, 12 dp of padding. */
+/** A card: 8 dp corners, a 1 dp border, 12 dp of padding, and its contents stacked top down. */
 @Composable
 private fun Card(content: @Composable () -> Unit) {
     val c = LocalPageColors.current
-    Box(
+    Column(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
