@@ -92,6 +92,21 @@ object OpenCode {
     private suspend fun runServer(context: Context, projectRoot: File, projectName: String) {
         val port = freePort()
         val abis = Build.SUPPORTED_ABIS.toList()
+        val arch = OpenCodeRuntime.alpineArch(abis)
+        if (arch == null) {
+            update {
+                it.copy(
+                    phase = OpenCodePhase.Failed,
+                    projectName = projectName,
+                    projectFolder = projectRoot.name,
+                    error = "This phone's CPU is not one OpenCode runs on. It needs ARM64 or x86_64.",
+                    steps = openCodeSteps(failed = true),
+                    log = listOf(OpenCodeLogLine("Starting")),
+                )
+            }
+            DebugLog.crumb("AICO", "no build for ${abis.firstOrNull()}")
+            return
+        }
 
         update {
             it.copy(
@@ -106,7 +121,8 @@ object OpenCode {
             )
         }
 
-        // Step one: the program itself. The first start downloads it; later starts skip that.
+        // Step one: the program itself, and the libraries it is linked against. The first start
+        // downloads both; later starts find them on the phone and skip the whole thing.
         val binary = try {
             update { it.copy(downloading = true, downloadPercent = 0) }
             val file = withContext(Dispatchers.IO) {
@@ -114,8 +130,17 @@ object OpenCode {
                     update { it.copy(downloadPercent = percent) }
                 }
             }
-            update { it.copy(downloading = false) }
+            update { it.copy(downloading = false, downloadPercent = 0) }
             log("Downloaded OpenCode ${OpenCodeDefaults.VERSION}")
+
+            update { it.copy(downloading = true, downloadPercent = 0) }
+            withContext(Dispatchers.IO) {
+                OpenCodeRuntime.ensure(context, arch) { percent ->
+                    update { it.copy(downloadPercent = percent) }
+                }
+            }
+            update { it.copy(downloading = false) }
+            log("Runtime: musl, libstdc++ and libgcc from Alpine ${OpenCodeRuntime.ALPINE} ($arch)")
             file
         } catch (error: Throwable) {
             update {
@@ -141,7 +166,7 @@ object OpenCode {
         while (currentCoroutineContext().isActive) {
             log(OpenCodeDefaults.launchLine(port))
             log("Waiting for port $port")
-            val started = launchProcess(binary, projectRoot, port, password)
+            val started = launchProcess(context, arch, binary, projectRoot, port, password)
             if (!started) {
                 update {
                     it.copy(
@@ -163,7 +188,7 @@ object OpenCode {
             }
 
             if (waitForAnswer(port)) {
-                val version = readVersion(binary)
+                val version = readVersion(context, arch, binary)
                 update {
                     it.copy(
                         phase = OpenCodePhase.Running,
@@ -255,8 +280,17 @@ object OpenCode {
         }
     }
 
-    /** Starts the program and reads its output into Build Info. */
+    /**
+     * Starts the program and reads its output into Build Info.
+     *
+     * The program is started *through the musl loader*, with the runtime's directories on its
+     * search path: it is linked against libraries Android does not have, and this is how they
+     * are handed to it. Everything after the program's own path is the command the log line
+     * above names.
+     */
     private fun launchProcess(
+        context: Context,
+        arch: String,
         binary: File,
         projectRoot: File,
         port: Int,
@@ -264,6 +298,9 @@ object OpenCode {
     ): Boolean {
         return try {
             val builder = ProcessBuilder(
+                OpenCodeRuntime.loader(context, arch).absolutePath,
+                "--library-path",
+                OpenCodeRuntime.libraryPath(context),
                 binary.absolutePath,
                 "web",
                 "--hostname",
@@ -288,10 +325,16 @@ object OpenCode {
         }
     }
 
-    /** The version OpenCode reports about itself. */
-    private fun readVersion(binary: File): String {
+    /** The version the program reports about itself, asked of it the same way it is started. */
+    private fun readVersion(context: Context, arch: String, binary: File): String {
         return try {
-            val builder = ProcessBuilder(binary.absolutePath, "--version")
+            val builder = ProcessBuilder(
+                OpenCodeRuntime.loader(context, arch).absolutePath,
+                "--library-path",
+                OpenCodeRuntime.libraryPath(context),
+                binary.absolutePath,
+                "--version",
+            )
             builder.redirectErrorStream(true)
             val started = builder.start()
             val text = started.inputStream.bufferedReader().readText().trim()

@@ -15,11 +15,15 @@ import java.util.zip.GZIPInputStream
  * The header carries the name, the size in octal and the type flag; a name longer than 100 bytes
  * is continued in a GNU long-name entry, which this reader follows.
  *
- * Two ways of reading, because the two callers want different things:
+ * Three ways of reading, because the callers want different things:
  *
- *  - [extractFirstFile] writes straight to disk through a small buffer. The program it unpacks
- *    is close to two hundred megabytes, which is more than the app may hold in memory, so
- *    nothing is ever assembled in a byte array. This is the path the app runs on.
+ *  - [extractFirstFile] writes the first file straight to disk through a small buffer. The
+ *    program it unpacks is close to two hundred megabytes, which is more than the app may hold
+ *    in memory, so nothing is ever assembled in a byte array. This is the path the app runs on
+ *    for the program itself.
+ *  - [extractInto] writes *every* file into a directory, which is what a package of libraries
+ *    needs: a symlink's name has to end up there under that exact name, so a link becomes a
+ *    copy of the file it points at.
  *  - [entries] keeps every file in memory, which is only right for the small archives the tests
  *    build. It is kept for exactly that.
  *
@@ -88,6 +92,104 @@ object TarReader {
             }
         }
         return null
+    }
+
+    /**
+     * Every file in a gzipped tar, written into the directory [into].
+     *
+     * This is how a package of libraries is unpacked. An Alpine package is a tar of `lib/` and
+     * `usr/lib/`, and its symlink names matter — `libstdc++.so.6` has to be there under that
+     * exact name or the loader will not find it — so a link becomes a copy of the file it points
+     * at, and nothing depends on the phone's file system allowing links at all.
+     *
+     * A name that tries to get out of [into] is refused, a file is written to a `.part` and
+     * renamed into place, and the package's own metadata (`.PKGINFO`, `.SIGN.*`) is passed by —
+     * it is about the package, not about the file system.
+     *
+     * The names that ended up there, files and links alike.
+     */
+    fun extractInto(gzip: InputStream, into: File): List<String> {
+        val names = ArrayList<String>()
+        val links = ArrayList<Pair<String, String>>()
+        into.mkdirs()
+        GZIPInputStream(gzip.buffered()).use { gz ->
+            val header = ByteArray(BLOCK)
+            var longName: String? = null
+            while (true) {
+                if (!readFully(gz, header)) break
+                if (isAllZero(header)) break
+
+                val name = longName ?: readString(header, 0, 100)
+                val size = readOctal(header, 124, 12)
+                val type = header[156].toInt().toChar()
+                longName = null
+
+                when (type) {
+                    'L' -> longName = readLongName(gz, size)
+
+                    '5' -> {
+                        val directory = inside(into, File(into, name))
+                        if (directory != null && !name.startsWith(".")) directory.mkdirs()
+                        skipRaw(gz, blocksFor(size))
+                    }
+
+                    '0', NUL, '7' -> {
+                        val file = inside(into, File(into, name))
+                        if (file == null || name.startsWith(".")) {
+                            skipRaw(gz, blocksFor(size))
+                        } else {
+                            file.parentFile?.mkdirs()
+                            val part = File(file.parentFile, file.name + PART)
+                            FileOutputStream(part).use { out -> copyExactly(gz, size, out) }
+                            // The file's bytes are padded to a whole block, and that padding is
+                            // not part of the file — reading on has to step over it, or the next
+                            // header is read from the wrong place.
+                            skipRaw(gz, blocksFor(size) - size)
+                            if (file.exists()) file.delete()
+                            if (!part.renameTo(file)) {
+                                part.copyTo(file, overwrite = true)
+                                part.delete()
+                            }
+                            names += name
+                        }
+                    }
+
+                    // A symlink's target is stored where the file's bytes would be, at 157.
+                    '2' -> {
+                        links += name to readString(header, 157, 100)
+                        skipRaw(gz, blocksFor(size))
+                    }
+
+                    else -> skipRaw(gz, blocksFor(size))
+                }
+            }
+        }
+
+        // A link is only a name, so it becomes a copy of whatever it points at — which by now
+        // is on the disk, wherever in the archive it came.
+        for ((name, target) in links) {
+            if (name.startsWith(".") || target.isBlank()) continue
+            val link = inside(into, File(into, name)) ?: continue
+            val points = inside(into, File(link.parentFile, target)) ?: continue
+            if (points.path == link.path || !points.isFile) continue
+            link.parentFile?.mkdirs()
+            points.copyTo(link, overwrite = true)
+            names += name
+        }
+        return names
+    }
+
+    /**
+     * Where [file] really is inside [into], or null when the name would get out.
+     *
+     * Canonical paths, so `..`, a name that is absolute and a link already on the phone are all
+     * answered the same way: a package cannot write outside the directory it was handed.
+     */
+    private fun inside(into: File, file: File): File? {
+        val base = runCatching { into.canonicalFile }.getOrNull() ?: return null
+        val path = runCatching { file.canonicalFile }.getOrNull() ?: return null
+        if (path.path != base.path && !path.path.startsWith(base.path + File.separator)) return null
+        return path
     }
 
     /**

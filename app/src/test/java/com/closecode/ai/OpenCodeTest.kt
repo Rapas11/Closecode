@@ -93,6 +93,20 @@ class OpenCodeBinaryTest {
     }
 
     @Test
+    fun thePreferredAbiDecidesEvenWhenAnotherOneIsThere() {
+        // MuMu lists arm64 because it can translate ARM — but it runs x86_64, and an arm64
+        // program on it is a program that crashes. The first ABI is the phone's own.
+        assertEquals(
+            "opencode-linux-x64-musl.tar.gz",
+            OpenCodeBinary.assetForAbis(listOf("x86_64", "arm64-v8a", "x86")),
+        )
+        assertEquals(
+            "opencode-linux-arm64-musl.tar.gz",
+            OpenCodeBinary.assetForAbis(listOf("arm64-v8a", "armeabi-v7a", "armeabi")),
+        )
+    }
+
+    @Test
     fun anUnknownCpuGetsNothing() {
         assertNull(OpenCodeBinary.assetForAbis(listOf("mips", "riscv64")))
     }
@@ -104,6 +118,52 @@ class OpenCodeBinaryTest {
         assertTrue(url.startsWith("https://github.com/sst/opencode/releases/download/"))
         assertTrue(url.endsWith("/opencode-linux-arm64-musl.tar.gz"))
         assertTrue(url.contains(OpenCodeDefaults.TAG))
+    }
+}
+
+class OpenCodeRuntimeTest {
+
+    @Test
+    fun theCpuDecidesWhichLibrariesComeDown() {
+        assertEquals("aarch64", OpenCodeRuntime.alpineArch(listOf("arm64-v8a", "armeabi-v7a")))
+        assertEquals("x86_64", OpenCodeRuntime.alpineArch(listOf("x86_64", "arm64-v8a", "x86")))
+        assertNull(OpenCodeRuntime.alpineArch(listOf("armeabi-v7a")))
+        assertNull(OpenCodeRuntime.alpineArch(emptyList()))
+    }
+
+    @Test
+    fun everyPackageIsPinnedToAHash() {
+        for (arch in listOf("aarch64", "x86_64")) {
+            val packages = OpenCodeRuntime.packages(arch)
+            // The loader, the C++ library, libgcc and zlib: all four, or the program cannot run.
+            assertEquals(4, packages.size)
+            assertTrue(packages.any { it.file.startsWith("musl-") })
+            assertTrue(packages.any { it.file.startsWith("libstdc++") })
+            assertTrue(packages.any { it.file.startsWith("libgcc-") })
+            for (pkg in packages) {
+                assertTrue(pkg.file.endsWith(".apk"))
+                assertEquals(
+                    "${arch}/${pkg.file} has no hash pinned",
+                    64,
+                    pkg.sha256.length,
+                )
+                assertTrue(pkg.sha256.all { it in "0123456789abcdef" })
+            }
+        }
+    }
+
+    @Test
+    fun aCpuWithoutABuildGetsNoLibraries() {
+        assertTrue(OpenCodeRuntime.packages("armeabi").isEmpty())
+    }
+
+    @Test
+    fun thePackagesComeFromThePinnedAlpineRelease() {
+        val url = OpenCodeRuntime.url("aarch64", "libstdc++-15.2.0-r5.apk")
+
+        assertTrue(url.startsWith("https://dl-cdn.alpinelinux.org/alpine/"))
+        assertTrue(url.contains(OpenCodeRuntime.ALPINE))
+        assertTrue(url.endsWith("/aarch64/libstdc%2B%2B-15.2.0-r5.apk"))
     }
 }
 
@@ -198,18 +258,65 @@ class TarReaderTest {
         assertFalse(into.exists())
     }
 
+    @Test
+    fun aPackageIsUnpackedWithItsLinkNames() {
+        // An Alpine package: a directory, the library, and the short name everything links to.
+        val archive = tarGzWith(
+            FileEntry("usr", ByteArray(0), '5'),
+            FileEntry("usr/lib", ByteArray(0), '5'),
+            FileEntry("usr/lib/libstdc++.so.6.0.34", "the real library".toByteArray(), '0'),
+            FileEntry("usr/lib/libstdc++.so.6", ByteArray(0), '2', link = "libstdc++.so.6.0.34"),
+        )
+        val into = File(dir, "pkg")
+
+        val names = TarReader.extractInto(ByteArrayInputStream(archive), into)
+
+        assertTrue(File(into, "usr/lib/libstdc++.so.6.0.34").isFile)
+        // The short name is there too, as a copy — a phone's file system need not allow links,
+        // and the loader looks for that exact name.
+        val short = File(into, "usr/lib/libstdc++.so.6")
+        assertTrue(short.isFile)
+        assertEquals("the real library", short.readText())
+        assertEquals(listOf("usr/lib/libstdc++.so.6.0.34", "usr/lib/libstdc++.so.6"), names)
+        // Nothing half-written is left behind beside what was unpacked.
+        assertEquals(
+            emptyList<String>(),
+            (into.list() ?: emptyArray()).filter { it.endsWith(".part") },
+        )
+    }
+
+    @Test
+    fun aNameTryingToGetOutOfTheDirectoryIsRefused() {
+        val archive = tarGzWith(
+            FileEntry("../escape.so", "gone".toByteArray(), '0'),
+            FileEntry("lib/libz.so.1", "here".toByteArray(), '0'),
+        )
+        val into = File(dir, "inside")
+
+        val names = TarReader.extractInto(ByteArrayInputStream(archive), into)
+
+        assertEquals(listOf("lib/libz.so.1"), names)
+        assertFalse(File(dir, "escape.so").exists())
+        assertEquals("here", File(into, "lib/libz.so.1").readText())
+    }
+
     /** A tiny tar writer, so the reader is tested against the format rather than against itself. */
     private fun tarGz(vararg files: Pair<String, ByteArray>): ByteArray =
         tarGzWith(*files.map { FileEntry(it.first, it.second, '0') }.toTypedArray())
 
     private fun tarGzWith(vararg files: FileEntry): ByteArray {
         val out = ByteArrayOutputStream()
-        for ((name, bytes, type) in files) {
+        for ((name, bytes, type, link) in files) {
             val header = ByteArray(512)
             val nameBytes = name.toByteArray()
             System.arraycopy(nameBytes, 0, header, 0, nameBytes.size)
             writeOctal(header, 124, 12, bytes.size.toLong())
             header[156] = type.code.toByte()
+            // A symlink carries its target in the header, where the file's bytes would be.
+            if (link.isNotEmpty()) {
+                val target = link.toByteArray()
+                System.arraycopy(target, 0, header, 157, minOf(target.size, 100))
+            }
             System.arraycopy("ustar".toByteArray(), 0, header, 257, 5)
             out.write(header)
             out.write(bytes)
@@ -223,7 +330,12 @@ class TarReaderTest {
         return gzipped.toByteArray()
     }
 
-    private data class FileEntry(val name: String, val bytes: ByteArray, val type: Char)
+    private data class FileEntry(
+        val name: String,
+        val bytes: ByteArray,
+        val type: Char,
+        val link: String = "",
+    )
 
     private fun writeOctal(header: ByteArray, offset: Int, length: Int, value: Long) {
         val end = 0.toChar()
