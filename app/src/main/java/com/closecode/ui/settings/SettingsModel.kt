@@ -47,11 +47,17 @@ sealed interface Row {
         val value: String,
     ) : Row
 
-    /** A destination the row leads somewhere else to reach. */
+    /**
+     * A destination the row leads somewhere else to reach.
+     *
+     * [id] is what the row asks for when it is tapped. A row without one leads nowhere yet and
+     * says so by having nothing to do when pressed.
+     */
     data class Nav(
         override val name: String,
         override val description: String? = null,
         val action: String,
+        val id: SettingsAction? = null,
     ) : Row
 
     /** A fact with a health signal beside it: green when it is fine, red when it is not. */
@@ -91,6 +97,8 @@ sealed interface Row {
 enum class SettingsAction {
     CLEAR_CACHES,
     DOWNLOAD_TOOLCHAIN,
+    CONNECT_GITHUB,
+    DISCONNECT_GITHUB,
 }
 
 @Immutable
@@ -138,8 +146,12 @@ data class SettingsLive(
  * A function rather than a constant because three of the rows report something the app measured for
  * this session. Section order is the order they are listed in — general, editor, intelligence,
  * build, terminal, git, ai, appearance, storage, security, about.
+ *
+ * [githubLogin] is the account this phone is signed in to, or null when it is signed out. It is a
+ * parameter rather than a read here because the settings screen is not the only place that knows:
+ * the token lives in encrypted storage, and the screen is told what it says.
  */
-fun sections(live: SettingsLive): List<Section> = listOf(
+fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = listOf(
     Section(
         id = "general",
         label = "General",
@@ -345,7 +357,23 @@ fun sections(live: SettingsLive): List<Section> = listOf(
             ),
             Group(
                 "GitHub",
-                listOf(Row.Nav("GitHub account", "Sign in to clone, pull and push.", "Connect")),
+                listOf(
+                    if (githubLogin == null) {
+                        Row.Nav(
+                            "GitHub account",
+                            "Sign in to clone, pull and push.",
+                            "Connect",
+                            id = SettingsAction.CONNECT_GITHUB,
+                        )
+                    } else {
+                        Row.Nav(
+                            "GitHub account",
+                            "Connected as @$githubLogin.",
+                            "Disconnect",
+                            id = SettingsAction.DISCONNECT_GITHUB,
+                        )
+                    },
+                ),
             ),
         ),
     ),

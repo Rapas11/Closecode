@@ -46,6 +46,9 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.rememberProjectRepository
+import com.closecode.ui.github.GitHubClient
+import com.closecode.ui.github.TokenStore
+import com.closecode.ui.ide.GitHubSignIn
 import com.closecode.ui.project.ProjectRepository
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
@@ -135,6 +138,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     settings: Settings,
     onSettingsChange: (Settings) -> Unit,
+    onGitHubChanged: () -> Unit = {},
 ) {
     val c = LocalPageColors.current
     val widthDp = LocalConfiguration.current.screenWidthDp
@@ -162,8 +166,65 @@ fun SettingsScreen(
         return
     }
 
-    val allSections = sections(live)
+    // The GitHub account this phone is signed in to. The token itself lives in encrypted
+    // storage and never in a composition; what is kept here is whether one is there and which
+    // account it belongs to, so the row can say something true.
+    val tokenStore = remember(context) { TokenStore(context) }
+    var githubToken by remember { mutableStateOf(tokenStore.read()) }
+    var githubLogin by remember { mutableStateOf<String?>(null) }
+    var signInOpen by remember { mutableStateOf(false) }
+    val gitHubClient = remember { GitHubClient() }
+    LaunchedEffect(githubToken) {
+        val token = githubToken
+        githubLogin = if (token == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) { gitHubClient.currentUser(token).getOrNull()?.login }
+        }
+    }
+    if (signInOpen) {
+        GitHubSignIn(
+            onSignedIn = { token ->
+                val stored = tokenStore.write(token)
+                githubToken = token
+                signInOpen = false
+                onGitHubChanged()
+                if (!stored) {
+                    // The Keystore would not take it, so this sign-in lasts for this session
+                    // only. Saying so beats a row that claims to be connected after a restart.
+                    android.widget.Toast.makeText(
+                        context,
+                        "Signed in for this session only: this phone cannot store the token securely.",
+                        android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                }
+            },
+            onDismiss = { signInOpen = false },
+        )
+        return
+    }
+
+    val allSections = sections(live, githubLogin)
     val current = allSections.firstOrNull { it.id == activeId } ?: allSections.first()
+
+    // One place that answers what a row asked for, so the narrow and wide layouts agree.
+    fun handleAction(action: SettingsAction) {
+        when (action) {
+            SettingsAction.CLEAR_CACHES -> scope.launch { live = facts.clearCaches() }
+            SettingsAction.DOWNLOAD_TOOLCHAIN -> setupOpen = true
+            SettingsAction.CONNECT_GITHUB -> signInOpen = true
+            SettingsAction.DISCONNECT_GITHUB -> {
+                tokenStore.clear()
+                githubToken = null
+                onGitHubChanged()
+                android.widget.Toast.makeText(
+                    context,
+                    "Disconnected from GitHub",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
+    }
 
     Column(
         Modifier
@@ -195,14 +256,7 @@ fun SettingsScreen(
                     wide = true,
                     settings = settings,
                     onSettingsChange = onSettingsChange,
-                    onAction = { action ->
-                        if (action == SettingsAction.CLEAR_CACHES) {
-                            scope.launch { live = facts.clearCaches() }
-                        }
-                        if (action == SettingsAction.DOWNLOAD_TOOLCHAIN) {
-                            setupOpen = true
-                        }
-                    },
+                    onAction = ::handleAction,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -226,14 +280,7 @@ fun SettingsScreen(
                     wide = false,
                     settings = settings,
                     onSettingsChange = onSettingsChange,
-                    onAction = { action ->
-                        if (action == SettingsAction.CLEAR_CACHES) {
-                            scope.launch { live = facts.clearCaches() }
-                        }
-                        if (action == SettingsAction.DOWNLOAD_TOOLCHAIN) {
-                            setupOpen = true
-                        }
-                    },
+                    onAction = ::handleAction,
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -654,6 +701,16 @@ private fun SettingControl(
 
         is Row.Nav -> Row(
             verticalAlignment = Alignment.CenterVertically,
+            // A row with an action is a button. The whole control is the tap target, not the
+            // label: the chevron says "there is more", and pressing it must do that.
+            modifier = if (row.id != null) {
+                Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onAction(row.id) }
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            } else {
+                Modifier
+            },
         ) {
             Text(
                 text = row.action,

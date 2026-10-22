@@ -203,6 +203,10 @@ internal fun IdeScreen(
     // caller decides where that lands; this screen never navigates itself.
     onProjectCloned: (ProjectRecord) -> Unit = {},
     onToggleTheme: () -> Unit = {},
+    // Moves when the GitHub account changes elsewhere — a sign-in or a disconnect done on the
+    // settings screen. The token is read again when it does, so the Source Control tab never
+    // keeps showing an account that is no longer connected.
+    tokenEpoch: Int = 0,
 ) {
     // The one place the settings are read from for this screen: saving and the editor both honour
     // them, and reading them once keeps a row changed on the settings screen in force immediately.
@@ -393,6 +397,9 @@ internal fun IdeScreen(
     // it is composed, and this is how it is told to read it again rather than go on with the copy
     // it took when it was opened.
     var githubTokenEpoch by remember { mutableStateOf(0) }
+    // The token is read again when either side moves: this screen's own sign-in, and a change
+    // made on the settings screen while this screen was in the back stack.
+    val gitTokenEpoch = githubTokenEpoch + tokenEpoch
     var query by remember { mutableStateOf("") }
     var findQuery by remember { mutableStateOf("") }
     // The search sheet's switches. They hold while the sheet is open so a pattern survives a
@@ -2384,7 +2391,7 @@ internal fun IdeScreen(
                 }
             },
             onCloneRequest = { cloneOpen = true },
-            githubTokenEpoch = githubTokenEpoch,
+            githubTokenEpoch = gitTokenEpoch,
             projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
         )
 
@@ -2900,7 +2907,7 @@ internal fun IdeScreen(
         if (cloneOpen) {
             val tokenStore = remember { TokenStore(context) }
             GitHubCloneScreen(
-                token = remember(githubTokenEpoch) { tokenStore.read() },
+                token = remember(gitTokenEpoch) { tokenStore.read() },
                 onToken = { fresh ->
                     tokenStore.write(fresh)
                     githubTokenEpoch++

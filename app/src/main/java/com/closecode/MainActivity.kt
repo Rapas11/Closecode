@@ -112,6 +112,10 @@ class MainActivity : ComponentActivity() {
                 }
                 var encoded by rememberSaveable { mutableStateOf("") }
                 var section by rememberSaveable { mutableStateOf("general") }
+                // Bumped when the GitHub account changes — a sign-in or a disconnect done on
+                // the settings screen. The screens that hold a token read it when this moves,
+                // so they never keep showing an account that is no longer connected.
+                var githubTokenEpoch by rememberSaveable { mutableStateOf(0) }
 
                 val repository = rememberProjectRepository()
                 val project = ProjectCodec.decode(encoded)
@@ -184,6 +188,7 @@ class MainActivity : ComponentActivity() {
                             }
                             HeroScreen(
                                 recentCount = recentCount,
+                                tokenEpoch = githubTokenEpoch,
                                 onProjectCreated = { name, selection, templateName, config ->
                                     val record = repository.create(name, selection, config)
                                     openEncoded(
@@ -219,6 +224,7 @@ class MainActivity : ComponentActivity() {
                                 onBack = { nav.popBackStack() },
                                 settings = settings,
                                 onSettingsChange = { settings = settingsStore.write(it) },
+                                onGitHubChanged = { githubTokenEpoch++ },
                             )
                         }
 
@@ -239,6 +245,7 @@ class MainActivity : ComponentActivity() {
                                         templateName = current.templateName,
                                         slug = current.slug,
                                         repository = repository,
+                                        tokenEpoch = githubTokenEpoch,
                                         onOpenSettings = {
                                             section = "general"
                                             nav.navigate("settings")

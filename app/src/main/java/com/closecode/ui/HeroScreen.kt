@@ -362,6 +362,10 @@ fun HeroScreen(
     onProjectCloned: (ProjectRecord) -> Unit,
     onOpenRecent: () -> Unit,
     recentCount: Int,
+    // Moves when the GitHub account changes elsewhere — a sign-in or a disconnect done on the
+    // settings screen. The token is read again when it does, so this screen never keeps
+    // showing an account that is no longer connected.
+    tokenEpoch: Int = 0,
 ) {
     val c = LocalPageColors.current
     var sheetOpen by remember { mutableStateOf(false) }
@@ -371,7 +375,7 @@ fun HeroScreen(
     // this screen is composed; everything that touches the network runs off the main thread.
     val context = LocalContext.current
     val tokenStore = remember(context) { TokenStore(context) }
-    var githubToken by remember { mutableStateOf(tokenStore.read()) }
+    var githubToken by remember(tokenEpoch) { mutableStateOf(tokenStore.read()) }
     // The token only says that *some* account is connected. This is which one, and it is fetched
     // rather than derived — off the main thread, because it is a network call made on screen load.
     val gitHubClient = remember { GitHubClient() }
