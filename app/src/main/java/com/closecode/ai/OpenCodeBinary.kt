@@ -70,15 +70,24 @@ object OpenCodeBinary {
 
         installDir(context).mkdirs()
         val archive = File(installDir(context), asset)
-        download(url, archive, onProgress)
+        // A previous start may have downloaded the archive and then failed while unpacking it.
+        // The file is only ever renamed into place once every byte arrived, so a file that is
+        // there is a whole archive, and downloading it a second time would buy nothing.
+        if (!archive.isFile || archive.length() == 0L) {
+            download(url, archive, onProgress)
+        } else {
+            onProgress(100)
+        }
 
-        val file = TarReader.firstFile(archive.inputStream())
-        archive.delete()
-        if (file == null) {
+        // Unpacked straight to disk: the program is close to two hundred megabytes, so it is
+        // written through a small buffer and renamed into place only once every byte arrived.
+        val entry = TarReader.extractFirstFile(archive.inputStream(), target)
+        if (entry == null) {
+            // Nothing usable inside, so it is not worth keeping: the next start downloads again.
+            archive.delete()
             throw IllegalStateException("The downloaded OpenCode archive held no program.")
         }
-        val (entry, bytes) = file
-        FileOutputStream(target).use { it.write(bytes) }
+        archive.delete()
         // The program has to be executable to be run at all.
         target.setExecutable(true, false)
         target.setReadable(true, false)
