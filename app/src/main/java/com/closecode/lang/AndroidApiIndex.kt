@@ -42,6 +42,24 @@ class AndroidApiIndex(
     fun hasClass(simpleName: String): Boolean = fqnsBySimpleName.containsKey(simpleName)
 
     /**
+     * True when Kotlin imports this name without being told to.
+     *
+     * The index is built from `android.jar`, which carries the `java.lang` classes — so it knows
+     * `System`, `Math` and `Objects` — but a Kotlin file names those without an import. A class
+     * from `java.lang` is never missing an import, so it must never be reported as one: doing so
+     * put an error on a project that compiles, and the build refuses to run while any error is
+     * on the screen.
+     *
+     * The `kotlin` packages are Kotlin's other default imports. `android.jar` holds none of them,
+     * so this arm only matters for an index built from somewhere that has them.
+     */
+    fun isAutoImported(simpleName: String): Boolean =
+        fqnsBySimpleName[simpleName].orEmpty().any { fqn ->
+            val pkg = fqn.substringBeforeLast('.', "")
+            pkg == "java.lang" || pkg == "kotlin" || pkg.startsWith("kotlin.")
+        }
+
+    /**
      * Fully-qualified names a bare [simpleName] could refer to, best candidate first. A name like
      * `Cursor` exists in several packages, so plain Android packages are preferred over obscure
      * ones to keep the common import at the top of the quick-fix list.

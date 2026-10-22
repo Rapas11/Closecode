@@ -325,6 +325,10 @@ private fun hasUnseenProvider(symbols: SymbolTable, offset: Int, name: String, n
 private fun needsAndroidImport(name: String): Boolean =
         name.firstOrNull()?.isUpperCase() == true &&
             name !in KnownNames.kotlinTypes &&
+            // `java.lang` and the Kotlin packages are imported by default, so a class from one
+            // of them is never missing an import — it only looks like it, because `android.jar`
+            // carries the `java.lang` classes and the index knows them.
+            !api.isAutoImported(name) &&
             api.hasClass(name)
 
 private fun isPartOfQualifiedName(sig: List<Token>, index: Int): Boolean {

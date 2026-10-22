@@ -94,6 +94,12 @@ object KnownNames {
         "Any", "Unit", "Nothing", "String", "CharSequence", "Boolean", "Byte", "Short",
         "Int", "Long", "Char", "Float", "Double", "Number", "Comparable", "Throwable",
         "Exception", "RuntimeException", "IllegalArgumentException", "IllegalStateException",
+        // Kotlin's own `kotlin.io` and `kotlin.comparisons` types. They live in the default
+        // imports, so a file may name them bare — but `android.jar` carries the `java.io` twin
+        // of each one, so the API index knows them by a name Kotlin never needs an import for.
+        "File", "Reader", "Writer", "InputStream", "OutputStream", "BufferedReader",
+        "BufferedWriter", "PrintWriter", "PrintStream", "IOException", "FileNotFoundException",
+        "RandomAccessFile", "Comparator", "Closeable",
         "Array", "IntArray", "LongArray", "DoubleArray", "FloatArray", "BooleanArray",
         "CharArray", "ByteArray", "ShortArray", "IntRange", "LongRange", "CharRange",
         "Collection", "List", "MutableList", "Set", "MutableSet", "Map", "MutableMap",
