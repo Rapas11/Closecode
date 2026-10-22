@@ -25,6 +25,11 @@
          and a notification with the same action is the fallback when it is refused. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- The OpenCode server has to stay alive while the user is in another app. Android
+         puts apps to sleep to save battery, and the server would be stopped for no reason
+         the user can see, so the app asks to be exempt and explains why. -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Android 11+ only reports apps this app can see. The built app is launched with
          the package manager's launch intent, so the launcher query is required. -->
     <queries>
@@ -107,6 +112,17 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Back to editor button over a launched app" />
+        </service>
+
+        <!-- The OpenCode server on the phone. It keeps running while the user is in another
+             app, and the notification says what is running, where, and stops it. -->
+        <service
+            android:name=".ai.OpenCodeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Running the OpenCode assistant server on the phone" />
         </service>
     </application>
 

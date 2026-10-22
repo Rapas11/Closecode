@@ -390,6 +390,9 @@ internal fun IdeScreen(
     // The full history page and one commit's detail page, stacked: a commit opens over
     // the history, and Back walks back down the stack.
     var historyOpen by remember { mutableStateOf(false) }
+    // OpenCode's own web page, opened from the AI tab's Running card. It covers the screen,
+    // like the clone route: it is a browser, not a panel inside the drawer.
+    var openCodeChat by remember { mutableStateOf(false) }
     var commitOpen by remember { mutableStateOf<String?>(null) }
     // The full build log over everything, for the same reason: errors want the whole screen.
     var buildLogOpen by remember { mutableStateOf(false) }
@@ -1927,7 +1930,12 @@ internal fun IdeScreen(
             }
 
             when (activePanel) {
-                "AI" -> AgentPanel(projectName = projectName, modifier = Modifier.weight(1f))
+                "AI" -> OpenCodeTab(
+                    projectName = projectName,
+                    projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                    onChat = { openCodeChat = true },
+                    modifier = Modifier.weight(1f),
+                )
                 "Logcat" -> IdeLogcatPanel(
                     lines = logLines,
                     onBack = ::handleBackPress,
@@ -2917,6 +2925,17 @@ internal fun IdeScreen(
                     cloneOpen = false
                     onProjectCloned(record)
                 },
+            )
+        }
+
+        // OpenCode's own web page. It is a browser, so it covers the screen; the back button
+        // inside the page goes back inside the page first and only leaves it at the start.
+        if (openCodeChat) {
+            val secret = remember { com.closecode.ai.OpenCodeSecret(context) }
+            OpenCodeChatScreen(
+                url = com.closecode.ai.OpenCode.state.value.url,
+                password = secret.read(),
+                onBack = { openCodeChat = false },
             )
         }
 
