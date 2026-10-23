@@ -1,17 +1,18 @@
 package com.closecode.ui.ide
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
 import android.util.Log
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
-import android.webkit.HttpAuthHandler
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.WebViewDatabase
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -23,26 +24,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.closecode.ai.OpenCode
-import com.closecode.ai.OpenCodeDefaults
+import com.closecode.ai.OpenCodePageLog
 import com.closecode.ui.theme.LocalPageColors
 
 /**
  * OpenCode's own web page, inside the app.
  *
  * The page is not redesigned and not reimplemented: it is OpenCode's own page, loaded from the
- * phone's own loopback. Three things are enforced around it:
+ * phone's own loopback. Two things are enforced around it:
  *
  *  - only the local address may be loaded. The server is bound to 127.0.0.1, but a page could
  *    still try to send the user somewhere else, and the WebView refuses to follow it;
- *  - the password is filled in for the user, so the page opens straight into the chat;
  *  - the back button goes back inside the page first, and only leaves the page at its start —
  *    leaving never stops the server.
+ *
+ * The server is unsecured on loopback, as OpenCode documents for local use, so there is no
+ * password box to fill and no HTTP-auth challenge to answer. The page's console and its own
+ * network failures are copied into [OpenCodePageLog] so the AI tab can show them when the page
+ * loads but does not work.
  */
 @SuppressLint("SetJavaScriptEnabled", "AddVsClear")
 @Composable
 fun OpenCodeChatScreen(
     url: String,
-    password: String,
     generation: Int = 0,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
@@ -71,6 +75,7 @@ fun OpenCodeChatScreen(
         }
         holder.url = url
         holder.generation = generation
+        OpenCodePageLog.add("open $url")
         view.loadUrl(url)
     }
 
@@ -98,18 +103,16 @@ fun OpenCodeChatScreen(
                 }
                 WebView(context).apply {
                     if (wipe) runCatching { clearCache(true) }
-                    // While developing on the phone, the page's own console is the only way
-                    // to see what it is doing when it fails; its lines go to logcat in debug
-                    // builds so they can be read with the device's own tools.
-                    if (com.closecode.BuildConfig.DEBUG) {
-                        webChromeClient = object : WebChromeClient() {
-                            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
-                                Log.i(
-                                    "ClosecodeWeb",
-                                    "console: ${message.messageLevel()} ${message.lineNumber()} ${message.message()}",
-                                )
-                                return false
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                            val line = "console ${message.messageLevel()}: " +
+                                "${message.message()} " +
+                                "(${message.sourceId()}:${message.lineNumber()})"
+                            OpenCodePageLog.add(line)
+                            if (com.closecode.BuildConfig.DEBUG) {
+                                Log.i("ClosecodeWeb", line)
                             }
+                            return false
                         }
                     }
                     holder.view = this
@@ -130,27 +133,39 @@ fun OpenCodeChatScreen(
                             return !(host == "127.0.0.1" || host == "localhost" || host == "::1")
                         }
 
-                        override fun onPageFinished(view: WebView?, finishedUrl: String?) {
-                            fillPassword(view, password)
+                        override fun onPageStarted(
+                            view: WebView?,
+                            startedUrl: String?,
+                            favicon: Bitmap?,
+                        ) {
+                            OpenCodePageLog.add("page started: $startedUrl")
+                            installPageLog(view)
                         }
 
-                        /**
-                         * The server answers `401 Unauthorized` with an HTTP Basic challenge
-                         * before it hands over any page, so the password box is never one the
-                         * page could fill: it is answered here, at the network level, straight
-                         * out of the same secret the server was started with.
-                         */
-                        override fun onReceivedHttpAuthRequest(
+                        override fun onPageFinished(view: WebView?, finishedUrl: String?) {
+                            OpenCodePageLog.add("page finished: $finishedUrl")
+                            installPageLog(view)
+                        }
+
+                        override fun onReceivedError(
                             view: WebView?,
-                            handler: HttpAuthHandler?,
-                            host: String?,
-                            realm: String?,
+                            request: WebResourceRequest?,
+                            error: WebResourceError?,
                         ) {
-                            if (handler != null && password.isNotBlank()) {
-                                handler.proceed(OpenCodeDefaults.USERNAME, password)
-                            } else {
-                                handler?.cancel()
-                            }
+                            OpenCodePageLog.add(
+                                "page error: ${request?.url} " +
+                                    "${error?.errorCode} ${error?.description}",
+                            )
+                        }
+
+                        override fun onReceivedHttpError(
+                            view: WebView?,
+                            request: WebResourceRequest?,
+                            errorResponse: WebResourceResponse?,
+                        ) {
+                            OpenCodePageLog.add(
+                                "http ${errorResponse?.statusCode}: ${request?.url}",
+                            )
                         }
                     }
                     loadUrl(url)
@@ -169,58 +184,74 @@ private class WebViewHolder {
 }
 
 /**
- * Clears the state a previous server left in the WebView: cookies, local storage and the
- * remembered HTTP-auth answer. The server is new; its page must not start from the old one's
- * state.
+ * Clears the state a previous server left in the WebView: cookies and local storage. The
+ * server is new; its page must not start from the old one's state.
  */
 private fun wipePage(context: android.content.Context) {
     runCatching {
         CookieManager.getInstance().removeAllCookies(null)
         CookieManager.getInstance().removeSessionCookies(null)
         WebStorage.getInstance().deleteAllData()
-        WebViewDatabase.getInstance(context).clearHttpAuthUsernamePassword()
     }
 }
 
 /**
- * Fills the password box on OpenCode's page and presses the button.
+ * Adds the page-log hooks to the page that is loading.
  *
- * OpenCode's web page asks for the server password when one is set. The password never goes
- * into a log, and it is put in by the page itself rather than shown on the screen.
+ * The hooks print one line for every fetch, XHR and event-source request and for every page
+ * error. The WebView's console client copies those lines into [OpenCodePageLog]. Nothing here
+ * sends data anywhere; it only makes the page's own failures visible to the AI tab.
  */
-private fun fillPassword(view: WebView?, password: String) {
-    if (view == null || password.isBlank()) return
-    val script = """
-        (function () {
-            var input = document.querySelector('input[type="password"]');
-            if (!input) return;
-            var setter = Object.getOwnPropertyDescriptor(
-                window.HTMLInputElement.prototype, 'value'
-            ).set;
-            setter.call(input, ${jsString(password)});
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            var form = input.form;
-            if (form) { form.submit(); return; }
-            var button = document.querySelector('button[type="submit"]');
-            if (button) button.click();
-        })();
-    """.trimIndent()
-    runCatching { view.evaluateJavascript(script, null) }
+private fun installPageLog(view: WebView?) {
+    if (view == null) return
+    runCatching { view.evaluateJavascript(PAGE_LOG_SCRIPT, null) }
 }
 
-/** A JavaScript string literal, so a password with a quote in it cannot break the script. */
-internal fun jsString(value: String): String {
-    val out = StringBuilder("\"")
-    for (ch in value) {
-        when (ch) {
-            '"' -> out.append("\\\"")
-            '\\' -> out.append("\\\\")
-            '\n' -> out.append("\\n")
-            '\r' -> out.append("\\r")
-            else -> out.append(ch)
+private const val PAGE_LOG_SCRIPT = """
+    (function () {
+        if (window.__closecodePageLog) return;
+        window.__closecodePageLog = true;
+        var report = function (text) {
+            try { console.log(text); } catch (e) {}
+        };
+        var originalFetch = window.fetch;
+        if (originalFetch) {
+            window.fetch = function () {
+                var input = arguments[0];
+                var url = (input && input.url) ? input.url : String(input);
+                return originalFetch.apply(window, arguments).then(function (response) {
+                    report('[fetch] ' + response.status + ' ' + url);
+                    return response;
+                }, function (error) {
+                    report('[fetch] FAILED ' + url + ' ' + error);
+                    throw error;
+                });
+            };
         }
-    }
-    out.append("\"")
-    return out.toString()
-}
+        var originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (method, url) {
+            this.addEventListener('loadend', function () {
+                report('[xhr] ' + method + ' ' + this.status + ' ' + url);
+            });
+            return originalOpen.apply(this, arguments);
+        };
+        window.addEventListener('error', function (event) {
+            report('[pageerror] ' + event.message + ' ' + event.filename + ':' + event.lineno);
+        });
+        window.addEventListener('unhandledrejection', function (event) {
+            report('[promise] ' + event.reason);
+        });
+        var OriginalEventSource = window.EventSource;
+        if (OriginalEventSource) {
+            window.EventSource = function (url, config) {
+                report('[sse] open ' + url);
+                var source = new OriginalEventSource(url, config);
+                source.addEventListener('error', function () {
+                    report('[sse] error ' + url);
+                });
+                return source;
+            };
+            window.EventSource.prototype = OriginalEventSource.prototype;
+        }
+    })();
+"""

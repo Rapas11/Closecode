@@ -16,7 +16,6 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.ServerSocket
 import java.net.URL
-import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 /**
@@ -25,6 +24,12 @@ import java.util.concurrent.TimeUnit
  * One object, because there is only ever one server: it is launched on the phone, its documented
  * health endpoint is polled once a second, and when it stops answering the app starts it again
  * by itself.
+ *
+ * The server is unsecured, as OpenCode documents for local use: it is bound to 127.0.0.1 and
+ * never to 0.0.0.0, so it is reachable only from this phone, and the page's own fetch and event
+ * requests do not have to carry a Basic-auth answer the WebView may not attach. OpenCode's docs:
+ * "If OPENCODE_SERVER_PASSWORD is not set, the server will be unsecured. This is fine for local
+ * use but should be set for network access."
  *
  * The state is a plain Compose value, so the AI tab, the notification and the log read the same
  * truth.
@@ -39,6 +44,11 @@ object OpenCode {
 
     @Volatile
     private var process: Process? = null
+
+    /** The PID file belonging to [process], removed with it. */
+    @Volatile
+    private var pidFile: File? = null
+
     private val processLock = Any()
 
     /**
@@ -72,6 +82,7 @@ object OpenCode {
         job?.cancel()
         job = null
         killProcess()
+        lastAutoOpenedGeneration = -1
         state.value = OpenCodeStatus()
         DebugLog.crumb("AICO", "stopped")
     }
@@ -91,10 +102,49 @@ object OpenCode {
     }
 
     private fun killProcess() {
-        val running = synchronized(processLock) { process.also { process = null } } ?: return
+        val running = synchronized(processLock) { process.also { process = null } }
+        pidFile?.let { file -> runCatching { file.delete() } }
+        if (running == null) return
         runCatching { running.destroy() }
         runCatching { running.waitFor(2, TimeUnit.SECONDS) }
         runCatching { running.destroyForcibly() }
+    }
+
+    /** The file that lets the next app run find a server a force-stop left behind. */
+    private fun serverPidFile(context: Context): File =
+        File(context.filesDir, "opencode/server.pid")
+
+    /**
+     * Kills a server the last app run left behind.
+     *
+     * `am force-stop` kills the app process but not its child. The child keeps listening on the
+     * old port, and the next start would either take another port or talk to a server it does
+     * not own. The PID file is written at launch and read here; the UID and cmdline checks make
+     * sure a recycled PID cannot make the app kill an unrelated process.
+     */
+    private fun killOrphan(context: Context): Int? {
+        val file = serverPidFile(context)
+        val pid = runCatching { file.readText().trim().toInt() }.getOrNull()
+        runCatching { file.delete() }
+        if (pid == null || pid <= 0 || pid == android.os.Process.myPid()) return null
+        val status = runCatching { File("/proc/$pid/status").readLines() }.getOrNull()
+            ?: return null
+        val uid = status.firstOrNull { it.startsWith("Uid:") }
+            ?.split(Regex("\\s+"))
+            ?.getOrNull(1)
+            ?.toIntOrNull()
+        if (uid != android.os.Process.myUid()) return null
+        val cmdline = runCatching { File("/proc/$pid/cmdline").readText() }.getOrNull()
+            .orEmpty()
+        if (!cmdline.contains("opencode")) return null
+        val killed = runCatching {
+            ProcessBuilder("/system/bin/kill", "-9", pid.toString())
+                .start()
+                .waitFor(2, TimeUnit.SECONDS)
+        }.getOrDefault(false)
+        if (!killed) return null
+        DebugLog.crumb("AICO", "removed orphan server $pid")
+        return pid
     }
 
     /**
@@ -120,10 +170,24 @@ object OpenCode {
     }
 
     /**
+     * The server generation whose page was opened automatically.
+     *
+     * The AI tab uses this to open a new server's page once, then leave the user alone: closing
+     * the page and coming back to the tab must not pop it open again. [stop] resets it because
+     * the next server starts its generation count over.
+     */
+    @Volatile
+    var lastAutoOpenedGeneration: Int = -1
+
+    /**
      * The whole life of the server: launch, wait for its health endpoint, answer, and come
      * back if it goes.
      */
     private suspend fun runServer(context: Context, projectRoot: File, projectName: String) {
+        // A force-stop kills this app but not its child. The PID file is the only way the next
+        // run can find that child; clean it up before choosing a port, or the old server would
+        // keep 4098 and this run would start a second one beside it.
+        val orphanPid = killOrphan(context)
         val port = freePort()
         val abis = Build.SUPPORTED_ABIS.toList()
         val arch = OpenCodeRuntime.alpineArch(abis)
@@ -149,7 +213,12 @@ object OpenCode {
                 projectFolder = projectRoot.name,
                 url = "http://${OpenCodeDefaults.HOST}:$port",
                 port = port,
-                log = listOf(OpenCodeLogLine("Starting OpenCode ${OpenCodeDefaults.VERSION}")),
+                log = listOfNotNull(
+                    OpenCodeLogLine("Starting OpenCode ${OpenCodeDefaults.VERSION}"),
+                    orphanPid?.let {
+                        OpenCodeLogLine("Removed a server left by the last run (PID $it)")
+                    },
+                ),
                 error = null,
                 downloading = false,
                 downloadPercent = 0,
@@ -197,12 +266,12 @@ object OpenCode {
         log("Program: ${binary.absolutePath}")
         log("Loader: ${OpenCodeRuntime.loader(context, arch).absolutePath}")
 
-        val password = OpenCodeSecret(context).read()
         var attempt = 1
         while (currentCoroutineContext().isActive) {
             log(OpenCodeDefaults.launchLine(port))
+            log("Server: local only, unsecured (OpenCode's documented local mode)")
             log("Waiting for http://${OpenCodeDefaults.HOST}:$port/global/health")
-            val failure = launchProcess(context, arch, binary, projectRoot, port, password)
+            val failure = launchProcess(context, arch, binary, projectRoot, port)
             if (failure != null) {
                 if (!currentCoroutineContext().isActive) return
                 val message = "OpenCode could not be started on this phone.\n$failure"
@@ -218,7 +287,7 @@ object OpenCode {
                 return
             }
 
-            val version = waitForAnswer(port, password)
+            val version = waitForAnswer(port)
             if (version != null) {
                 val shown = version.ifBlank { readVersion(context, arch, binary) }
                 val url = "http://${OpenCodeDefaults.HOST}:$port"
@@ -238,7 +307,7 @@ object OpenCode {
                 while (currentCoroutineContext().isActive) {
                     delay(1_000)
                     if (process?.isAlive != true) break
-                    if (probe(port, password) != null) {
+                    if (probe(port) != null) {
                         misses = 0
                     } else {
                         misses++
@@ -275,11 +344,11 @@ object OpenCode {
      * Returns the version it reported (possibly empty), or null when the process died or the
      * server did not answer within [START_TIMEOUT_MS].
      */
-    private suspend fun waitForAnswer(port: Int, password: String): String? {
+    private suspend fun waitForAnswer(port: Int): String? {
         val deadline = System.currentTimeMillis() + START_TIMEOUT_MS
         while (currentCoroutineContext().isActive) {
             if (process?.isAlive != true) return null
-            probe(port, password)?.let { return it.version }
+            probe(port)?.let { return it.version }
             if (System.currentTimeMillis() >= deadline) {
                 log("No answer after ${START_TIMEOUT_MS / 1000} s", warning = true)
                 return null
@@ -293,10 +362,10 @@ object OpenCode {
 
     /**
      * One request to `GET /global/health`, the endpoint OpenCode documents for "is the server
-     * up, and which version is it". The server is password-protected, so the request carries
-     * the same Basic-auth answer the WebView gives.
+     * up, and which version is it". The server is unsecured on loopback, so no Authorization
+     * header is needed.
      */
-    private fun probe(port: Int, password: String): ServerHealth? {
+    private fun probe(port: Int): ServerHealth? {
         val connection = try {
             URL("http://${OpenCodeDefaults.HOST}:$port/global/health").openConnection()
                 as HttpURLConnection
@@ -308,12 +377,6 @@ object OpenCode {
             connection.readTimeout = 3_000
             connection.useCaches = false
             connection.requestMethod = "GET"
-            connection.setRequestProperty(
-                "Authorization",
-                "Basic " + Base64.getEncoder().encodeToString(
-                    "${OpenCodeDefaults.USERNAME}:$password".toByteArray(Charsets.UTF_8),
-                ),
-            )
             if (connection.responseCode != 200) {
                 null
             } else {
@@ -344,13 +407,16 @@ object OpenCode {
         binary: File,
         projectRoot: File,
         port: Int,
-        password: String,
     ): String? {
         return try {
-            val builder = ProcessBuilder(
-                OpenCodeRuntime.loader(context, arch).absolutePath,
+            val loader = OpenCodeRuntime.loader(context, arch).absolutePath
+            val libraryPath = OpenCodeRuntime.libraryPath(context)
+            val pid = serverPidFile(context)
+            runCatching { pid.parentFile?.mkdirs() }
+            val command = listOf(
+                loader,
                 "--library-path",
-                OpenCodeRuntime.libraryPath(context),
+                libraryPath,
                 binary.absolutePath,
                 "web",
                 "--hostname",
@@ -358,10 +424,18 @@ object OpenCode {
                 "--port",
                 port.toString(),
             )
+            // The shell writes its own PID, then becomes the loader. `exec` keeps the PID, so
+            // the file names the server itself, and no Android-only Process.pid() is needed.
+            val launch = "echo \$\$ > ${shellQuote(pid.absolutePath)}; exec " +
+                command.joinToString(" ") { shellQuote(it) }
+            val builder = ProcessBuilder("/system/bin/sh", "-c", launch)
             builder.directory(projectRoot)
             ground(context, builder.environment())
-            builder.environment()["OPENCODE_SERVER_USERNAME"] = OpenCodeDefaults.USERNAME
-            builder.environment()["OPENCODE_SERVER_PASSWORD"] = password
+            // No OPENCODE_SERVER_PASSWORD and no OPENCODE_SERVER_USERNAME: the server is bound
+            // to loopback, and OpenCode documents unsecured local use as fine. This is also
+            // what makes the page's own fetch/SSE calls work without the WebView having to
+            // attach a Basic-auth answer it may not carry.
+            //
             // The server must not try to replace itself, and must not download LSP servers it
             // would then have to run: both are desktop habits that do not belong in this app's
             // storage. Print logs to stderr so the AI tab's log shows what the server itself
@@ -371,10 +445,12 @@ object OpenCode {
             builder.environment()["OPENCODE_PRINT_LOGS"] = "1"
             builder.environment()["OPENCODE_LOG_LEVEL"] = "INFO"
             builder.redirectErrorStream(true)
+            pidFile = pid
             val started = builder.start()
             synchronized(processLock) {
                 if (stopping) {
                     runCatching { started.destroyForcibly() }
+                    runCatching { pid.delete() }
                     return "The start was cancelled."
                 }
                 process = started
@@ -401,6 +477,10 @@ object OpenCode {
             }
         }
     }
+
+    /** A single-quoted shell argument, safe for a path with spaces in it. */
+    private fun shellQuote(value: String): String =
+        "'" + value.replace("'", "'\\''") + "'"
 
     /** The version the program reports about itself, asked of it the same way it is started. */
     private fun readVersion(context: Context, arch: String, binary: File): String {

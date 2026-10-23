@@ -1,6 +1,5 @@
 package com.closecode.ai
 
-import com.closecode.ui.ide.jsString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -29,11 +28,6 @@ class OpenCodeModelTest {
         assertEquals("", healthyVersion("""{"healthy":true}"""))
         assertNull(healthyVersion("""{"healthy":false,"version":"1.19.4"}"""))
         assertNull(healthyVersion("not json"))
-    }
-
-    @Test
-    fun theBasicAuthUsernameIsTheDocumentedDefault() {
-        assertEquals("opencode", OpenCodeDefaults.USERNAME)
     }
 
     @Test
@@ -327,12 +321,42 @@ class TarReaderTest {
     }
 }
 
-class JsStringTest {
+class OpenCodePageLogTest {
 
     @Test
-    fun aPasswordWithAQuoteCannotBreakTheScript() {
-        val quoted = jsString("pa\"ss\\word")
+    fun keepsTheNewestLinesAndDropsTheOldest() {
+        OpenCodePageLog.clear()
+        repeat(205) { OpenCodePageLog.add("line $it") }
 
-        assertEquals("\"pa\\\"ss\\\\word\"", quoted)
+        assertEquals(200, OpenCodePageLog.lines.size)
+        assertTrue(OpenCodePageLog.lines.first().contains("line 5"))
+        assertTrue(OpenCodePageLog.lines.last().contains("line 204"))
+
+        OpenCodePageLog.clear()
+    }
+
+    @Test
+    fun ignoresBlankLinesAndKeepsTheOrder() {
+        OpenCodePageLog.clear()
+        OpenCodePageLog.add("first")
+        OpenCodePageLog.add("   ")
+        OpenCodePageLog.add("second")
+
+        assertEquals(
+            listOf("first", "second"),
+            OpenCodePageLog.lines.map { it.substringAfter(' ') },
+        )
+
+        OpenCodePageLog.clear()
+    }
+
+    @Test
+    fun aVeryLongLineIsCutToTheCap() {
+        OpenCodePageLog.clear()
+        OpenCodePageLog.add("x".repeat(600))
+
+        assertEquals(500, OpenCodePageLog.lines.single().substringAfter(' ').length)
+
+        OpenCodePageLog.clear()
     }
 }

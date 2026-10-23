@@ -1,9 +1,11 @@
 package com.closecode.ui.ide
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import android.webkit.WebView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -44,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.closecode.ai.OpenCode
 import com.closecode.ai.OpenCodeLogLine
+import com.closecode.ai.OpenCodePageLog
 import com.closecode.ai.OpenCodePhase
 import com.closecode.ai.OpenCodeService
 import com.closecode.ai.OpenCodeStatus
@@ -57,10 +60,11 @@ import java.io.File
  * The AI tab: OpenCode, running on this phone.
  *
  * The tab is deliberately small. OpenCode ships its own complete web interface — sessions,
- * models, files, permissions — and the app's job is to start the documented server on loopback,
- * answer its Basic-auth challenge, and hand the screen to that interface. The tab itself only
- * shows the few states around it: not started, downloading/starting, running with the page
- * closed, reconnecting, or failed with the exact reason.
+ * models, files, permissions — and the app's job is to start the documented server on loopback
+ * and hand the screen to that interface. The server is unsecured on that loopback, as OpenCode
+ * documents for local use. The tab itself only shows the few states around it: not started,
+ * downloading/starting, running with the page closed, reconnecting, or failed with the exact
+ * reason.
  *
  * As soon as a server answers its health check, the page opens by itself. The user asked for
  * OpenCode, not for a launcher to click through every time.
@@ -77,21 +81,21 @@ fun OpenCodeTab(
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
-    var batteryAsked by remember { mutableStateOf(false) }
+    val prefs = remember {
+        context.getSharedPreferences(OPEN_CODE_PREFS, Context.MODE_PRIVATE)
+    }
     var batteryDialog by remember { mutableStateOf(false) }
-    var autoOpened by remember { mutableStateOf(false) }
 
-    // Open the page once for every server that comes up. If the user closes the page, the
-    // Running screen waits for them instead of popping it back open; a reconnect is a new
-    // server, so that one does open the fresh page.
+    // Open the page once for every server that comes up. The generation is kept on the
+    // OpenCode object, not in this composable: the AI tab leaves composition while the page
+    // covers the screen, and a fresh remember would pop the page open again on the way back.
+    // A reconnect is a new generation, so that one does open the fresh page.
     LaunchedEffect(status.phase, status.generation) {
-        if (status.phase == OpenCodePhase.Running) {
-            if (!autoOpened) {
-                autoOpened = true
-                onChat(status.url)
-            }
-        } else {
-            autoOpened = false
+        if (status.phase == OpenCodePhase.Running &&
+            status.generation != OpenCode.lastAutoOpenedGeneration
+        ) {
+            OpenCode.lastAutoOpenedGeneration = status.generation
+            onChat(status.url)
         }
     }
 
@@ -115,8 +119,10 @@ fun OpenCodeTab(
         }
         OpenCodeService.start(context, "", projectName)
         OpenCode.start(context, root, projectName)
-        if (!batteryAsked) {
-            batteryAsked = true
+        // The battery question is a one-time nudge, not a dialog on every start. It is kept
+        // in the app's preferences so leaving the tab and coming back cannot bring it back.
+        if (!prefs.getBoolean(KEY_BATTERY_ASKED, false)) {
+            prefs.edit().putBoolean(KEY_BATTERY_ASKED, true).apply()
             batteryDialog = true
         }
     }
@@ -463,6 +469,7 @@ private fun RunningTab(
             }
             Spacer(Modifier.height(10.dp))
             StatusRow("Version", status.version.ifBlank { "unknown" })
+            StatusRow("WebView", webViewVersion())
             StatusRow("Address", status.url)
             StatusRow("Project", status.projectName)
             Spacer(Modifier.height(12.dp))
@@ -473,6 +480,12 @@ private fun RunningTab(
 
         Spacer(Modifier.height(14.dp))
         LogSection(status.log)
+
+        val pageLines = OpenCodePageLog.lines
+        if (pageLines.isNotEmpty()) {
+            Spacer(Modifier.height(18.dp))
+            PageLogSection(pageLines)
+        }
     }
 }
 
@@ -565,6 +578,60 @@ private fun LogSection(lines: List<OpenCodeLogLine>) {
         }
     }
 }
+
+/**
+ * The page's own log: what OpenCode's JavaScript printed and which requests it made. The
+ * "Copy page log" button is the way to get a real failure report off the phone.
+ */
+@Composable
+private fun PageLogSection(lines: List<String>) {
+    if (lines.isEmpty()) return
+    val c = LocalPageColors.current
+    val clipboard = LocalClipboardManager.current
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OpenCodeSection("PAGE LOG")
+            Spacer(Modifier.weight(1f))
+            SmallButton(label = "Copy page log") {
+                clipboard.setText(AnnotatedString(lines.joinToString("\n")))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(c.bg)
+                .border(1.dp, c.ln, RoundedCornerShape(8.dp))
+                .padding(10.dp),
+        ) {
+            Column {
+                lines.takeLast(14).forEach { line ->
+                    Text(
+                        text = line,
+                        color = if (pageLogWarning(line)) c.amber else c.mu,
+                        fontSize = 10.5.sp,
+                        fontFamily = Mono,
+                        lineHeight = 15.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** A page line that names a failure, so the log draws it in the warning colour. */
+private fun pageLogWarning(line: String): Boolean =
+    line.contains("FAILED") ||
+        line.contains("error", ignoreCase = true) ||
+        Regex("\\b[45]\\d{2}\\b").containsMatchIn(line)
+
+/** The WebView version, which is the browser OpenCode's page actually runs in. */
+private fun webViewVersion(): String =
+    runCatching { WebView.getCurrentWebViewPackage()?.versionName }
+        .getOrNull()
+        ?.takeIf { it.isNotBlank() }
+        ?: "unknown"
 
 /** The exact failure text, in the colour that says it is one. */
 @Composable
@@ -704,3 +771,7 @@ private fun OpenCodeSection(text: String) {
         fontWeight = FontWeight.SemiBold,
     )
 }
+
+/** Where the AI tab keeps the one-time battery question. */
+private const val OPEN_CODE_PREFS = "closecode_ai"
+private const val KEY_BATTERY_ASKED = "battery_asked"

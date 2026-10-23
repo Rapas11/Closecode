@@ -61,6 +61,9 @@ class OpenCodeService : Service() {
 
     override fun onDestroy() {
         running = false
+        // The foreground slot is gone, so the server should not keep running with no owner.
+        // The Stop action already does this; this covers a service the system destroys.
+        OpenCode.stop()
         super.onDestroy()
     }
 

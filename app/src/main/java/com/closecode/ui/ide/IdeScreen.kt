@@ -2931,10 +2931,8 @@ internal fun IdeScreen(
         // OpenCode's own web page. It is a browser, so it covers the screen; the back button
         // inside the page goes back inside the page first and only leaves it at the start.
         if (openCodeChat) {
-            val secret = remember { com.closecode.ai.OpenCodeSecret(context) }
             OpenCodeChatScreen(
                 url = com.closecode.ai.OpenCode.state.value.url,
-                password = secret.read(),
                 generation = com.closecode.ai.OpenCode.state.value.generation,
                 onBack = { openCodeChat = false },
             )

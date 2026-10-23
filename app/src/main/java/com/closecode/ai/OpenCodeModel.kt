@@ -65,14 +65,12 @@ object OpenCodeDefaults {
     /** The release tag, which is the version with a v in front. */
     const val TAG: String = "v$VERSION"
 
-    /** The host the server is bound to. Never 0.0.0.0: the page must not be reachable from the network. */
-    const val HOST: String = "127.0.0.1"
-
     /**
-     * The Basic-auth username. OpenCode's documented default is `opencode`; the password is
-     * generated on the phone and never leaves it.
+     * The host the server is bound to. Never 0.0.0.0: the page must not be reachable from the
+     * network. The server is unsecured on this loopback, which OpenCode documents as fine for
+     * local use.
      */
-    const val USERNAME: String = "opencode"
+    const val HOST: String = "127.0.0.1"
 
     /** The launch line, exactly as it is written into the log. */
     fun launchLine(port: Int = PORT): String =
