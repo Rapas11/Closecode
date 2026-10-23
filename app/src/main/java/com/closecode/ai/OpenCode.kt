@@ -212,8 +212,9 @@ object OpenCode {
                         misses = 0
                     } else {
                         misses++
-                        // One missed answer is a hiccup; two in a row is a dead server.
-                        if (misses >= 2) break
+                        // One missed answer is a hiccup, two is a busy moment. A server that
+                        // is truly gone does not come back within ten seconds of asking.
+                        if (misses >= 3) break
                     }
                 }
                 if (!currentCoroutineContext().isActive) return
@@ -263,8 +264,8 @@ object OpenCode {
     private fun isAnswering(port: Int): Boolean {
         val connection = (URL("http://${OpenCodeDefaults.HOST}:$port/").openConnection()
             as HttpURLConnection).apply {
-            connectTimeout = 1_500
-            readTimeout = 1_500
+            connectTimeout = 3_000
+            readTimeout = 3_000
             instanceFollowRedirects = false
             useCaches = false
         }
