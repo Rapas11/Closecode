@@ -15,42 +15,25 @@ import java.util.zip.GZIPOutputStream
 class OpenCodeModelTest {
 
     @Test
-    fun theStepsAreTheFourTheMockupShows() {
-        val steps = openCodeSteps()
+    fun theCpuMessageNamesWhatThePhoneReported() {
+        val message = unsupportedCpuMessage(listOf("armeabi-v7a", "armeabi"))
 
-        assertEquals(4, steps.size)
-        assertEquals(
-            listOf(
-                "Checking files",
-                "Connecting your project",
-                "Starting the server",
-                "Waiting for it to answer",
-            ),
-            steps.map { it.label },
-        )
-        assertEquals(OpenCodeStepState.Working, steps[0].state)
-        assertEquals(OpenCodeStepState.Pending, steps[1].state)
-        assertEquals("Waiting", steps[3].note)
+        assertTrue(message.contains("armeabi-v7a, armeabi"))
+        assertTrue(message.contains("arm64-v8a"))
+        assertTrue(message.contains("x86_64"))
     }
 
     @Test
-    fun eachStepIsDoneOnceItHasHappened() {
-        val steps = openCodeSteps(
-            filesChecked = true,
-            projectConnected = true,
-            serverStarted = true,
-            answered = true,
-        )
-
-        assertTrue(steps.all { it.state == OpenCodeStepState.Done })
-        assertTrue(steps.all { it.note == "Done" })
+    fun aHealthyServerReportsItsVersion() {
+        assertEquals("1.19.4", healthyVersion("""{"healthy":true,"version":"1.19.4"}"""))
+        assertEquals("", healthyVersion("""{"healthy":true}"""))
+        assertNull(healthyVersion("""{"healthy":false,"version":"1.19.4"}"""))
+        assertNull(healthyVersion("not json"))
     }
 
     @Test
-    fun aFailureIsShownOnEveryStep() {
-        val steps = openCodeSteps(failed = true)
-
-        assertTrue(steps.all { it.state == OpenCodeStepState.Failed })
+    fun theBasicAuthUsernameIsTheDocumentedDefault() {
+        assertEquals("opencode", OpenCodeDefaults.USERNAME)
     }
 
     @Test
@@ -94,8 +77,8 @@ class OpenCodeBinaryTest {
 
     @Test
     fun thePreferredAbiDecidesEvenWhenAnotherOneIsThere() {
-        // MuMu lists arm64 because it can translate ARM — but it runs x86_64, and an arm64
-        // program on it is a program that crashes. The first ABI is the phone's own.
+        // A phone can list an ABI it only translates as well as the one it runs. The first
+        // ABI is the phone's own, so it decides; a translated build is a build that crashes.
         assertEquals(
             "opencode-linux-x64-musl.tar.gz",
             OpenCodeBinary.assetForAbis(listOf("x86_64", "arm64-v8a", "x86")),

@@ -1,52 +1,37 @@
 package com.closecode.ai
 
-/** What the OpenCode card in the AI tab is doing right now. */
+/** What the AI tab's OpenCode screens are doing right now. */
 enum class OpenCodePhase {
-    /** Nothing has been started. The card offers the Start button. */
+    /** Nothing has been started. The screen offers the Open button. */
     Idle,
 
     /** Starting: the binary is being fetched if needed, then the server is launched. */
     Starting,
 
-    /** The server answered. The status card shows the URL and the buttons. */
+    /** The server answered its health check. The web page is opened. */
     Running,
 
     /** The server stopped answering. The app is restarting it by itself. */
     ConnectionLost,
 
-    /** Something went wrong and the app cannot go on by itself. The reason is on the card. */
+    /** Something went wrong and the app cannot go on by itself. The reason is on the screen. */
     Failed,
 }
 
-/** One of the four steps on the Starting screen. */
-enum class OpenCodeStepState { Pending, Working, Done, Failed }
-
 /**
- * One line of Build Info.
+ * One line of the log the AI tab shows.
  *
- * [warning] marks the lines that say the app is still waiting — they are drawn in amber, the
- * way the mockup shows them.
+ * [warning] marks the lines that say the app is still waiting or that something went wrong.
  */
 data class OpenCodeLogLine(val text: String, val warning: Boolean = false)
 
-
 /**
- * One line of the Starting screen: what the app is doing, and how it went.
+ * Everything the AI tab shows.
  *
- * [note] is the short word on the right — "Done", "4 s", "Waiting" — so the row reads the same
- * way the mockup does.
- */
-data class OpenCodeStep(
-    val label: String,
-    val state: OpenCodeStepState,
-    val note: String = "",
-)
-
-/**
- * Everything the AI tab's OpenCode screens show.
- *
- * One value, held by [OpenCode.state], so the screens read the same truth: the phase, the four
- * steps, the log that goes into Build Info, the URL, the version and the countdown.
+ * One value, held by [OpenCode.state], so the screen, the notification and the log read the
+ * same truth: the phase, the URL, the version, the log, and how many times a server has come
+ * up. [generation] changes every time a fresh server answers, which is what tells the open web
+ * page to reload after a reconnect.
  */
 data class OpenCodeStatus(
     val phase: OpenCodePhase = OpenCodePhase.Idle,
@@ -55,28 +40,23 @@ data class OpenCodeStatus(
     val url: String = "",
     val version: String = "",
     val port: Int = OpenCodeDefaults.PORT,
-    val steps: List<OpenCodeStep> = emptyList(),
-    /** The Build Info lines, oldest first. */
+    /** The log, oldest first. */
     val log: List<OpenCodeLogLine> = emptyList(),
     /** Seconds until the next automatic retry. Zero when nothing is being retried. */
     val retryInSeconds: Int = 0,
     /** Why it stopped, when it stopped by itself. */
     val error: String? = null,
-    /** True while the binary is being downloaded for the first time. */
+    /** True while the binary or its runtime is being downloaded. */
     val downloading: Boolean = false,
-    /** Percent of the first download, zero when nothing is downloading. */
+    /** Percent of the current download, zero when nothing is downloading. */
     val downloadPercent: Int = 0,
-) {
-    /** The four steps of the Starting screen, in the order the mockup shows them. */
-    val stepRows: List<OpenCodeStep> get() = steps
-
-    /** The Build Info box, as one monospaced block of text. */
-    val buildInfo: String get() = log.joinToString("\n") { it.text }
-}
+    /** Raised once for every server that answered. The web page reloads when it changes. */
+    val generation: Int = 0,
+)
 
 /** The numbers the app and the server agree on. */
 object OpenCodeDefaults {
-    /** The port the spec names. */
+    /** The port the app tries first. A taken port moves the server to the next free one. */
     const val PORT: Int = 4098
 
     /** The pinned OpenCode release the app downloads. */
@@ -88,13 +68,19 @@ object OpenCodeDefaults {
     /** The host the server is bound to. Never 0.0.0.0: the page must not be reachable from the network. */
     const val HOST: String = "127.0.0.1"
 
-    /** The launch line, exactly as it is written into Build Info. */
+    /**
+     * The Basic-auth username. OpenCode's documented default is `opencode`; the password is
+     * generated on the phone and never leaves it.
+     */
+    const val USERNAME: String = "opencode"
+
+    /** The launch line, exactly as it is written into the log. */
     fun launchLine(port: Int = PORT): String =
         "Launch: opencode web --hostname $HOST --port $port"
 }
 
 /**
- * The countdown on the Connection lost screen: "Retrying in 3 s".
+ * The countdown on the reconnecting screen: "Retrying in 3 s".
  *
  * The app never asks the user to press anything to try again, so this line is the whole promise
  * the screen makes.
@@ -105,54 +91,26 @@ fun retryCountdownText(seconds: Int): String {
 }
 
 /**
- * The four steps of the Starting screen, with what has happened so far.
+ * What the AI tab says when this phone's CPU is not one OpenCode ships a build for.
  *
- * Pure, so the exact wording and the order are held by a test rather than by a screenshot.
+ * The list is the phone's own, in its own order, so a report of the message says which ABIs the
+ * phone actually reported instead of leaving the reason a guess.
  */
-fun openCodeSteps(
-    filesChecked: Boolean = false,
-    projectConnected: Boolean = false,
-    serverStarted: Boolean = false,
-    answered: Boolean = false,
-    failed: Boolean = false,
-): List<OpenCodeStep> = listOf(
-    OpenCodeStep(
-        "Checking files",
-        when {
-            failed -> OpenCodeStepState.Failed
-            filesChecked -> OpenCodeStepState.Done
-            else -> OpenCodeStepState.Working
-        },
-        if (filesChecked) "Done" else "",
-    ),
-    OpenCodeStep(
-        "Connecting your project",
-        when {
-            failed -> OpenCodeStepState.Failed
-            projectConnected -> OpenCodeStepState.Done
-            else -> OpenCodeStepState.Pending
-        },
-        if (projectConnected) "Done" else "",
-    ),
-    OpenCodeStep(
-        "Starting the server",
-        when {
-            failed -> OpenCodeStepState.Failed
-            serverStarted -> OpenCodeStepState.Done
-            else -> OpenCodeStepState.Pending
-        },
-        if (serverStarted) "Done" else "",
-    ),
-    OpenCodeStep(
-        "Waiting for it to answer",
-        when {
-            failed -> OpenCodeStepState.Failed
-            answered -> OpenCodeStepState.Done
-            else -> OpenCodeStepState.Working
-        },
-        when {
-            answered -> "Done"
-            else -> "Waiting"
-        },
-    ),
-)
+fun unsupportedCpuMessage(abis: List<String>): String {
+    val reported = abis.filter { it.isNotBlank() }.joinToString(", ").ifBlank { "no ABI" }
+    return "This phone reports $reported. OpenCode needs a 64-bit ARM (arm64-v8a) or " +
+        "Intel (x86_64) CPU."
+}
+
+/**
+ * The version in an OpenCode `/global/health` answer, or null when the server is not healthy.
+ *
+ * The endpoint is documented as `{ healthy: true, version: string }`. An empty string is a
+ * healthy answer with no version in it — still up — which is why this does not return null for
+ * it. Parsed with a regex rather than a mapped class because the app only needs these two
+ * fields and this runs once a second.
+ */
+fun healthyVersion(json: String): String? {
+    if (!Regex("\"healthy\"\\s*:\\s*true").containsMatchIn(json)) return null
+    return Regex("\"version\"\\s*:\\s*\"([^\"]*)\"").find(json)?.groupValues?.get(1).orEmpty()
+}

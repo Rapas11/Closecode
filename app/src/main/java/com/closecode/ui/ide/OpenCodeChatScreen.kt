@@ -18,10 +18,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import com.closecode.ai.OpenCode
+import com.closecode.ai.OpenCodeDefaults
 import com.closecode.ui.theme.LocalPageColors
 
 /**
@@ -41,6 +43,7 @@ import com.closecode.ui.theme.LocalPageColors
 fun OpenCodeChatScreen(
     url: String,
     password: String,
+    generation: Int = 0,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -55,6 +58,20 @@ fun OpenCodeChatScreen(
         } else {
             onBack()
         }
+    }
+
+    // A reconnect is a new server: the page that was open belongs to the old one. Load the
+    // fresh address into a clean browser instead of leaving OpenCode's error screen up.
+    LaunchedEffect(url, generation) {
+        val view = holder.view ?: return@LaunchedEffect
+        if (holder.url == url && holder.generation == generation) return@LaunchedEffect
+        if (holder.generation != generation && OpenCode.consumeWebWipe()) {
+            wipePage(view.context)
+            runCatching { view.clearCache(true) }
+        }
+        holder.url = url
+        holder.generation = generation
+        view.loadUrl(url)
     }
 
     DisposableEffect(Unit) {
@@ -77,12 +94,7 @@ fun OpenCodeChatScreen(
                     // ran. OpenCode's frontend trips over state from a dead server — its own
                     // error screen is the known result — so this server's first page loads
                     // into a clean browser instead. The phone's own files keep everything.
-                    runCatching {
-                        CookieManager.getInstance().removeAllCookies(null)
-                        CookieManager.getInstance().removeSessionCookies(null)
-                        WebStorage.getInstance().deleteAllData()
-                        WebViewDatabase.getInstance(context).clearHttpAuthUsernamePassword()
-                    }
+                    wipePage(context)
                 }
                 WebView(context).apply {
                     if (wipe) runCatching { clearCache(true) }
@@ -101,6 +113,8 @@ fun OpenCodeChatScreen(
                         }
                     }
                     holder.view = this
+                    holder.url = url
+                    holder.generation = generation
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.allowFileAccess = false
@@ -118,19 +132,6 @@ fun OpenCodeChatScreen(
 
                         override fun onPageFinished(view: WebView?, finishedUrl: String?) {
                             fillPassword(view, password)
-                            // Reading the page's own words out, for the same reason as the
-                            // console hook above: when the page shows an error it cannot
-                            // scroll, its first lines are unreachable on the screen.
-                            view?.postDelayed({
-                                runCatching {
-                                    view.evaluateJavascript(
-                                        "(function(){var d=document.querySelector('details');" +
-                                            "var t=document.body?document.body.textContent:'';" +
-                                            "return JSON.stringify({details:d?String(d.open):null," +
-                                            "text:t.replace(/[ \\t]+/g,' ').substring(0,6000)});})()",
-                                    ) { text -> Log.i("ClosecodeWeb", "page data: $text") }
-                                }
-                            }, 5_000)
                         }
 
                         /**
@@ -146,7 +147,7 @@ fun OpenCodeChatScreen(
                             realm: String?,
                         ) {
                             if (handler != null && password.isNotBlank()) {
-                                handler.proceed("opencode", password)
+                                handler.proceed(OpenCodeDefaults.USERNAME, password)
                             } else {
                                 handler?.cancel()
                             }
@@ -163,6 +164,22 @@ fun OpenCodeChatScreen(
 /** The one WebView this screen owns, so the back handler can reach it. */
 private class WebViewHolder {
     var view: WebView? = null
+    var url: String = ""
+    var generation: Int = -1
+}
+
+/**
+ * Clears the state a previous server left in the WebView: cookies, local storage and the
+ * remembered HTTP-auth answer. The server is new; its page must not start from the old one's
+ * state.
+ */
+private fun wipePage(context: android.content.Context) {
+    runCatching {
+        CookieManager.getInstance().removeAllCookies(null)
+        CookieManager.getInstance().removeSessionCookies(null)
+        WebStorage.getInstance().deleteAllData()
+        WebViewDatabase.getInstance(context).clearHttpAuthUsernamePassword()
+    }
 }
 
 /**

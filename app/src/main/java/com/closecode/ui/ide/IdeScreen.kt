@@ -2935,6 +2935,7 @@ internal fun IdeScreen(
             OpenCodeChatScreen(
                 url = com.closecode.ai.OpenCode.state.value.url,
                 password = secret.read(),
+                generation = com.closecode.ai.OpenCode.state.value.generation,
                 onBack = { openCodeChat = false },
             )
         }

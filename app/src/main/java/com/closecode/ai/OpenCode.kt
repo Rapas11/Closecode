@@ -16,18 +16,18 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.ServerSocket
 import java.net.URL
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 /**
  * The OpenCode server on the phone.
  *
- * One object, because there is only ever one server: it is launched on the phone, it is polled
- * once a second, and when it stops answering the app starts it again by itself. The user never
- * presses "try again" — the spec is explicit about that, and the countdown on the Connection
- * lost screen is the promise that it happens.
+ * One object, because there is only ever one server: it is launched on the phone, its documented
+ * health endpoint is polled once a second, and when it stops answering the app starts it again
+ * by itself.
  *
- * The state is a plain Compose value, so the AI tab reads the same truth the notification and
- * the log show.
+ * The state is a plain Compose value, so the AI tab, the notification and the log read the same
+ * truth.
  */
 object OpenCode {
 
@@ -36,7 +36,18 @@ object OpenCode {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
+
+    @Volatile
     private var process: Process? = null
+    private val processLock = Any()
+
+    /**
+     * True from the moment [stop] is called until the next [start]. A launch that is already in
+     * flight checks this before it adopts a process, so a quick Start/Stop cannot leave a server
+     * running with nobody holding it.
+     */
+    @Volatile
+    private var stopping: Boolean = false
 
     /** True while a server is being started or is running. */
     val isActive: Boolean get() = job?.isActive == true
@@ -48,6 +59,7 @@ object OpenCode {
      */
     fun start(context: Context, projectRoot: File, projectName: String) {
         if (isActive) return
+        stopping = false
         val appContext = context.applicationContext
         job = scope.launch {
             runServer(appContext, projectRoot, projectName)
@@ -56,6 +68,7 @@ object OpenCode {
 
     /** Stops the server and clears the card. */
     fun stop() {
+        stopping = true
         job?.cancel()
         job = null
         killProcess()
@@ -73,14 +86,12 @@ object OpenCode {
         state.value = state.value.copy(
             phase = OpenCodePhase.Failed,
             error = message,
-            steps = openCodeSteps(failed = true),
         )
         DebugLog.crumb("AICO", "not started: ${message.take(60)}")
     }
 
     private fun killProcess() {
-        val running = process ?: return
-        process = null
+        val running = synchronized(processLock) { process.also { process = null } } ?: return
         runCatching { running.destroy() }
         runCatching { running.waitFor(2, TimeUnit.SECONDS) }
         runCatching { running.destroyForcibly() }
@@ -109,7 +120,8 @@ object OpenCode {
     }
 
     /**
-     * The whole life of the server: launch, wait for the port, answer, and come back if it goes.
+     * The whole life of the server: launch, wait for its health endpoint, answer, and come
+     * back if it goes.
      */
     private suspend fun runServer(context: Context, projectRoot: File, projectName: String) {
         val port = freePort()
@@ -121,12 +133,12 @@ object OpenCode {
                     phase = OpenCodePhase.Failed,
                     projectName = projectName,
                     projectFolder = projectRoot.name,
-                    error = "This phone's CPU is not one OpenCode runs on. It needs ARM64 or x86_64.",
-                    steps = openCodeSteps(failed = true),
+                    error = unsupportedCpuMessage(abis),
                     log = listOf(OpenCodeLogLine("Starting")),
                 )
             }
-            DebugLog.crumb("AICO", "no build for ${abis.firstOrNull()}")
+            OpenCodeService.stop(context)
+            DebugLog.crumb("AICO", "no build for ${abis.joinToString()}")
             return
         }
 
@@ -137,9 +149,10 @@ object OpenCode {
                 projectFolder = projectRoot.name,
                 url = "http://${OpenCodeDefaults.HOST}:$port",
                 port = port,
-                steps = openCodeSteps(),
-                log = listOf(OpenCodeLogLine("Starting")),
+                log = listOf(OpenCodeLogLine("Starting OpenCode ${OpenCodeDefaults.VERSION}")),
                 error = null,
+                downloading = false,
+                downloadPercent = 0,
             )
         }
 
@@ -165,72 +178,67 @@ object OpenCode {
             log("Runtime: musl, libstdc++ and libgcc from Alpine ${OpenCodeRuntime.ALPINE} ($arch)")
             file
         } catch (error: Throwable) {
+            if (!currentCoroutineContext().isActive) return
+            val message = error.message ?: "OpenCode could not be downloaded."
             update {
                 it.copy(
                     phase = OpenCodePhase.Failed,
                     downloading = false,
-                    error = error.message ?: "OpenCode could not be downloaded.",
-                    steps = openCodeSteps(failed = true),
+                    error = message,
+                    log = it.log + OpenCodeLogLine(message, warning = true),
                 )
             }
+            OpenCodeService.stop(context)
             DebugLog.crumb("AICO", "download failed: ${error.javaClass.simpleName}")
             return
         }
 
-        update { it.copy(steps = openCodeSteps(filesChecked = true)) }
-
-        // Step two: the project. OpenCode works on the folder that is open in Closecode.
         log("Project: ${projectRoot.absolutePath}")
-        update { it.copy(steps = openCodeSteps(filesChecked = true, projectConnected = true)) }
+        log("Program: ${binary.absolutePath}")
+        log("Loader: ${OpenCodeRuntime.loader(context, arch).absolutePath}")
 
         val password = OpenCodeSecret(context).read()
         var attempt = 1
         while (currentCoroutineContext().isActive) {
             log(OpenCodeDefaults.launchLine(port))
-            log("Waiting for port $port")
-            val started = launchProcess(context, arch, binary, projectRoot, port, password)
-            if (!started) {
+            log("Waiting for http://${OpenCodeDefaults.HOST}:$port/global/health")
+            val failure = launchProcess(context, arch, binary, projectRoot, port, password)
+            if (failure != null) {
+                if (!currentCoroutineContext().isActive) return
+                val message = "OpenCode could not be started on this phone.\n$failure"
                 update {
                     it.copy(
                         phase = OpenCodePhase.Failed,
-                        error = "OpenCode could not be started on this phone.",
-                        steps = openCodeSteps(failed = true),
+                        error = message,
+                        log = it.log + OpenCodeLogLine(message, warning = true),
                     )
                 }
+                OpenCodeService.stop(context)
+                DebugLog.crumb("AICO", "launch failed: ${failure.take(120)}")
                 return
             }
-            update {
-                it.copy(
-                    steps = openCodeSteps(
-                        filesChecked = true,
-                        projectConnected = true,
-                        serverStarted = true,
-                    ),
-                )
-            }
 
-            if (waitForAnswer(port)) {
-                val version = readVersion(context, arch, binary)
+            val version = waitForAnswer(port, password)
+            if (version != null) {
+                val shown = version.ifBlank { readVersion(context, arch, binary) }
+                val url = "http://${OpenCodeDefaults.HOST}:$port"
                 update {
                     it.copy(
                         phase = OpenCodePhase.Running,
-                        version = version,
-                        steps = openCodeSteps(
-                            filesChecked = true,
-                            projectConnected = true,
-                            serverStarted = true,
-                            answered = true,
-                        ),
+                        version = shown,
+                        url = url,
+                        generation = it.generation + 1,
                     )
                 }
-                log("OpenCode is answering at http://${OpenCodeDefaults.HOST}:$port")
+                log("OpenCode is answering at $url")
+                OpenCodeService.update(context, url, projectName)
                 DebugLog.crumb("AICO", "server answering")
                 // Stay up until the server stops answering or the process ends.
                 var misses = 0
                 while (currentCoroutineContext().isActive) {
                     delay(1_000)
                     if (process?.isAlive != true) break
-                    if (isAnswering(port)) {
+                    if (probe(port, password) != null) {
                         misses = 0
                     } else {
                         misses++
@@ -244,23 +252,16 @@ object OpenCode {
 
             // The server is gone or stopped answering. The app brings it back by itself.
             attempt++
-            log("Connection lost")
+            log("Connection lost", warning = true)
             update {
                 it.copy(
                     phase = OpenCodePhase.ConnectionLost,
                     retryInSeconds = RETRY_SECONDS,
-                    steps = openCodeSteps(
-                        filesChecked = true,
-                        projectConnected = true,
-                        serverStarted = true,
-                        answered = false,
-                    ),
                 )
             }
             for (second in RETRY_SECONDS downTo 1) {
                 if (!currentCoroutineContext().isActive) return
                 update { it.copy(retryInSeconds = second) }
-                log("Checking again in 1 second", warning = true)
                 delay(1_000)
             }
             log("Retry $attempt: starting again…")
@@ -269,47 +270,73 @@ object OpenCode {
     }
 
     /**
-     * Waits for the server to answer on its port.
+     * Waits for the documented health endpoint to say the server is healthy.
      *
-     * Returns true when it answered. Returns false when the process died on the way there.
+     * Returns the version it reported (possibly empty), or null when the process died or the
+     * server did not answer within [START_TIMEOUT_MS].
      */
-    private suspend fun waitForAnswer(port: Int): Boolean {
+    private suspend fun waitForAnswer(port: Int, password: String): String? {
+        val deadline = System.currentTimeMillis() + START_TIMEOUT_MS
         while (currentCoroutineContext().isActive) {
-            if (process?.isAlive != true) return false
-            if (isAnswering(port)) return true
+            if (process?.isAlive != true) return null
+            probe(port, password)?.let { return it.version }
+            if (System.currentTimeMillis() >= deadline) {
+                log("No answer after ${START_TIMEOUT_MS / 1000} s", warning = true)
+                return null
+            }
             delay(1_000)
         }
-        return false
+        return null
     }
 
-    /** One request to the local server. Anything that answers counts as up. */
-    private fun isAnswering(port: Int): Boolean {
-        val connection = (URL("http://${OpenCodeDefaults.HOST}:$port/").openConnection()
-            as HttpURLConnection).apply {
-            connectTimeout = 3_000
-            readTimeout = 3_000
-            instanceFollowRedirects = false
-            useCaches = false
+    private data class ServerHealth(val version: String)
+
+    /**
+     * One request to `GET /global/health`, the endpoint OpenCode documents for "is the server
+     * up, and which version is it". The server is password-protected, so the request carries
+     * the same Basic-auth answer the WebView gives.
+     */
+    private fun probe(port: Int, password: String): ServerHealth? {
+        val connection = try {
+            URL("http://${OpenCodeDefaults.HOST}:$port/global/health").openConnection()
+                as HttpURLConnection
+        } catch (error: Throwable) {
+            return null
         }
         return try {
+            connection.connectTimeout = 3_000
+            connection.readTimeout = 3_000
+            connection.useCaches = false
             connection.requestMethod = "GET"
-            connection.connect()
-            // Any answer at all means the server is up: a login page is still an answer.
-            connection.responseCode in 100..599
+            connection.setRequestProperty(
+                "Authorization",
+                "Basic " + Base64.getEncoder().encodeToString(
+                    "${OpenCodeDefaults.USERNAME}:$password".toByteArray(Charsets.UTF_8),
+                ),
+            )
+            if (connection.responseCode != 200) {
+                null
+            } else {
+                val text = connection.inputStream.bufferedReader().use { it.readText() }
+                healthyVersion(text)?.let { ServerHealth(it) }
+            }
         } catch (error: Throwable) {
-            false
+            null
         } finally {
             connection.disconnect()
         }
     }
 
     /**
-     * Starts the program and reads its output into Build Info.
+     * Starts the program and reads its output into the log.
      *
      * The program is started *through the musl loader*, with the runtime's directories on its
      * search path: it is linked against libraries Android does not have, and this is how they
      * are handed to it. Everything after the program's own path is the command the log line
      * above names.
+     *
+     * Returns null when the process started, or the exact failure text when it did not. The
+     * text goes onto the card: "could not be started" without the reason is a dead end.
      */
     private fun launchProcess(
         context: Context,
@@ -318,7 +345,7 @@ object OpenCode {
         projectRoot: File,
         port: Int,
         password: String,
-    ): Boolean {
+    ): String? {
         return try {
             val builder = ProcessBuilder(
                 OpenCodeRuntime.loader(context, arch).absolutePath,
@@ -333,10 +360,25 @@ object OpenCode {
             )
             builder.directory(projectRoot)
             ground(context, builder.environment())
+            builder.environment()["OPENCODE_SERVER_USERNAME"] = OpenCodeDefaults.USERNAME
             builder.environment()["OPENCODE_SERVER_PASSWORD"] = password
+            // The server must not try to replace itself, and must not download LSP servers it
+            // would then have to run: both are desktop habits that do not belong in this app's
+            // storage. Print logs to stderr so the AI tab's log shows what the server itself
+            // says when it refuses to start.
+            builder.environment()["OPENCODE_DISABLE_AUTOUPDATE"] = "true"
+            builder.environment()["OPENCODE_DISABLE_LSP_DOWNLOAD"] = "true"
+            builder.environment()["OPENCODE_PRINT_LOGS"] = "1"
+            builder.environment()["OPENCODE_LOG_LEVEL"] = "INFO"
             builder.redirectErrorStream(true)
             val started = builder.start()
-            process = started
+            synchronized(processLock) {
+                if (stopping) {
+                    runCatching { started.destroyForcibly() }
+                    return "The start was cancelled."
+                }
+                process = started
+            }
             webWipePending = true
             scope.launch {
                 // Destroying the process closes this stream under the reader's feet: the read
@@ -348,10 +390,15 @@ object OpenCode {
                     }
                 }
             }
-            true
+            null
         } catch (error: Throwable) {
-            DebugLog.crumb("AICO", "launch failed: ${error.javaClass.simpleName}")
-            false
+            buildString {
+                append(error.javaClass.simpleName)
+                error.message?.takeIf { it.isNotBlank() }?.let {
+                    append(": ")
+                    append(it)
+                }
+            }
         }
     }
 
@@ -422,15 +469,23 @@ object OpenCode {
         }
     }
 
-    /** Appends a line to Build Info. */
+    /** Appends a line to the log, keeping the newest [MAX_LOG_LINES] so it cannot grow forever. */
     private fun log(text: String, warning: Boolean = false) {
         if (text.isBlank()) return
-        update { status -> status.copy(log = status.log + OpenCodeLogLine(text, warning)) }
+        update { status ->
+            val lines = status.log + OpenCodeLogLine(text, warning)
+            status.copy(
+                log = if (lines.size > MAX_LOG_LINES) lines.takeLast(MAX_LOG_LINES) else lines,
+            )
+        }
     }
 
     private fun update(block: (OpenCodeStatus) -> OpenCodeStatus) {
+        if (stopping) return
         state.value = block(state.value)
     }
 
     private const val RETRY_SECONDS = 3
+    private const val START_TIMEOUT_MS = 120_000L
+    private const val MAX_LOG_LINES = 400
 }

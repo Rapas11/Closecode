@@ -50,12 +50,13 @@ class OpenCodeService : Service() {
 
             ACTION_STOP -> {
                 running = false
-                OpenCode.stop()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
         }
-        return START_STICKY
+        // The server lives in this process. A process that died cannot be brought back by
+        // Android recreating an empty service, so there is nothing to restart.
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -190,5 +191,6 @@ class OpenCodeService : Service() {
 class OpenCodeStopReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         OpenCode.stop()
+        if (context != null) OpenCodeService.stop(context)
     }
 }
