@@ -315,8 +315,13 @@ object OpenCode {
             val started = builder.start()
             process = started
             scope.launch {
-                started.inputStream.bufferedReader().useLines { lines ->
-                    lines.forEach { line -> log(line) }
+                // Destroying the process closes this stream under the reader's feet: the read
+                // in progress answers InterruptedIOException. The reader must then stop
+                // reading quietly — its process is being replaced — not take the app with it.
+                runCatching {
+                    started.inputStream.bufferedReader().useLines { lines ->
+                        lines.forEach { line -> log(line) }
+                    }
                 }
             }
             true
