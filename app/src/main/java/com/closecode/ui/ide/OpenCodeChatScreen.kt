@@ -2,6 +2,7 @@ package com.closecode.ui.ide
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.webkit.HttpAuthHandler
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -82,6 +83,25 @@ fun OpenCodeChatScreen(
 
                         override fun onPageFinished(view: WebView?, finishedUrl: String?) {
                             fillPassword(view, password)
+                        }
+
+                        /**
+                         * The server answers `401 Unauthorized` with an HTTP Basic challenge
+                         * before it hands over any page, so the password box is never one the
+                         * page could fill: it is answered here, at the network level, straight
+                         * out of the same secret the server was started with.
+                         */
+                        override fun onReceivedHttpAuthRequest(
+                            view: WebView?,
+                            handler: HttpAuthHandler?,
+                            host: String?,
+                            realm: String?,
+                        ) {
+                            if (handler != null && password.isNotBlank()) {
+                                handler.proceed("opencode", password)
+                            } else {
+                                handler?.cancel()
+                            }
                         }
                     }
                     loadUrl(url)
