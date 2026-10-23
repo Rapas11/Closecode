@@ -2,8 +2,11 @@ package com.closecode.ui.ide
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.util.Log
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
 import android.webkit.WebView
@@ -83,6 +86,20 @@ fun OpenCodeChatScreen(
                 }
                 WebView(context).apply {
                     if (wipe) runCatching { clearCache(true) }
+                    // While developing on the phone, the page's own console is the only way
+                    // to see what it is doing when it fails; its lines go to logcat in debug
+                    // builds so they can be read with the device's own tools.
+                    if (com.closecode.BuildConfig.DEBUG) {
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                                Log.i(
+                                    "ClosecodeWeb",
+                                    "console: ${message.messageLevel()} ${message.lineNumber()} ${message.message()}",
+                                )
+                                return false
+                            }
+                        }
+                    }
                     holder.view = this
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
@@ -101,6 +118,19 @@ fun OpenCodeChatScreen(
 
                         override fun onPageFinished(view: WebView?, finishedUrl: String?) {
                             fillPassword(view, password)
+                            // Reading the page's own words out, for the same reason as the
+                            // console hook above: when the page shows an error it cannot
+                            // scroll, its first lines are unreachable on the screen.
+                            view?.postDelayed({
+                                runCatching {
+                                    view.evaluateJavascript(
+                                        "(function(){var d=document.querySelector('details');" +
+                                            "var t=document.body?document.body.textContent:'';" +
+                                            "return JSON.stringify({details:d?String(d.open):null," +
+                                            "text:t.replace(/[ \\t]+/g,' ').substring(0,6000)});})()",
+                                    ) { text -> Log.i("ClosecodeWeb", "page data: $text") }
+                                }
+                            }, 5_000)
                         }
 
                         /**
