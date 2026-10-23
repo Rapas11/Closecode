@@ -309,6 +309,7 @@ object OpenCode {
                 port.toString(),
             )
             builder.directory(projectRoot)
+            ground(context, builder.environment())
             builder.environment()["OPENCODE_SERVER_PASSWORD"] = password
             builder.redirectErrorStream(true)
             val started = builder.start()
@@ -335,6 +336,7 @@ object OpenCode {
                 binary.absolutePath,
                 "--version",
             )
+            ground(context, builder.environment())
             builder.redirectErrorStream(true)
             val started = builder.start()
             val text = started.inputStream.bufferedReader().readText().trim()
@@ -343,6 +345,31 @@ object OpenCode {
         } catch (error: Throwable) {
             ""
         }
+    }
+
+    /**
+     * The home directory the program is given: its own corner of the app's files, not the
+     * phone's.
+     */
+    private fun home(context: Context): File = File(context.filesDir, "opencode/home")
+
+    /** The place for files a program is meant to throw away again. */
+    private fun tmp(context: Context): File =
+        File(context.cacheDir, "opencode").apply { mkdirs() }
+
+    /**
+     * Puts into [environment] the directories the program is allowed to write: Android is not a
+     * desktop Linux — there is no `/tmp` an app may write and no `$HOME` a program may rely
+     * on — and OpenCode makes `/tmp/opencode` for itself the moment it starts, so without
+     * these it dies with EACCES before the server is ever up, even at `--version`.
+     */
+    private fun ground(context: Context, environment: MutableMap<String, String>) {
+        val home = home(context)
+        environment["TMPDIR"] = tmp(context).absolutePath
+        environment["HOME"] = home.absolutePath
+        environment["XDG_DATA_HOME"] = File(home, "data").apply { mkdirs() }.absolutePath
+        environment["XDG_CONFIG_HOME"] = File(home, "config").apply { mkdirs() }.absolutePath
+        environment["XDG_CACHE_HOME"] = File(home, "cache").apply { mkdirs() }.absolutePath
     }
 
     /**
