@@ -11,7 +11,7 @@ plugins {
 // The build number is raised for every APK handed to the user. The More sheet, every log
 // and every report print it beside the version name and the short commit, so whichever
 // APK is installed says which one it is. ("unknown" only when git is not reachable.)
-val closecodeBuild = 16
+val closecodeBuild = 17
 val closecodeGitCommit: String = runCatching {
     providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }
         .standardOutput.asText.get().trim()
@@ -23,8 +23,14 @@ android {
 
     defaultConfig {
         applicationId = "com.closecode"
-        minSdk = 29
-        targetSdk = 35
+        // OpenCode is a Linux program started from this app's own files directory. Android 10
+        // and newer refuse to execute a file there for any app that targets API 29 or newer:
+        // SELinux denies the exec, so ProcessBuilder.start() fails with EACCES. This is the
+        // same wall Termux hits; its answer, and ours, is to target 28. CloseCode is installed
+        // from GitHub releases, not Play, so the trade is deliberate: on-device execution of
+        // OpenCode, the terminal and the toolchain matters more than the newest target level.
+        minSdk = 28
+        targetSdk = 28
         versionCode = closecodeBuild
         versionName = "1.0"
         buildConfigField("String", "GIT_COMMIT", "\"$closecodeGitCommit\"")
