@@ -2,10 +2,13 @@ package com.closecode.ui.ide
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
 import android.webkit.WebResourceRequest
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebViewDatabase
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -15,6 +18,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
+import com.closecode.ai.OpenCode
 import com.closecode.ui.theme.LocalPageColors
 
 /**
@@ -29,7 +33,7 @@ import com.closecode.ui.theme.LocalPageColors
  *  - the back button goes back inside the page first, and only leaves the page at its start —
  *    leaving never stops the server.
  */
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "AddVsClear")
 @Composable
 fun OpenCodeChatScreen(
     url: String,
@@ -64,7 +68,21 @@ fun OpenCodeChatScreen(
     ) {
         AndroidView(
             factory = { context ->
+                val wipe = OpenCode.consumeWebWipe()
+                if (wipe) {
+                    // The page this WebView would inherit was written while an older server
+                    // ran. OpenCode's frontend trips over state from a dead server — its own
+                    // error screen is the known result — so this server's first page loads
+                    // into a clean browser instead. The phone's own files keep everything.
+                    runCatching {
+                        CookieManager.getInstance().removeAllCookies(null)
+                        CookieManager.getInstance().removeSessionCookies(null)
+                        WebStorage.getInstance().deleteAllData()
+                        WebViewDatabase.getInstance(context).clearHttpAuthUsernamePassword()
+                    }
+                }
                 WebView(context).apply {
+                    if (wipe) runCatching { clearCache(true) }
                     holder.view = this
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
