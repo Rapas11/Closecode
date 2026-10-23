@@ -71,13 +71,27 @@ object OpenCodeBinary {
         // says which release it came out of, so a phone that reports a different CPU — an
         // emulator, or an app restored onto new hardware — gets the right one instead of a
         // program that cannot run here.
-        if (isInstalled(context) && marker.isFile && marker.readText().trim() == asset) {
+        // The pinned release the local files must be from. The archive's name carries it, so
+        // leftovers from another release cannot be quietly unpacked in place of this one.
+        val expectedMarker = asset.replace(".tar.gz", "-${OpenCodeDefaults.VERSION}.tar.gz")
+        if (isInstalled(context) && marker.isFile && marker.readText().trim() == expectedMarker) {
             return target
         }
 
         val url = downloadUrl(asset)
         installDir(context).mkdirs()
-        val archive = File(installDir(context), asset)
+        val archive = File(installDir(context), expectedMarker)
+        // An older release's program or archive is quietly in the way: the marker says so. The
+        // program of the older release goes, and so do archives that do not carry this
+        // release's name — an archive with the right name is this release's own download and
+        // stays for the unpacking below.
+        if (marker.isFile && marker.readText().trim() != expectedMarker) {
+            target.delete()
+            installDir(context).listFiles()
+                ?.filter { it.name.endsWith(".tar.gz") && it.name != expectedMarker }
+                ?.forEach { it.delete() }
+            marker.delete()
+        }
         // A previous start may have downloaded the archive and then failed while unpacking it.
         // The file is only ever renamed into place once every byte arrived, so a file that is
         // there is a whole archive, and downloading it a second time would buy nothing.
@@ -99,7 +113,7 @@ object OpenCodeBinary {
         // The program has to be executable to be run at all.
         target.setExecutable(true, false)
         target.setReadable(true, false)
-        marker.writeText(asset)
+        marker.writeText(expectedMarker)
         return target
     }
 }

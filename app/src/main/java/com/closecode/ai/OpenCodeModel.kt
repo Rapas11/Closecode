@@ -80,7 +80,7 @@ object OpenCodeDefaults {
     const val PORT: Int = 4098
 
     /** The pinned OpenCode release the app downloads. */
-    const val VERSION: String = "1.19.3"
+    const val VERSION: String = "1.19.4"
 
     /** The release tag, which is the version with a v in front. */
     const val TAG: String = "v$VERSION"
