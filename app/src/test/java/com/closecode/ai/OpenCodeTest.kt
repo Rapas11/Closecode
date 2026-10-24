@@ -24,9 +24,9 @@ class OpenCodeModelTest {
 
     @Test
     fun aHealthyServerReportsItsVersion() {
-        assertEquals("1.19.4", healthyVersion("""{"healthy":true,"version":"1.19.4"}"""))
+        assertEquals("1.18.31", healthyVersion("""{"healthy":true,"version":"1.18.31"}"""))
         assertEquals("", healthyVersion("""{"healthy":true}"""))
-        assertNull(healthyVersion("""{"healthy":false,"version":"1.19.4"}"""))
+        assertNull(healthyVersion("""{"healthy":false,"version":"1.18.31"}"""))
         assertNull(healthyVersion("not json"))
     }
 

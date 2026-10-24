@@ -8,6 +8,7 @@ import android.provider.Settings
 import android.webkit.WebView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -132,10 +133,26 @@ fun OpenCodeTab(
         OpenCode.stop()
     }
 
+    // The in-app page uses the phone's WebView. Some phones ship an old WebView that cannot
+    // run OpenCode's current page even though their Chrome is new. A Custom Tab hands the
+    // same loopback URL to the browser, which gives the page a second, independent engine.
+    fun openInBrowser() {
+        if (status.url.isBlank()) return
+        val uri = Uri.parse(status.url)
+        runCatching {
+            CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, uri)
+        }.onFailure {
+            runCatching {
+                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            }
+        }
+    }
+
     when (status.phase) {
         OpenCodePhase.Running -> RunningTab(
             status = status,
             onOpen = { onChat(status.url) },
+            onBrowser = ::openInBrowser,
             onStop = ::stopServer,
             modifier = modifier,
         )
@@ -444,6 +461,7 @@ private fun ReconnectingTab(
 private fun RunningTab(
     status: OpenCodeStatus,
     onOpen: () -> Unit,
+    onBrowser: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -474,6 +492,8 @@ private fun RunningTab(
             StatusRow("Project", status.projectName)
             Spacer(Modifier.height(12.dp))
             PrimaryAction(label = "Open OpenCode", onClick = onOpen)
+            Spacer(Modifier.height(8.dp))
+            SecondaryAction(label = "Open in browser", onClick = onBrowser)
             Spacer(Modifier.height(8.dp))
             SecondaryAction(label = "Stop server", onClick = onStop, danger = true)
         }

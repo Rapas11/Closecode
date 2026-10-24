@@ -59,8 +59,15 @@ object OpenCodeDefaults {
     /** The port the app tries first. A taken port moves the server to the next free one. */
     const val PORT: Int = 4098
 
-    /** The pinned OpenCode release the app downloads. */
-    const val VERSION: String = "1.19.4"
+    /**
+     * The pinned OpenCode release the app downloads.
+     *
+     * 1.18.31 is the release the AndroidIDE app uses on these phones, and its web page runs in
+     * the phone's WebView. 1.19.4's page crashes on an older WebView before the session view
+     * renders, which is the black page with only the top bar. Do not bump this without opening
+     * the page on a real phone.
+     */
+    const val VERSION: String = "1.18.31"
 
     /** The release tag, which is the version with a v in front. */
     const val TAG: String = "v$VERSION"
