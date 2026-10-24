@@ -2930,10 +2930,12 @@ internal fun IdeScreen(
 
         // OpenCode's own web page. It is a browser, so it covers the screen; the back button
         // inside the page goes back inside the page first and only leaves it at the start.
+        // The page URL names the project, not OpenCode's global home directory.
         if (openCodeChat) {
+            val openCode = com.closecode.ai.OpenCode.state.value
             OpenCodeChatScreen(
-                url = com.closecode.ai.OpenCode.state.value.url,
-                generation = com.closecode.ai.OpenCode.state.value.generation,
+                url = openCode.pageUrl.ifBlank { openCode.url },
+                generation = openCode.generation,
                 onBack = { openCodeChat = false },
             )
         }

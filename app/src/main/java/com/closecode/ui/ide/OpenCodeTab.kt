@@ -8,7 +8,6 @@ import android.provider.Settings
 import android.webkit.WebView
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -120,40 +119,31 @@ fun OpenCodeTab(
         OpenCode.stop()
     }
 
-    // The in-app page uses the phone's WebView. Some phones ship an old WebView that cannot
-    // run OpenCode's current page even though their Chrome is new. A Custom Tab hands the
-    // same loopback URL to the browser, which gives the page a second, independent engine.
+    // The browser is the secondary way in: it runs the same project page in Chrome when the
+    // phone's WebView is too old for OpenCode's frontend. The primary page stays in the app.
     fun openInBrowser() {
-        if (status.url.isBlank()) return
-        val uri = Uri.parse(status.url)
-        runCatching {
-            CustomTabsIntent.Builder().setShowTitle(true).build().launchUrl(context, uri)
-        }.onFailure {
-            runCatching {
-                context.startActivity(Intent(Intent.ACTION_VIEW, uri))
-            }
-        }
+        openOpenCodeInBrowser(context, status.pageUrl.ifBlank { status.url })
     }
 
     // Open the page once for every server that comes up. The generation is kept on the
     // OpenCode object, not in this composable: the AI tab leaves composition while the page
     // covers the screen, and a fresh remember would pop the page open again on the way back.
     // A reconnect is a new generation, so that one does open the fresh page. The page opens
-    // in the browser, because the system WebView on some phones cannot render it at all.
+    // inside CloseCode, on the project URL, not on OpenCode's global home screen.
     LaunchedEffect(status.phase, status.generation) {
         if (status.phase == OpenCodePhase.Running &&
             status.generation != OpenCode.lastAutoOpenedGeneration
         ) {
             OpenCode.lastAutoOpenedGeneration = status.generation
-            openInBrowser()
+            onChat(status.pageUrl.ifBlank { status.url })
         }
     }
 
     when (status.phase) {
         OpenCodePhase.Running -> RunningTab(
             status = status,
-            onOpen = ::openInBrowser,
-            onOpenInApp = { onChat(status.url) },
+            onOpen = { onChat(status.pageUrl.ifBlank { status.url }) },
+            onOpenInBrowser = ::openInBrowser,
             onStop = ::stopServer,
             modifier = modifier,
         )
@@ -460,15 +450,14 @@ private fun ReconnectingTab(
 /**
  * Running, with the page closed: the address, the version, and the way back in.
  *
- * The primary action opens the page in the phone's browser. Some phones' system WebView cannot
- * run OpenCode's page and leaves it black, while the browser runs it. "Open in app" keeps the
- * WebView available for diagnostics and for phones where it does work.
+ * The primary action opens OpenCode's page inside CloseCode, on the project URL. The browser
+ * is the secondary action for phones whose WebView cannot run the page.
  */
 @Composable
 private fun RunningTab(
     status: OpenCodeStatus,
     onOpen: () -> Unit,
-    onOpenInApp: () -> Unit,
+    onOpenInBrowser: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -500,7 +489,7 @@ private fun RunningTab(
             Spacer(Modifier.height(12.dp))
             PrimaryAction(label = "Open OpenCode", onClick = onOpen)
             Spacer(Modifier.height(8.dp))
-            SecondaryAction(label = "Open in app", onClick = onOpenInApp)
+            SecondaryAction(label = "Open in browser", onClick = onOpenInBrowser)
             Spacer(Modifier.height(8.dp))
             SecondaryAction(label = "Stop server", onClick = onStop, danger = true)
         }

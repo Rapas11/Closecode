@@ -207,11 +207,13 @@ object OpenCode {
         }
 
         update {
+            val url = "http://${OpenCodeDefaults.HOST}:$port"
             it.copy(
                 phase = OpenCodePhase.Starting,
                 projectName = projectName,
                 projectFolder = projectRoot.name,
-                url = "http://${OpenCodeDefaults.HOST}:$port",
+                url = url,
+                pageUrl = projectPageUrl(url, projectRoot),
                 port = port,
                 log = listOfNotNull(
                     OpenCodeLogLine("Starting OpenCode ${OpenCodeDefaults.VERSION}"),
@@ -296,6 +298,7 @@ object OpenCode {
                         phase = OpenCodePhase.Running,
                         version = shown,
                         url = url,
+                        pageUrl = projectPageUrl(url, projectRoot),
                         generation = it.generation + 1,
                     )
                 }
@@ -521,11 +524,49 @@ object OpenCode {
      */
     private fun ground(context: Context, environment: MutableMap<String, String>) {
         val home = home(context)
+        val tools = prepareTools(context)
         environment["TMPDIR"] = tmp(context).absolutePath
         environment["HOME"] = home.absolutePath
         environment["XDG_DATA_HOME"] = File(home, "data").apply { mkdirs() }.absolutePath
         environment["XDG_CONFIG_HOME"] = File(home, "config").apply { mkdirs() }.absolutePath
         environment["XDG_CACHE_HOME"] = File(home, "cache").apply { mkdirs() }.absolutePath
+        // Android has no desktop browser. `opencode web` tries to open one after the server is
+        // listening; without a no-op it exits on ENOENT and the page reconnects forever. The
+        // wrapper is also on PATH because some launches ask for `xdg-open` directly.
+        environment["BROWSER"] = "/system/bin/true"
+        environment["PATH"] = listOf(
+            tools.absolutePath,
+            "/system/bin",
+            "/system/xbin",
+            environment["PATH"].orEmpty(),
+        ).filter { it.isNotBlank() }.joinToString(":")
+        // OpenCode's shell tool asks for bash. Android ships sh, and the wrapper on PATH keeps
+        // the tool's `bash -lc` and `bash -c` forms working without a fake bash.
+        environment["SHELL"] = "/system/bin/sh"
+        environment["TERM"] = "xterm-256color"
+    }
+
+    /**
+     * Creates the two tiny programs the server expects from a desktop Linux.
+     *
+     * They live in app storage beside OpenCode's other files. `targetSdk 28` is what lets the
+     * app execute them; the same setting is why the OpenCode binary itself can run.
+     */
+    private fun prepareTools(context: Context): File {
+        val dir = File(context.filesDir, "opencode/bin").apply { mkdirs() }
+        writeTool(File(dir, "xdg-open"), XDG_OPEN_SCRIPT)
+        writeTool(File(dir, "bash"), BASH_SCRIPT)
+        return dir
+    }
+
+    private fun writeTool(file: File, content: String) {
+        file.parentFile?.mkdirs()
+        if (!file.isFile || file.readText() != content) {
+            file.writeText(content)
+        }
+        if (!file.setExecutable(true, false)) {
+            error("Could not make ${file.name} executable")
+        }
     }
 
     /**
@@ -568,4 +609,24 @@ object OpenCode {
     private const val RETRY_SECONDS = 3
     private const val START_TIMEOUT_MS = 120_000L
     private const val MAX_LOG_LINES = 400
+
+    private val XDG_OPEN_SCRIPT = """
+        #!/system/bin/sh
+        # Android has no desktop browser for OpenCode's web command to open.
+        exit 0
+    """.trimIndent() + "\n"
+
+    private val BASH_SCRIPT = """
+        #!/system/bin/sh
+        # OpenCode's shell tool asks for bash; Android provides sh.
+        if [ "${'$'}1" = "-lc" ] && [ -n "${'$'}2" ]; then
+          shift
+          exec /system/bin/sh -c "${'$'}1"
+        fi
+        if [ "${'$'}1" = "-l" ] && [ "${'$'}2" = "-c" ] && [ -n "${'$'}3" ]; then
+          shift 2
+          exec /system/bin/sh -c "${'$'}1"
+        fi
+        exec /system/bin/sh "${'$'}@"
+    """.trimIndent() + "\n"
 }

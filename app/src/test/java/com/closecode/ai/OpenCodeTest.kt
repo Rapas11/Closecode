@@ -49,6 +49,42 @@ class OpenCodeModelTest {
     fun theServerIsOnlyEverBoundToTheLoopback() {
         assertEquals("127.0.0.1", OpenCodeDefaults.HOST)
     }
+
+    @Test
+    fun thePageUrlSelectsTheProjectDirectory() {
+        assertEquals(
+            "http://127.0.0.1:4098/" +
+                "L2RhdGEvdXNlci8wL2NvbS5jbG9zZWNvZGUvZmlsZXMvcHJvamVjdHMvbGFuZGluZy1wYWdlLTI" +
+                "/session",
+            projectPageUrl(
+                "http://127.0.0.1:4098/",
+                "/data/user/0/com.closecode/files/projects/landing-page-2",
+            ),
+        )
+    }
+
+    @Test
+    fun thePageUrlUsesUnpaddedBase64Url() {
+        val url = projectPageUrl("http://127.0.0.1:4098", "/data/user/0/com.closecode/files/p")
+        val encoded = url.removeSuffix("/session").substringAfterLast('/')
+
+        assertFalse(encoded.contains('='))
+        assertTrue(encoded.all { it.isLetterOrDigit() || it == '-' || it == '_' })
+    }
+
+    @Test
+    fun thePageUrlEncodesTheDirectoryAsUtf8() {
+        val directory = "/data/user/0/com.closecode/files/проект"
+        val url = projectPageUrl("http://127.0.0.1:4098", directory)
+
+        assertEquals(
+            "http://127.0.0.1:4098/" +
+                java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString(directory.toByteArray(Charsets.UTF_8)) +
+                "/session",
+            url,
+        )
+    }
 }
 
 class OpenCodeBinaryTest {

@@ -1,5 +1,9 @@
 package com.closecode.ai
 
+import java.io.File
+import java.nio.charset.StandardCharsets
+import java.util.Base64
+
 /** What the AI tab's OpenCode screens are doing right now. */
 enum class OpenCodePhase {
     /** Nothing has been started. The screen offers the Open button. */
@@ -38,6 +42,8 @@ data class OpenCodeStatus(
     val projectName: String = "",
     val projectFolder: String = "",
     val url: String = "",
+    /** The server URL that opens this project, not the home screen. Empty until the port is known. */
+    val pageUrl: String = "",
     val version: String = "",
     val port: Int = OpenCodeDefaults.PORT,
     /** The log, oldest first. */
@@ -82,6 +88,26 @@ object OpenCodeDefaults {
     /** The launch line, exactly as it is written into the log. */
     fun launchLine(port: Int = PORT): String =
         "Launch: opencode web --hostname $HOST --port $port"
+}
+
+/**
+ * The page URL that opens a new session in [projectRoot], not OpenCode's home screen.
+ *
+ * OpenCode's web bundle selects a directory by putting the base64url of its UTF-8 bytes on the
+ * path. The directory alone is treated as the home screen; the bundle's own route parser only
+ * selects the directory when the next segment is `session`. The root page otherwise opens the
+ * global home with `~/.local` and a `/` worktree, which is not this app's project. The encoding
+ * has no padding, matching the page's own `base64url` helper.
+ */
+fun projectPageUrl(baseUrl: String, projectRoot: File): String =
+    projectPageUrl(baseUrl, projectRoot.absolutePath)
+
+/** The same URL for a directory already in the form the server reports. */
+fun projectPageUrl(baseUrl: String, directory: String): String {
+    val encoded = Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(directory.toByteArray(StandardCharsets.UTF_8))
+    return baseUrl.trimEnd('/') + "/" + encoded + "/session"
 }
 
 /**
