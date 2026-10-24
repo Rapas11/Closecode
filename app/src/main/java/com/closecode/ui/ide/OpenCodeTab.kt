@@ -87,19 +87,6 @@ fun OpenCodeTab(
     }
     var batteryDialog by remember { mutableStateOf(false) }
 
-    // Open the page once for every server that comes up. The generation is kept on the
-    // OpenCode object, not in this composable: the AI tab leaves composition while the page
-    // covers the screen, and a fresh remember would pop the page open again on the way back.
-    // A reconnect is a new generation, so that one does open the fresh page.
-    LaunchedEffect(status.phase, status.generation) {
-        if (status.phase == OpenCodePhase.Running &&
-            status.generation != OpenCode.lastAutoOpenedGeneration
-        ) {
-            OpenCode.lastAutoOpenedGeneration = status.generation
-            onChat(status.url)
-        }
-    }
-
     fun startServer() {
         val root = projectRoot
         if (root == null || !root.isDirectory) {
@@ -148,11 +135,25 @@ fun OpenCodeTab(
         }
     }
 
+    // Open the page once for every server that comes up. The generation is kept on the
+    // OpenCode object, not in this composable: the AI tab leaves composition while the page
+    // covers the screen, and a fresh remember would pop the page open again on the way back.
+    // A reconnect is a new generation, so that one does open the fresh page. The page opens
+    // in the browser, because the system WebView on some phones cannot render it at all.
+    LaunchedEffect(status.phase, status.generation) {
+        if (status.phase == OpenCodePhase.Running &&
+            status.generation != OpenCode.lastAutoOpenedGeneration
+        ) {
+            OpenCode.lastAutoOpenedGeneration = status.generation
+            openInBrowser()
+        }
+    }
+
     when (status.phase) {
         OpenCodePhase.Running -> RunningTab(
             status = status,
-            onOpen = { onChat(status.url) },
-            onBrowser = ::openInBrowser,
+            onOpen = ::openInBrowser,
+            onOpenInApp = { onChat(status.url) },
             onStop = ::stopServer,
             modifier = modifier,
         )
@@ -456,12 +457,18 @@ private fun ReconnectingTab(
     }
 }
 
-/** Running, with the page closed: the address, the version, and the way back in. */
+/**
+ * Running, with the page closed: the address, the version, and the way back in.
+ *
+ * The primary action opens the page in the phone's browser. Some phones' system WebView cannot
+ * run OpenCode's page and leaves it black, while the browser runs it. "Open in app" keeps the
+ * WebView available for diagnostics and for phones where it does work.
+ */
 @Composable
 private fun RunningTab(
     status: OpenCodeStatus,
     onOpen: () -> Unit,
-    onBrowser: () -> Unit,
+    onOpenInApp: () -> Unit,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -493,7 +500,7 @@ private fun RunningTab(
             Spacer(Modifier.height(12.dp))
             PrimaryAction(label = "Open OpenCode", onClick = onOpen)
             Spacer(Modifier.height(8.dp))
-            SecondaryAction(label = "Open in browser", onClick = onBrowser)
+            SecondaryAction(label = "Open in app", onClick = onOpenInApp)
             Spacer(Modifier.height(8.dp))
             SecondaryAction(label = "Stop server", onClick = onStop, danger = true)
         }
