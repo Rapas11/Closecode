@@ -99,6 +99,24 @@ object OpenCode {
         return status
     }
 
+    /**
+     * The command that starts OpenCode's provider authentication in a terminal.
+     *
+     * AndroidIDE's own status dialog says to continue the authentication flow in Terminal, then
+     * return and retry. This command uses the same installed binary and the same HOME/XDG
+     * directories as the web server, so credentials written by the login are the credentials the
+     * server reads. It is null until the binary and its runtime are installed; there is nothing
+     * to run before that.
+     */
+    fun authCommand(context: Context): String? {
+        if (!OpenCodeBinary.isInstalled(context)) return null
+        val arch = OpenCodeRuntime.alpineArch(Build.SUPPORTED_ABIS.toList()) ?: return null
+        val loader = OpenCodeRuntime.loader(context, arch)
+        if (!loader.isFile) return null
+        val wrapper = writeAuthWrapper(context, arch)
+        return "${shellQuote(wrapper.absolutePath)} auth login"
+    }
+
     /** Stops the server and clears the card. */
     fun stop() {
         stopping = true
@@ -516,8 +534,7 @@ object OpenCode {
     }
 
     /** A single-quoted shell argument, safe for a path with spaces in it. */
-    private fun shellQuote(value: String): String =
-        "'" + value.replace("'", "'\\''") + "'"
+    private fun shellQuote(value: String): String = quoteShell(value)
 
     /** The version the program reports about itself, asked of it the same way it is started. */
     private fun readVersion(context: Context, arch: String, binary: File): String {
@@ -593,6 +610,44 @@ object OpenCode {
         return dir
     }
 
+    /**
+     * The `opencode` command used by the terminal for authentication.
+     *
+     * It is a wrapper, not a copy: the installed binary is linked against musl and has to be
+     * started through the runtime loader. The wrapper carries the same environment as the web
+     * server, so `auth login` writes into the store the server will read.
+     */
+    private fun writeAuthWrapper(context: Context, arch: String): File {
+        val dir = File(context.filesDir, "opencode/bin").apply { mkdirs() }
+        val file = File(dir, "opencode")
+        val home = home(context)
+        val data = File(home, "data").apply { mkdirs() }
+        val config = File(home, "config").apply { mkdirs() }
+        val cache = File(home, "cache").apply { mkdirs() }
+        val temp = tmp(context)
+        val tools = prepareTools(context)
+        val loader = OpenCodeRuntime.loader(context, arch)
+        val libraries = OpenCodeRuntime.libraryPath(context)
+        val binary = OpenCodeBinary.binaryFile(context)
+        val path = listOf(tools.absolutePath, "/system/bin", "/system/xbin").joinToString(":")
+        val content = authWrapperScript(
+            temp = temp.absolutePath,
+            home = home.absolutePath,
+            data = data.absolutePath,
+            config = config.absolutePath,
+            cache = cache.absolutePath,
+            path = path,
+            loader = loader.absolutePath,
+            libraries = libraries,
+            binary = binary.absolutePath,
+        )
+        if (!file.isFile || file.readText() != content) file.writeText(content)
+        if (!file.setExecutable(true, false)) {
+            error("Could not make the OpenCode auth command executable")
+        }
+        return file
+    }
+
     private fun writeTool(file: File, content: String) {
         file.parentFile?.mkdirs()
         if (!file.isFile || file.readText() != content) {
@@ -664,3 +719,43 @@ object OpenCode {
         exec /system/bin/sh "${'$'}@"
     """.trimIndent() + "\n"
 }
+
+/**
+ * The shell program the terminal runs for `opencode auth login`.
+ *
+ * It is kept separate from the file write so the exact environment can be checked by a unit
+ * test: the login has to read and write the same HOME and XDG directories as the web server, or
+ * the credentials it creates are invisible to the page that needs them.
+ */
+internal fun authWrapperScript(
+    temp: String,
+    home: String,
+    data: String,
+    config: String,
+    cache: String,
+    path: String,
+    loader: String,
+    libraries: String,
+    binary: String,
+): String = buildString {
+    appendLine("#!/system/bin/sh")
+    appendLine("# Same environment as the web server, so auth lands in the same store.")
+    appendLine("export TMPDIR=${quoteShell(temp)}")
+    appendLine("export HOME=${quoteShell(home)}")
+    appendLine("export XDG_DATA_HOME=${quoteShell(data)}")
+    appendLine("export XDG_CONFIG_HOME=${quoteShell(config)}")
+    appendLine("export XDG_CACHE_HOME=${quoteShell(cache)}")
+    appendLine("export BROWSER=/system/bin/true")
+    appendLine("export PATH=${quoteShell(path)}")
+    appendLine("export SHELL=/system/bin/sh")
+    appendLine("export TERM=xterm-256color")
+    appendLine(
+        "exec ${quoteShell(loader)} " +
+            "--library-path ${quoteShell(libraries)} " +
+            "${quoteShell(binary)} \"\$@\"",
+    )
+}
+
+/** A single-quoted shell argument, safe for a path with spaces in it. */
+private fun quoteShell(value: String): String =
+    "'" + value.replace("'", "'\\''") + "'"

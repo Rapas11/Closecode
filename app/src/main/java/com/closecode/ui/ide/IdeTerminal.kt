@@ -483,6 +483,16 @@ internal fun IdeTerminal(
                             "This device has no shell to run."
                         }
                     )
+                } else {
+                    // A command handed over before this panel was composed: the AI tab's
+                    // Authenticate action uses this to start OpenCode's login in a fresh PTY.
+                    session.pendingCommand?.let { command ->
+                        session.pendingCommand = null
+                        val prompt = promptPrefix(displayDir(projectName, session.cwd))
+                        if (session.submit(command, projectSlug, historyStore, prompt)) {
+                            onFilesChanged()
+                        }
+                    }
                 }
                 // Drained here rather than on the reader thread: compose state is written on the
                 // thread that owns the composition, and the reader is not it.

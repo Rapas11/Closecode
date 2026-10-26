@@ -121,6 +121,53 @@ class OpenCodeModelTest {
         assertFalse(sameProjectPath("", "/data/user/0/com.closecode/files/p"))
         assertFalse(sameProjectPath("/data/user/0/com.closecode/files/p", ""))
     }
+
+    @Test
+    fun theAuthWrapperUsesTheServersEnvironment() {
+        val script = authWrapperScript(
+            temp = "/data/tmp",
+            home = "/data/home",
+            data = "/data/home/data",
+            config = "/data/home/config",
+            cache = "/data/home/cache",
+            path = "/data/bin:/system/bin",
+            loader = "/data/alpine/lib/ld-musl-x86_64.so.1",
+            libraries = "/data/alpine/lib:/data/alpine/usr/lib",
+            binary = "/data/opencode",
+        )
+
+        assertTrue(script.startsWith("#!/system/bin/sh"))
+        assertTrue(script.contains("export TMPDIR='/data/tmp'"))
+        assertTrue(script.contains("export HOME='/data/home'"))
+        assertTrue(script.contains("export XDG_DATA_HOME='/data/home/data'"))
+        assertTrue(script.contains("export XDG_CONFIG_HOME='/data/home/config'"))
+        assertTrue(script.contains("export XDG_CACHE_HOME='/data/home/cache'"))
+        assertTrue(script.contains("export PATH='/data/bin:/system/bin'"))
+        assertTrue(script.contains("'/data/alpine/lib/ld-musl-x86_64.so.1'"))
+        assertTrue(
+            script.contains(
+                "--library-path '/data/alpine/lib:/data/alpine/usr/lib'",
+            ),
+        )
+        assertTrue(script.contains("'/data/opencode' \"$@\""))
+    }
+
+    @Test
+    fun theAuthWrapperQuotesAPathWithSpaces() {
+        val script = authWrapperScript(
+            temp = "/data/tmp",
+            home = "/data/home with space",
+            data = "/data/home/data",
+            config = "/data/home/config",
+            cache = "/data/home/cache",
+            path = "/data/bin:/system/bin",
+            loader = "/data/loader",
+            libraries = "/data/lib:/data/usr/lib",
+            binary = "/data/opencode",
+        )
+
+        assertTrue(script.contains("export HOME='/data/home with space'"))
+    }
 }
 
 class OpenCodeBinaryTest {

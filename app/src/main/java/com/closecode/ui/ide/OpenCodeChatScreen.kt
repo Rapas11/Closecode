@@ -1,8 +1,11 @@
 package com.closecode.ui.ide
 
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
+import android.net.Uri
 import android.util.Log
 import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
@@ -10,11 +13,14 @@ import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.ValueCallback
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -67,8 +73,9 @@ import com.closecode.ui.theme.Sans
  * The page is not redesigned and not reimplemented: it is OpenCode's own page, loaded from the
  * phone's own loopback. Two things are enforced around it:
  *
- *  - only the local address may be loaded. The server is bound to 127.0.0.1, but a page could
- *    still try to send the user somewhere else, and the WebView refuses to follow it;
+ *  - the page itself stays on the local address. The server is bound to 127.0.0.1, and a link
+ *    that points somewhere else is handed to the phone's browser instead of navigating the
+ *    WebView away from the project;
  *  - the back button goes back inside the page first, and only leaves the page at its start —
  *    leaving never stops the server.
  *
@@ -83,10 +90,34 @@ fun OpenCodeChatScreen(
     url: String,
     generation: Int = 0,
     onBack: () -> Unit,
+    onAuthenticate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
     val holder = remember { WebViewHolder() }
+    var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
+    val fileLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult(),
+    ) { result ->
+        val callback = fileCallback
+        fileCallback = null
+        if (callback == null) return@rememberLauncherForActivityResult
+        if (result.resultCode != Activity.RESULT_OK) {
+            callback.onReceiveValue(null)
+            return@rememberLauncherForActivityResult
+        }
+        val data = result.data
+        val clip = data?.clipData
+        val uris: Array<Uri> = when {
+            clip != null -> (0 until clip.itemCount)
+                .mapNotNull { index -> clip.getItemAt(index).uri }
+                .toTypedArray()
+
+            data?.data != null -> arrayOf(data.data!!)
+            else -> emptyArray()
+        }
+        callback.onReceiveValue(uris)
+    }
 
     // The page's own back button: back inside the page first, then leave the page.
     BackHandler {
@@ -128,6 +159,7 @@ fun OpenCodeChatScreen(
         OpenCodePageBar(
             url = url,
             onBack = onBack,
+            onAuthenticate = onAuthenticate,
             onRefresh = { holder.view?.reload() },
         )
         Box(
@@ -161,6 +193,34 @@ fun OpenCodeChatScreen(
                                 }
                                 return false
                             }
+
+                            // The OpenCode page uses a normal file input for attachments.
+                            // Android has no built-in answer to that input, so the WebView
+                            // asks this client for an Intent and waits for the chosen URIs.
+                            override fun onShowFileChooser(
+                                webView: WebView?,
+                                filePathCallback: ValueCallback<Array<Uri>>?,
+                                fileChooserParams: WebChromeClient.FileChooserParams?,
+                            ): Boolean {
+                                fileCallback?.onReceiveValue(null)
+                                fileCallback = filePathCallback
+                                if (filePathCallback == null) return false
+                                val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                                    addCategory(Intent.CATEGORY_OPENABLE)
+                                    type = "*/*"
+                                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                                }
+                                return runCatching {
+                                    fileLauncher.launch(
+                                        Intent.createChooser(intent, "Choose a file"),
+                                    )
+                                    true
+                                }.getOrElse {
+                                    fileCallback = null
+                                    filePathCallback.onReceiveValue(null)
+                                    false
+                                }
+                            }
                         }
                         holder.view = this
                         holder.url = url
@@ -179,13 +239,28 @@ fun OpenCodeChatScreen(
                                 view: WebView?,
                                 request: WebResourceRequest?,
                             ): Boolean {
-                                val host = request?.url?.host ?: return true
-                                // Only the loopback is allowed. Everything else is refused.
-                                return !(
-                                    host == "127.0.0.1" ||
-                                        host == "localhost" ||
-                                        host == "::1"
+                                val target = request?.url ?: return true
+                                val host = target.host
+                                if (host == "127.0.0.1" || host == "localhost" || host == "::1") {
+                                    return false
+                                }
+                                // A provider login or documentation link belongs in the
+                                // phone's browser, not inside the project page's WebView.
+                                // Keep the page on the project it was opened for.
+                                val context = view?.context ?: return true
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, target)
+                                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                                     )
+                                }.onFailure {
+                                    Toast.makeText(
+                                        context,
+                                        "No app can open that link",
+                                        Toast.LENGTH_SHORT,
+                                    ).show()
+                                }
+                                return true
                             }
 
                             override fun onPageStarted(
@@ -254,6 +329,7 @@ fun OpenCodeChatScreen(
 private fun OpenCodePageBar(
     url: String,
     onBack: () -> Unit,
+    onAuthenticate: () -> Unit,
     onRefresh: () -> Unit,
 ) {
     val c = LocalPageColors.current
@@ -327,6 +403,20 @@ private fun OpenCodePageBar(
                         menuOpen = false
                         clipboard.setText(AnnotatedString(url))
                         Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { PageBarMenuText("Authenticate") },
+                    onClick = {
+                        menuOpen = false
+                        onAuthenticate()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { PageBarMenuText("Close page") },
+                    onClick = {
+                        menuOpen = false
+                        onBack()
                     },
                 )
             }

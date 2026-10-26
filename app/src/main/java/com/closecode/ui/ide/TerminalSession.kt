@@ -91,6 +91,12 @@ internal class TerminalSession(val number: Int) {
     var followOutput by mutableStateOf(true)
     /** Output arrived while unfollowed: the Latest pill's blue dot until the reader catches up. */
     var hasNewOutput by mutableStateOf(false)
+    /**
+     * A command to run as soon as this shell starts. The AI tab uses it to hand OpenCode's
+     * authentication command to a fresh terminal; the command waits here until the terminal is
+     * composed and its PTY is ready.
+     */
+    var pendingCommand by mutableStateOf<String?>(null)
 
     private var shell: ShellBackend? = null
     // The last measured size. Kept here (not only on the process) so a resize that lands
@@ -407,6 +413,19 @@ internal class TerminalSessions {
         sessions = sessions + TerminalSession(next)
         activeId = next
         return next
+    }
+
+    /**
+     * Opens a fresh shell with one command waiting for it.
+     *
+     * The shell starts when the terminal panel is composed, so the command cannot be written
+     * here. It is kept on the session and handed to the PTY at start, which also makes it work
+     * when the terminal is opened from a page that covers the whole screen.
+     */
+    fun openAndRun(command: String): Int {
+        val number = openNew()
+        sessions.firstOrNull { it.number == number }?.pendingCommand = command
+        return number
     }
 
     /**

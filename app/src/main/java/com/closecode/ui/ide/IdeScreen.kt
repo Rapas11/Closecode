@@ -748,6 +748,25 @@ internal fun IdeScreen(
         navKeyboard?.hide()
         navFocus.clearFocus()
     }
+
+    /**
+     * Opens OpenCode's provider login in a fresh terminal.
+     *
+     * The command is a wrapper that runs the installed OpenCode binary with the same HOME and
+     * XDG directories as the web server. The terminal is the app's own PTY, so the login can
+     * ask its questions and show its codes. Nothing is sent anywhere by CloseCode itself.
+     */
+    fun authenticateOpenCode() {
+        val command = com.closecode.ai.OpenCode.authCommand(context)
+        if (command == null) {
+            toast = "Start OpenCode once, then authenticate."
+            return
+        }
+        terminalSessions.openAndRun(command)
+        dismissKeyboard()
+        activePanel = "Terminal"
+        toast = "Finish authentication in Terminal, then return to AI and tap Chat."
+    }
     // How far the code text is pinched away from the size the settings chose. The gesture is heard
     // on the whole screen — a pinch over the top bar or the tool row zooms the editor too — so the
     // state lives here rather than down in the editor that only reads it.
@@ -1934,6 +1953,7 @@ internal fun IdeScreen(
                     projectName = projectName,
                     projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                     onChat = { openCodeChat = true },
+                    onAuthenticate = ::authenticateOpenCode,
                     modifier = Modifier.weight(1f),
                 )
                 "Logcat" -> IdeLogcatPanel(
@@ -2937,6 +2957,10 @@ internal fun IdeScreen(
                 url = openCode.pageUrl.ifBlank { openCode.url },
                 generation = openCode.generation,
                 onBack = { openCodeChat = false },
+                onAuthenticate = {
+                    openCodeChat = false
+                    authenticateOpenCode()
+                },
             )
         }
 
