@@ -70,8 +70,9 @@ class OpenCodeModelTest {
     @Test
     fun thePageUrlSelectsTheProjectSession() {
         assertEquals(
-            "http://127.0.0.1:4098/project-session?directory=" +
-                "%2Fdata%2Fuser%2F0%2Fcom.closecode%2Ffiles%2Fprojects%2Flanding-page-2",
+            "http://127.0.0.1:4098/" +
+                "L2RhdGEvdXNlci8wL2NvbS5jbG9zZWNvZGUvZmlsZXMvcHJvamVjdHMvbGFuZGluZy1wYWdlLTI" +
+                "/session",
             projectPageUrl(
                 "http://127.0.0.1:4098/",
                 "/data/user/0/com.closecode/files/projects/landing-page-2",
@@ -80,20 +81,26 @@ class OpenCodeModelTest {
     }
 
     @Test
-    fun thePageUrlUsesTheProjectSessionRoute() {
+    fun thePageUrlUsesTheDirectoryRouteThePageUnderstands() {
         val url = projectPageUrl("http://127.0.0.1:4098", "/data/user/0/com.closecode/files/p")
 
-        assertTrue(url.startsWith("http://127.0.0.1:4098/project-session?directory="))
-        assertFalse(url.contains("/session"))
+        assertTrue(url.startsWith("http://127.0.0.1:4098/L2RhdGEvdXNlci8wL2NvbS5jbG9zZWNvZGU"))
+        assertTrue(url.endsWith("/session"))
+        assertFalse(url.contains("project-session"))
     }
 
     @Test
-    fun thePageUrlEncodesTheDirectoryAsUtf8() {
+    fun thePageUrlEncodesTheDirectoryAsUnpaddedBase64UrlUtf8() {
         val directory = "/data/user/0/com.closecode/files/проект"
         val url = projectPageUrl("http://127.0.0.1:4098", directory)
-        val encoded = java.net.URLEncoder.encode(directory, Charsets.UTF_8.name())
 
-        assertEquals("http://127.0.0.1:4098/project-session?directory=$encoded", url)
+        assertEquals(
+            "http://127.0.0.1:4098/" +
+                "L2RhdGEvdXNlci8wL2NvbS5jbG9zZWNvZGUvZmlsZXMv0L_RgNC-0LXQutGC" +
+                "/session",
+            url,
+        )
+        assertFalse(url.contains("="))
     }
 
     @Test

@@ -66,6 +66,7 @@ import com.closecode.ai.OpenCode
 import com.closecode.ai.OpenCodePageLog
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
+import org.json.JSONObject
 
 /**
  * OpenCode's own web page, inside the app.
@@ -281,9 +282,27 @@ fun OpenCodeChatScreen(
                                 OpenCodePageLog.add("page finished: $finishedUrl")
                                 installPageLog(view)
                                 installViewportFix(view)
+                                installProjectStateFix(
+                                    view,
+                                    OpenCode.state.value.projectDirectory,
+                                    url,
+                                )
                                 // React can mount a moment after the document finishes; apply
                                 // once more after that so the page fills the WebView at once.
                                 view?.postDelayed({ installViewportFix(view) }, 300)
+                                // An older build could leave a tab record with a corrupt project
+                                // directory. The first check catches state that was already
+                                // there; this second one catches state the page writes late.
+                                view?.postDelayed(
+                                    {
+                                        installProjectStateFix(
+                                            view,
+                                            OpenCode.state.value.projectDirectory,
+                                            url,
+                                        )
+                                    },
+                                    800,
+                                )
                             }
 
                             override fun onReceivedError(
@@ -486,6 +505,50 @@ private fun wipePage(context: android.content.Context) {
 private fun installPageLog(view: WebView?) {
     if (view == null) return
     runCatching { view.evaluateJavascript(PAGE_LOG_SCRIPT, null) }
+}
+
+/**
+ * Repairs the one piece of OpenCode state a previous install can leave behind.
+ *
+ * OpenCode keeps its open tabs in `opencode.window.browser.dat:tabs`. A tab record written by a
+ * bad project URL can carry a corrupt `directory`, and the page then sends every API request to
+ * that corrupt path even when the address bar names the real project. When the saved tabs exist
+ * but none belongs to [directory], this drops the saved tabs, clears the page's session state and
+ * reloads [projectUrl] once. A clean load creates a correct draft from the base64 route; a load
+ * that is already correct does nothing.
+ */
+private fun installProjectStateFix(
+    view: WebView?,
+    directory: String,
+    projectUrl: String,
+) {
+    if (view == null || directory.isBlank() || projectUrl.isBlank()) return
+    val directoryLiteral = JSONObject.quote(directory)
+    val urlLiteral = JSONObject.quote(projectUrl)
+    val script = """
+        (function () {
+            try {
+                var key = 'opencode.window.browser.dat:tabs';
+                var raw = localStorage.getItem(key);
+                if (!raw) return;
+                var tabs = JSON.parse(raw);
+                var wanted = $directoryLiteral;
+                if (Array.isArray(tabs) && tabs.some(function (tab) {
+                    return tab && tab.directory === wanted;
+                })) return;
+                localStorage.removeItem(key);
+                sessionStorage.clear();
+                location.replace($urlLiteral);
+            } catch (error) {
+                try {
+                    localStorage.removeItem('opencode.window.browser.dat:tabs');
+                    sessionStorage.clear();
+                    location.replace($urlLiteral);
+                } catch (ignored) {}
+            }
+        })();
+    """.trimIndent()
+    runCatching { view.evaluateJavascript(script, null) }
 }
 
 /**

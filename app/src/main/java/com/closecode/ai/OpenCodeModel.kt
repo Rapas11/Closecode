@@ -1,8 +1,8 @@
 package com.closecode.ai
 
 import java.io.File
-import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 
 /** What the AI tab's OpenCode screens are doing right now. */
 enum class OpenCodePhase {
@@ -95,18 +95,20 @@ object OpenCodeDefaults {
 /**
  * The page URL that opens the project in [projectRoot], not OpenCode's home screen.
  *
- * AndroidIDE 1.3.1 opens the project through `/project-session?directory=...`, not through the
- * older base64 path route. The directory is a normal query parameter, so the server receives the
- * real absolute path and binds the page to that project. The route returns the page shell; the
- * page itself reads the directory and selects the project.
+ * OpenCode 1.18.31's own page router reads the directory from the first path segment: it decodes
+ * that segment as UTF-8 base64url and then opens a new session in the decoded folder. The route
+ * is therefore `/<base64url(directory)>/session`. This is the route the installed page actually
+ * understands; `/project-session?directory=...` is not in its router and leaves a blank page.
  */
 fun projectPageUrl(baseUrl: String, projectRoot: File): String =
     projectPageUrl(baseUrl, projectRoot.absolutePath)
 
 /** The same URL for a directory already in the form the server reports. */
 fun projectPageUrl(baseUrl: String, directory: String): String {
-    val encoded = URLEncoder.encode(directory, StandardCharsets.UTF_8.name())
-    return baseUrl.trimEnd('/') + "/project-session?directory=" + encoded
+    val encoded = Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(directory.toByteArray(StandardCharsets.UTF_8))
+    return baseUrl.trimEnd('/') + "/" + encoded + "/session"
 }
 
 /**
