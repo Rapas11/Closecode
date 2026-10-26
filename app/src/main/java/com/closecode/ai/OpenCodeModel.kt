@@ -122,6 +122,26 @@ fun retryCountdownText(seconds: Int): String {
 }
 
 /**
+ * How long a running server may stay silent before it is treated as gone.
+ *
+ * OpenCode's health endpoint can stop answering while the server bootstraps a project: the
+ * first request touches the project, starts watchers and reads configuration. On a phone that
+ * work can take a minute, especially while OpenCode is timing out on its own network calls.
+ * Killing the process after a few seconds turns that slow first request into a restart loop, so
+ * the same budget as the initial start is allowed before the supervisor gives up.
+ */
+internal const val SERVER_SILENCE_LIMIT_MS = 120_000L
+
+/**
+ * Whether the server should be restarted after [silentForMs] without a health answer.
+ *
+ * A dead process is always restarted at once. A live process gets the full grace period, which
+ * is what lets a slow project bootstrap finish instead of being mistaken for a crash.
+ */
+internal fun serverNeedsRestart(processAlive: Boolean, silentForMs: Long): Boolean =
+    !processAlive || silentForMs >= SERVER_SILENCE_LIMIT_MS
+
+/**
  * What the AI tab says when this phone's CPU is not one OpenCode ships a build for.
  *
  * The list is the phone's own, in its own order, so a report of the message says which ABIs the

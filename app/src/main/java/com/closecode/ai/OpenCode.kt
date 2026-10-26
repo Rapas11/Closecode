@@ -2,6 +2,7 @@ package com.closecode.ai
 
 import android.content.Context
 import android.os.Build
+import android.os.SystemClock
 import com.closecode.debug.DebugLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -305,18 +306,27 @@ object OpenCode {
                 log("OpenCode is answering at $url")
                 OpenCodeService.update(context, url, projectName)
                 DebugLog.crumb("AICO", "server answering")
-                // Stay up until the server stops answering or the process ends.
-                var misses = 0
+                // Stay up until the server stops answering or the process ends. A project's
+                // first request bootstraps it and can leave the health endpoint silent for a
+                // long time while watchers and configuration come up. A few missed answers are
+                // therefore not a death sentence; only a dead process or the full grace period
+                // is.
+                var silentSinceMs: Long? = null
                 while (currentCoroutineContext().isActive) {
                     delay(1_000)
                     if (process?.isAlive != true) break
+                    val now = SystemClock.elapsedRealtime()
                     if (probe(port) != null) {
-                        misses = 0
+                        silentSinceMs = null
                     } else {
-                        misses++
-                        // One missed answer is a hiccup, two is a busy moment. A server that
-                        // is truly gone does not come back within ten seconds of asking.
-                        if (misses >= 3) break
+                        val since = silentSinceMs ?: now.also { silentSinceMs = it }
+                        if (serverNeedsRestart(processAlive = true, silentForMs = now - since)) {
+                            log(
+                                "No health answer for ${SERVER_SILENCE_LIMIT_MS / 1000} s",
+                                warning = true,
+                            )
+                            break
+                        }
                     }
                 }
                 if (!currentCoroutineContext().isActive) return

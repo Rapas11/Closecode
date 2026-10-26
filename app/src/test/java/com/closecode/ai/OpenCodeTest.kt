@@ -38,6 +38,23 @@ class OpenCodeModelTest {
     }
 
     @Test
+    fun aSlowBootstrapIsNotTreatedAsADeadServer() {
+        assertFalse(serverNeedsRestart(processAlive = true, silentForMs = 0))
+        assertFalse(serverNeedsRestart(true, SERVER_SILENCE_LIMIT_MS - 1))
+    }
+
+    @Test
+    fun aServerSilentForTheWholeGracePeriodIsRestarted() {
+        assertTrue(serverNeedsRestart(true, SERVER_SILENCE_LIMIT_MS))
+        assertTrue(serverNeedsRestart(true, SERVER_SILENCE_LIMIT_MS + 1))
+    }
+
+    @Test
+    fun aDeadServerIsRestartedAtOnce() {
+        assertTrue(serverNeedsRestart(processAlive = false, silentForMs = 0))
+    }
+
+    @Test
     fun theLaunchLineIsTheCommandTheAppRuns() {
         assertEquals(
             "Launch: opencode web --hostname 127.0.0.1 --port 4098",
