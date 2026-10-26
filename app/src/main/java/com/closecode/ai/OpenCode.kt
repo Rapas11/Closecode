@@ -66,15 +66,37 @@ object OpenCode {
     /**
      * Starts the server on [projectRoot].
      *
-     * Safe to call twice: the second call is ignored while the first is still going.
+     * Safe to call twice for the same project: the second call is ignored while the first is
+     * still going. A different project stops the old server first; the UI asks the reader to
+     * confirm that switch before calling this.
      */
     fun start(context: Context, projectRoot: File, projectName: String) {
-        if (isActive) return
+        if (isActive) {
+            if (isRunningFor(projectRoot)) return
+            stop()
+        }
         stopping = false
         val appContext = context.applicationContext
         job = scope.launch {
             runServer(appContext, projectRoot, projectName)
         }
+    }
+
+    /** True while this server is starting or running for [projectRoot]. */
+    fun isRunningFor(projectRoot: File): Boolean =
+        isActive &&
+            sameProjectPath(state.value.projectDirectory, projectRoot.absolutePath)
+
+    /**
+     * The running server's status when it belongs to a different project, or null when there is
+     * no conflict. The AI tab uses this to ask before replacing one project's server with
+     * another's.
+     */
+    fun runningForOtherProject(projectRoot: File): OpenCodeStatus? {
+        val status = state.value
+        if (!isActive || status.projectDirectory.isBlank()) return null
+        if (sameProjectPath(status.projectDirectory, projectRoot.absolutePath)) return null
+        return status
     }
 
     /** Stops the server and clears the card. */
@@ -213,6 +235,7 @@ object OpenCode {
                 phase = OpenCodePhase.Starting,
                 projectName = projectName,
                 projectFolder = projectRoot.name,
+                projectDirectory = projectRoot.absolutePath,
                 url = url,
                 pageUrl = projectPageUrl(url, projectRoot),
                 port = port,
@@ -298,6 +321,7 @@ object OpenCode {
                     it.copy(
                         phase = OpenCodePhase.Running,
                         version = shown,
+                        projectDirectory = projectRoot.absolutePath,
                         url = url,
                         pageUrl = projectPageUrl(url, projectRoot),
                         generation = it.generation + 1,

@@ -68,11 +68,10 @@ class OpenCodeModelTest {
     }
 
     @Test
-    fun thePageUrlSelectsTheProjectDirectory() {
+    fun thePageUrlSelectsTheProjectSession() {
         assertEquals(
-            "http://127.0.0.1:4098/" +
-                "L2RhdGEvdXNlci8wL2NvbS5jbG9zZWNvZGUvZmlsZXMvcHJvamVjdHMvbGFuZGluZy1wYWdlLTI" +
-                "/session",
+            "http://127.0.0.1:4098/project-session?directory=" +
+                "%2Fdata%2Fuser%2F0%2Fcom.closecode%2Ffiles%2Fprojects%2Flanding-page-2",
             projectPageUrl(
                 "http://127.0.0.1:4098/",
                 "/data/user/0/com.closecode/files/projects/landing-page-2",
@@ -81,26 +80,46 @@ class OpenCodeModelTest {
     }
 
     @Test
-    fun thePageUrlUsesUnpaddedBase64Url() {
+    fun thePageUrlUsesTheProjectSessionRoute() {
         val url = projectPageUrl("http://127.0.0.1:4098", "/data/user/0/com.closecode/files/p")
-        val encoded = url.removeSuffix("/session").substringAfterLast('/')
 
-        assertFalse(encoded.contains('='))
-        assertTrue(encoded.all { it.isLetterOrDigit() || it == '-' || it == '_' })
+        assertTrue(url.startsWith("http://127.0.0.1:4098/project-session?directory="))
+        assertFalse(url.contains("/session"))
     }
 
     @Test
     fun thePageUrlEncodesTheDirectoryAsUtf8() {
         val directory = "/data/user/0/com.closecode/files/проект"
         val url = projectPageUrl("http://127.0.0.1:4098", directory)
+        val encoded = java.net.URLEncoder.encode(directory, Charsets.UTF_8.name())
 
-        assertEquals(
-            "http://127.0.0.1:4098/" +
-                java.util.Base64.getUrlEncoder().withoutPadding()
-                    .encodeToString(directory.toByteArray(Charsets.UTF_8)) +
-                "/session",
-            url,
+        assertEquals("http://127.0.0.1:4098/project-session?directory=$encoded", url)
+    }
+
+    @Test
+    fun theSameProjectPathIsRecognised() {
+        assertTrue(
+            sameProjectPath(
+                "/data/user/0/com.closecode/files/p",
+                "/data/user/0/com.closecode/files/p",
+            ),
         )
+    }
+
+    @Test
+    fun aDifferentProjectPathIsNotTheSame() {
+        assertFalse(
+            sameProjectPath(
+                "/data/user/0/com.closecode/files/p",
+                "/data/user/0/com.closecode/files/q",
+            ),
+        )
+    }
+
+    @Test
+    fun aBlankProjectPathIsNeverTheSame() {
+        assertFalse(sameProjectPath("", "/data/user/0/com.closecode/files/p"))
+        assertFalse(sameProjectPath("/data/user/0/com.closecode/files/p", ""))
     }
 }
 

@@ -1,8 +1,8 @@
 package com.closecode.ai
 
 import java.io.File
+import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.util.Base64
 
 /** What the AI tab's OpenCode screens are doing right now. */
 enum class OpenCodePhase {
@@ -41,6 +41,8 @@ data class OpenCodeStatus(
     val phase: OpenCodePhase = OpenCodePhase.Idle,
     val projectName: String = "",
     val projectFolder: String = "",
+    /** Absolute path of the project this server is bound to. Empty while idle. */
+    val projectDirectory: String = "",
     val url: String = "",
     /** The server URL that opens this project, not the home screen. Empty until the port is known. */
     val pageUrl: String = "",
@@ -91,23 +93,34 @@ object OpenCodeDefaults {
 }
 
 /**
- * The page URL that opens a new session in [projectRoot], not OpenCode's home screen.
+ * The page URL that opens the project in [projectRoot], not OpenCode's home screen.
  *
- * OpenCode's web bundle selects a directory by putting the base64url of its UTF-8 bytes on the
- * path. The directory alone is treated as the home screen; the bundle's own route parser only
- * selects the directory when the next segment is `session`. The root page otherwise opens the
- * global home with `~/.local` and a `/` worktree, which is not this app's project. The encoding
- * has no padding, matching the page's own `base64url` helper.
+ * AndroidIDE 1.3.1 opens the project through `/project-session?directory=...`, not through the
+ * older base64 path route. The directory is a normal query parameter, so the server receives the
+ * real absolute path and binds the page to that project. The route returns the page shell; the
+ * page itself reads the directory and selects the project.
  */
 fun projectPageUrl(baseUrl: String, projectRoot: File): String =
     projectPageUrl(baseUrl, projectRoot.absolutePath)
 
 /** The same URL for a directory already in the form the server reports. */
 fun projectPageUrl(baseUrl: String, directory: String): String {
-    val encoded = Base64.getUrlEncoder()
-        .withoutPadding()
-        .encodeToString(directory.toByteArray(StandardCharsets.UTF_8))
-    return baseUrl.trimEnd('/') + "/" + encoded + "/session"
+    val encoded = URLEncoder.encode(directory, StandardCharsets.UTF_8.name())
+    return baseUrl.trimEnd('/') + "/project-session?directory=" + encoded
+}
+
+/**
+ * Whether two project paths name the same folder.
+ *
+ * Android exposes the same app directory as both `/data/user/0/...` and `/data/data/...`; the
+ * canonical path resolves that alias. Paths that are blank are never the same project: an idle
+ * server has no project to compare.
+ */
+fun sameProjectPath(first: String, second: String): Boolean {
+    if (first.isBlank() || second.isBlank()) return false
+    val left = runCatching { File(first).canonicalPath }.getOrDefault(first)
+    val right = runCatching { File(second).canonicalPath }.getOrDefault(second)
+    return left == right
 }
 
 /**
