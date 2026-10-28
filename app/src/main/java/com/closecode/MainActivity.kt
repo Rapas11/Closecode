@@ -11,6 +11,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
+import com.closecode.control.CloseCodeControl
 import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
 import com.closecode.debug.sharePlainText
@@ -84,6 +85,7 @@ class MainActivity : ComponentActivity() {
         // The debug log gets its file and its version line before anything can record an event.
         // The switch stays off — it is turned on per session, and every start begins off.
         DebugLog.attach(filesDir, BuildInfo.label)
+        CloseCodeControl.start(applicationContext)
         CrashReport.install(filesDir) { BuildInfo.label }
         // A crash leaves its report in a file; the next launch offers it up for copying or
         // sharing instead of swallowing it. There is no logcat on a phone, so this dialog is

@@ -197,7 +197,7 @@ class BuildService : Service() {
                 } else {
                     context.startService(intent)
                 }
-            }
+            }.onFailure { running = false }
         }
 
         fun update(context: Context, project: String, text: String, progress: Int) {
@@ -215,6 +215,7 @@ class BuildService : Service() {
 
         fun finish(context: Context, project: String, text: String, ok: Boolean) {
             if (!running) return
+            running = false
             runCatching {
                 context.startService(
                     Intent(context, BuildService::class.java)

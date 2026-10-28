@@ -1531,54 +1531,24 @@ internal fun IdeScreen(
         com.closecode.build.BuildCancel.register { buildEngine.cancel() }
         // Every piece the chain needs. A missing piece is setup, and the engine says so;
         // nothing here guesses at a tool that is not on disk.
-        val libraries = withContext(Dispatchers.IO) {
-            store.librariesDir()?.let { com.closecode.build.LibraryIndex.load(it) }
-        }
-        val record = projectRecord?.takeIf { !it.imported }
-        val checkInput = com.closecode.build.ProjectCheck.Input(
-            savedPackage = record?.config?.packageName?.takeIf { it.isNotBlank() },
-            savedMinSdk = record?.config?.minSdk?.toIntOrNull(),
-            savedTargetSdk = record?.config?.targetSdk?.toIntOrNull(),
-            savedCompileSdk = record?.config?.compileSdk?.toIntOrNull(),
-            otherPackages = repository.listProjects()
-                .filter { it.slug != slug }
-                .mapNotNull { runCatching { repository.packageOf(it) }.getOrNull() }
-                .toSet(),
-            freeBytes = context.filesDir.usableSpace,
-            cacheModules = libraries?.cacheModules.orEmpty(),
+        val configured = projectRecord?.takeIf { !it.imported }
+        val setup = com.closecode.build.BuildSetupFactory.create(
+            context,
+            com.closecode.build.BuildSetup.Project(
+                slug = slug,
+                name = projectName,
+                directory = projectRoot,
+                savedPackage = configured?.config?.packageName?.takeIf { it.isNotBlank() },
+                savedMinSdk = configured?.config?.minSdk?.toIntOrNull(),
+                savedTargetSdk = configured?.config?.targetSdk?.toIntOrNull(),
+                savedCompileSdk = configured?.config?.compileSdk?.toIntOrNull(),
+                otherPackages = repository.listProjects()
+                    .filter { it.slug != slug }
+                    .mapNotNull { runCatching { repository.packageOf(it) }.getOrNull() }
+                    .toSet(),
+            ),
         )
-        val ids = com.closecode.build.ToolchainManifest.KOTLINC_LAUNCH_IDS + listOf("ecj", "r8")
-        val toolFiles = ids.distinct()
-            .mapNotNull { id -> store.jar(id)?.let { id to it } }
-            .toMap()
-        val aapt2 = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
-            .takeIf { it.isFile }
-        val androidJar = store.jar("android-jar")
-        val stdlib = store.jar("kotlin-stdlib")
-        val signer = withContext(Dispatchers.IO) {
-            runCatching { com.closecode.build.DebugKey.ensure(context) }.getOrNull()
-        }
-        val tools = if (
-            aapt2 != null && androidJar != null && stdlib != null &&
-            libraries != null && signer != null &&
-            toolFiles.size == ids.distinct().size
-        ) {
-            com.closecode.build.BuildTools(
-                aapt2 = aapt2,
-                androidJar = androidJar,
-                stdlib = stdlib,
-                libraries = libraries,
-                signer = com.closecode.build.SigningIdentity(signer.key, signer.chain),
-                toolFiles = toolFiles,
-                composePlugin = store.jar("kotlin-compiler"),
-                dexOptDir = File(context.codeCacheDir, "build-dex"),
-                aapt2Env = com.closecode.build.Aapt2Runtime.environment(context),
-                kotlinResources = com.closecode.build.KotlinCompat.resources(context),
-            )
-        } else {
-            null
-        }
-        val outcome = buildEngine.build(projectRoot, slug, checkInput, tools)
+        val outcome = buildEngine.build(projectRoot, slug, setup.checkInput, setup.tools)
         when (outcome) {
             is com.closecode.build.BuildOutcome.Blocked -> {
                 val errors = outcome.findings

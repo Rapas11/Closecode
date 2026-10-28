@@ -4,6 +4,8 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -16,6 +18,10 @@ import kotlinx.coroutines.withContext
  * chain at the start of each step; the tools themselves cannot be interrupted mid-call,
  * so a cancel stops the build at the next step boundary.
  */
+internal object BuildLock {
+    val mutex = Mutex()
+}
+
 class BuildEngine(
     private val toolchain: ToolchainStore,
 ) {
@@ -34,8 +40,21 @@ class BuildEngine(
         slug: String,
         checkInput: ProjectCheck.Input = ProjectCheck.Input(),
         tools: BuildTools? = null,
-    ): BuildOutcome = withContext(Dispatchers.IO) {
+        onLog: (String) -> Unit = {},
+    ): BuildOutcome {
         cancelled = false
+        return BuildLock.mutex.withLock {
+            buildLocked(projectDir, slug, checkInput, tools, onLog)
+        }
+    }
+
+    private suspend fun buildLocked(
+        projectDir: File,
+        slug: String,
+        checkInput: ProjectCheck.Input,
+        tools: BuildTools?,
+        onLog: (String) -> Unit,
+    ): BuildOutcome = withContext(Dispatchers.IO) {
         _state.value = BuildState.Running(Step.CheckProject, 0f)
         val report = ProjectCheck.check(projectDir, slug, checkInput)
         if (!report.ok) {
@@ -76,6 +95,7 @@ class BuildEngine(
             tools = tools,
             onStep = { step -> _state.value = BuildState.Running(step, progress(step)) },
             cancelled = { cancelled },
+            onLog = onLog,
         )
         val seconds = ((System.currentTimeMillis() - started) / 1000).coerceAtLeast(0)
         val failure = result.failure

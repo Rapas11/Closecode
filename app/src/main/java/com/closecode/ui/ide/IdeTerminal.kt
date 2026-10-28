@@ -197,7 +197,8 @@ internal class ShellProcess(
             // a panel that parses 256 colors and truecolor. (There is no PTY behind this
             // shell — piping through one needs native code this app does not ship — so
             // programs that color only on a terminal get their color forced below instead.)
-            builder.environment()["TERM"] = "xterm-256color"
+            // The same environment as the PTY puts the app's terminal commands on PATH.
+            TerminalEnvironment.applyTo(builder.environment(), directory ?: File("/"))
             // Standard error is folded into standard output rather than given its own pipe.
             //
             // It used to have one, and nothing ever read it. A pipe holds about 64 KB and the shell

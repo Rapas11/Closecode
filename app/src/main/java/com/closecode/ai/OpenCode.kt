@@ -3,6 +3,7 @@ package com.closecode.ai
 import android.content.Context
 import android.os.Build
 import android.os.SystemClock
+import com.closecode.control.CloseCodeControl
 import com.closecode.debug.DebugLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -80,6 +81,7 @@ object OpenCode {
         }
         stopping = false
         val appContext = context.applicationContext
+        CloseCodeControl.start(appContext)
         job = scope.launch {
             runServer(appContext, projectRoot, projectName)
         }

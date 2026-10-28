@@ -63,6 +63,7 @@ object BuildChain {
         tools: BuildTools,
         onStep: (Step) -> Unit = {},
         cancelled: () -> Boolean = { false },
+        onLog: (String) -> Unit = {},
         // Preview rendering compiles one generated harness alongside the project and writes
         // its APK away from the real build, so a preview can never replace the app the user
         // installs and the two builds cannot delete each other's working files.
@@ -76,6 +77,7 @@ object BuildChain {
             tools = tools,
             onStep = onStep,
             cancelled = cancelled,
+            onLog = onLog,
             extraSources = extraSources,
             buildDirectory = buildDirectory ?: File(projectDir, "build"),
             outputApk = outputApk,
@@ -89,6 +91,7 @@ object BuildChain {
         val tools: BuildTools,
         val onStep: (Step) -> Unit,
         val cancelled: () -> Boolean,
+        val onLog: (String) -> Unit,
         val extraSources: List<File>,
         val buildDirectory: File,
         val outputApk: File?,
@@ -114,10 +117,11 @@ object BuildChain {
                 timed(Step.MakeDex) { dex() }
                 val unsigned = timed(Step.PackApp) { pack(preparedManifest) }
                 val apk = timed(Step.Sign) { sign(unsigned) }
+                writeLog()
                 return Result(apk, times.toList(), diagnostics.toList(), null, log.toString())
             } catch (stop: Stop) {
                 diagnostics += stop.diagnostics
-                log.appendLine("FAILED at ${stop.step.label}: ${stop.message}")
+                logLine("FAILED at ${stop.step.label}: ${stop.message}")
                 writeLog()
                 return Result(
                     apk = null,
@@ -133,7 +137,7 @@ object BuildChain {
                 )
             } catch (error: Exception) {
                 val message = error.message ?: error.javaClass.simpleName
-                log.appendLine("FAILED at ${times.lastOrNull()?.step?.label ?: "build"}: $message")
+                logLine("FAILED at ${times.lastOrNull()?.step?.label ?: "build"}: $message")
                 writeLog()
                 return Result(
                     apk = null,
@@ -148,7 +152,7 @@ object BuildChain {
         private fun <T> timed(step: Step, block: () -> T): T {
             if (cancelled()) throw Stop(step, "Build cancelled.", cancelled = true)
             onStep(step)
-            log.appendLine("== ${step.label}")
+            logLine("== ${step.label}")
             val start = System.currentTimeMillis()
             try {
                 return block()
@@ -192,7 +196,7 @@ object BuildChain {
                     "The library cache is missing. Open Build tools and download the tools again.",
                 )
             }
-            log.appendLine("libraries: ${libraries.size} modules, ${tools.libraries.dexFiles.size} dex files")
+            logLine("libraries: ${libraries.size} modules, ${tools.libraries.dexFiles.size} dex files")
             return libraries
         }
 
@@ -205,7 +209,7 @@ object BuildChain {
             if (projectRes.isDirectory) {
                 compileRes(projectRes, File(resFlatDir, "project"))
             } else {
-                log.appendLine("no res folder; linking without project resources")
+                logLine("no res folder; linking without project resources")
             }
             libraries.forEachIndexed { index, library ->
                 val res = library.res ?: return@forEachIndexed
@@ -260,7 +264,7 @@ object BuildChain {
         private fun writeLibraryRClasses(libraries: List<CachedLibrary>) {
             val appR = File(genDir, config.packageName.replace('.', '/') + "/R.java")
             if (!appR.isFile) {
-                log.appendLine("R.java was not generated; library R classes are skipped")
+                logLine("R.java was not generated; library R classes are skipped")
                 return
             }
             val text = appR.readText()
@@ -322,7 +326,7 @@ object BuildChain {
             text = Regex("(<manifest\\b[^>]*>)").replaceFirst(text, "$1$usesSdk")
             if (!text.contains("android:versionCode")) {
                 // aapt2 --version-code/--version-name inject these; nothing else to do.
-                log.appendLine("version ${config.versionCode} (${config.versionName}) from the project")
+                logLine("version ${config.versionCode} (${config.versionName}) from the project")
             }
             return text
         }
@@ -498,7 +502,7 @@ object BuildChain {
             val unsigned = File(apkDir, "app-unsigned.apk")
             unsigned.delete()
             AlignedApkWriter.write(resources, named, unsigned)
-            log.appendLine("packed ${unsigned.length()} bytes · ${named.size} dex files")
+            logLine("packed ${unsigned.length()} bytes · ${named.size} dex files")
             return unsigned
         }
 
@@ -538,7 +542,7 @@ object BuildChain {
                 temp.copyTo(output, overwrite = true)
                 temp.delete()
             }
-            log.appendLine("signed ${output.name} · ${output.length()} bytes")
+            logLine("signed ${output.name} · ${output.length()} bytes")
             writeBuildJson(output)
             return output
         }
@@ -580,12 +584,19 @@ object BuildChain {
             return if (tail.isEmpty()) "$what (exit ${result.code})." else "$what (exit ${result.code}): $tail"
         }
 
+        private fun logLine(text: String) {
+            log.appendLine(text)
+            runCatching { onLog(text) }
+        }
+
         private fun writeLog() {
             runCatching {
                 logsDir.mkdirs()
+                val text = log.toString()
+                File(logsDir, "build.log").writeText(text)
                 val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-                File(logsDir, "build-$stamp.txt").writeText(log.toString())
-                logsDir.listFiles()?.filter { it.isFile }
+                File(logsDir, "build-$stamp.txt").writeText(text)
+                logsDir.listFiles()?.filter { it.isFile && it.name.startsWith("build-") }
                     ?.sortedByDescending { it.name }
                     ?.drop(10)
                     ?.forEach { it.delete() }

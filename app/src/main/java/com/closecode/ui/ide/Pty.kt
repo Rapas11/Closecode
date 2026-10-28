@@ -269,8 +269,16 @@ internal object TerminalEnvironment {
         base = context.filesDir
     }
 
-    fun env(folder: File): Array<String> {
-        val envFile = base?.let { File(it, "terminal/env.sh") }
+    fun env(folder: File): Array<String> =
+        envMap(folder).map { (key, value) -> "$key=$value" }.toTypedArray()
+
+    fun applyTo(environment: MutableMap<String, String>, folder: File) {
+        environment.putAll(envMap(folder))
+    }
+
+    private fun envMap(folder: File): Map<String, String> {
+        val root = base
+        val envFile = root?.let { File(it, "terminal/env.sh") }
         if (envFile != null) {
             runCatching {
                 envFile.parentFile?.mkdirs()
@@ -285,12 +293,17 @@ internal object TerminalEnvironment {
                 )
             }
         }
-        return buildList {
-            add("TERM=xterm-256color")
-            add("HOME=${folder.absolutePath}")
-            add("PATH=/system/bin:/system/xbin")
-            add("LANG=en_US.UTF-8")
-            envFile?.let { add("ENV=${it.absolutePath}") }
-        }.toTypedArray()
+        val path = buildList {
+            root?.let { add(File(it, "opencode/bin").absolutePath) }
+            add("/system/bin")
+            add("/system/xbin")
+        }.joinToString(":")
+        return buildMap {
+            put("TERM", "xterm-256color")
+            put("HOME", folder.absolutePath)
+            put("PATH", path)
+            put("LANG", "en_US.UTF-8")
+            envFile?.let { put("ENV", it.absolutePath) }
+        }
     }
 }

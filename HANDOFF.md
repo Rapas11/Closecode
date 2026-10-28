@@ -5,9 +5,10 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 5 is build 27: OpenCode 1.18.35, atomic binary
-  replacement, Android CA export and a loopback proxy for the server and shell
-  tools. Device verification is still required.
+- Branch `main`; Step 6 is build 28: the token-protected `closecode` terminal
+  bridge and shared build coordinator. Device verification is still required.
+- Step 5 `3e42589` — OpenCode 1.18.35, atomic binary replacement, Android CA
+  export and a loopback proxy for the server and shell tools.
 - Step 1 `c679fe5` — bind the OpenCode page to the real project directory.
 - Step 2 `b457f15` — replace the AI tab with the OpenCode page surface.
 - Step 3 `54dd4a3` — restore OpenCode's project route and repair stale tabs.
@@ -39,6 +40,41 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 - Still to check on a device: 1.18.35 page/model picker in the WebView, proxy
   CONNECT/HTTPS traffic, `opencode auth login` with the exported CA, orphan
   cleanup after force-stop, and port fallback.
+
+## Step 6 (build 28)
+
+- `CloseCodeControl` listens only on `127.0.0.1` with a fresh 32-byte token per
+  app process. The token and port live in
+  `files/opencode/control.token` / `control.port`; the executable
+  `files/opencode/bin/closecode` reads them and speaks one JSON line per
+  request. Commands are `ping`, `status`, `cancel` and `build`.
+- The terminal PATH includes `files/opencode/bin`, so `closecode build` works
+  from any terminal and from OpenCode's shell. `build` resolves the current
+  directory against registered projects (or accepts a project slug), refuses
+  unregistered folders, and streams `start`, `state`, `log` and `done` JSON
+  lines. `status` reports the active state/log tail or the last result.
+- `BuildCoordinator` owns the active/last build, starts the existing
+  `BuildService`, registers `BuildCancel`, and shares `BuildEngine` instances
+  per slug. `BuildSetupFactory` is the single project/toolchain setup path used
+  by both the Build panel and the bridge. `BuildLock` still serializes UI and
+  bridge builds.
+- `BuildChain` now accepts `onLog` and writes `build/logs/build.log` plus
+  timestamped `build-*.txt` logs on success and failure. `BuildReport` turns
+  build state/outcomes into JSON and supplies the log tail.
+- `TerminalEnvironment` exposes `envMap()`/`applyTo()` and adds the OpenCode
+  `bin` directory to PATH; the pipe fallback in `IdeTerminal` uses it.
+- `MainActivity` and `OpenCode.start` start the control server idempotently.
+  `BuildService.finish` now clears its running flag, and a failed service start
+  does not leave it stuck.
+- Tests: `BuildReportTest` covers state/outcome/log JSON, and
+  `CloseCodeControlTest` checks the generated command script with `sh -n`.
+  `:app:testDebugUnitTest` and `:app:assembleDebug` are green.
+- Still to check on a device: `nc` streaming/half-close behavior in the
+  `closecode` script, token rejection, `status`/`cancel` while a build runs,
+  build-from-terminal and build-from-OpenCode, foreground-service start from a
+  background terminal, and whether a bridge-started build is reflected in the
+  Build panel. A control build is tracked by `BuildCoordinator` but the panel
+  still calls `BuildEngine.build` directly.
 
 ## Fixed in build 26 (pending device check)
 
@@ -104,7 +140,9 @@ the 1.18.35 page is proven on a device.
    committed.
 5. First build: `.\gradlew.bat :app:assembleDebug --console=plain`
    (and `:app:testDebugUnitTest --console=plain` before any commit). On Linux
-   use `./gradlew` with `JAVA_HOME` and `ANDROID_HOME` exported.
+   use `./gradlew` with `JAVA_HOME` and `ANDROID_HOME` exported. If the Kotlin
+   daemon hangs, use
+   `--no-daemon -Dkotlin.compiler.execution.strategy=in-process`.
 6. Emulator testing: MuMu Player, ADB reachable on `127.0.0.1:16384`; output is
    on a secondary display, find the id from `adb shell dumpsys SurfaceFlinger
    --display-id` and pass it to `adb shell input`. Screenshots only render for
@@ -113,5 +151,5 @@ the 1.18.35 page is proven on a device.
 
 ## Latest deliverable
 
-`closecode-27-debug.apk` for Step 5 (debug, since `assembleRelease` is blocked
+`closecode-28-debug.apk` for Step 6 (debug, since `assembleRelease` is blocked
 by an unrelated Gradle lint issue on this machine).
