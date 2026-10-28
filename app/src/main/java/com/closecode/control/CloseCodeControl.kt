@@ -7,6 +7,8 @@ import com.closecode.build.BuildReport
 import com.closecode.build.BuildSetup
 import com.closecode.build.BuildSetupFactory
 import com.closecode.build.BuildState
+import com.closecode.build.ToolchainHolder
+import com.closecode.build.ToolchainManifest
 import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
 import com.closecode.device.CloseCodeAccessibilityService
@@ -77,6 +79,7 @@ object CloseCodeControl {
                 portFile(app).writeText(socket.localPort.toString())
                 portFile(app).setReadable(true, false)
                 installCommand(app)
+                ToolWrappers.install(app)
             } catch (error: Throwable) {
                 runCatching { socket.close() }
                 pool.shutdownNow()
@@ -169,6 +172,14 @@ object CloseCodeControl {
                 "screenshot" -> send(output, screenshot(context, request))
                 "input" -> send(output, DeviceTools.input(args(request)))
                 "accessibility" -> send(output, accessibility(context))
+                "describe" -> {
+                    it.soTimeout = 0
+                    runBlocking { send(output, describe(context, request)) }
+                }
+                "tool" -> {
+                    it.soTimeout = 0
+                    tool(context, request, output)
+                }
                 "build" -> {
                     it.soTimeout = 0
                     runBlocking { build(context, request, output) }
@@ -233,6 +244,79 @@ object CloseCodeControl {
         ) ?: return error("Run closecode from a registered project folder.")
         return DeviceTools.screenshot(context, project.directory, args(request).firstOrNull())
     }
+
+    private suspend fun describe(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: return error("Run closecode from a registered project folder.")
+        val setup = try {
+            BuildSetupFactory.create(context, project)
+        } catch (error: Throwable) {
+            return error(error.message ?: error.javaClass.simpleName)
+        }
+        val store = ToolchainHolder.store(context)
+        val last = BuildCoordinator.last()?.takeIf { it.slug == project.slug }?.let { build ->
+            com.google.gson.JsonObject().apply {
+                addProperty("summary", build.summary)
+                add("result", BuildReport.outcome(build.outcome))
+            }
+        }
+        return ProjectDescription.json(
+            project = project,
+            facts = ProjectDescription.read(project),
+            setup = setup,
+            toolchainVersion = ToolchainManifest.load(context).version,
+            toolchainReady = store.isReady(),
+            toolchainMissing = store.missing().map { it.fileName },
+            toolchainBytes = store.sizeOnPhone(),
+            last = last,
+        )
+    }
+
+    private fun tool(context: Context, request: JsonObject, output: OutputStream) {
+        val arguments = args(request)
+        val name = arguments.firstOrNull()
+        if (name == null) {
+            sendRaw(output, "usage: closecode tool aapt2|d8|r8|kotlinc [args...]\n", 2)
+            return
+        }
+        if (name !in ToolBridge.names) {
+            sendRaw(output, "closecode: unknown tool '$name'.\n", 2)
+            return
+        }
+        if (BuildCoordinator.active() != null) {
+            sendRaw(output, "closecode: a build is running; try again when it finishes.\n", 1)
+            return
+        }
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        if (project == null) {
+            sendRaw(output, "closecode: run this from a registered project folder.\n", 1)
+            return
+        }
+        val result = runCatching {
+            ToolBridge.run(context, name, arguments.drop(1), project.directory)
+        }.getOrElse { error ->
+            ToolBridge.Result(1, error.message ?: error.javaClass.simpleName)
+        }
+        val text = result.output + if (result.output.endsWith("\n")) "" else "\n"
+        sendRaw(output, text, result.code)
+    }
+
+    private fun sendRaw(output: OutputStream, text: String, code: Int): Boolean =
+        synchronized(output) {
+            runCatching {
+                output.write(text.toByteArray(StandardCharsets.UTF_8))
+                output.write("__CLOSECODE_TOOL_EXIT__${code}__\n".toByteArray(StandardCharsets.UTF_8))
+                output.flush()
+                true
+            }.getOrDefault(false)
+        }
 
     private fun accessibility(context: Context): JsonObject {
         if (CloseCodeAccessibilityService.connected()) {
@@ -475,8 +559,23 @@ internal fun controlCommandScript(basePath: String): String = """
     fi
     CMD="${'$'}{1:-status}"
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility) ;;
-      *) echo "usage: closecode build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility" >&2; exit 2 ;;
+      b|build) CMD=build ;;
+      s|status) CMD=status ;;
+      c|cancel) CMD=cancel ;;
+      p|ping) CMD=ping ;;
+      i|install) CMD=install ;;
+      l|launch) CMD=launch ;;
+      log|logcat) CMD=logcat ;;
+      x|export) CMD=export ;;
+      shot|screenshot) CMD=screenshot ;;
+      in|input) CMD=input ;;
+      a|accessibility) CMD=accessibility ;;
+      d|describe) CMD=describe ;;
+      t|tool) CMD=tool ;;
+    esac
+    case "${'$'}CMD" in
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool) ;;
+      *) echo "usage: closecode build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool" >&2; exit 2 ;;
     esac
     [ ${'$'}# -gt 0 ] && shift
     CWD=${'$'}(pwd -P 2>/dev/null || pwd)
@@ -489,6 +588,22 @@ internal fun controlCommandScript(basePath: String): String = """
     REQUEST="{\"token\":\"${'$'}(escape "${'$'}TOKEN")\",\"command\":\"${'$'}CMD\",\"cwd\":\"${'$'}(escape "${'$'}CWD")\",\"args\":[${'$'}ARGS]}"
     OUT="${'$'}BASE/control.out.${'$'}${'$'}"
     if printf '%s\n' "${'$'}REQUEST" | /system/bin/nc 127.0.0.1 "${'$'}PORT" > "${'$'}OUT" 2>/dev/null; then
+      if [ "${'$'}CMD" = "tool" ]; then
+        CODE=${'$'}(tail -n 1 "${'$'}OUT" 2>/dev/null)
+        case "${'$'}CODE" in
+          __CLOSECODE_TOOL_EXIT__*__)
+            sed '${'$'}d' "${'$'}OUT"
+            CODE=${'$'}(printf '%s\n' "${'$'}CODE" | sed 's/^__CLOSECODE_TOOL_EXIT__//; s/__${'$'}//')
+            rm -f "${'$'}OUT"
+            exit "${'$'}CODE"
+            ;;
+          *)
+            cat "${'$'}OUT"
+            rm -f "${'$'}OUT"
+            exit 1
+            ;;
+        esac
+      fi
       cat "${'$'}OUT"
       rm -f "${'$'}OUT"
     else

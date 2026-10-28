@@ -132,17 +132,33 @@ object ToolExec {
     }
 
     fun d8(jars: List<File>, args: List<String>, dexOptDir: File? = null): ToolRunner.Result =
+        r8Family("com.android.tools.r8.D8Command", "com.android.tools.r8.D8", jars, args, dexOptDir)
+
+    /**
+     * R8 shares D8's command-object shape. The build only needs D8, but the standalone
+     * `r8` command uses the same no-exit path instead of the jar's exiting main().
+     */
+    fun r8(jars: List<File>, args: List<String>, dexOptDir: File? = null): ToolRunner.Result =
+        r8Family("com.android.tools.r8.R8Command", "com.android.tools.r8.R8", jars, args, dexOptDir)
+
+    private fun r8Family(
+        commandName: String,
+        runnerName: String,
+        jars: List<File>,
+        args: List<String>,
+        dexOptDir: File?,
+    ): ToolRunner.Result =
         ToolRunner.runCall(jars, dexOptDir = dexOptDir, allowWithoutTrap = true) { loader ->
-            // R8's D8 has no run(String[]) and its main() exits the process. The command
-            // object API is the no-exit path: parse(args) -> builder -> build -> run.
-            val commandClass = loader.loadClass("com.android.tools.r8.D8Command")
+            // R8's tools have no run(String[]) and their main() exits the process. The
+            // command object API is the no-exit path: parse(args) -> builder -> build -> run.
+            val commandClass = loader.loadClass(commandName)
             val originClass = loader.loadClass("com.android.tools.r8.origin.Origin")
             val origin = originClass.getMethod("unknown").invoke(null)
             val builder = commandClass
                 .getMethod("parse", Array<String>::class.java, originClass)
                 .invoke(null, args.toTypedArray(), origin)
             val command = builder.javaClass.getMethod("build").invoke(builder)
-            loader.loadClass("com.android.tools.r8.D8")
+            loader.loadClass(runnerName)
                 .getMethod("run", commandClass)
                 .invoke(null, command)
             0

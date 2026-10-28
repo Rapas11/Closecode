@@ -5,9 +5,11 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 7 is build 29: install, launch, logcat, export,
-  screenshot and optional accessibility input from `closecode`. Device
-  verification is still required.
+- Branch `main`; Step 8 is build 30: `closecode describe`, short command
+  aliases, and `aapt2`/`d8`/`r8`/`kotlinc` wrappers. Device verification of
+  Steps 5–8 is still required.
+- Step 7 `5002de3` — install, launch, logcat, export, screenshot and optional
+  accessibility input from `closecode`.
 - Step 6 `c028923` — token-protected `closecode` terminal bridge and shared
   build coordinator.
 - Step 5 `3e42589` — OpenCode 1.18.35, atomic binary replacement, Android CA
@@ -113,6 +115,32 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
   tap/swipe/text on a real app, and the exported file path being reachable from
   the terminal.
 
+## Step 8 (build 30)
+
+- `closecode describe [project]` reports the registered project's package,
+  version, SDK levels, Kotlin/Compose facts, source counts, existing APK,
+  check findings, toolchain readiness/missing files and the last build result.
+  It works before the build tools are installed.
+- The command resolver accepts short aliases: `b`/`build`, `s`/`status`,
+  `c`/`cancel`, `p`/`ping`, `i`/`install`, `l`/`launch`, `log`/`logcat`,
+  `x`/`export`, `shot`/`screenshot`, `in`/`input`, `a`/`accessibility`,
+  `d`/`describe`, `t`/`tool`.
+- `files/opencode/bin` now also gets `aapt2`, `d8`, `r8`, `kotlinc` and a `cc`
+  alias. Each tool wrapper calls `closecode tool <name> ...`; the bridge runs
+  the bundled native aapt2 or the no-exit kotlinc/D8/R8 entry points and
+  forwards the real exit code. Tool output uses a final
+  `__CLOSECODE_TOOL_EXIT__<code>__` line so the wrapper can print normal output
+  and exit correctly.
+- The wrappers refuse to run while a build is active, require a registered
+  project directory, and report that build tools must be installed first.
+  `kotlinc` adds `-no-jdk` and `-kotlin-home` unless the caller supplied them.
+- Tests cover project description, wrapper scripts, alias resolution and
+  kotlinc argument defaults. `:app:testDebugUnitTest` (1280 tests) and
+  `:app:assembleDebug` are green.
+- Still to check on a device: wrapper execution from the PTY/OpenCode shell,
+  aapt2 library loading, kotlinc/D8/R8 argument paths and exit codes, `cc`
+  alias, and `describe` against real imported projects.
+
 ## Fixed in build 26 (pending device check)
 
 ### Session and tab restore
@@ -188,5 +216,5 @@ the 1.18.35 page is proven on a device.
 
 ## Latest deliverable
 
-`closecode-29-debug.apk` for Step 7 (debug, since `assembleRelease` is blocked
+`closecode-30-debug.apk` for Step 8 (debug, since `assembleRelease` is blocked
 by an unrelated Gradle lint issue on this machine).
