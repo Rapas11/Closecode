@@ -293,17 +293,38 @@ internal object TerminalEnvironment {
                 )
             }
         }
+        val shellTools = root?.parentFile?.let { File(it, "file/u") }
+            ?.takeIf { File(it, "bin/sh").exists() }
         val path = buildList {
             root?.let { add(File(it, "opencode/bin").absolutePath) }
+            shellTools?.let { add(File(it, "bin").absolutePath) }
             add("/system/bin")
             add("/system/xbin")
         }.joinToString(":")
+        val ca = root?.let {
+            File(it, "opencode/ca.pem").takeIf { file -> file.isFile }
+                ?: File(it.parentFile, "file/u/etc/tls/cert.pem").takeIf { file -> file.isFile }
+        }
         return buildMap {
             put("TERM", "xterm-256color")
             put("HOME", folder.absolutePath)
             put("PATH", path)
             put("LANG", "en_US.UTF-8")
             envFile?.let { put("ENV", it.absolutePath) }
+            if (shellTools != null) {
+                runCatching { File(shellTools, "tmp").mkdirs() }
+                put("PREFIX", shellTools.absolutePath)
+                put("TERMUX_PREFIX", shellTools.absolutePath)
+                put("LD_LIBRARY_PATH", File(shellTools, "lib").absolutePath)
+                put("TMPDIR", File(shellTools, "tmp").absolutePath)
+                put("SHELL", File(shellTools, "bin/sh").absolutePath)
+            }
+            ca?.let {
+                put("SSL_CERT_FILE", it.absolutePath)
+                put("CURL_CA_BUNDLE", it.absolutePath)
+                put("GIT_SSL_CAINFO", it.absolutePath)
+                put("NODE_EXTRA_CA_CERTS", it.absolutePath)
+            }
         }
     }
 }

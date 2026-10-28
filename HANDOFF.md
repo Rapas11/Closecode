@@ -5,9 +5,11 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 8 is build 30: `closecode describe`, short command
+- Branch `main`; Step 9 is build 31: the optional on-demand Termux
+  shell-tools pack. Step 8 is build 30: `closecode describe`, short command
   aliases, and `aapt2`/`d8`/`r8`/`kotlinc` wrappers. Device verification of
-  Steps 5–8 is still required.
+  Steps 5–9 is still required.
+- Step 8 `00b1407` — project description, aliases and build-tool wrappers.
 - Step 7 `5002de3` — install, launch, logcat, export, screenshot and optional
   accessibility input from `closecode`.
 - Step 6 `c028923` — token-protected `closecode` terminal bridge and shared
@@ -141,6 +143,39 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
   aapt2 library loading, kotlinc/D8/R8 argument paths and exit codes, `cc`
   alias, and `describe` against real imported projects.
 
+## Step 9 (build 31)
+
+- `closecode tools [status|install|remove]` manages an optional shell-tools
+  pack. Nothing is bundled in the APK and nothing runs as root; the pack is
+  downloaded only when the user asks for it.
+- `install` reads the current Termux `Packages` index for the phone's ABI,
+  resolves the roots (`git`, `curl`, `python`, `nodejs`, `zip`, `jq`,
+  `ca-certificates`), verifies every `.deb` against its SHA-256 and size,
+  extracts `data.tar.xz`/`data.tar.gz`, and rejects paths outside the Termux
+  prefix. The current root closure is about 40,057,328 bytes compressed; the
+  installed tree is larger.
+- Packages are extracted under `file/u.tmp`, patched, checked for the required
+  commands and `bin/sh`, then swapped into `file/u`; home is `file/hh`. The
+  replacement is exactly 31/32 bytes, so Termux binaries are rewritten in
+  place from `/data/data/com.termux/files/usr` and `.../home`. The app package
+  must remain `com.closecode` for the path to fit.
+- Absolute symlinks are rewritten to the final install root (not the temporary
+  directory), relative symlinks are preserved, and deletion does not follow
+  symlinked directories. `bin/sh` and `bin/env` link to `/system/bin` when the
+  packages do not provide them.
+- The terminal adds `file/u/bin` to PATH and exports `PREFIX`,
+  `TERMUX_PREFIX`, `LD_LIBRARY_PATH`, `TMPDIR`, `SHELL` and the CA variables
+  when the pack is present. `closecode describe` now includes a `shellTools`
+  object with readiness, installed bytes and prefix.
+- Tests cover the manifest, dependency resolution, ar/deb reading, tar
+  extraction (including absolute symlinks), prefix replacement and the new
+  command script. `:app:testDebugUnitTest` (1295 tests, 8 skipped) and
+  `:app:assembleDebug` are green; versionCode 31 was verified.
+- Still to check on a device: `tools install` download/progress, disk use,
+  running `git`/`python3`/`node`/`zip`/`jq`/`curl` from the PTY, CA trust,
+  `LD_LIBRARY_PATH`, symlinks, `tools remove` and reinstall, interruption
+  during install, and whether any package script needs `termux-exec`.
+
 ## Fixed in build 26 (pending device check)
 
 ### Session and tab restore
@@ -216,5 +251,5 @@ the 1.18.35 page is proven on a device.
 
 ## Latest deliverable
 
-`closecode-30-debug.apk` for Step 8 (debug, since `assembleRelease` is blocked
+`closecode-31-debug.apk` for Step 9 (debug, since `assembleRelease` is blocked
 by an unrelated Gradle lint issue on this machine).

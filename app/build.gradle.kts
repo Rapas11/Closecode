@@ -11,7 +11,7 @@ plugins {
 // The build number is raised for every APK handed to the user. The More sheet, every log
 // and every report print it beside the version name and the short commit, so whichever
 // APK is installed says which one it is. ("unknown" only when git is not reachable.)
-val closecodeBuild = 30
+val closecodeBuild = 31
 val closecodeGitCommit: String = runCatching {
     providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }
         .standardOutput.asText.get().trim()
@@ -94,6 +94,9 @@ dependencies {
     // GitHub's Device Flow and REST responses are JSON. Parsed with JsonParser rather than
     // with mapped classes so nothing on this path depends on reflection.
     implementation("com.google.code.gson:gson:2.11.0")
+    // Termux packages are .deb files with an xz-compressed tar payload. The shell-tools
+    // pack is downloaded on demand; this decoder is the only piece Android does not ship.
+    implementation("org.tukaani:xz:1.9")
     // On-device APK signing: apksig is a zero-dependency library (+0.5 MB) driven through
     // ApkSigner.Builder with the AndroidKeyStore debug key. Proven with 8.13.0.
     implementation("com.android.tools.build:apksig:8.13.0")

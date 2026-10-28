@@ -13,6 +13,8 @@ import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
 import com.closecode.device.CloseCodeAccessibilityService
 import com.closecode.device.DeviceTools
+import com.closecode.tools.ShellToolsManifest
+import com.closecode.tools.ShellToolsStore
 import com.closecode.ui.project.ProjectRepository
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -180,6 +182,10 @@ object CloseCodeControl {
                     it.soTimeout = 0
                     tool(context, request, output)
                 }
+                "tools" -> {
+                    it.soTimeout = 0
+                    tools(context, request, output)
+                }
                 "build" -> {
                     it.soTimeout = 0
                     runBlocking { build(context, request, output) }
@@ -263,7 +269,7 @@ object CloseCodeControl {
                 add("result", BuildReport.outcome(build.outcome))
             }
         }
-        return ProjectDescription.json(
+        val description = ProjectDescription.json(
             project = project,
             facts = ProjectDescription.read(project),
             setup = setup,
@@ -273,6 +279,13 @@ object CloseCodeControl {
             toolchainBytes = store.sizeOnPhone(),
             last = last,
         )
+        val shellTools = ShellToolsStore(context, ShellToolsManifest.load(context))
+        description.add("shellTools", JsonObject().apply {
+            addProperty("ready", shellTools.isReady())
+            addProperty("bytes", shellTools.installedBytes())
+            addProperty("prefix", shellTools.directory.absolutePath)
+        })
+        return description
     }
 
     private fun tool(context: Context, request: JsonObject, output: OutputStream) {
@@ -317,6 +330,60 @@ object CloseCodeControl {
                 true
             }.getOrDefault(false)
         }
+
+    private fun tools(context: Context, request: JsonObject, output: OutputStream) {
+        val store = ShellToolsStore(context, ShellToolsManifest.load(context))
+        when (args(request).firstOrNull() ?: "status") {
+            "status" -> send(output, toolsStatus(context, store))
+            "remove" -> {
+                val removed = store.remove()
+                send(output, JsonObject().apply {
+                    addProperty("ok", removed)
+                    if (!removed) addProperty("error", "Could not remove the shell tools.")
+                    else addProperty("removed", true)
+                })
+            }
+            "install" -> {
+                val result = store.install { progress ->
+                    send(output, JsonObject().apply {
+                        addProperty("ok", true)
+                        addProperty("event", "progress")
+                        addProperty("stage", progress.stage)
+                        addProperty("doneBytes", progress.doneBytes)
+                        addProperty("totalBytes", progress.totalBytes)
+                        progress.packageName?.let { addProperty("package", it) }
+                        addProperty("message", progress.message)
+                    })
+                }
+                if (result.ok) {
+                    send(output, JsonObject().apply {
+                        addProperty("ok", true)
+                        addProperty("event", "done")
+                        addProperty("bytes", store.installedBytes())
+                        addProperty("prefix", store.directory.absolutePath)
+                    })
+                } else {
+                    send(output, error(result.error ?: "The shell tools did not install."))
+                }
+            }
+            else -> send(output, error("usage: closecode tools status|install|remove"))
+        }
+    }
+
+    private fun toolsStatus(context: Context, store: ShellToolsStore): JsonObject = JsonObject().apply {
+        val manifest = ShellToolsManifest.load(context)
+        addProperty("ok", true)
+        addProperty("ready", store.isReady())
+        addProperty("prefix", store.directory.absolutePath)
+        addProperty("bytes", store.installedBytes())
+        addProperty("version", manifest.version)
+        add("packages", com.google.gson.JsonArray().apply {
+            store.installedPackages().forEach { add(it) }
+        })
+        add("required", com.google.gson.JsonArray().apply {
+            manifest.required.forEach { add(it) }
+        })
+    }
 
     private fun accessibility(context: Context): JsonObject {
         if (CloseCodeAccessibilityService.connected()) {
@@ -572,10 +639,11 @@ internal fun controlCommandScript(basePath: String): String = """
       a|accessibility) CMD=accessibility ;;
       d|describe) CMD=describe ;;
       t|tool) CMD=tool ;;
+      tools) CMD=tools ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool) ;;
-      *) echo "usage: closecode build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool" >&2; exit 2 ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools) ;;
+      *) echo "usage: closecode build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools" >&2; exit 2 ;;
     esac
     [ ${'$'}# -gt 0 ] && shift
     CWD=${'$'}(pwd -P 2>/dev/null || pwd)
