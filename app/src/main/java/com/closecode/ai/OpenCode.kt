@@ -189,28 +189,6 @@ object OpenCode {
     }
 
     /**
-     * True while the page the WebView kept from the last server run is out of date.
-     *
-     * A freshly started server wants a freshly started page: OpenCode's web frontend stores
-     * state about the old server run in the WebView, and opening the new server with the old
-     * state can bring up its error screen before anything is shown. So every new server
-     * process marks the page data as out of date; the chat screen then clears it once — and
-     * only once — before the page is loaded.
-     */
-    @Volatile
-    private var webWipePending: Boolean = false
-
-    /**
-     * Takes the due page wipe: answers whether one was pending and clears the mark, so the
-     * wipe happens exactly once per server process and never during a running one.
-     */
-    fun consumeWebWipe(): Boolean {
-        val due = webWipePending
-        webWipePending = false
-        return due
-    }
-
-    /**
      * The server generation whose page was opened automatically.
      *
      * The AI tab uses this to open a new server's page once, then leave the user alone: closing
@@ -510,7 +488,6 @@ object OpenCode {
                 }
                 process = started
             }
-            webWipePending = true
             scope.launch {
                 // Destroying the process closes this stream under the reader's feet: the read
                 // in progress answers InterruptedIOException. The reader must then stop

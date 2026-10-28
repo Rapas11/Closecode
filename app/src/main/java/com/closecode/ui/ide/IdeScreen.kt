@@ -2954,7 +2954,9 @@ internal fun IdeScreen(
         if (openCodeChat) {
             val openCode = com.closecode.ai.OpenCode.state.value
             OpenCodeChatScreen(
-                url = openCode.pageUrl.ifBlank { openCode.url },
+                baseUrl = openCode.url,
+                projectUrl = openCode.pageUrl,
+                projectDirectory = openCode.projectDirectory,
                 generation = openCode.generation,
                 onBack = { openCodeChat = false },
                 onAuthenticate = {

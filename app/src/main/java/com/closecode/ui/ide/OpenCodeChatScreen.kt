@@ -2,19 +2,18 @@ package com.closecode.ui.ide
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.util.Log
 import android.webkit.ConsoleMessage
-import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.ValueCallback
-import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -62,8 +61,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import com.closecode.ai.OpenCode
 import com.closecode.ai.OpenCodePageLog
+import com.closecode.ai.isRestorableOpenCodePage
+import com.closecode.ai.openCodePagePath
+import com.closecode.ai.openCodePageUrl
+import com.closecode.ai.openCodeServerKey
+import com.closecode.ai.rebaseOpenCodeServerPath
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
 import org.json.JSONObject
@@ -88,14 +91,27 @@ import org.json.JSONObject
 @SuppressLint("SetJavaScriptEnabled", "AddVsClear")
 @Composable
 fun OpenCodeChatScreen(
-    url: String,
+    baseUrl: String,
+    projectUrl: String,
+    projectDirectory: String,
     generation: Int = 0,
     onBack: () -> Unit,
     onAuthenticate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
+    val context = LocalContext.current
     val holder = remember { WebViewHolder() }
+    fun pageTarget(): PageTarget {
+        val saved = savedPagePath(context, baseUrl, projectDirectory)
+        if (saved != null) return PageTarget(openCodePageUrl(baseUrl, saved), false)
+        if (baseUrl.isBlank() || projectUrl.isBlank()) {
+            return PageTarget(projectUrl.ifBlank { baseUrl }, false)
+        }
+        return PageTarget(openCodePageUrl(baseUrl, "/") + RESUME_QUERY, true)
+    }
+    val initialTarget = remember(baseUrl, projectUrl, projectDirectory) { pageTarget() }
+    var currentUrl by remember { mutableStateOf(initialTarget.url) }
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
     val fileLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -130,19 +146,24 @@ fun OpenCodeChatScreen(
         }
     }
 
-    // A reconnect is a new server: the page that was open belongs to the old one. Load the
-    // fresh address into a clean browser instead of leaving OpenCode's error screen up.
-    LaunchedEffect(url, generation) {
+    LaunchedEffect(baseUrl, projectUrl, projectDirectory, generation) {
         val view = holder.view ?: return@LaunchedEffect
-        if (holder.url == url && holder.generation == generation) return@LaunchedEffect
-        if (holder.generation != generation && OpenCode.consumeWebWipe()) {
-            wipePage(view.context)
-            runCatching { view.clearCache(true) }
+        if (holder.baseUrl == baseUrl &&
+            holder.projectUrl == projectUrl &&
+            holder.projectDirectory == projectDirectory &&
+            holder.generation == generation
+        ) {
+            return@LaunchedEffect
         }
-        holder.url = url
+        val target = pageTarget()
+        holder.baseUrl = baseUrl
+        holder.projectUrl = projectUrl
+        holder.projectDirectory = projectDirectory
         holder.generation = generation
-        OpenCodePageLog.add("open $url")
-        view.loadUrl(url)
+        holder.bootstrap = target.bootstrap
+        currentUrl = target.url
+        OpenCodePageLog.add("open ${target.url}")
+        view.loadUrl(target.url)
     }
 
     DisposableEffect(Unit) {
@@ -158,7 +179,7 @@ fun OpenCodeChatScreen(
             .background(c.bg),
     ) {
         OpenCodePageBar(
-            url = url,
+            url = currentUrl,
             onBack = onBack,
             onAuthenticate = onAuthenticate,
             onRefresh = { holder.view?.reload() },
@@ -169,20 +190,12 @@ fun OpenCodeChatScreen(
                 .fillMaxWidth(),
         ) {
             AndroidView(
-                factory = { context ->
+                factory = { webContext ->
                     if (com.closecode.BuildConfig.DEBUG) {
                         WebView.setWebContentsDebuggingEnabled(true)
                     }
-                    val wipe = OpenCode.consumeWebWipe()
-                    if (wipe) {
-                        // The page this WebView would inherit was written while an older server
-                        // ran. OpenCode's frontend trips over state from a dead server — its own
-                        // error screen is the known result — so this server's first page loads
-                        // into a clean browser instead. The phone's own files keep everything.
-                        wipePage(context)
-                    }
-                    WebView(context).apply {
-                        if (wipe) runCatching { clearCache(true) }
+                    val target = pageTarget()
+                    WebView(webContext).apply {
                         webChromeClient = object : WebChromeClient() {
                             override fun onConsoleMessage(message: ConsoleMessage): Boolean {
                                 val line = "console ${message.messageLevel()}: " +
@@ -224,8 +237,11 @@ fun OpenCodeChatScreen(
                             }
                         }
                         holder.view = this
-                        holder.url = url
+                        holder.baseUrl = baseUrl
+                        holder.projectUrl = projectUrl
+                        holder.projectDirectory = projectDirectory
                         holder.generation = generation
+                        holder.bootstrap = target.bootstrap
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.allowFileAccess = false
@@ -264,11 +280,27 @@ fun OpenCodeChatScreen(
                                 return true
                             }
 
+                            override fun doUpdateVisitedHistory(
+                                view: WebView?,
+                                pageUrl: String?,
+                                isReload: Boolean,
+                            ) {
+                                if (pageUrl == null) return
+                                currentUrl = pageUrl
+                                rememberPagePath(
+                                    view?.context,
+                                    holder.baseUrl,
+                                    holder.projectDirectory,
+                                    pageUrl,
+                                )
+                            }
+
                             override fun onPageStarted(
                                 view: WebView?,
                                 startedUrl: String?,
                                 favicon: Bitmap?,
                             ) {
+                                if (startedUrl != null) currentUrl = startedUrl
                                 OpenCodePageLog.add("page started: $startedUrl")
                                 installPageLog(view)
                                 installViewportFix(view)
@@ -280,29 +312,29 @@ fun OpenCodeChatScreen(
 
                             override fun onPageFinished(view: WebView?, finishedUrl: String?) {
                                 OpenCodePageLog.add("page finished: $finishedUrl")
+                                if (finishedUrl != null) {
+                                    currentUrl = finishedUrl
+                                    rememberPagePath(
+                                        view?.context,
+                                        holder.baseUrl,
+                                        holder.projectDirectory,
+                                        finishedUrl,
+                                    )
+                                }
                                 installPageLog(view)
                                 installViewportFix(view)
-                                installProjectStateFix(
-                                    view,
-                                    OpenCode.state.value.projectDirectory,
-                                    url,
-                                )
+                                if (holder.bootstrap) {
+                                    holder.bootstrap = false
+                                    installResumeScript(
+                                        view,
+                                        holder.baseUrl,
+                                        holder.projectUrl,
+                                        holder.projectDirectory,
+                                    )
+                                }
                                 // React can mount a moment after the document finishes; apply
                                 // once more after that so the page fills the WebView at once.
                                 view?.postDelayed({ installViewportFix(view) }, 300)
-                                // An older build could leave a tab record with a corrupt project
-                                // directory. The first check catches state that was already
-                                // there; this second one catches state the page writes late.
-                                view?.postDelayed(
-                                    {
-                                        installProjectStateFix(
-                                            view,
-                                            OpenCode.state.value.projectDirectory,
-                                            url,
-                                        )
-                                    },
-                                    800,
-                                )
                             }
 
                             override fun onReceivedError(
@@ -329,7 +361,7 @@ fun OpenCodeChatScreen(
                         addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
                             post { installViewportFix(this) }
                         }
-                        loadUrl(url)
+                        loadUrl(target.url)
                     }
                 },
                 modifier = Modifier.fillMaxSize(),
@@ -476,23 +508,43 @@ private fun PageBarButton(
     }
 }
 
+private data class PageTarget(val url: String, val bootstrap: Boolean)
+
 /** The one WebView this screen owns, so the back handler can reach it. */
 private class WebViewHolder {
     var view: WebView? = null
-    var url: String = ""
+    var baseUrl: String = ""
+    var projectUrl: String = ""
+    var projectDirectory: String = ""
     var generation: Int = -1
+    var bootstrap: Boolean = false
 }
 
-/**
- * Clears the state a previous server left in the WebView: cookies and local storage. The
- * server is new; its page must not start from the old one's state.
- */
-private fun wipePage(context: android.content.Context) {
-    runCatching {
-        CookieManager.getInstance().removeAllCookies(null)
-        CookieManager.getInstance().removeSessionCookies(null)
-        WebStorage.getInstance().deleteAllData()
-    }
+private const val PAGE_PREFS = "closecode_open_code_page"
+private const val PAGE_PATH_PREFIX = "last:"
+private const val RESUME_QUERY = "?closecode_resume=1"
+
+private fun savedPagePath(context: Context, baseUrl: String, directory: String): String? {
+    if (baseUrl.isBlank() || directory.isBlank()) return null
+    val saved = context.getSharedPreferences(PAGE_PREFS, Context.MODE_PRIVATE)
+        .getString(PAGE_PATH_PREFIX + directory, null) ?: return null
+    return rebaseOpenCodeServerPath(saved, baseUrl)
+        .takeIf { isRestorableOpenCodePage(it) }
+}
+
+private fun rememberPagePath(
+    context: Context?,
+    baseUrl: String,
+    directory: String,
+    pageUrl: String,
+) {
+    if (context == null || baseUrl.isBlank() || directory.isBlank()) return
+    val path = openCodePagePath(baseUrl, pageUrl) ?: return
+    if (!isRestorableOpenCodePage(path)) return
+    context.getSharedPreferences(PAGE_PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putString(PAGE_PATH_PREFIX + directory, path)
+        .apply()
 }
 
 /**
@@ -507,59 +559,139 @@ private fun installPageLog(view: WebView?) {
     runCatching { view.evaluateJavascript(PAGE_LOG_SCRIPT, null) }
 }
 
-/**
- * Repairs the one piece of OpenCode state a previous install can leave behind.
- *
- * OpenCode keeps its open tabs in `opencode.window.browser.dat:tabs`. A tab record written by a
- * bad project URL can carry a corrupt `directory`, and the page then sends every API request to
- * that corrupt path even when the address bar names the real project. When the saved tabs exist
- * but none belongs to [directory], this drops the saved tabs, clears the page's session state and
- * reloads [projectUrl] once. A clean load creates a correct draft from the base64 route; a load
- * that is already correct does nothing.
- */
-private fun installProjectStateFix(
+private fun installResumeScript(
     view: WebView?,
-    directory: String,
+    baseUrl: String,
     projectUrl: String,
+    directory: String,
 ) {
-    if (view == null || directory.isBlank() || projectUrl.isBlank()) return
+    if (view == null || baseUrl.isBlank() || directory.isBlank()) return
     val directoryLiteral = JSONObject.quote(directory)
-    val urlLiteral = JSONObject.quote(projectUrl)
+    val projectUrlLiteral = JSONObject.quote(projectUrl)
+    val serverLiteral = JSONObject.quote(openCodeServerKey(baseUrl))
+    val tabsKeyLiteral = JSONObject.quote("opencode.window.browser.dat:tabs")
+    val recentKeyLiteral = JSONObject.quote("opencode.window.browser.dat:tabs.recent")
+    val infoKeyLiteral = JSONObject.quote("opencode.window.browser.dat:tabs.info")
+    val legacyKeyLiteral = JSONObject.quote("opencode.window.browser.dat:lastProjectSession")
     val script = """
         (function () {
-            try {
-                var key = 'opencode.window.browser.dat:tabs';
-                var raw = localStorage.getItem(key);
-                if (!raw) return;
-                var tabs = JSON.parse(raw);
-                var wanted = $directoryLiteral;
-                if (Array.isArray(tabs) && tabs.some(function (tab) {
-                    return tab && tab.directory === wanted;
-                })) return;
-                localStorage.removeItem(key);
-                sessionStorage.clear();
-                location.replace($urlLiteral);
-            } catch (error) {
-                try {
-                    localStorage.removeItem('opencode.window.browser.dat:tabs');
-                    sessionStorage.clear();
-                    location.replace($urlLiteral);
-                } catch (ignored) {}
-            }
+            if (window.__closecodeResume) return;
+            window.__closecodeResume = true;
+            if (window.location.search.indexOf('closecode_resume=1') < 0) return;
+            try { history.replaceState(null, '', window.location.pathname); } catch (error) {}
+            var directory = $directoryLiteral;
+            var projectUrl = $projectUrlLiteral;
+            var server = $serverLiteral;
+            var tabsKey = $tabsKeyLiteral;
+            var recentKey = $recentKeyLiteral;
+            var infoKey = $infoKeyLiteral;
+            var legacyKey = $legacyKeyLiteral;
+            var read = function (key) {
+                try { return JSON.parse(localStorage.getItem(key) || 'null'); } catch (error) { return null; }
+            };
+            var b64 = function (text) {
+                return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+            };
+            var samePath = function (left, right) {
+                if (typeof left !== 'string' || typeof right !== 'string') return false;
+                return left.replace(/\/+$/, '') === right.replace(/\/+$/, '');
+            };
+            var href = function (tab, targetServer) {
+                if (tab.type === 'draft') {
+                    return '/new-session?draftId=' + encodeURIComponent(tab.draftID);
+                }
+                return '/server/' + b64(targetServer || tab.server) + '/session/' + tab.sessionId;
+            };
+            var key = function (tab) {
+                return tab.type === 'draft' ? 'draft:' + tab.draftID : tab.server + '\n' + href(tab, tab.server);
+            };
+            var tabs = read(tabsKey);
+            var info = read(infoKey) || {};
+            var recent = read(recentKey) || {};
+            var matches = [];
+            var pendingTabs = [];
+            var pending = false;
+            var collect = function () {
+                matches = [];
+                pendingTabs = [];
+                pending = false;
+                if (!Array.isArray(tabs)) return;
+                tabs.forEach(function (tab) {
+                    if (!tab || typeof tab !== 'object') return;
+                    if (tab.type === 'draft') {
+                        if (samePath(tab.directory || tab.worktree, directory)) matches.push(tab);
+                        return;
+                    }
+                    if (tab.type !== 'session') return;
+                    var record = info[key(tab)];
+                    if (record && typeof record.directory === 'string') {
+                        if (samePath(record.directory, directory)) matches.push(tab);
+                        return;
+                    }
+                    if (tab.server === server) {
+                        pending = true;
+                        pendingTabs.push(tab);
+                    }
+                });
+            };
+            var choose = function () {
+                var chosen = null;
+                if (recent && recent.key) {
+                    for (var i = 0; i < matches.length; i++) {
+                        if (key(matches[i]) === recent.key) { chosen = matches[i]; break; }
+                    }
+                }
+                return chosen || matches[matches.length - 1] || null;
+            };
+            var go = function (force) {
+                if (force && !matches.length && pendingTabs.length) matches = pendingTabs.slice();
+                var chosen = choose();
+                if (chosen) {
+                    if (chosen.type === 'draft' && chosen.server !== server) {
+                        chosen.server = server;
+                        try { localStorage.setItem(tabsKey, JSON.stringify(tabs)); } catch (error) {}
+                    }
+                    window.location.replace(href(chosen, server));
+                    return true;
+                }
+                if (pending && !force) return false;
+                var legacy = read(legacyKey);
+                var legacyID = legacy && (legacy.id || legacy.sessionId);
+                if (legacyID && samePath(legacy.directory, directory)) {
+                    window.location.replace('/server/' + b64(server) + '/session/' + legacyID);
+                    return true;
+                }
+                if (projectUrl) window.location.replace(projectUrl);
+                return true;
+            };
+            collect();
+            if (go(false)) return;
+            var attempts = 0;
+            var timer = setInterval(function () {
+                info = read(infoKey) || {};
+                collect();
+                attempts++;
+                if (go(false)) {
+                    clearInterval(timer);
+                    return;
+                }
+                if (attempts >= 10) {
+                    clearInterval(timer);
+                    go(true);
+                }
+            }, 150);
         })();
     """.trimIndent()
     runCatching { view.evaluateJavascript(script, null) }
 }
 
 /**
- * Gives OpenCode's page a real height in WebViews that resolve `vh`/`dvh` to zero.
+ * Gives OpenCode's page a real height in WebViews that resolve vertical viewport units to zero.
  *
- * OpenCode's root element is `height: 100dvh`. The system WebView on some phones reports the
- * viewport height correctly to JavaScript but computes every viewport unit to `0px`; the root
- * then collapses to its 1 px padding and the page looks black, while the same page in a browser
- * is fine. The page is not redesigned: its own root element gets the measured CSS-pixel height
- * as an inline style, and the same value is reapplied whenever the viewport or the WebView is
- * resized (keyboard, rotation, split screen).
+ * The system WebView on some phones reports the viewport height correctly to JavaScript but
+ * computes `vh`, `dvh`, `svh` and `lvh` as `0px`. The page's root and every stylesheet rule are
+ * rewritten to use a measured CSS variable, and the value is reapplied whenever the viewport or
+ * the WebView is resized (keyboard, rotation, split screen).
  */
 private fun installViewportFix(view: WebView?) {
     if (view == null) return
@@ -571,10 +703,58 @@ private const val PAGE_VIEWPORT_SCRIPT = """
         var apply = function () {
             var height = window.innerHeight;
             if (!height) return;
+            var html = document.documentElement;
+            if (!html) return;
+            html.style.setProperty('--closecode-vh', height + 'px');
             var root = document.getElementById('root');
             if (root) root.style.setProperty('height', height + 'px', 'important');
         };
+        var rewriteValue = function (value) {
+            return value.replace(/(^|[^\w.-])(\d*\.?\d+)(d|s|l)?vh\b/gi, function (match, prefix, number) {
+                return prefix + 'calc(var(--closecode-vh) * ' + (parseFloat(number) / 100) + ')';
+            });
+        };
+        var rewriteRule = function (rule) {
+            try {
+                if (rule.style && rule.style.cssText) {
+                    var css = rule.style.cssText;
+                    var next = rewriteValue(css);
+                    if (next !== css) rule.style.cssText = next;
+                }
+            } catch (error) {}
+            try {
+                var children = rule.cssRules;
+                if (children) {
+                    for (var i = 0; i < children.length; i++) rewriteRule(children[i]);
+                }
+            } catch (error) {}
+        };
+        var rewriteSheet = function (sheet) {
+            try {
+                var rules = sheet.cssRules;
+                if (!rules) return;
+                for (var i = 0; i < rules.length; i++) rewriteRule(rules[i]);
+            } catch (error) {}
+        };
+        var rewriteElement = function (element) {
+            if (!element || !element.style) return;
+            var css = element.style.cssText;
+            if (!/(\d*\.?\d+)(d|s|l)?vh\b/i.test(css)) return;
+            var next = rewriteValue(css);
+            if (next !== css) element.style.cssText = next;
+        };
+        var rewriteStyles = function () {
+            var sheets = document.styleSheets;
+            for (var i = 0; i < sheets.length; i++) rewriteSheet(sheets[i]);
+            var adopted = document.adoptedStyleSheets;
+            if (adopted) {
+                for (var j = 0; j < adopted.length; j++) rewriteSheet(adopted[j]);
+            }
+            var elements = document.querySelectorAll('[style]');
+            for (var k = 0; k < elements.length; k++) rewriteElement(elements[k]);
+        };
         window.__closecodeApplyViewport = apply;
+        window.__closecodeRewriteViewport = rewriteStyles;
         if (!window.__closecodeViewportBound) {
             window.__closecodeViewportBound = true;
             window.addEventListener('resize', apply);
@@ -583,6 +763,43 @@ private const val PAGE_VIEWPORT_SCRIPT = """
             }
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', apply);
+            }
+            if (window.MutationObserver) {
+                var observer = new MutationObserver(function (records) {
+                    var styles = false;
+                    for (var i = 0; i < records.length; i++) {
+                        var record = records[i];
+                        if (record.type === 'characterData') {
+                            var parent = record.target.parentNode;
+                            if (parent && parent.tagName === 'STYLE') styles = true;
+                            continue;
+                        }
+                        if (record.type === 'attributes') {
+                            rewriteElement(record.target);
+                            continue;
+                        }
+                        var added = record.addedNodes;
+                        for (var j = 0; j < added.length; j++) {
+                            var node = added[j];
+                            if (!node || node.nodeType !== 1) continue;
+                            if (node.tagName === 'STYLE' || node.tagName === 'LINK') {
+                                styles = true;
+                                if (node.tagName === 'LINK') node.addEventListener('load', rewriteStyles);
+                            }
+                            if (node.querySelector && node.querySelector('style,link[rel="stylesheet"]')) {
+                                styles = true;
+                            }
+                        }
+                    }
+                    if (styles) setTimeout(rewriteStyles, 0);
+                });
+                observer.observe(document.documentElement || document, {
+                    childList: true,
+                    subtree: true,
+                    characterData: true,
+                    attributes: true,
+                    attributeFilter: ['style']
+                });
             }
             // OpenCode focuses its new-session prompt on load. Blur that one focus so the
             // keyboard does not open before the user has touched the page. The guard is
@@ -614,6 +831,7 @@ private const val PAGE_VIEWPORT_SCRIPT = """
             }, 1200);
         }
         apply();
+        rewriteStyles();
     })();
 """
 

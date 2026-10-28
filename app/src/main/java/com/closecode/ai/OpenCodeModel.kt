@@ -1,6 +1,7 @@
 package com.closecode.ai
 
 import java.io.File
+import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
@@ -109,6 +110,63 @@ fun projectPageUrl(baseUrl: String, directory: String): String {
         .withoutPadding()
         .encodeToString(directory.toByteArray(StandardCharsets.UTF_8))
     return baseUrl.trimEnd('/') + "/" + encoded + "/session"
+}
+
+internal fun openCodePagePath(baseUrl: String, pageUrl: String): String? {
+    if (baseUrl.isBlank() || pageUrl.isBlank()) return null
+    val base = runCatching { URI(baseUrl.trimEnd('/')) }.getOrNull() ?: return null
+    val page = runCatching { URI(pageUrl) }.getOrNull() ?: return null
+    if (page.scheme != base.scheme || page.host != base.host || page.port != base.port) return null
+    val path = page.rawPath ?: return null
+    if (!path.startsWith("/") || path.startsWith("//")) return null
+    return buildString {
+        append(path)
+        page.rawQuery?.takeIf { it.isNotEmpty() }?.let { append('?').append(it) }
+        page.rawFragment?.takeIf { it.isNotEmpty() }?.let { append('#').append(it) }
+    }
+}
+
+internal fun openCodePageUrl(baseUrl: String, path: String): String =
+    baseUrl.trimEnd('/') + "/" + path.trimStart('/')
+
+internal fun openCodeServerKey(baseUrl: String): String =
+    Base64.getUrlEncoder()
+        .withoutPadding()
+        .encodeToString(baseUrl.trimEnd('/').toByteArray(StandardCharsets.UTF_8))
+
+internal fun rebaseOpenCodeServerPath(path: String, baseUrl: String): String {
+    if (baseUrl.isBlank()) return path
+    val prefix = "/server/"
+    if (!path.startsWith(prefix)) return path
+    val end = path.indexOf('/', prefix.length)
+    if (end <= prefix.length) return path
+    val encoded = path.substring(prefix.length, end)
+    val decoded = runCatching {
+        String(Base64.getUrlDecoder().decode(encoded), StandardCharsets.UTF_8)
+    }.getOrNull() ?: return path
+    val server = runCatching { URI(decoded) }.getOrNull() ?: return path
+    val host = server.host ?: return path
+    if (server.scheme != "http" || host !in setOf("127.0.0.1", "localhost", "::1")) return path
+    return prefix + openCodeServerKey(baseUrl) + path.substring(end)
+}
+
+internal fun isRestorableOpenCodePage(path: String): Boolean {
+    if (!path.startsWith("/") || path.startsWith("//")) return false
+    val target = path.substringBefore('#').substringBefore('?')
+    if (target.isBlank() || target == "/") return false
+    if (target == "/new-session") {
+        return path.substringAfter('?', "")
+            .split('&')
+            .any {
+                it.substringBefore('=') == "draftId" && it.substringAfter('=', "").isNotBlank()
+            }
+    }
+    val parts = target.trim('/').split('/')
+    return when {
+        parts.size >= 4 && parts[0] == "server" && parts[2] == "session" -> parts[3].isNotBlank()
+        parts.size >= 3 && parts[1] == "session" -> parts[2].isNotBlank()
+        else -> false
+    }
 }
 
 /**
