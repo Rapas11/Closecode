@@ -216,6 +216,39 @@ class OpenCodeModelTest {
 
         assertTrue(script.contains("export HOME='/data/home with space'"))
     }
+
+    @Test
+    fun theAuthWrapperAddsShellToolsWhenTheyAreInstalled() {
+        val script = authWrapperScript(
+            temp = "/data/tmp",
+            home = "/data/home",
+            data = "/data/home/data",
+            config = "/data/home/config",
+            cache = "/data/home/cache",
+            path = "/data/opencode/bin:/data/file/u/bin:/system/bin",
+            loader = "/data/loader",
+            libraries = "/data/lib:/data/usr/lib",
+            binary = "/data/opencode",
+            shellToolsPrefix = "/data/file/u",
+        )
+
+        assertTrue(script.contains("export CLOSECODE_SHELL_TOOLS='/data/file/u'"))
+        assertTrue(script.contains("export PREFIX='/data/file/u'"))
+        assertTrue(script.contains("export TERMUX_PREFIX='/data/file/u'"))
+        assertTrue(script.contains("'/data/opencode/bin:/data/file/u/bin:/system/bin'"))
+    }
+
+    @Test
+    fun theBashShimExportsTheShellToolsEnvironment() {
+        val script = openCodeBashScript()
+
+        assertTrue(script.contains("SHELL_TOOLS=\"\$CLOSECODE_SHELL_TOOLS\""))
+        assertTrue(script.contains("export PREFIX=\"\$SHELL_TOOLS\""))
+        assertTrue(script.contains("export TERMUX_PREFIX=\"\$SHELL_TOOLS\""))
+        assertTrue(script.contains("export PATH=\"\$SHELL_TOOLS/bin:"))
+        assertTrue(script.contains("export LD_LIBRARY_PATH=\"\$SHELL_TOOLS/lib"))
+        assertTrue(script.contains("exec /system/bin/sh -c"))
+    }
 }
 
 class OpenCodeBinaryTest {

@@ -5,10 +5,11 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 10 is build 32: the one-time manual `aapt2` is now
+- Branch `main`; Step 11 is build 33: OpenCode's shell tool gets the optional
+  Termux environment. Step 10 is build 32: the one-time manual `aapt2` is
   inside the APK. Step 9 is build 31: the optional on-demand Termux shell-tools
   pack. Step 8 is build 30: `closecode describe`, short command aliases, and
-  `aapt2`/`d8`/`r8`/`kotlinc` wrappers. Device verification of Steps 5–10 is
+  `aapt2`/`d8`/`r8`/`kotlinc` wrappers. Device verification of Steps 5–11 is
   still required.
 - Step 8 `00b1407` — project description, aliases and build-tool wrappers.
 - Step 7 `5002de3` — install, launch, logcat, export, screenshot and optional
@@ -193,8 +194,30 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
   8 skipped, 0 failures/errors, and `:app:assembleDebug` is green.
 - `closecode build` should no longer report `missing: ["aapt2"]`, but no device
   is connected here, so the on-device build/install/launch check is still
-  pending. OpenCode's AI shell still does not receive the shell-tools
-  environment; that remains Step 11.
+  pending. Step 11 covers the OpenCode shell-tools environment.
+
+## Step 11 (build 33)
+
+- The OpenCode server now puts `file/u/bin` on PATH and exports
+  `CLOSECODE_SHELL_TOOLS`. The generated `bash` shim reads that variable on
+  every invocation; when `file/u/bin/sh` exists it exports `PREFIX`,
+  `TERMUX_PREFIX`, `PATH`, `LD_LIBRARY_PATH`, `TMPDIR` and `SHELL` for the
+  command. The Termux libraries are therefore not put into the OpenCode
+  process environment while its musl loader starts.
+- Because the shim checks at invocation time, installing the optional pack
+  after the server has started still makes its commands available to
+  OpenCode's shell tool without restarting the server.
+- The `opencode auth login` wrapper gets the shell-tools PATH and
+  `PREFIX`/`TERMUX_PREFIX` when the pack is installed. `closecode` remains
+  available through `files/opencode/bin`.
+- Tests cover the auth wrapper and bash shim environment.
+  `:app:testDebugUnitTest` passed 1297 tests, 8 skipped, 0 failures/errors, and
+  `:app:assembleDebug` is green; versionCode 33.
+- Still to check on a device: install the shell tools, then run
+  `git --version`, `python3 --version`, `node --version`, `curl`, `zip` and
+  `jq` from OpenCode's shell tool; verify commands still work when the pack is
+  absent; check `opencode auth login`; and confirm the server's own startup is
+  unaffected by Termux libraries.
 
 ## Fixed in build 26 (pending device check)
 
@@ -271,5 +294,5 @@ the 1.18.35 page is proven on a device.
 
 ## Latest deliverable
 
-`closecode-32-debug.apk` for Step 10 (debug, since `assembleRelease` is blocked
+`closecode-33-debug.apk` for Step 11 (debug, since `assembleRelease` is blocked
 by an unrelated Gradle lint issue on this machine).

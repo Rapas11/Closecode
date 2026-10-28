@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.SystemClock
 import com.closecode.control.CloseCodeControl
 import com.closecode.debug.DebugLog
+import com.closecode.tools.ShellToolsRepo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -623,21 +624,30 @@ object OpenCode {
     ) {
         val home = home(context)
         val tools = prepareTools(context)
+        val shellTools = ShellToolsRepo.workingPrefix(context.dataDir)
         environment["TMPDIR"] = tmp(context).absolutePath
         environment["HOME"] = home.absolutePath
         environment["XDG_DATA_HOME"] = File(home, "data").apply { mkdirs() }.absolutePath
         environment["XDG_CONFIG_HOME"] = File(home, "config").apply { mkdirs() }.absolutePath
         environment["XDG_CACHE_HOME"] = File(home, "cache").apply { mkdirs() }.absolutePath
+        // The bash wrapper reads this at each shell invocation, so installing the optional
+        // shell tools after the server starts still makes them available without a restart.
+        environment["CLOSECODE_SHELL_TOOLS"] = shellTools.absolutePath
         // Android has no desktop browser. `opencode web` tries to open one after the server is
         // listening; without a no-op it exits on ENOENT and the page reconnects forever. The
         // wrapper is also on PATH because some launches ask for `xdg-open` directly.
         environment["BROWSER"] = "/system/bin/true"
         environment["PATH"] = listOf(
             tools.absolutePath,
+            File(shellTools, "bin").absolutePath,
             "/system/bin",
             "/system/xbin",
             environment["PATH"].orEmpty(),
         ).filter { it.isNotBlank() }.joinToString(":")
+        if (File(shellTools, "bin/sh").exists()) {
+            environment["PREFIX"] = shellTools.absolutePath
+            environment["TERMUX_PREFIX"] = shellTools.absolutePath
+        }
         // OpenCode's shell tool asks for bash. Android ships sh, and the wrapper on PATH keeps
         // the tool's `bash -lc` and `bash -c` forms working without a fake bash.
         environment["SHELL"] = "/system/bin/sh"
@@ -675,11 +685,17 @@ object OpenCode {
         val cache = File(home, "cache").apply { mkdirs() }
         val temp = tmp(context)
         val tools = prepareTools(context)
+        val shellTools = ShellToolsRepo.workingPrefix(context.dataDir)
         val loader = OpenCodeRuntime.loader(context, arch)
         val libraries = OpenCodeRuntime.libraryPath(context)
         val binary = OpenCodeBinary.binaryFile(context)
         val ca = runCatching { OpenCodeCa.ensure(context).absolutePath }.getOrDefault("")
-        val path = listOf(tools.absolutePath, "/system/bin", "/system/xbin").joinToString(":")
+        val path = listOf(
+            tools.absolutePath,
+            File(shellTools, "bin").absolutePath,
+            "/system/bin",
+            "/system/xbin",
+        ).joinToString(":")
         val content = authWrapperScript(
             temp = temp.absolutePath,
             home = home.absolutePath,
@@ -692,6 +708,9 @@ object OpenCode {
             binary = binary.absolutePath,
             caFile = ca,
             proxyPort = proxyPort,
+            shellToolsPrefix = shellTools.absolutePath.takeIf {
+                File(shellTools, "bin/sh").exists()
+            },
         )
         if (!file.isFile || file.readText() != content) file.writeText(content)
         if (!file.setExecutable(true, false)) {
@@ -770,20 +789,39 @@ object OpenCode {
         exit 0
     """.trimIndent() + "\n"
 
-    private val BASH_SCRIPT = """
-        #!/system/bin/sh
-        # OpenCode's shell tool asks for bash; Android provides sh.
-        if [ "${'$'}1" = "-lc" ] && [ -n "${'$'}2" ]; then
-          shift
-          exec /system/bin/sh -c "${'$'}1"
-        fi
-        if [ "${'$'}1" = "-l" ] && [ "${'$'}2" = "-c" ] && [ -n "${'$'}3" ]; then
-          shift 2
-          exec /system/bin/sh -c "${'$'}1"
-        fi
-        exec /system/bin/sh "${'$'}@"
-    """.trimIndent() + "\n"
+    private val BASH_SCRIPT = openCodeBashScript()
 }
+
+/**
+ * The bash shim OpenCode's shell tool runs.
+ *
+ * The optional Termux pack needs its prefix and shared libraries when a shell command
+ * uses it. They are exported here, in the command's own environment, so the OpenCode
+ * process itself is not given Android libraries while it is starting.
+ */
+internal fun openCodeBashScript(): String = """
+    #!/system/bin/sh
+    # OpenCode's shell tool asks for bash; Android provides sh.
+    SHELL_TOOLS="${'$'}CLOSECODE_SHELL_TOOLS"
+    if [ -n "${'$'}SHELL_TOOLS" ] && [ -x "${'$'}SHELL_TOOLS/bin/sh" ]; then
+      export PREFIX="${'$'}SHELL_TOOLS"
+      export TERMUX_PREFIX="${'$'}SHELL_TOOLS"
+      export PATH="${'$'}SHELL_TOOLS/bin:${'$'}{PATH:-/system/bin:/system/xbin}"
+      export LD_LIBRARY_PATH="${'$'}SHELL_TOOLS/lib${'$'}{LD_LIBRARY_PATH:+:${'$'}LD_LIBRARY_PATH}"
+      export TMPDIR="${'$'}SHELL_TOOLS/tmp"
+      export SHELL="${'$'}SHELL_TOOLS/bin/sh"
+      mkdir -p "${'$'}TMPDIR" 2>/dev/null
+    fi
+    if [ "${'$'}1" = "-lc" ] && [ -n "${'$'}2" ]; then
+      shift
+      exec /system/bin/sh -c "${'$'}1"
+    fi
+    if [ "${'$'}1" = "-l" ] && [ "${'$'}2" = "-c" ] && [ -n "${'$'}3" ]; then
+      shift 2
+      exec /system/bin/sh -c "${'$'}1"
+    fi
+    exec /system/bin/sh "${'$'}@"
+""".trimIndent() + "\n"
 
 internal fun isOpenCodeServerCommandLine(commandLine: String): Boolean {
     val text = commandLine.replace('\u0000', ' ')
@@ -810,6 +848,7 @@ internal fun authWrapperScript(
     binary: String,
     caFile: String = "",
     proxyPort: Int? = null,
+    shellToolsPrefix: String? = null,
 ): String = buildString {
     appendLine("#!/system/bin/sh")
     appendLine("# Same environment as the web server, so auth lands in the same store.")
@@ -820,6 +859,11 @@ internal fun authWrapperScript(
     appendLine("export XDG_CACHE_HOME=${quoteShell(cache)}")
     appendLine("export BROWSER=/system/bin/true")
     appendLine("export PATH=${quoteShell(path)}")
+    if (shellToolsPrefix != null) {
+        appendLine("export CLOSECODE_SHELL_TOOLS=${quoteShell(shellToolsPrefix)}")
+        appendLine("export PREFIX=${quoteShell(shellToolsPrefix)}")
+        appendLine("export TERMUX_PREFIX=${quoteShell(shellToolsPrefix)}")
+    }
     appendLine("export SHELL=/system/bin/sh")
     appendLine("export TERM=xterm-256color")
     if (caFile.isNotBlank()) {
