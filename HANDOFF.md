@@ -5,8 +5,11 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 6 is build 28: the token-protected `closecode` terminal
-  bridge and shared build coordinator. Device verification is still required.
+- Branch `main`; Step 7 is build 29: install, launch, logcat, export,
+  screenshot and optional accessibility input from `closecode`. Device
+  verification is still required.
+- Step 6 `c028923` — token-protected `closecode` terminal bridge and shared
+  build coordinator.
 - Step 5 `3e42589` — OpenCode 1.18.35, atomic binary replacement, Android CA
   export and a loopback proxy for the server and shell tools.
 - Step 1 `c679fe5` — bind the OpenCode page to the real project directory.
@@ -75,6 +78,40 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
   background terminal, and whether a bridge-started build is reflected in the
   Build panel. A control build is tracked by `BuildCoordinator` but the panel
   still calls `BuildEngine.build` directly.
+
+## Step 7 (build 29)
+
+- `closecode` now accepts `install [apk]`, `launch [package]`,
+  `logcat [package] [lines]`, `export [path]`, `screenshot [path]`,
+  `input tap|swipe|text|key ...`, and `accessibility`. The command script sends
+  the remaining shell arguments as a JSON `args` array.
+- `install` defaults to `build/outputs/apk/debug/app-debug.apk`, reads the
+  package name from the APK, and uses `PackageInstaller`. Android's own
+  confirmation is still mandatory; without the per-source permission it returns
+  `needsPermission`.
+- `launch` uses the package manager's launch intent, with the package inferred
+  from `build/build.json` or the project's Gradle files when omitted. `logcat`
+  uses the existing `LogcatReader`; its note explains Android's cross-app log
+  limit instead of pretending the log is complete.
+- `export` copies a single file (for example an APK) or zips a directory into
+  `files/exports`, skipping generated `build`, `.gradle` and `.git` roots.
+- `screenshot` opens a transparent `ScreenshotActivity`, requests MediaProjection
+  consent, captures one frame and writes `build/screenshots/screenshot-*.png`
+  (or the path supplied). Consent is per request and can be cancelled.
+- `input` uses the optional `CloseCodeAccessibilityService`. The user must
+  enable CloseCode in Android's accessibility settings; `closecode accessibility`
+  opens that screen. Gestures use `dispatchGesture`, text uses `ACTION_SET_TEXT`
+  on the focused editable node, and keys map to the global back/home/recents/
+  notifications actions.
+- Tests: `ExportHelperTest` covers project zips, generated-output exclusions and
+  non-overwriting file exports; the command-script test now validates the new
+  commands and `args` payload. `:app:testDebugUnitTest` (1272 tests) and
+  `:app:assembleDebug` are green.
+- Still to check on a device: the installer consent screen and permission
+  return, launch from a background terminal, real cross-app logcat visibility,
+  screenshot consent/rotation and frame quality, accessibility enablement,
+  tap/swipe/text on a real app, and the exported file path being reachable from
+  the terminal.
 
 ## Fixed in build 26 (pending device check)
 
@@ -151,5 +188,5 @@ the 1.18.35 page is proven on a device.
 
 ## Latest deliverable
 
-`closecode-28-debug.apk` for Step 6 (debug, since `assembleRelease` is blocked
+`closecode-29-debug.apk` for Step 7 (debug, since `assembleRelease` is blocked
 by an unrelated Gradle lint issue on this machine).

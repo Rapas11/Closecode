@@ -104,6 +104,28 @@
             android:name=".build.BuildCancelReceiver"
             android:exported="false" />
 
+        <!-- Optional screenshot consent flow. The system MediaProjection dialog is the UI. -->
+        <activity
+            android:name=".device.ScreenshotActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:configChanges="keyboardHidden|orientation|screenSize|screenLayout|uiMode"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <!-- Optional input bridge; the user must enable it in accessibility settings. -->
+        <service
+            android:name=".device.CloseCodeAccessibilityService"
+            android:exported="true"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/closecode_accessibility" />
+        </service>
+
         <!-- The floating Back to editor pill over the user's built app. -->
         <service
             android:name=".overlay.BackToEditorService"

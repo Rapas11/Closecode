@@ -9,6 +9,8 @@ import com.closecode.build.BuildSetupFactory
 import com.closecode.build.BuildState
 import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
+import com.closecode.device.CloseCodeAccessibilityService
+import com.closecode.device.DeviceTools
 import com.closecode.ui.project.ProjectRepository
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -151,15 +153,22 @@ object CloseCodeControl {
                 send(output, error("The request is not JSON."))
                 return
             }
-            val supplied = request.get("token")?.asString.orEmpty()
+            val supplied = string(request, "token").orEmpty()
             if (!sameToken(supplied, token)) {
                 send(output, error("Unauthorized."))
                 return
             }
-            when (request.get("command")?.asString.orEmpty()) {
+            when (string(request, "command").orEmpty()) {
                 "ping" -> send(output, ping())
                 "status" -> send(output, status(context))
                 "cancel" -> send(output, cancel())
+                "install" -> send(output, install(context, request))
+                "launch" -> send(output, launch(context, request))
+                "logcat" -> send(output, logcat(context, request))
+                "export" -> send(output, export(context, request))
+                "screenshot" -> send(output, screenshot(context, request))
+                "input" -> send(output, DeviceTools.input(args(request)))
+                "accessibility" -> send(output, accessibility(context))
                 "build" -> {
                     it.soTimeout = 0
                     runBlocking { build(context, request, output) }
@@ -169,6 +178,94 @@ object CloseCodeControl {
         }
     }
 
+    private fun install(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: return error("Run closecode from a registered project folder.")
+        return DeviceTools.install(context, project.directory, args(request).firstOrNull())
+    }
+
+    private fun launch(context: Context, request: JsonObject): JsonObject {
+        val argument = args(request).firstOrNull()
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        if (project == null && argument.isNullOrBlank()) {
+            return error("Run closecode from a registered project folder or pass a package name.")
+        }
+        return DeviceTools.launch(context, project?.directory, argument)
+    }
+
+    private fun logcat(context: Context, request: JsonObject): JsonObject {
+        val arguments = args(request)
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        if (project == null && arguments.firstOrNull().isNullOrBlank()) {
+            return error("Run closecode from a registered project folder or pass a package name.")
+        }
+        val limit = int(request, "limit")
+            ?: arguments.getOrNull(1)?.toIntOrNull()
+            ?: 600
+        return DeviceTools.logcat(project?.directory, arguments.firstOrNull(), limit)
+    }
+
+    private fun export(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: return error("Run closecode from a registered project folder.")
+        return DeviceTools.export(context, project.directory, args(request).firstOrNull())
+    }
+
+    private fun screenshot(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: return error("Run closecode from a registered project folder.")
+        return DeviceTools.screenshot(context, project.directory, args(request).firstOrNull())
+    }
+
+    private fun accessibility(context: Context): JsonObject {
+        if (CloseCodeAccessibilityService.connected()) {
+            return JsonObject().apply {
+                addProperty("ok", true)
+                addProperty("enabled", true)
+            }
+        }
+        val opened = runCatching {
+            context.startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }.isSuccess
+        return JsonObject().apply {
+            addProperty("ok", opened)
+            addProperty("enabled", false)
+            if (!opened) addProperty("error", "Android did not open accessibility settings.")
+            else addProperty("note", "Enable CloseCode in the accessibility settings, then try input again.")
+        }
+    }
+
+    private fun args(request: JsonObject): List<String> =
+        request.getAsJsonArray("args")
+            ?.mapNotNull { runCatching { it.asString }.getOrNull() }
+            .orEmpty()
+
+    private fun string(request: JsonObject, key: String): String? =
+        runCatching { request.get(key)?.asString }.getOrNull()
+
+    private fun int(request: JsonObject, key: String): Int? =
+        runCatching { request.get(key)?.asInt }.getOrNull()
+
     private suspend fun build(
         context: Context,
         request: JsonObject,
@@ -176,8 +273,8 @@ object CloseCodeControl {
     ) {
         val resolved = resolveProject(
             context,
-            cwd = request.get("cwd")?.asString,
-            slug = request.get("project")?.asString,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
         )
         if (resolved == null) {
             send(output, error("Run closecode from a registered project folder."))
@@ -378,12 +475,18 @@ internal fun controlCommandScript(basePath: String): String = """
     fi
     CMD="${'$'}{1:-status}"
     case "${'$'}CMD" in
-      build|status|cancel|ping) ;;
-      *) echo "usage: closecode build|status|cancel|ping" >&2; exit 2 ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility) ;;
+      *) echo "usage: closecode build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility" >&2; exit 2 ;;
     esac
+    [ ${'$'}# -gt 0 ] && shift
     CWD=${'$'}(pwd -P 2>/dev/null || pwd)
     escape() { printf '%s' "${'$'}1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
-    REQUEST="{\"token\":\"${'$'}(escape "${'$'}TOKEN")\",\"command\":\"${'$'}CMD\",\"cwd\":\"${'$'}(escape "${'$'}CWD")\"}"
+    ARGS=""
+    for arg in "${'$'}@"; do
+      item=${'$'}(escape "${'$'}arg")
+      if [ -z "${'$'}ARGS" ]; then ARGS="\"${'$'}item\""; else ARGS="${'$'}ARGS,\"${'$'}item\""; fi
+    done
+    REQUEST="{\"token\":\"${'$'}(escape "${'$'}TOKEN")\",\"command\":\"${'$'}CMD\",\"cwd\":\"${'$'}(escape "${'$'}CWD")\",\"args\":[${'$'}ARGS]}"
     OUT="${'$'}BASE/control.out.${'$'}${'$'}"
     if printf '%s\n' "${'$'}REQUEST" | /system/bin/nc 127.0.0.1 "${'$'}PORT" > "${'$'}OUT" 2>/dev/null; then
       cat "${'$'}OUT"

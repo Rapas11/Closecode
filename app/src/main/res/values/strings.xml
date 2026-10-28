@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Closecode</string>
+    <string name="closecode_accessibility_description">Lets the CloseCode terminal tap, swipe and type in other apps when you ask it to. Enable it only while you need input automation.</string>
 </resources>
 

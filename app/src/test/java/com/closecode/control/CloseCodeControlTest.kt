@@ -35,5 +35,7 @@ class CloseCodeControlTest {
         assertTrue(script.contains("control.token"))
         assertTrue(script.contains("control.port"))
         assertTrue(script.contains("/system/bin/nc 127.0.0.1"))
+        assertTrue(script.contains("install|launch|logcat|export|screenshot|input|accessibility"))
+        assertTrue(script.contains("\\\"args\\\":"))
     }
 }
