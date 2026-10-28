@@ -5,10 +5,11 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 9 is build 31: the optional on-demand Termux
-  shell-tools pack. Step 8 is build 30: `closecode describe`, short command
-  aliases, and `aapt2`/`d8`/`r8`/`kotlinc` wrappers. Device verification of
-  Steps 5–9 is still required.
+- Branch `main`; Step 10 is build 32: the one-time manual `aapt2` is now
+  inside the APK. Step 9 is build 31: the optional on-demand Termux shell-tools
+  pack. Step 8 is build 30: `closecode describe`, short command aliases, and
+  `aapt2`/`d8`/`r8`/`kotlinc` wrappers. Device verification of Steps 5–10 is
+  still required.
 - Step 8 `00b1407` — project description, aliases and build-tool wrappers.
 - Step 7 `5002de3` — install, launch, logcat, export, screenshot and optional
   accessibility input from `closecode`.
@@ -176,6 +177,25 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
   `LD_LIBRARY_PATH`, symlinks, `tools remove` and reinstall, interruption
   during install, and whether any package script needs `termux-exec`.
 
+## Step 10 (build 32)
+
+- `libaapt2.so` is now placed manually at
+  `app/src/main/jniLibs/arm64-v8a/libaapt2.so` and packaged into the APK. It
+  comes from `build-tools-34.0.4-aarch64.tar.xz` from
+  AndroidIDEOfficial/androidide-tools (SHA-256
+  `4bbbdeee608ff8d3a2c1534d0a5270305a02b1f200403a536c75ac84c41e52fa`).
+- The file is deliberately gitignored and not committed. This is the one-time
+  local copy; a fresh clone or another machine must place it again. The current
+  `aapt2` is an ARM64, statically linked executable, so no
+  `libc++_shared.so` is required.
+- The APK contains `lib/arm64-v8a/libaapt2.so`; versionCode 32 and package
+  `com.closecode` were verified. `:app:testDebugUnitTest` passed 1295 tests,
+  8 skipped, 0 failures/errors, and `:app:assembleDebug` is green.
+- `closecode build` should no longer report `missing: ["aapt2"]`, but no device
+  is connected here, so the on-device build/install/launch check is still
+  pending. OpenCode's AI shell still does not receive the shell-tools
+  environment; that remains Step 11.
+
 ## Fixed in build 26 (pending device check)
 
 ### Session and tab restore
@@ -235,9 +255,9 @@ the 1.18.35 page is proven on a device.
 3. Android Studio's NDK only if rebuilding the PTY bridge
    (`scripts/build-pty.ps1`). `libclosepty.so` is already committed for normal
    builds.
-4. Run `scripts/prepare-toolchain.ps1` once — it produces `libaapt2.so`,
-   `libc++_shared.so` and the other toolchain files that are deliberately not
-   committed.
+4. Run `scripts/prepare-toolchain.ps1` once — it produces `libaapt2.so` and
+   the other toolchain files that are deliberately not committed. The current
+   ARM64 `aapt2` is statically linked; `libc++_shared.so` is not required.
 5. First build: `.\gradlew.bat :app:assembleDebug --console=plain`
    (and `:app:testDebugUnitTest --console=plain` before any commit). On Linux
    use `./gradlew` with `JAVA_HOME` and `ANDROID_HOME` exported. If the Kotlin
@@ -251,5 +271,5 @@ the 1.18.35 page is proven on a device.
 
 ## Latest deliverable
 
-`closecode-31-debug.apk` for Step 9 (debug, since `assembleRelease` is blocked
+`closecode-32-debug.apk` for Step 10 (debug, since `assembleRelease` is blocked
 by an unrelated Gradle lint issue on this machine).
