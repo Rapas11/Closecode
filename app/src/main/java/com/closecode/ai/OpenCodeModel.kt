@@ -61,6 +61,8 @@ data class OpenCodeStatus(
     val downloadPercent: Int = 0,
     /** Raised once for every server that answered. The web page reloads when it changes. */
     val generation: Int = 0,
+    /** The loopback proxy port, or zero when the server is running without one. */
+    val proxyPort: Int = 0,
 )
 
 /** The numbers the app and the server agree on. */
@@ -71,12 +73,12 @@ object OpenCodeDefaults {
     /**
      * The pinned OpenCode release the app downloads.
      *
-     * 1.18.31 is the release the AndroidIDE app uses on these phones, and its web page runs in
-     * the phone's WebView. 1.19.4's page crashes on an older WebView before the session view
-     * renders, which is the black page with only the top bar. Do not bump this without opening
-     * the page on a real phone.
+     * 1.18.35 is the latest 1.18.x release and its web page runs in the phone's WebView.
+     * 1.19.4's page crashes on an older WebView before the session view renders, which is
+     * the black page with only the top bar. Do not bump this without opening the page on a
+     * real phone.
      */
-    const val VERSION: String = "1.18.31"
+    const val VERSION: String = "1.18.35"
 
     /** The release tag, which is the version with a v in front. */
     const val TAG: String = "v$VERSION"
@@ -96,7 +98,7 @@ object OpenCodeDefaults {
 /**
  * The page URL that opens the project in [projectRoot], not OpenCode's home screen.
  *
- * OpenCode 1.18.31's own page router reads the directory from the first path segment: it decodes
+ * OpenCode 1.18.x's own page router reads the directory from the first path segment: it decodes
  * that segment as UTF-8 base64url and then opens a new session in the decoded folder. The route
  * is therefore `/<base64url(directory)>/session`. This is the route the installed page actually
  * understands; `/project-session?directory=...` is not in its router and leaves a blank page.

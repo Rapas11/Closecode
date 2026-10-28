@@ -24,10 +24,28 @@ class OpenCodeModelTest {
 
     @Test
     fun aHealthyServerReportsItsVersion() {
-        assertEquals("1.18.31", healthyVersion("""{"healthy":true,"version":"1.18.31"}"""))
+        assertEquals("1.18.35", healthyVersion("""{"healthy":true,"version":"1.18.35"}"""))
         assertEquals("", healthyVersion("""{"healthy":true}"""))
-        assertNull(healthyVersion("""{"healthy":false,"version":"1.18.31"}"""))
+        assertNull(healthyVersion("""{"healthy":false,"version":"1.18.35"}"""))
         assertNull(healthyVersion("not json"))
+    }
+
+    @Test
+    fun thePinnedVersionMatchesTheReleaseTag() {
+        assertEquals("1.18.35", OpenCodeDefaults.VERSION)
+        assertEquals("v1.18.35", OpenCodeDefaults.TAG)
+    }
+
+    @Test
+    fun theOrphanMatcherOnlyFindsTheWebServer() {
+        assertTrue(
+            isOpenCodeServerCommandLine(
+                "/data/opencode\u0000web\u0000--hostname\u0000127.0.0.1\u0000--port\u00004098",
+            ),
+        )
+        assertFalse(isOpenCodeServerCommandLine("/data/opencode\u0000auth\u0000login"))
+        assertTrue(isOpenCodeServerCommandLine("/system/bin/sh\u0000-c\u0000opencode web"))
+        assertFalse(isOpenCodeServerCommandLine("/system/bin/sh\u0000-c\u0000echo opencode"))
     }
 
     @Test
@@ -160,6 +178,29 @@ class OpenCodeModelTest {
     }
 
     @Test
+    fun theAuthWrapperUsesTheCaAndProxyWhenTheyAreAvailable() {
+        val script = authWrapperScript(
+            temp = "/data/tmp",
+            home = "/data/home",
+            data = "/data/home/data",
+            config = "/data/home/config",
+            cache = "/data/home/cache",
+            path = "/data/bin:/system/bin",
+            loader = "/data/loader",
+            libraries = "/data/lib:/data/usr/lib",
+            binary = "/data/opencode",
+            caFile = "/data/opencode/ca.pem",
+            proxyPort = 4099,
+        )
+
+        assertTrue(script.contains("export SSL_CERT_FILE='/data/opencode/ca.pem'"))
+        assertTrue(script.contains("export NODE_EXTRA_CA_CERTS='/data/opencode/ca.pem'"))
+        assertTrue(script.contains("export HTTP_PROXY='http://127.0.0.1:4099'"))
+        assertTrue(script.contains("export HTTPS_PROXY='http://127.0.0.1:4099'"))
+        assertTrue(script.contains("export NO_PROXY='localhost,127.0.0.1,::1'"))
+    }
+
+    @Test
     fun theAuthWrapperQuotesAPathWithSpaces() {
         val script = authWrapperScript(
             temp = "/data/tmp",
@@ -218,9 +259,74 @@ class OpenCodeBinaryTest {
     fun theDownloadComesFromTheReleaseThatMatchesThePinnedVersion() {
         val url = OpenCodeBinary.downloadUrl("opencode-linux-arm64-musl.tar.gz")
 
-        assertTrue(url.startsWith("https://github.com/sst/opencode/releases/download/"))
+        assertTrue(url.startsWith("https://github.com/anomalyco/opencode/releases/download/"))
         assertTrue(url.endsWith("/opencode-linux-arm64-musl.tar.gz"))
         assertTrue(url.contains(OpenCodeDefaults.TAG))
+    }
+
+    @Test
+    fun aNewProgramReplacesTheOldOneAtomically() {
+        val dir = File(System.getProperty("java.io.tmpdir"), "opencode-binary-${System.nanoTime()}")
+        dir.mkdirs()
+        val target = File(dir, "opencode").apply { writeText("old") }
+        val staged = File(dir, "opencode.new").apply { writeText("new") }
+
+        try {
+            replaceFileAtomically(staged, target)
+
+            assertEquals("new", target.readText())
+            assertFalse(staged.exists())
+            assertFalse(File(dir, "opencode.old").exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun aMissingNewProgramDoesNotReplaceTheOldOne() {
+        val dir = File(System.getProperty("java.io.tmpdir"), "opencode-binary-${System.nanoTime()}")
+        dir.mkdirs()
+        val target = File(dir, "opencode").apply { writeText("old") }
+
+        try {
+            try {
+                replaceFileAtomically(File(dir, "opencode.new"), target)
+                throw AssertionError("Expected the missing staged program to fail")
+            } catch (_: IllegalStateException) {
+            }
+
+            assertEquals("old", target.readText())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+}
+
+class OpenCodeCaTest {
+
+    @Test
+    fun aCertificateBecomesAPemBlock() {
+        val pem = OpenCodeCa.pem(listOf(byteArrayOf(1, 2, 3)))
+
+        assertTrue(pem.startsWith("-----BEGIN CERTIFICATE-----\n"))
+        assertTrue(pem.contains("AQID"))
+        assertTrue(pem.endsWith("-----END CERTIFICATE-----\n"))
+    }
+
+    @Test
+    fun noCertificatesMakeNoPem() {
+        assertTrue(OpenCodeCa.pem(emptyList()).isEmpty())
+    }
+
+    @Test
+    fun theCaIsGivenToEveryToolThatUsesTls() {
+        val environment = OpenCodeCa.environment("/data/opencode/ca.pem")
+
+        assertEquals("/data/opencode/ca.pem", environment["SSL_CERT_FILE"])
+        assertEquals("/data/opencode/ca.pem", environment["NODE_EXTRA_CA_CERTS"])
+        assertEquals("/data/opencode/ca.pem", environment["CURL_CA_BUNDLE"])
+        assertEquals("/data/opencode/ca.pem", environment["GIT_SSL_CAINFO"])
+        assertEquals("1", environment["NODE_USE_SYSTEM_CA"])
     }
 }
 

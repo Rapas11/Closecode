@@ -5,14 +5,40 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 4 fixes the two open bugs below and raises
-  `versionCode` to 26. Device verification of Step 4 is still required.
+- Branch `main`; Step 5 is build 27: OpenCode 1.18.35, atomic binary
+  replacement, Android CA export and a loopback proxy for the server and shell
+  tools. Device verification is still required.
 - Step 1 `c679fe5` — bind the OpenCode page to the real project directory.
 - Step 2 `b457f15` — replace the AI tab with the OpenCode page surface.
 - Step 3 `54dd4a3` — restore OpenCode's project route and repair stale tabs.
+- Step 4 `d54f722` — keep the page session/tab state and fix viewport units.
 - Untouched working rule: one commit per step, full unit suite green, bump
   `versionCode`, send an APK after each step, no force-push, keep the untracked
   `real opencode open pc/` folder out of the repo.
+
+## Step 5 (build 27)
+
+- `OpenCodeDefaults.VERSION` is pinned to `1.18.35`; downloads now come from
+  `anomalyco/opencode`.
+- Binary installs are staged and replaced atomically, with the old program kept
+  until the new one is in place. A changed install clears
+  `cache/opencode/models.json` once.
+- `OpenCodeCa` exports Android's system roots to
+  `files/opencode/ca.pem` and passes them to Node, curl and git through
+  `SSL_CERT_FILE`, `NODE_EXTRA_CA_CERTS`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`
+  and `NODE_USE_SYSTEM_CA`.
+- `OpenCodeProxy` listens only on `127.0.0.1`, handles CONNECT and absolute-URL
+  HTTP with full-duplex bodies, and exports `HTTP(S)_PROXY`/`NO_PROXY` for the
+  server and the auth wrapper.
+- Orphan cleanup reads the PID file and scans `/proc`, killing only this UID's
+  `opencode ... web` processes. Port choice falls back through
+  `4098..4118` and logs when it does.
+- Unit tests cover the new version/URL, CA PEM/env, proxy env and forwarding,
+  orphan command matching, and atomic replacement. `:app:testDebugUnitTest`
+  and `:app:assembleDebug` are green.
+- Still to check on a device: 1.18.35 page/model picker in the WebView, proxy
+  CONNECT/HTTPS traffic, `opencode auth login` with the exported CA, orphan
+  cleanup after force-stop, and port fallback.
 
 ## Fixed in build 26 (pending device check)
 
@@ -57,10 +83,10 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 ## OpenCode upgrade request
 
 The user asked to upgrade from the pinned 1.18.31 to 1.19.4 (or 2.0).
-`OpenCodeDefaults.VERSION` in `OpenCodeModel.kt` pins the download tag; the
-comment there warns 1.19.4's page crashed on older WebViews when the viewport
-units collapse — which is the same root bug above. Do not bump the pin until
-the viewport fix is proven on a device.
+Step 5 moves the pin to 1.18.35, the latest 1.18.x release. The comment in
+`OpenCodeModel.kt` warns 1.19.4's page crashed on older WebViews when the
+viewport units collapse — the same root bug above. Do not move to 1.19.4 until
+the 1.18.35 page is proven on a device.
 
 ## Environment on a new machine
 
@@ -87,5 +113,5 @@ the viewport fix is proven on a device.
 
 ## Latest deliverable
 
-`closecode-26-debug.apk` for Step 4 (debug, since `assembleRelease` is blocked
+`closecode-27-debug.apk` for Step 5 (debug, since `assembleRelease` is blocked
 by an unrelated Gradle lint issue on this machine).

@@ -2,6 +2,8 @@ package com.closecode.ai
 
 import android.content.Context
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * The OpenCode program itself: where it comes from, and how it is put on the phone.
@@ -15,6 +17,8 @@ import java.io.File
  * and [OpenCodeRuntime] puts those on the phone beside the program and starts it through them.
  */
 object OpenCodeBinary {
+
+    data class Install(val binary: File, val changed: Boolean)
 
     /** Where the program lives on the phone. */
     fun installDir(context: Context): File = File(context.filesDir, "opencode")
@@ -47,7 +51,7 @@ object OpenCodeBinary {
 
     /** Where the release file is downloaded from. */
     fun downloadUrl(asset: String): String =
-        "https://github.com/sst/opencode/releases/download/${OpenCodeDefaults.TAG}/$asset"
+        "https://github.com/anomalyco/opencode/releases/download/${OpenCodeDefaults.TAG}/$asset"
 
     /**
      * The program on the phone, downloading it first if this is the first start.
@@ -60,60 +64,101 @@ object OpenCodeBinary {
         context: Context,
         abis: List<String>,
         onProgress: (Int) -> Unit,
-    ): File {
+    ): Install {
         val asset = assetForAbis(abis)
             ?: throw IllegalStateException(
                 "This phone's CPU is not one OpenCode runs on. It needs ARM64 or x86_64.",
             )
         val target = binaryFile(context)
         val marker = markerFile(context)
-        // The file on its own is not enough: it has to be the build for *this* phone. The marker
-        // says which release it came out of, so a phone that reports a different CPU — an
-        // emulator, or an app restored onto new hardware — gets the right one instead of a
-        // program that cannot run here.
-        // The pinned release the local files must be from. The archive's name carries it, so
-        // leftovers from another release cannot be quietly unpacked in place of this one.
         val expectedMarker = asset.replace(".tar.gz", "-${OpenCodeDefaults.VERSION}.tar.gz")
         if (isInstalled(context) && marker.isFile && marker.readText().trim() == expectedMarker) {
-            return target
+            return Install(target, changed = false)
         }
 
         val url = downloadUrl(asset)
         installDir(context).mkdirs()
         val archive = File(installDir(context), expectedMarker)
-        // An older release's program or archive is quietly in the way: the marker says so. The
-        // program of the older release goes, and so do archives that do not carry this
-        // release's name — an archive with the right name is this release's own download and
-        // stays for the unpacking below.
         if (marker.isFile && marker.readText().trim() != expectedMarker) {
-            target.delete()
             installDir(context).listFiles()
                 ?.filter { it.name.endsWith(".tar.gz") && it.name != expectedMarker }
                 ?.forEach { it.delete() }
-            marker.delete()
         }
-        // A previous start may have downloaded the archive and then failed while unpacking it.
-        // The file is only ever renamed into place once every byte arrived, so a file that is
-        // there is a whole archive, and downloading it a second time would buy nothing.
         if (!archive.isFile || archive.length() == 0L) {
             Downloads.get(url, archive, what = "OpenCode download", onProgress = onProgress)
         } else {
             onProgress(100)
         }
 
-        // Unpacked straight to disk: the program is close to two hundred megabytes, so it is
-        // written through a small buffer and renamed into place only once every byte arrived.
-        val entry = TarReader.extractFirstFile(archive.inputStream(), target)
-        if (entry == null) {
-            // Nothing usable inside, so it is not worth keeping: the next start downloads again.
+        val staged = File(installDir(context), "opencode.new")
+        val part = File(installDir(context), "opencode.new.part")
+        staged.delete()
+        part.delete()
+        try {
+            val entry = TarReader.extractFirstFile(archive.inputStream(), staged)
+            if (entry == null) {
+                archive.delete()
+                throw IllegalStateException("The downloaded OpenCode archive held no program.")
+            }
+            staged.setExecutable(true, false)
+            staged.setReadable(true, false)
+            replaceFileAtomically(staged, target)
             archive.delete()
-            throw IllegalStateException("The downloaded OpenCode archive held no program.")
+            marker.writeText(expectedMarker)
+            return Install(target, changed = true)
+        } catch (error: Throwable) {
+            staged.delete()
+            part.delete()
+            archive.delete()
+            throw error
         }
-        archive.delete()
-        // The program has to be executable to be run at all.
-        target.setExecutable(true, false)
-        target.setReadable(true, false)
-        marker.writeText(expectedMarker)
-        return target
     }
+}
+
+internal fun replaceFileAtomically(staged: File, target: File) {
+    if (!staged.isFile) throw IllegalStateException("The staged OpenCode program is missing.")
+    val direct = runCatching {
+        Files.move(
+            staged.toPath(),
+            target.toPath(),
+            StandardCopyOption.REPLACE_EXISTING,
+            StandardCopyOption.ATOMIC_MOVE,
+        )
+    }.isSuccess
+    if (direct) return
+
+    val backup = File(target.parentFile, "${target.name}.old")
+    backup.delete()
+    if (target.isFile) {
+        val backedUp = runCatching {
+            Files.move(
+                target.toPath(),
+                backup.toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        }.isSuccess
+        if (!backedUp) {
+            throw IllegalStateException("Could not move the old OpenCode program aside.")
+        }
+    }
+    val installed = runCatching {
+        Files.move(
+            staged.toPath(),
+            target.toPath(),
+            StandardCopyOption.REPLACE_EXISTING,
+        )
+    }.isSuccess
+    if (!installed) {
+        if (backup.isFile) {
+            runCatching {
+                Files.move(
+                    backup.toPath(),
+                    target.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                )
+            }
+        }
+        throw IllegalStateException("Could not install the new OpenCode program.")
+    }
+    backup.delete()
 }

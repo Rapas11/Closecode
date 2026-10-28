@@ -50,6 +50,9 @@ object OpenCode {
     @Volatile
     private var pidFile: File? = null
 
+    @Volatile
+    private var proxy: OpenCodeProxy? = null
+
     private val processLock = Any()
 
     /**
@@ -113,7 +116,7 @@ object OpenCode {
         val arch = OpenCodeRuntime.alpineArch(Build.SUPPORTED_ABIS.toList()) ?: return null
         val loader = OpenCodeRuntime.loader(context, arch)
         if (!loader.isFile) return null
-        val wrapper = writeAuthWrapper(context, arch)
+        val wrapper = writeAuthWrapper(context, arch, state.value.proxyPort.takeIf { it > 0 })
         return "${shellQuote(wrapper.absolutePath)} auth login"
     }
 
@@ -122,6 +125,8 @@ object OpenCode {
         stopping = true
         job?.cancel()
         job = null
+        proxy?.stop()
+        proxy = null
         killProcess()
         lastAutoOpenedGeneration = -1
         state.value = OpenCodeStatus()
@@ -156,36 +161,47 @@ object OpenCode {
         File(context.filesDir, "opencode/server.pid")
 
     /**
-     * Kills a server the last app run left behind.
+     * Kills servers the last app run left behind.
      *
-     * `am force-stop` kills the app process but not its child. The child keeps listening on the
-     * old port, and the next start would either take another port or talk to a server it does
-     * not own. The PID file is written at launch and read here; the UID and cmdline checks make
-     * sure a recycled PID cannot make the app kill an unrelated process.
+     * `am force-stop` kills the app process but not its children. A child keeps listening on
+     * the old port, and the next start would either take another port or talk to a server it
+     * does not own. The PID file is read first; `/proc` finds a server whose PID file was
+     * already gone. The UID and cmdline checks make sure a recycled PID cannot make the app
+     * kill an unrelated process.
      */
-    private fun killOrphan(context: Context): Int? {
+    private fun killOrphans(context: Context): List<Int> {
+        val candidates = linkedSetOf<Int>()
         val file = serverPidFile(context)
-        val pid = runCatching { file.readText().trim().toInt() }.getOrNull()
+        runCatching { file.readText().trim().toInt() }.getOrNull()?.let { candidates += it }
         runCatching { file.delete() }
-        if (pid == null || pid <= 0 || pid == android.os.Process.myPid()) return null
+        File("/proc").listFiles()?.forEach { entry ->
+            entry.name.toIntOrNull()?.let { pid ->
+                if (pid != android.os.Process.myPid()) candidates += pid
+            }
+        }
+        return candidates.filter { pid -> killOrphanPid(pid) }
+    }
+
+    private fun killOrphanPid(pid: Int): Boolean {
+        if (pid <= 0 || pid == android.os.Process.myPid()) return false
         val status = runCatching { File("/proc/$pid/status").readLines() }.getOrNull()
-            ?: return null
+            ?: return false
         val uid = status.firstOrNull { it.startsWith("Uid:") }
             ?.split(Regex("\\s+"))
             ?.getOrNull(1)
             ?.toIntOrNull()
-        if (uid != android.os.Process.myUid()) return null
-        val cmdline = runCatching { File("/proc/$pid/cmdline").readText() }.getOrNull()
+        if (uid != android.os.Process.myUid()) return false
+        val cmdline = runCatching { File("/proc/$pid/cmdline").readBytes() }.getOrNull()
+            ?.toString(Charsets.UTF_8)
             .orEmpty()
-        if (!cmdline.contains("opencode")) return null
+        if (!isOpenCodeServerCommandLine(cmdline)) return false
         val killed = runCatching {
             ProcessBuilder("/system/bin/kill", "-9", pid.toString())
                 .start()
                 .waitFor(2, TimeUnit.SECONDS)
         }.getOrDefault(false)
-        if (!killed) return null
-        DebugLog.crumb("AICO", "removed orphan server $pid")
-        return pid
+        if (killed) DebugLog.crumb("AICO", "removed orphan server $pid")
+        return killed
     }
 
     /**
@@ -203,11 +219,11 @@ object OpenCode {
      * back if it goes.
      */
     private suspend fun runServer(context: Context, projectRoot: File, projectName: String) {
-        // A force-stop kills this app but not its child. The PID file is the only way the next
-        // run can find that child; clean it up before choosing a port, or the old server would
-        // keep 4098 and this run would start a second one beside it.
-        val orphanPid = killOrphan(context)
-        val port = freePort()
+        // A force-stop kills this app but not its child. Clean leftovers up before choosing a
+        // port, or the old server would keep 4098 and this run would start a second one beside it.
+        val orphanPids = killOrphans(context)
+        val portChoice = freePort()
+        val port = portChoice.port
         val abis = Build.SUPPORTED_ABIS.toList()
         val arch = OpenCodeRuntime.alpineArch(abis)
         if (arch == null) {
@@ -235,12 +251,29 @@ object OpenCode {
                 url = url,
                 pageUrl = projectPageUrl(url, projectRoot),
                 port = port,
-                log = listOfNotNull(
-                    OpenCodeLogLine("Starting OpenCode ${OpenCodeDefaults.VERSION}"),
-                    orphanPid?.let {
-                        OpenCodeLogLine("Removed a server left by the last run (PID $it)")
-                    },
-                ),
+                log = buildList {
+                    add(OpenCodeLogLine("Starting OpenCode ${OpenCodeDefaults.VERSION}"))
+                    orphanPids.forEach {
+                        add(OpenCodeLogLine("Removed a server left by the last run (PID $it)"))
+                    }
+                    if (portChoice.fellBack) {
+                        add(
+                            OpenCodeLogLine(
+                                "Port ${OpenCodeDefaults.PORT} is busy; using $port",
+                                warning = true,
+                            ),
+                        )
+                    }
+                    if (portChoice.exhausted) {
+                        add(
+                            OpenCodeLogLine(
+                                "Ports ${OpenCodeDefaults.PORT}-" +
+                                    "${OpenCodeDefaults.PORT + 20} are busy; trying $port",
+                                warning = true,
+                            ),
+                        )
+                    }
+                },
                 error = null,
                 downloading = false,
                 downloadPercent = 0,
@@ -251,13 +284,21 @@ object OpenCode {
         // downloads both; later starts find them on the phone and skip the whole thing.
         val binary = try {
             update { it.copy(downloading = true, downloadPercent = 0) }
-            val file = withContext(Dispatchers.IO) {
+            val installed = withContext(Dispatchers.IO) {
                 OpenCodeBinary.ensure(context, abis) { percent ->
                     update { it.copy(downloadPercent = percent) }
                 }
             }
             update { it.copy(downloading = false, downloadPercent = 0) }
-            log("Downloaded OpenCode ${OpenCodeDefaults.VERSION}")
+            if (installed.changed) {
+                val cleared = clearModelCache(context)
+                log(
+                    "Installed OpenCode ${OpenCodeDefaults.VERSION}" +
+                        if (cleared) "; model cache cleared" else "",
+                )
+            } else {
+                log("OpenCode ${OpenCodeDefaults.VERSION} is ready")
+            }
 
             update { it.copy(downloading = true, downloadPercent = 0) }
             withContext(Dispatchers.IO) {
@@ -267,7 +308,7 @@ object OpenCode {
             }
             update { it.copy(downloading = false) }
             log("Runtime: musl, libstdc++ and libgcc from Alpine ${OpenCodeRuntime.ALPINE} ($arch)")
-            file
+            installed.binary
         } catch (error: Throwable) {
             if (!currentCoroutineContext().isActive) return
             val message = error.message ?: "OpenCode could not be downloaded."
@@ -288,86 +329,108 @@ object OpenCode {
         log("Program: ${binary.absolutePath}")
         log("Loader: ${OpenCodeRuntime.loader(context, arch).absolutePath}")
 
-        var attempt = 1
-        while (currentCoroutineContext().isActive) {
-            log(OpenCodeDefaults.launchLine(port))
-            log("Server: local only, unsecured (OpenCode's documented local mode)")
-            log("Waiting for http://${OpenCodeDefaults.HOST}:$port/global/health")
-            val failure = launchProcess(context, arch, binary, projectRoot, port)
-            if (failure != null) {
-                if (!currentCoroutineContext().isActive) return
-                val message = "OpenCode could not be started on this phone.\n$failure"
-                update {
-                    it.copy(
-                        phase = OpenCodePhase.Failed,
-                        error = message,
-                        log = it.log + OpenCodeLogLine(message, warning = true),
-                    )
-                }
-                OpenCodeService.stop(context)
-                DebugLog.crumb("AICO", "launch failed: ${failure.take(120)}")
-                return
-            }
+        val localProxy = OpenCodeProxy { line -> log(line) }
+        val proxyPort = runCatching { localProxy.start() }.onFailure {
+            log("Proxy could not start: ${it.message ?: it.javaClass.simpleName}", warning = true)
+        }.getOrNull()
+        if (proxyPort != null) {
+            proxy = localProxy
+            update { it.copy(proxyPort = proxyPort) }
+        }
 
-            val version = waitForAnswer(port)
-            if (version != null) {
-                val shown = version.ifBlank { readVersion(context, arch, binary) }
-                val url = "http://${OpenCodeDefaults.HOST}:$port"
-                update {
-                    it.copy(
-                        phase = OpenCodePhase.Running,
-                        version = shown,
-                        projectDirectory = projectRoot.absolutePath,
-                        url = url,
-                        pageUrl = projectPageUrl(url, projectRoot),
-                        generation = it.generation + 1,
-                    )
+        try {
+            var attempt = 1
+            while (currentCoroutineContext().isActive) {
+                log(OpenCodeDefaults.launchLine(port))
+                log("Server: local only, unsecured (OpenCode's documented local mode)")
+                log("Waiting for http://${OpenCodeDefaults.HOST}:$port/global/health")
+                val failure = launchProcess(
+                    context,
+                    arch,
+                    binary,
+                    projectRoot,
+                    port,
+                    proxyPort,
+                )
+                if (failure != null) {
+                    if (!currentCoroutineContext().isActive) return
+                    val message = "OpenCode could not be started on this phone.\n$failure"
+                    update {
+                        it.copy(
+                            phase = OpenCodePhase.Failed,
+                            error = message,
+                            log = it.log + OpenCodeLogLine(message, warning = true),
+                        )
+                    }
+                    OpenCodeService.stop(context)
+                    DebugLog.crumb("AICO", "launch failed: ${failure.take(120)}")
+                    return
                 }
-                log("OpenCode is answering at $url")
-                OpenCodeService.update(context, url, projectName)
-                DebugLog.crumb("AICO", "server answering")
-                // Stay up until the server stops answering or the process ends. A project's
-                // first request bootstraps it and can leave the health endpoint silent for a
-                // long time while watchers and configuration come up. A few missed answers are
-                // therefore not a death sentence; only a dead process or the full grace period
-                // is.
-                var silentSinceMs: Long? = null
-                while (currentCoroutineContext().isActive) {
-                    delay(1_000)
-                    if (process?.isAlive != true) break
-                    val now = SystemClock.elapsedRealtime()
-                    if (probe(port) != null) {
-                        silentSinceMs = null
-                    } else {
-                        val since = silentSinceMs ?: now.also { silentSinceMs = it }
-                        if (serverNeedsRestart(processAlive = true, silentForMs = now - since)) {
-                            log(
-                                "No health answer for ${SERVER_SILENCE_LIMIT_MS / 1000} s",
-                                warning = true,
-                            )
-                            break
+
+                val version = waitForAnswer(port)
+                if (version != null) {
+                    val shown = version.ifBlank { readVersion(context, arch, binary) }
+                    val url = "http://${OpenCodeDefaults.HOST}:$port"
+                    update {
+                        it.copy(
+                            phase = OpenCodePhase.Running,
+                            version = shown,
+                            projectDirectory = projectRoot.absolutePath,
+                            url = url,
+                            pageUrl = projectPageUrl(url, projectRoot),
+                            generation = it.generation + 1,
+                            proxyPort = proxyPort ?: 0,
+                        )
+                    }
+                    log("OpenCode is answering at $url")
+                    OpenCodeService.update(context, url, projectName)
+                    DebugLog.crumb("AICO", "server answering")
+                    // Stay up until the server stops answering or the process ends. A project's
+                    // first request bootstraps it and can leave the health endpoint silent for a
+                    // long time while watchers and configuration come up. A few missed answers
+                    // are therefore not a death sentence; only a dead process or the full grace
+                    // period is.
+                    var silentSinceMs: Long? = null
+                    while (currentCoroutineContext().isActive) {
+                        delay(1_000)
+                        if (process?.isAlive != true) break
+                        val now = SystemClock.elapsedRealtime()
+                        if (probe(port) != null) {
+                            silentSinceMs = null
+                        } else {
+                            val since = silentSinceMs ?: now.also { silentSinceMs = it }
+                            if (serverNeedsRestart(processAlive = true, silentForMs = now - since)) {
+                                log(
+                                    "No health answer for ${SERVER_SILENCE_LIMIT_MS / 1000} s",
+                                    warning = true,
+                                )
+                                break
+                            }
                         }
                     }
+                    if (!currentCoroutineContext().isActive) return
                 }
-                if (!currentCoroutineContext().isActive) return
-            }
 
-            // The server is gone or stopped answering. The app brings it back by itself.
-            attempt++
-            log("Connection lost", warning = true)
-            update {
-                it.copy(
-                    phase = OpenCodePhase.ConnectionLost,
-                    retryInSeconds = RETRY_SECONDS,
-                )
+                // The server is gone or stopped answering. The app brings it back by itself.
+                attempt++
+                log("Connection lost", warning = true)
+                update {
+                    it.copy(
+                        phase = OpenCodePhase.ConnectionLost,
+                        retryInSeconds = RETRY_SECONDS,
+                    )
+                }
+                for (second in RETRY_SECONDS downTo 1) {
+                    if (!currentCoroutineContext().isActive) return
+                    update { it.copy(retryInSeconds = second) }
+                    delay(1_000)
+                }
+                log("Retry $attempt: starting again…")
+                killProcess()
             }
-            for (second in RETRY_SECONDS downTo 1) {
-                if (!currentCoroutineContext().isActive) return
-                update { it.copy(retryInSeconds = second) }
-                delay(1_000)
-            }
-            log("Retry $attempt: starting again…")
-            killProcess()
+        } finally {
+            localProxy.stop()
+            if (proxy === localProxy) proxy = null
         }
     }
 
@@ -440,6 +503,7 @@ object OpenCode {
         binary: File,
         projectRoot: File,
         port: Int,
+        proxyPort: Int?,
     ): String? {
         return try {
             val loader = OpenCodeRuntime.loader(context, arch).absolutePath
@@ -463,7 +527,7 @@ object OpenCode {
                 command.joinToString(" ") { shellQuote(it) }
             val builder = ProcessBuilder("/system/bin/sh", "-c", launch)
             builder.directory(projectRoot)
-            ground(context, builder.environment())
+            ground(context, builder.environment(), proxyPort)
             // No OPENCODE_SERVER_PASSWORD and no OPENCODE_SERVER_USERNAME: the server is bound
             // to loopback, and OpenCode documents unsecured local use as fine. This is also
             // what makes the page's own fetch/SSE calls work without the WebView having to
@@ -550,7 +614,11 @@ object OpenCode {
      * on — and OpenCode makes `/tmp/opencode` for itself the moment it starts, so without
      * these it dies with EACCES before the server is ever up, even at `--version`.
      */
-    private fun ground(context: Context, environment: MutableMap<String, String>) {
+    private fun ground(
+        context: Context,
+        environment: MutableMap<String, String>,
+        proxyPort: Int? = null,
+    ) {
         val home = home(context)
         val tools = prepareTools(context)
         environment["TMPDIR"] = tmp(context).absolutePath
@@ -572,6 +640,8 @@ object OpenCode {
         // the tool's `bash -lc` and `bash -c` forms working without a fake bash.
         environment["SHELL"] = "/system/bin/sh"
         environment["TERM"] = "xterm-256color"
+        OpenCodeCa.environment(context).forEach { (key, value) -> environment[key] = value }
+        if (proxyPort != null) environment.putAll(OpenCodeProxy.environment(proxyPort))
     }
 
     /**
@@ -594,7 +664,7 @@ object OpenCode {
      * started through the runtime loader. The wrapper carries the same environment as the web
      * server, so `auth login` writes into the store the server will read.
      */
-    private fun writeAuthWrapper(context: Context, arch: String): File {
+    private fun writeAuthWrapper(context: Context, arch: String, proxyPort: Int?): File {
         val dir = File(context.filesDir, "opencode/bin").apply { mkdirs() }
         val file = File(dir, "opencode")
         val home = home(context)
@@ -606,6 +676,7 @@ object OpenCode {
         val loader = OpenCodeRuntime.loader(context, arch)
         val libraries = OpenCodeRuntime.libraryPath(context)
         val binary = OpenCodeBinary.binaryFile(context)
+        val ca = runCatching { OpenCodeCa.ensure(context).absolutePath }.getOrDefault("")
         val path = listOf(tools.absolutePath, "/system/bin", "/system/xbin").joinToString(":")
         val content = authWrapperScript(
             temp = temp.absolutePath,
@@ -617,6 +688,8 @@ object OpenCode {
             loader = loader.absolutePath,
             libraries = libraries,
             binary = binary.absolutePath,
+            caFile = ca,
+            proxyPort = proxyPort,
         )
         if (!file.isFile || file.readText() != content) file.writeText(content)
         if (!file.setExecutable(true, false)) {
@@ -641,12 +714,20 @@ object OpenCode {
      * The spec names 4098. When that port is already taken the app takes the next free one and
      * says so in the log, rather than failing over a port it cannot use.
      */
-    private fun freePort(): Int {
+    private fun freePort(): PortChoice {
         for (candidate in OpenCodeDefaults.PORT..(OpenCodeDefaults.PORT + 20)) {
-            if (!isPortBusy(candidate)) return candidate
+            if (!isPortBusy(candidate)) {
+                return PortChoice(candidate, fellBack = candidate != OpenCodeDefaults.PORT)
+            }
         }
-        return OpenCodeDefaults.PORT
+        return PortChoice(OpenCodeDefaults.PORT, fellBack = false, exhausted = true)
     }
+
+    private data class PortChoice(
+        val port: Int,
+        val fellBack: Boolean,
+        val exhausted: Boolean = false,
+    )
 
     private fun isPortBusy(port: Int): Boolean {
         return try {
@@ -654,6 +735,11 @@ object OpenCode {
         } catch (error: Throwable) {
             true
         }
+    }
+
+    private fun clearModelCache(context: Context): Boolean {
+        val cache = File(home(context), "cache/opencode/models.json")
+        return cache.isFile && cache.delete()
     }
 
     /** Appends a line to the log, keeping the newest [MAX_LOG_LINES] so it cannot grow forever. */
@@ -697,6 +783,12 @@ object OpenCode {
     """.trimIndent() + "\n"
 }
 
+internal fun isOpenCodeServerCommandLine(commandLine: String): Boolean {
+    val text = commandLine.replace('\u0000', ' ')
+    if (!text.contains("opencode")) return false
+    return Regex("(^|\\s)web(\\s|$)").containsMatchIn(text)
+}
+
 /**
  * The shell program the terminal runs for `opencode auth login`.
  *
@@ -714,6 +806,8 @@ internal fun authWrapperScript(
     loader: String,
     libraries: String,
     binary: String,
+    caFile: String = "",
+    proxyPort: Int? = null,
 ): String = buildString {
     appendLine("#!/system/bin/sh")
     appendLine("# Same environment as the web server, so auth lands in the same store.")
@@ -726,6 +820,16 @@ internal fun authWrapperScript(
     appendLine("export PATH=${quoteShell(path)}")
     appendLine("export SHELL=/system/bin/sh")
     appendLine("export TERM=xterm-256color")
+    if (caFile.isNotBlank()) {
+        OpenCodeCa.environment(caFile).toSortedMap().forEach { (key, value) ->
+            appendLine("export $key=${quoteShell(value)}")
+        }
+    }
+    if (proxyPort != null) {
+        OpenCodeProxy.environment(proxyPort).toSortedMap().forEach { (key, value) ->
+            appendLine("export $key=${quoteShell(value)}")
+        }
+    }
     appendLine(
         "exec ${quoteShell(loader)} " +
             "--library-path ${quoteShell(libraries)} " +
