@@ -40,11 +40,18 @@ class SettingsControlsTest {
             .flatMap { section -> section.groups.flatMap { it.rows } }
             .filterIsInstance<Row.Toggle>()
 
-        assertEquals(20, toggles.size)
-        assertEquals(8, toggles.count { it.key == null })
+        assertEquals(19, toggles.size)
+        assertEquals(0, toggles.count { it.key == null })
         assertTrue(toggles.any { it.name == "Word wrap" && it.key == BoolSetting.WORD_WRAP })
         assertTrue(toggles.any { it.name == "Rainbow brackets" && it.key == BoolSetting.RAINBOW_BRACKETS })
         assertTrue(toggles.any { it.name == "Frame stats" && it.key == BoolSetting.FRAME_STATS })
+        assertTrue(toggles.any { it.name == "Code folding" && it.key == BoolSetting.CODE_FOLDING })
+        assertTrue(toggles.any { it.name == "Auto import" && it.key == BoolSetting.AUTO_IMPORT })
+        assertTrue(toggles.any { it.name == "Parameter hints" && it.key == BoolSetting.PARAMETER_HINTS })
+        assertTrue(toggles.any { it.name == "Quick fixes" && it.key == BoolSetting.QUICK_FIXES })
+        assertTrue(toggles.any { it.name == "Build cache" && it.key == BoolSetting.BUILD_CACHE })
+        assertTrue(toggles.any { it.name == "Command history" && it.key == BoolSetting.COMMAND_HISTORY })
+        assertTrue(toggles.any { it.name == "Animations" && it.key == BoolSetting.ANIMATIONS })
         assertEquals("On", toggleStateLabel(true))
         assertEquals("Off", toggleStateLabel(false))
     }

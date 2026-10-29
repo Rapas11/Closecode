@@ -223,17 +223,22 @@ private fun PlainKey(label: String, tinted: Boolean, onTap: () -> Unit) {
  * The preference store is wrapped rather than reached for directly so this can be tested against an
  * in-memory map, because `SharedPreferences` is not on the unit-test classpath.
  */
-internal class TerminalHistoryStore(private val kv: KeyValueStore) {
+internal class TerminalHistoryStore(
+    private val kv: KeyValueStore,
+    private val persist: Boolean = true,
+) {
 
     /** Newest first, exactly as it is kept, so reading one back needs no reversing. */
     fun read(slug: String): List<String> =
-        kv.getString(key(slug), null)
+        if (!persist) emptyList()
+        else kv.getString(key(slug), null)
             ?.split('\n')
             ?.map { it.trim() }
             ?.filter { it.isNotEmpty() }
             ?: emptyList()
 
     fun write(slug: String, history: List<String>) {
+        if (!persist) return
         if (history.isEmpty()) {
             kv.remove(key(slug))
         } else {
@@ -246,7 +251,9 @@ internal class TerminalHistoryStore(private val kv: KeyValueStore) {
 
 /** A store for [slug], remembered for as long as this screen is composed. */
 @Composable
-internal fun rememberTerminalHistory(slug: String): TerminalHistoryStore {
+internal fun rememberTerminalHistory(slug: String, persist: Boolean = true): TerminalHistoryStore {
     val context = LocalContext.current
-    return remember(slug) { TerminalHistoryStore(SharedPreferencesKeyValueStore(context)) }
+    return remember(slug, persist) {
+        TerminalHistoryStore(SharedPreferencesKeyValueStore(context), persist)
+    }
 }

@@ -1,19 +1,67 @@
 package com.closecode.ui.theme
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.os.Build
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
 import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
 @Composable
 fun ClosecodeTheme(
     darkTheme: Boolean = androidx.compose.foundation.isSystemInDarkTheme(),
     forceDark: Boolean? = null,
+    accent: Color? = null,
     content: @Composable () -> Unit,
 ) {
     val useDark = forceDark ?: darkTheme
-    val colors = if (useDark) DarkColors else LightColors
+    val base = if (useDark) DarkColors else LightColors
+    // One swatch changes every accent-bearing token at once. The tokens are all aliases of the
+    // same idea, so changing only `ac` would leave Material buttons and selections on the old
+    // colour while the rest of the screen moved.
+    val colors = accent?.let { picked ->
+        // A tint and its label cannot be the same colour: the outline buttons and the
+        // tinted terminal keys draw one on the other, and a solid accent in both places
+        // made their labels disappear. Keep the fill translucent, darken the label on
+        // light pages, and pick black or white for text that sits on a solid accent.
+        val link = if (useDark) picked else lerp(picked, Color.Black, 0.35f)
+        val onAccent = if (picked.luminance() > 0.32f) Color(0xFF0B0F16) else Color.White
+        base.copy(
+            ac = picked,
+            accent = picked,
+            primary = picked,
+            ab = picked,
+            toolbarAccent = picked,
+            link = link,
+            primaryTint = picked.copy(alpha = if (useDark) 0.18f else 0.12f),
+            af = onAccent,
+            selection = picked.copy(alpha = if (useDark) 0.20f else 0.14f),
+            glow = picked.copy(alpha = if (useDark) 0.10f else 0.06f),
+        )
+    } ?: base
+
+    val view = LocalView.current
+    val window = view.context.activityOrNull()?.window
+    SideEffect {
+        if (window != null) {
+            window.navigationBarColor = colors.bg.toArgb()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                window.isNavigationBarContrastEnforced = false
+            }
+            WindowCompat.getInsetsController(window, view)
+                .isAppearanceLightNavigationBars = !useDark
+        }
+    }
 
     CompositionLocalProvider(
         LocalPageColors provides colors,
@@ -59,4 +107,10 @@ fun ClosecodeTheme(
             content = content,
         )
     }
+}
+
+private fun Context.activityOrNull(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.activityOrNull()
+    else -> null
 }

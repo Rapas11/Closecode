@@ -31,6 +31,18 @@ class SettingsStoreTest {
         assertTrue(settings.autocomplete)
         assertTrue(settings.diagnostics)
         assertTrue(settings.bracketGuides)
+        assertTrue(settings.codeFolding)
+        assertTrue(settings.autoImport)
+        assertTrue(settings.parameterHints)
+        assertTrue(settings.quickFixes)
+        assertTrue(settings.buildCache)
+        assertTrue(settings.commandHistory)
+        assertTrue(settings.animations)
+        assertEquals(0, settings.accentIndex)
+        assertEquals("Shell tools", settings.shell)
+        assertEquals("", settings.gitName)
+        assertEquals("", settings.gitEmail)
+        assertEquals("main", settings.gitDefaultBranch)
         assertEquals("System", settings.theme)
         assertEquals(12, settings.fontSize)
         assertEquals(2, settings.tabSize)
@@ -45,6 +57,17 @@ class SettingsStoreTest {
             .withOption(OptionSetting.THEME, "Light")
             .withOption(OptionSetting.FONT_SIZE, "18")
             .withOption(OptionSetting.TAB_SIZE, "4")
+            .withOption(OptionSetting.SHELL, "Shell tools")
+            .withFlag(BoolSetting.CODE_FOLDING, false)
+            .withFlag(BoolSetting.AUTO_IMPORT, false)
+            .withFlag(BoolSetting.PARAMETER_HINTS, false)
+            .withFlag(BoolSetting.QUICK_FIXES, false)
+            .withFlag(BoolSetting.BUILD_CACHE, false)
+            .withFlag(BoolSetting.COMMAND_HISTORY, false)
+            .withFlag(BoolSetting.ANIMATIONS, false)
+            .withText(StringSetting.GIT_NAME, " Ada ")
+            .withText(StringSetting.GIT_EMAIL, " ada@example.com ")
+            .withText(StringSetting.GIT_DEFAULT_BRANCH, " trunk ")
 
         store.write(changed)
 
@@ -60,6 +83,26 @@ class SettingsStoreTest {
         assertEquals(FontSizeChoices.last().toInt(), stored.fontSize)
         assertEquals("System", stored.theme)
         assertEquals(stored, store.read())
+    }
+
+    @Test
+    fun anEmptyDefaultBranchFallsBackToMain() {
+        val store = SettingsStore(InMemoryKeyValueStore())
+        val stored = store.write(
+            store.read().withText(StringSetting.GIT_DEFAULT_BRANCH, "   "),
+        )
+        assertEquals("main", stored.gitDefaultBranch)
+        assertEquals("main", store.read().gitDefaultBranch)
+    }
+
+    @Test
+    fun anUnknownShellIsRejectedAndTheDefaultKept() {
+        val store = SettingsStore(InMemoryKeyValueStore(mapOf("shell" to "Fish")))
+        assertEquals("Shell tools", store.read().shell)
+        assertEquals(
+            "Shell tools",
+            store.read().withOption(OptionSetting.SHELL, "Shell tools").shell,
+        )
     }
 
     @Test
@@ -133,15 +176,39 @@ class SettingsStoreTest {
     fun everyKeyCanBeReachedFromAtLeastOneRow() {
         assertEquals(BoolSetting.entries.toSet(), usedBoolSettings())
         assertEquals(OptionSetting.entries.toSet(), usedOptionSettings())
+        assertEquals(StringSetting.entries.toSet(), usedStringSettings())
     }
 
     @Test
-    fun theScreenIsElevenSectionsAndFiftyFourRows() {
+    fun theScreenIsElevenSectionsAndFortyNineRows() {
         // Eleven sections throughout. The fictional JDK / Android SDK / Build Tools / Gradle rows
         // are gone; the toolchain group now shows the compiler pack, its pinned versions and the
-        // download row — all of them real.
+        // download row — all of them real. The account group and the five unwired AI rows are
+        // gone too, leaving one "Coming soon" destination for each deferred area. The optional
+        // Termux shell-tools pack adds one real download row under Terminal.
         assertEquals(11, sections(SettingsLive()).size)
-        assertEquals(54, rowCount())
+        assertEquals(50, rowCount())
+    }
+
+    @Test
+    fun theSetupGuideRowOpensTheFirstRunFlow() {
+        val row = sections(SettingsLive())
+            .flatMap { section -> section.groups.flatMap { it.rows } }
+            .filterIsInstance<Row.Nav>()
+            .first { it.name == "Setup guide" }
+
+        assertEquals(SettingsAction.SETUP_GUIDE, row.id)
+    }
+
+    @Test
+    fun theShellToolsRowOpensTheDownloadPage() {
+        val row = sections(SettingsLive(shellToolsStatus = "Not installed"))
+            .flatMap { section -> section.groups.flatMap { it.rows } }
+            .filterIsInstance<Row.Nav>()
+            .first { it.name == "Shell tools" }
+
+        assertEquals(SettingsAction.SHELL_TOOLS, row.id)
+        assertEquals("Not installed", row.action)
     }
 
     @Test
@@ -204,7 +271,14 @@ class SettingsStoreTest {
         assertEquals(BoolSetting.WORD_WRAP, toggles["Word wrap"])
         assertEquals(BoolSetting.RAINBOW_BRACKETS, toggles["Rainbow brackets"])
         assertEquals(BoolSetting.FRAME_STATS, toggles["Frame stats"])
-        assertEquals(12, toggles.values.filterNotNull().size)
+        assertEquals(BoolSetting.CODE_FOLDING, toggles["Code folding"])
+        assertEquals(BoolSetting.AUTO_IMPORT, toggles["Auto import"])
+        assertEquals(BoolSetting.PARAMETER_HINTS, toggles["Parameter hints"])
+        assertEquals(BoolSetting.QUICK_FIXES, toggles["Quick fixes"])
+        assertEquals(BoolSetting.BUILD_CACHE, toggles["Build cache"])
+        assertEquals(BoolSetting.COMMAND_HISTORY, toggles["Command history"])
+        assertEquals(BoolSetting.ANIMATIONS, toggles["Animations"])
+        assertEquals(19, toggles.values.filterNotNull().size)
 
         val options = sections(SettingsLive())
             .flatMap { section -> section.groups.flatMap { it.rows } }
@@ -217,7 +291,8 @@ class SettingsStoreTest {
         assertEquals(OptionSetting.TAB_SIZE, options["Tab size"])
         assertEquals(OptionSetting.TERMINAL_THEME, options["Terminal colours"])
         assertEquals(OptionSetting.TERMINAL_FONT_SIZE, options["Terminal font size"])
-        assertEquals(5, options.size)
+        assertEquals(OptionSetting.SHELL, options["Default shell"])
+        assertEquals(6, options.size)
     }
 
     @Test

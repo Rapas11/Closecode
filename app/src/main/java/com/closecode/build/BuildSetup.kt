@@ -1,6 +1,7 @@
 package com.closecode.build
 
 import android.content.Context
+import com.closecode.ui.settings.SharedPreferencesKeyValueStore
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -32,11 +33,20 @@ object BuildSetupFactory {
             val toolFiles = ids.distinct()
                 .mapNotNull { id -> store.jar(id)?.let { id to it } }
                 .toMap()
-            val aapt2 = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
+            val platformStore = PlatformStore(
+                context,
+                SharedPreferencesKeyValueStore(context),
+            )
+            val compileSdk = project.savedCompileSdk
+                ?: GradleReader.read(project.directory).compileSdk
+                ?: ProjectPins.COMPILE_SDK
+            val bundledAapt2 = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
                 .takeIf { it.isFile }
-            val androidJar = store.jar("android-jar")
+            val downloadedAapt2 = platformStore.buildToolsAapt2()
+            val aapt2 = downloadedAapt2 ?: bundledAapt2
+            val androidJar = platformStore.androidJar(compileSdk) ?: store.jar("android-jar")
             val stdlib = store.jar("kotlin-stdlib")
-            val signer = runCatching { DebugKey.ensure(context) }.getOrNull()
+            val signer = runCatching { SigningStore(context).identity() }.getOrNull()
             val missing = buildList {
                 if (aapt2 == null) add("aapt2")
                 if (androidJar == null) add("android.jar")
@@ -56,7 +66,23 @@ object BuildSetupFactory {
                     toolFiles = toolFiles,
                     composePlugin = store.jar("kotlin-compiler"),
                     dexOptDir = File(context.codeCacheDir, "build-dex"),
-                    aapt2Env = Aapt2Runtime.environment(context),
+                    aapt2Env = Aapt2Runtime.environment(context) +
+                        downloadedAapt2?.let { downloaded ->
+                            val dir = downloaded.parentFile
+                            val paths = listOf(File(dir, "lib"), File(dir, "lib64"))
+                                .filter { it.isDirectory }
+                                .map { it.absolutePath }
+                            if (paths.isEmpty()) {
+                                emptyMap()
+                            } else {
+                                val existing = System.getenv("LD_LIBRARY_PATH").orEmpty()
+                                mapOf(
+                                    "LD_LIBRARY_PATH" to
+                                        (paths + existing.split(':').filter { it.isNotEmpty() })
+                                            .joinToString(":"),
+                                )
+                            }
+                        }.orEmpty(),
                     kotlinResources = KotlinCompat.resources(context),
                 )
             } else {
@@ -71,6 +97,8 @@ object BuildSetupFactory {
                     otherPackages = project.otherPackages,
                     freeBytes = context.filesDir.usableSpace,
                     cacheModules = libraries?.cacheModules.orEmpty(),
+                    installedCompileSdks = platformStore.installedPlatforms().toMutableSet()
+                        .apply { if (store.jar("android-jar") != null) add(ProjectPins.COMPILE_SDK) },
                 ),
                 tools = tools,
                 missing = missing,

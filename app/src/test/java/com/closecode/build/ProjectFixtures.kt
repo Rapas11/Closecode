@@ -21,9 +21,11 @@ object ProjectFixtures {
         targetSdk: String = "35",
         compileSdk: String = "35",
         templateIndex: Int = 0,
+        language: String = "Kotlin",
     ): File {
         val config = ProjectConfig(
             packageName = packageName,
+            language = language,
             minSdk = minSdk,
             compileSdk = compileSdk,
             targetSdk = targetSdk,

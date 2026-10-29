@@ -50,6 +50,8 @@ object ProjectCheck {
         val freeBytes: Long? = null,
         /** "module:version" entries the library cache holds (verse 5 fills this in). */
         val cacheModules: Set<String> = emptySet(),
+        /** Compile platforms the phone can actually link against. Empty means the old default. */
+        val installedCompileSdks: Set<Int> = emptySet(),
     )
 
     const val INVALID_PACKAGE_MESSAGE =
@@ -205,11 +207,14 @@ object ProjectCheck {
                 line,
             )
         }
-        if (compileSdk != null && compileSdk != ProjectPins.COMPILE_SDK) {
+        val supportedCompileSdks = input.installedCompileSdks
+            .ifEmpty { setOf(ProjectPins.COMPILE_SDK) }
+        if (compileSdk != null && compileSdk !in supportedCompileSdks) {
             val (file, line) = sdkPlace(facts.compileSdkPlace)
             findings += Finding(
                 Severity.Error,
-                "This phone has build tools for Android ${ProjectPins.COMPILE_SDK} only.",
+                "Android $compileSdk is not installed. Open Settings → Build & Toolchain → " +
+                    "SDK Manager to install it.",
                 file,
                 line,
             )
@@ -220,21 +225,28 @@ object ProjectCheck {
         val usesCompose = facts.composeBom != null || facts.composeCompiler != null ||
             facts.libraries.any { it.module.startsWith("androidx.compose") }
         if (facts.hasAppBuildFile) {
-            if (facts.kotlinVersion == null) {
-                findings += Finding(
-                    Severity.Error,
-                    "The Kotlin version could not be found in the build files.",
-                    facts.kotlinPlace?.file ?: "build.gradle.kts",
-                    facts.kotlinPlace?.line,
-                )
-            } else if (facts.kotlinVersion != ProjectPins.KOTLIN) {
-                findings += Finding(
-                    Severity.Error,
-                    "Kotlin ${facts.kotlinVersion} is not supported yet. This phone builds " +
-                        "with Kotlin ${ProjectPins.KOTLIN}.",
-                    facts.kotlinPlace?.file,
-                    facts.kotlinPlace?.line,
-                )
+            val hasKotlinSources = File(projectDir, "app/src/main").walkTopDown()
+                .any { it.isFile && it.extension == "kt" }
+            val usesKotlin = hasKotlinSources || facts.kotlinVersion != null ||
+                facts.plugins.any { it.id.startsWith("org.jetbrains.kotlin") } ||
+                facts.libraries.any { it.module.startsWith("org.jetbrains.kotlin") }
+            if (usesKotlin) {
+                if (facts.kotlinVersion == null) {
+                    findings += Finding(
+                        Severity.Error,
+                        "The Kotlin version could not be found in the build files.",
+                        facts.kotlinPlace?.file ?: "build.gradle.kts",
+                        facts.kotlinPlace?.line,
+                    )
+                } else if (facts.kotlinVersion != ProjectPins.KOTLIN) {
+                    findings += Finding(
+                        Severity.Error,
+                        "Kotlin ${facts.kotlinVersion} is not supported yet. This phone builds " +
+                            "with Kotlin ${ProjectPins.KOTLIN}.",
+                        facts.kotlinPlace?.file,
+                        facts.kotlinPlace?.line,
+                    )
+                }
             }
             if (usesCompose && facts.composeCompiler == null) {
                 findings += Finding(
@@ -311,7 +323,11 @@ object ProjectCheck {
         val hasSources = sourceRoot.walkTopDown()
             .any { it.isFile && (it.extension == "kt" || it.extension == "java") }
         if (!hasSources) {
-            findings += Finding(Severity.Error, "No sources. Add at least one .kt file.", "app/src/main/java")
+            findings += Finding(
+                Severity.Error,
+                "No sources. Add at least one .kt or .java file.",
+                "app/src/main/java",
+            )
         }
 
         // 10. Free storage: a build needs room for classes, dex and the APK.

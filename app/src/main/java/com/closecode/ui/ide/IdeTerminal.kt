@@ -369,6 +369,7 @@ internal fun IdeTerminal(
 ) {
     val c = LocalPageColors.current
     val context = LocalContext.current
+    val settings = LocalSettings.current
     TerminalEnvironment.configure(context)
     val density = LocalDensity.current
     var ctrl by remember { mutableStateOf(ModifierLatch.OFF) }
@@ -447,7 +448,8 @@ internal fun IdeTerminal(
     val activeId = sessions.activeId
     val session = sessions.active()
     val listState = rememberLazyListState()
-    val historyStore = rememberTerminalHistory(projectSlug)
+    val historyStore = rememberTerminalHistory(projectSlug, settings.commandHistory)
+    val pipeShell = usePipe || settings.shell == "System"
     val termScope = rememberCoroutineScope()
     // The output width in pixels, measured so the shell can be told its width in characters.
     // A monospace glyph advances about six tenths of its point size; the number is an estimate
@@ -463,7 +465,7 @@ internal fun IdeTerminal(
     // Commands run before this screen is opened are still reachable, so the list is read once on
     // arrival rather than starting empty every time the panel is opened. Every tab starts with it:
     // the commands are the reader's, not one tab's.
-    LaunchedEffect(projectSlug) {
+    LaunchedEffect(projectSlug, settings.commandHistory) {
         val remembered = if (projectSlug.isEmpty()) emptyList() else historyStore.read(projectSlug)
         sessions.applyHistory(remembered)
     }
@@ -475,7 +477,7 @@ internal fun IdeTerminal(
     LaunchedEffect(sessions) {
         sessions.sessions.forEach { session ->
             launch {
-                withContext(Dispatchers.IO) { session.start(projectRoot, usePipe) }
+                withContext(Dispatchers.IO) { session.start(projectRoot, pipeShell) }
                 if (!session.isRunning) {
                     session.lines.appendTerminalLine(
                         if (projectRoot == null) {

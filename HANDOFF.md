@@ -5,12 +5,21 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 11 is build 33: OpenCode's shell tool gets the optional
-  Termux environment. Step 10 is build 32: the one-time manual `aapt2` is
-  inside the APK. Step 9 is build 31: the optional on-demand Termux shell-tools
-  pack. Step 8 is build 30: `closecode describe`, short command aliases, and
-  `aapt2`/`d8`/`r8`/`kotlinc` wrappers. Device verification of Steps 5–11 is
-  still required.
+- Branch `main`; Step 16 is build 38: first-run onboarding, real project setup
+  before the IDE opens, lazy commit-history diffs, Java-only app templates,
+  and Gradle wrapper/AGP metadata. Step 15 is build 37: Shell tools now has a
+  visible status/download/remove page under Settings → Terminal, and OpenCode
+  only shows or opens a server owned by the current project. Step 14 is build
+  36: editor horizontal-follow fix, Material icons and shared diff scrolling.
+  Step 13 is build 35: readable accent labels and a real IDE Back stack.
+  Step 12 is build 34: settings foundation, SDK Manager, signing keys,
+  final-APK build cache, AI as a full page, More kept as its sheet, and a
+  compact search-options menu. Step 11 is build 33: OpenCode's shell tool gets
+  the optional Termux environment. Step 10 is build 32: the one-time manual
+  `aapt2` is inside the APK. Step 9 is build 31: the optional on-demand Termux
+  shell-tools pack. Step 8 is build 30: `closecode describe`, short command
+  aliases, and `aapt2`/`d8`/`r8`/`kotlinc` wrappers. Device verification of
+  Steps 5–16 is still required.
 - Step 8 `00b1407` — project description, aliases and build-tool wrappers.
 - Step 7 `5002de3` — install, launch, logcat, export, screenshot and optional
   accessibility input from `closecode`.
@@ -267,6 +276,92 @@ Step 5 moves the pin to 1.18.35, the latest 1.18.x release. The comment in
 viewport units collapse — the same root bug above. Do not move to 1.19.4 until
 the 1.18.35 page is proven on a device.
 
+## Step 15 (build 37)
+
+- Settings → Terminal now has a real Shell tools row and page. It reports
+  installed/not-installed, shows the installed size and package list, downloads
+  the existing Termux pack with progress, and removes it again. The page says
+  plainly that this is an optional Termux pack, not an Android system install:
+  no root and no apt, and pip/npm only work for packages that do not need
+  extra native libraries.
+- The terminal still uses `/system/bin/sh` through the arm64 PTY. Once the
+  pack is installed, `TerminalEnvironment` adds `file/u/bin` to PATH and
+  exports `PREFIX`, `TERMUX_PREFIX`, `LD_LIBRARY_PATH`, `TMPDIR`, `SHELL` and
+  the CA variables; existing shells need to be reopened. Without the pack the
+  terminal has only Android's own commands.
+- The AI tab now checks which project owns the running server. A server for
+  another project shows that project's name with Stop and “Stop and start this
+  project”; it no longer displays the other project's Running card or opens its
+  page. Auto-open only fires for the current project.
+- The OpenCode page resume script no longer force-adopts pending tabs from the
+  same server when no tab carries the current project directory. It falls back
+  to this project's own URL/session instead. Back always leaves the page rather
+  than walking WebView router history, so Back cannot land on a new-session
+  route. A one-time page-route migration clears saved routes written by build
+  36, which could already have a cross-project session stored under the wrong
+  project; the session itself remains in the page's storage.
+- Settings now has 49 rows (the new Shell tools row) and a test pins its
+  action. Tests: `:app:testDebugUnitTest` passed 1308 tests, 8 skipped, 0
+  failures; `:app:assembleDebug` is green. `closecode-37-debug.apk` is 38 MB
+  (39,591,991 bytes, SHA-256
+  `4bd4bd57bba6872fd5484f258e3bb163cfd1a7c588537df1c4b0461ec1cc8423`),
+  package `com.closecode`, versionCode 37, v2-signed, with
+  `lib/arm64-v8a/libaapt2.so` (SHA-256
+  `be2cea61814678f7a9e61bf818a6666e6097a7d67d6c19498a4d7aa690bc4151`) and
+  `lib/arm64-v8a/libclosepty.so`.
+- Still to check on a device: download and remove the shell-tools pack, then
+  run `git`, `python3`, `node`, `curl`, `zip` and `jq` from a new PTY tab;
+  confirm CA trust and `LD_LIBRARY_PATH`; switch between two projects with
+  OpenCode running and check Stop, Stop-and-start, session resume and system
+  Back. No adb/device is connected here.
+
+## Step 16 (build 38)
+
+- First run now opens a real onboarding page before Home. Build tools, shell
+  tools and OpenCode each have their own skippable step with real downloads:
+  build tools use `ToolchainDownloadService`, shell tools use
+  `ShellToolsStore.install`, and OpenCode pre-downloads its binary plus Alpine
+  runtime. Finishing or skipping marks `first_run_completed` in the separate
+  `FirstRunStore`; Settings → General → Startup → Setup guide reopens the same
+  flow without making onboarding reappear. Settings now has 50 rows; the new
+  Setup guide row is pinned by a test.
+- Creating a project now scaffolds immediately and, for Android projects,
+  opens `ProjectSetupScreen` before the IDE. It runs the real
+  `BuildSetupFactory` check, shows missing tools, starts the existing toolchain
+  download with progress/pause/cancel, re-checks when the download finishes,
+  and only opens the editor when the toolchain is actually ready. Closing it
+  leaves the project in Recents. The old fake `ProvisioningScreen` is gone.
+- Commit history loads file paths first; each file's diff is fetched only when
+  its header is expanded. Diffs are collapsed by default, use a `LazyColumn`
+  with bounded horizontal scrolling per file, and share `flattenUnifiedDiff`
+  with the full-screen diff. Very large diffs show a notice instead of loading.
+  `CommitDiffLazyTest` covers the flattening/gap/column rules.
+- Java is now a real app-template language. Java projects get
+  `MainActivity.java`, `res/layout/activity_main.xml`, framework Views and a
+  platform theme; they contain no Kotlin or Compose files and their Gradle
+  files omit the Kotlin plugin and Compose dependencies. All six app templates
+  have Java extras. `ProjectCheck` only requires a Kotlin version when the
+  project actually uses Kotlin.
+- Gradle selection now writes `gradle/wrapper/gradle-wrapper.properties` and
+  maps the selected Gradle version to AGP 8.12.0 / 8.10.1 / 8.7.3 / 8.3.2 for
+  8.13 / 8.12 / 8.9 / 8.5. The config screen labels Gradle as desktop/export
+  metadata and warns when `compileSdk` is newer than the mapped AGP supports.
+  No wrapper jar/scripts are written and Gradle still does not run on-device.
+- Tests: `:app:testDebugUnitTest` passed 1323 tests, 8 skipped, 0 failures;
+  `:app:assembleDebug` is green. `closecode-38-debug.apk` is 38 MB
+  (39,796,055 bytes, SHA-256
+  `f627a97c402076f7ce893c1ac330a0de557c496a38b6a462c34d4a42afc48526`),
+  package `com.closecode`, versionCode 38, v2-signed, with
+  `lib/arm64-v8a/libaapt2.so` (SHA-256
+  `be2cea61814678f7a9e61bf818a6666e6097a7d67d6c19498a4d7aa690bc4151`) and
+  `lib/arm64-v8a/libclosepty.so`.
+- Still to check on a device: first-run downloads/skips and notification
+  permission; create an Android project with missing tools, pause/cancel and
+  resume; open the same setup from Settings; expand/collapse commit diffs on a
+  large history; create Java projects from each app template and build one;
+  switch Gradle versions and confirm wrapper/AGP output. No adb/device is
+  connected here.
+
 ## Environment on a new machine
 
 1. JDK 21, exported as `JAVA_HOME` (this machine used
@@ -294,5 +389,113 @@ the 1.18.35 page is proven on a device.
 
 ## Latest deliverable
 
-`closecode-33-debug.apk` for Step 11 (debug, since `assembleRelease` is blocked
+`closecode-38-debug.apk` for Step 16 (debug, since `assembleRelease` is blocked
 by an unrelated Gradle lint issue on this machine).
+
+## Step 12 (build 34)
+
+- Navigation: the AI tab is now a full page with its own `IdeFullPageBar`
+  header and Back; the bottom bar stays visible. More is deliberately still the
+  anchored `IdeMoreSheet` — only AI was promoted to a page. Active AI taps do
+  nothing; `panelBeforeAi` remembers the panel underneath.
+- The search sheet's options are a fixed-width 200 dp Material3 `DropdownMenu`
+  anchored to the sliders button. The old full-width dismiss layer and
+  `SpecMenu` import are gone; an outside tap dismisses the menu.
+- Settings now has 48 rows: 19 wired toggles, 0 unwired toggles, 6 option rows
+  and 3 free-text Git rows. Removed the fictional account group and the five
+  unwired AI rows; AI settings and biometric lock are single “Coming soon”
+  destinations.
+- New settings: code folding, auto import, parameter hints, quick fixes, build
+  cache, command history, animations, accent index, shell choice, Git name,
+  email and default branch. Accent is persisted by index and applied through
+  `ClosecodeTheme(accent = …)` to every accent-bearing `PageColors` token.
+  The default shell is “Shell tools”, which keeps the old PTY terminal; choosing
+  “System” switches to the plain pipe shell.
+- `SettingsPages.kt` adds the SDK Manager, Signing keys, Credentials, Privacy
+  and Licenses pages. `PlatformStore` downloads official Google platforms
+  34/35/36 (SHA-1 verified) and AndroidIDE build-tools 34.0.4 (SHA-256
+  verified), extracting `android.jar` and `aapt2`. The bundled
+  `libaapt2.so` remains the fallback.
+- `SigningStore` supports the debug key, imported PKCS#12/JKS keys and a
+  device-bound generated release key. Imported passwords use
+  `EncryptedSharedPreferences`; generated keys cannot be exported for Play.
+- `ProjectCheck` accepts any installed compile SDK and points missing ones at
+  Settings → Build & Toolchain → SDK Manager. `BuildSetupFactory` reads the
+  project's compile SDK, uses the downloaded platform jar/aapt2 when present,
+  and signs through `SigningStore`.
+- `BuildCache` caches only the final signed APK under
+  `cache/build-cache/<slug>/<sha-256>.apk`. The key covers project files, build
+  config, tool files, platform jar, aapt2, libraries, Compose plugin, stdlib and
+  signer certificate. Cache errors fall back to a full build; the Build cache
+  toggle disables it.
+- Editor wiring: code folding is identity when off; parameter hints, quick
+  fixes, command-history persistence and auto-import are gated; the new
+  `motion()` helper makes the editor, drawer, popups, scrollbar and settings
+  switches snap when Animations is off. Git commits/repositories use the
+  configured identity/default branch, and the terminal uses the selected shell.
+- Tests: `:app:testDebugUnitTest` passed 1304 tests, 8 skipped, 0 failures;
+  `:app:assembleDebug` is green. `closecode-34-debug.apk` is 39 MB, package
+  `com.closecode`, versionCode 34, v2-signed and contains
+  `lib/arm64-v8a/libaapt2.so` (SHA-256
+  `d62f2e925bdf90c91c97b7d18cd7990347a3ca9b35c62c6bc75f42212b4afbc4`).
+- Still to check on a device: AI full-page Back chain, More sheet return paths,
+  search menu placement, every new settings subpage, SDK license/download/
+  extraction, build-tools aapt2 execution, imported and generated signing keys,
+  a cache hit followed by an edited rebuild, Git identity/default branch,
+  shell choice, and all animation-off paths. No adb/device is connected here.
+
+## Step 13 (build 35)
+
+- Accent colours no longer make their own labels disappear. The selected accent
+  is used for the solid primary fill, while `primaryTint` stays translucent and
+  `link` stays a readable foreground; `af` is chosen black or white from the
+  accent's luminance. This restores the “Copy example” outline button, the
+  tinted terminal keys (ESC/TAB/CTRL/ALT), and the Git/GitHub tinted icons.
+- The primary button now uses the same on-accent colour instead of a hardcoded
+  white label, so orange and green accents stay legible.
+- IDE Back is now a real history stack, not a fixed “Code is underneath” rule.
+  Terminal → Logcat → Back returns to Terminal; AI → Terminal → Back returns to
+  AI; Preview → Terminal → Back returns to Preview. The stack is capped at 32
+  entries and resets with the project. Search-result return and the existing
+  sheet/dialog ordering still win over the panel stack.
+- The system navigation bar is painted with the page background instead of the
+  white platform default, and its icon appearance follows the light/dark theme.
+  The theme XML sets the same colour for the first frame.
+- Tests: `:app:testDebugUnitTest` passed 1304 tests, 8 skipped, 0 failures;
+  `:app:assembleDebug` is green. `closecode-35-debug.apk` is 38 MB, package
+  `com.closecode`, versionCode 35, v2-signed and contains
+  `lib/arm64-v8a/libaapt2.so` (SHA-256
+  `85ea983eceb39f0e77db68b5f79ade464bd336bab0af165e2b135a584d84339e`).
+- Still to check on a device: the two reported invisible-label spots, other
+  accent-tinted surfaces, the white bottom strip in both themes, and the
+  Terminal/Logcat/AI/Preview Back chains.
+
+## Step 14 (build 36)
+
+- The editor no longer jumps sideways when a tap opens the keyboard. The
+  horizontal follow now waits until the measured text layout belongs to the
+  current code window and contains the caret, instead of clamping the caret to
+  the end of a stale slice. `targetHScroll` also refuses to move an unmeasured
+  viewport and caps its margin at half the viewport, so a zero-width layout pass
+  cannot scroll the code by one margin.
+- Added regression tests for the unmeasured and narrow-viewport cases.
+- Replaced the prototype icon paths with Material Design 24 x 24 vectors behind
+  the existing `CcIcons` facade. The top bar, terminal, explorer and Git panel
+  now use the same outlined/filled family: Menu, Save, Undo/Redo, PlayArrow,
+  Terminal, AccountTree, History, CloudDownload, Download/Upload, FolderOpen,
+  Description, NoteAdd, CreateNewFolder, UnfoldLess, and the standard chevrons.
+  No new icon dependency was added, so the APK does not carry the 30 MB
+  `material-icons-extended` dex.
+- The GitHub history row now uses a History glyph instead of a clock.
+- Unified commit diffs now have one horizontal scroll axis per file card. All
+  rows in the card pan together, including when the card is shown under
+  “CHANGED FILES”, instead of each row owning a private scroll state. Wrapped
+  diffs still bypass horizontal scrolling.
+- Tests: `:app:testDebugUnitTest` passed 1307 tests, 8 skipped, 0 failures;
+  `:app:assembleDebug` is green. `closecode-36-debug.apk` is 38 MB, package
+  `com.closecode`, versionCode 36, v2-signed and contains
+  `lib/arm64-v8a/libaapt2.so` (SHA-256
+  `2428c68b568e46d8d9d648488140385edbc9fe5c2f8a3d70d32f7a7aef08a528`).
+- Still to check on a device: tap near the start and end of a long line with the
+  keyboard opening/closing, horizontal pan on a multi-file commit diff, and the
+  new icon weight/size at 15–20 dp in both themes.

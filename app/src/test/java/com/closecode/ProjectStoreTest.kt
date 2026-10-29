@@ -2,13 +2,16 @@ package com.closecode
 
 import com.closecode.ui.model.ProjectConfig
 import com.closecode.ui.model.SelectedTemplate
+import com.closecode.ui.model.gradleCompatibilityProblem
 import com.closecode.ui.model.TemplateTab
+import com.closecode.ui.model.Templates
 import com.closecode.ui.project.ProjectPathException
 import com.closecode.ui.project.ProjectSafety
 import com.closecode.ui.project.Scaffold
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -171,6 +174,38 @@ class ProjectStoreTest {
     }
 
     @Test
+    fun javaScaffoldUsesJavaAndXmlWithoutKotlinOrCompose() {
+        val cfg = config().copy(language = "Java")
+        val files = Scaffold.filesFor("Notes", selection(TemplateTab.App, 0), cfg)
+        val paths = files.map { it.path }.toSet()
+        val appGradle = files.first { it.path == "app/build.gradle.kts" }.content
+        val rootGradle = files.first { it.path == "build.gradle.kts" }.content
+
+        assertTrue(paths.contains("app/src/main/java/com/closecode/notes/MainActivity.java"))
+        assertTrue(paths.contains("app/src/main/res/layout/activity_main.xml"))
+        assertFalse(paths.any { it.endsWith(".kt") })
+        assertFalse(appGradle.contains("org.jetbrains.kotlin"))
+        assertFalse(appGradle.contains("compose"))
+        assertFalse(rootGradle.contains("org.jetbrains.kotlin"))
+    }
+
+    @Test
+    fun everyJavaAppTemplateGetsJavaExtras() {
+        val cfg = config().copy(language = "Java")
+        for (index in 0 until Templates[TemplateTab.App].orEmpty().size) {
+            val files = Scaffold.filesFor("Demo", selection(TemplateTab.App, index), cfg)
+            assertTrue(
+                "template $index lacks MainActivity.java",
+                files.any { it.path.endsWith("MainActivity.java") },
+            )
+            assertTrue(
+                "template $index contains Kotlin",
+                files.none { it.path.endsWith(".kt") },
+            )
+        }
+    }
+
+    @Test
     fun gradleFileSubstitutesChosenValues() {
         val cfg = ProjectConfig(
             packageName = "com.example.tool",
@@ -188,6 +223,44 @@ class ProjectStoreTest {
         assertTrue(gradle.contains("compileSdk = 34"))
         assertTrue(gradle.contains("release {"))
         assertTrue(!gradle.contains("minSdk = 29"))
+    }
+
+    @Test
+    fun gradleVersionSelectsTheMatchingAgp() {
+        val expected = mapOf(
+            "8.13" to "8.12.0",
+            "8.12" to "8.10.1",
+            "8.9" to "8.7.3",
+            "8.5" to "8.3.2",
+        )
+        for ((gradle, agp) in expected) {
+            val root = Scaffold.filesFor(
+                "Demo",
+                selection(TemplateTab.App, 0),
+                config().copy(gradleVersion = gradle),
+            ).first { it.path == "build.gradle.kts" }.content
+            assertTrue("Gradle $gradle should use AGP $agp", root.contains(agp))
+        }
+    }
+
+    @Test
+    fun compileSdkBeyondTheMappedAgpWarns() {
+        val config = config().copy(gradleVersion = "8.5", compileSdk = "36", targetSdk = "36")
+        val problem = gradleCompatibilityProblem(config)
+        assertNotNull(problem)
+        assertTrue(problem!!.contains("compileSdk 34"))
+        assertNull(gradleCompatibilityProblem(config.copy(compileSdk = "34", targetSdk = "34")))
+    }
+
+    @Test
+    fun wrapperPropertiesMatchTheSelectedGradleVersion() {
+        val properties = Scaffold.filesFor(
+            "Demo",
+            selection(TemplateTab.App, 0),
+            config().copy(gradleVersion = "8.9"),
+        ).first { it.path == "gradle/wrapper/gradle-wrapper.properties" }.content
+
+        assertTrue(properties.contains("gradle-8.9-bin.zip"))
     }
 
     @Test

@@ -79,7 +79,7 @@ sealed interface Row {
     }
 
     /** The accent colour swatches. */
-    data class Accents(override val name: String) : Row {
+    data class Accents(override val name: String, val selected: Int = 0) : Row {
         override val description: String? = null
     }
 
@@ -97,8 +97,20 @@ sealed interface Row {
 enum class SettingsAction {
     CLEAR_CACHES,
     DOWNLOAD_TOOLCHAIN,
+    SETUP_GUIDE,
     CONNECT_GITHUB,
     DISCONNECT_GITHUB,
+    SDK_MANAGER,
+    SHELL_TOOLS,
+    CREDENTIALS,
+    SIGNING_KEYS,
+    LICENSES,
+    PRIVACY,
+    AI_SETTINGS,
+    BIOMETRIC_LOCK,
+    EDIT_GIT_NAME,
+    EDIT_GIT_EMAIL,
+    EDIT_GIT_DEFAULT_BRANCH,
 }
 
 @Immutable
@@ -138,12 +150,13 @@ data class SettingsLive(
     val version: String = "1.0.0",
     val toolchainStatus: String = "…",
     val toolchainVersions: String = "…",
+    val shellToolsStatus: String = "…",
 )
 
 /**
  * The settings screen: every row, across every section, built as a function of [live].
  *
- * A function rather than a constant because three of the rows report something the app measured for
+ * A function rather than a constant because several rows report something the app measured for
  * this session. Section order is the order they are listed in — general, editor, intelligence,
  * build, terminal, git, ai, appearance, storage, security, about.
  *
@@ -151,7 +164,11 @@ data class SettingsLive(
  * parameter rather than a read here because the settings screen is not the only place that knows:
  * the token lives in encrypted storage, and the screen is told what it says.
  */
-fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = listOf(
+fun sections(
+    live: SettingsLive,
+    githubLogin: String? = null,
+    settings: Settings = Settings(),
+): List<Section> = listOf(
     Section(
         id = "general",
         label = "General",
@@ -177,11 +194,13 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
                         "Write the file a moment after you stop typing.",
                         BoolSetting.AUTO_SAVE,
                     ),
+                    Row.Nav(
+                        "Setup guide",
+                        "Download build tools, shell tools and the AI runtime again.",
+                        "Open",
+                        id = SettingsAction.SETUP_GUIDE,
+                    ),
                 ),
-            ),
-            Group(
-                "Account",
-                listOf(Row.Account("RC", "Closecode Account", "Signed in", "Manage")),
             ),
         ),
     ),
@@ -210,7 +229,11 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
                     ),
                     Row.Toggle("Line numbers", "Show the number gutter.", BoolSetting.LINE_NUMBERS),
                     Row.Toggle("Word wrap", "Wrap long lines instead of scrolling sideways.", BoolSetting.WORD_WRAP),
-                    Row.Toggle("Code folding", "Collapse a block behind its first line.", default = true),
+                    Row.Toggle(
+                        "Code folding",
+                        "Collapse a block behind its first line.",
+                        BoolSetting.CODE_FOLDING,
+                    ),
                     Row.Toggle(
                         "Rainbow brackets",
                         "Colour nested brackets by depth.",
@@ -261,9 +284,21 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
                         "Show code completion suggestions as you type.",
                         BoolSetting.AUTOCOMPLETE,
                     ),
-                    Row.Toggle("Auto import", "Add the import a symbol needs.", default = true),
-                    Row.Toggle("Parameter hints", "Show the arguments a call takes.", default = true),
-                    Row.Toggle("Quick fixes", "Offer a fix under a problem as you type.", default = true),
+                    Row.Toggle(
+                        "Auto import",
+                        "Add the import a symbol needs.",
+                        BoolSetting.AUTO_IMPORT,
+                    ),
+                    Row.Toggle(
+                        "Parameter hints",
+                        "Show the arguments a call takes.",
+                        BoolSetting.PARAMETER_HINTS,
+                    ),
+                    Row.Toggle(
+                        "Quick fixes",
+                        "Offer a fix under a problem as you type.",
+                        BoolSetting.QUICK_FIXES,
+                    ),
                     Row.Toggle(
                         "Diagnostics",
                         "Flag problems in the gutter and offer quick fixes.",
@@ -305,8 +340,17 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
             Group(
                 "Build Behavior",
                 listOf(
-                    Row.Toggle("Build cache", "Reuse task output instead of redoing it.", default = true),
-                    Row.Nav("SDK Manager", "Manage installed Android SDK packages.", "Open"),
+                    Row.Toggle(
+                        "Build cache",
+                        "Reuse the last APK when nothing that affects the build has changed.",
+                        BoolSetting.BUILD_CACHE,
+                    ),
+                    Row.Nav(
+                        "SDK Manager",
+                        "Manage installed Android SDK packages.",
+                        "Open",
+                        id = SettingsAction.SDK_MANAGER,
+                    ),
                 ),
             ),
         ),
@@ -321,7 +365,18 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
             Group(
                 "Terminal",
                 listOf(
-                    Row.Value("Default shell", null, "System"),
+                    Row.Options(
+                        "Default shell",
+                        "Choose the system shell or the optional shell-tools pack.",
+                        OptionSetting.SHELL,
+                        ShellChoices,
+                    ),
+                    Row.Nav(
+                        "Shell tools",
+                        "Git, Python, Node, curl, zip and jq from Termux. Optional download.",
+                        live.shellToolsStatus,
+                        SettingsAction.SHELL_TOOLS,
+                    ),
                     Row.Options(
                         "Terminal colours",
                         "The palette a program's own colour codes are drawn against.",
@@ -335,7 +390,11 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
                         TerminalFontSizeChoices,
                         unit = " pt",
                     ),
-                    Row.Toggle("Command history", "Keep the commands you have run.", default = true),
+                    Row.Toggle(
+                        "Command history",
+                        "Keep the commands you have run.",
+                        BoolSetting.COMMAND_HISTORY,
+                    ),
                 ),
             ),
         ),
@@ -350,9 +409,24 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
             Group(
                 "Git Identity",
                 listOf(
-                    Row.Value("Name", null, "Not configured"),
-                    Row.Value("Email", null, "Not configured"),
-                    Row.Value("Default branch", null, "main"),
+                    Row.Nav(
+                        "Name",
+                        "Author name written into commits.",
+                        settings.gitName.ifBlank { "Not configured" },
+                        id = SettingsAction.EDIT_GIT_NAME,
+                    ),
+                    Row.Nav(
+                        "Email",
+                        "Author email written into commits.",
+                        settings.gitEmail.ifBlank { "Not configured" },
+                        id = SettingsAction.EDIT_GIT_EMAIL,
+                    ),
+                    Row.Nav(
+                        "Default branch",
+                        "Branch new repositories start on.",
+                        settings.gitDefaultBranch,
+                        id = SettingsAction.EDIT_GIT_DEFAULT_BRANCH,
+                    ),
                 ),
             ),
             Group(
@@ -387,21 +461,12 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
             Group(
                 "AI Assistant",
                 listOf(
-                    Row.Value("Provider", null, "Not configured"),
-                    Row.Value("Model", null, "Default"),
-                ),
-            ),
-            Group(
-                "Agent Permissions",
-                listOf(
-                    Row.Value(
-                        "File access",
-                        "Allow AI to read and modify project files.",
-                        "Ask",
+                    Row.Nav(
+                        "AI settings",
+                        "Provider, model and agent permissions are coming soon.",
+                        "Coming soon",
+                        id = SettingsAction.AI_SETTINGS,
                     ),
-                    Row.Value("Terminal access", null, "Ask"),
-                    Row.Value("Build access", null, "Allow"),
-                    Row.Value("Git access", null, "Ask"),
                 ),
             ),
         ),
@@ -422,8 +487,12 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
                         OptionSetting.THEME,
                         ThemeChoices,
                     ),
-                    Row.Accents("Accent color"),
-                    Row.Toggle("Animations", "Let panels and controls move.", default = true),
+                    Row.Accents("Accent color", settings.accentIndex),
+                    Row.Toggle(
+                        "Animations",
+                        "Let panels and controls move.",
+                        BoolSetting.ANIMATIONS,
+                    ),
                 ),
             ),
         ),
@@ -469,13 +538,24 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
             Group(
                 "Security",
                 listOf(
-                    Row.Toggle(
+                    Row.Nav(
                         "Biometric lock",
                         "Require biometric authentication when opening Closecode.",
-                        default = false,
+                        "Coming soon",
+                        id = SettingsAction.BIOMETRIC_LOCK,
                     ),
-                    Row.Nav("Credentials", "Stored tokens and passwords.", "Manage"),
-                    Row.Nav("Signing keys", "Keystore files used to sign a build.", "Manage"),
+                    Row.Nav(
+                        "Credentials",
+                        "Stored tokens and passwords.",
+                        "Manage",
+                        id = SettingsAction.CREDENTIALS,
+                    ),
+                    Row.Nav(
+                        "Signing keys",
+                        "Keystore files used to sign a build.",
+                        "Manage",
+                        id = SettingsAction.SIGNING_KEYS,
+                    ),
                 ),
             ),
         ),
@@ -491,8 +571,18 @@ fun sections(live: SettingsLive, githubLogin: String? = null): List<Section> = l
                 "Closecode",
                 listOf(
                     Row.Value("Version", "This build of Closecode.", live.version),
-                    Row.Nav("Open source licenses", null, "View"),
-                    Row.Nav("Privacy", null, "View"),
+                    Row.Nav(
+                        "Open source licenses",
+                        null,
+                        "View",
+                        id = SettingsAction.LICENSES,
+                    ),
+                    Row.Nav(
+                        "Privacy",
+                        null,
+                        "View",
+                        id = SettingsAction.PRIVACY,
+                    ),
                 ),
             ),
         ),
@@ -517,6 +607,20 @@ fun usedBoolSettings(): Set<BoolSetting> = sections(SettingsLive())
 fun usedOptionSettings(): Set<OptionSetting> = sections(SettingsLive())
     .flatMap { section -> section.groups.flatMap { it.rows } }
     .mapNotNull { row -> (row as? Row.Options)?.key }
+    .toSet()
+
+fun usedStringSettings(): Set<StringSetting> = sections(SettingsLive())
+    .flatMap { section -> section.groups.flatMap { it.rows } }
+    .mapNotNull { row ->
+        (row as? Row.Nav)?.id?.let { action ->
+            when (action) {
+                SettingsAction.EDIT_GIT_NAME -> StringSetting.GIT_NAME
+                SettingsAction.EDIT_GIT_EMAIL -> StringSetting.GIT_EMAIL
+                SettingsAction.EDIT_GIT_DEFAULT_BRANCH -> StringSetting.GIT_DEFAULT_BRANCH
+                else -> null
+            }
+        }
+    }
     .toSet()
 
 /** Total rows on the screen, whatever section they sit in. */

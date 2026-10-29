@@ -79,9 +79,12 @@ class GitService(private val root: File) {
     /** True once `git init` has run. `.git` is filtered out of the file tree elsewhere. */
     fun isVersioned(): Boolean = File(root, ".git").exists()
 
-    fun init(initialBranch: String = "main"): Result<Unit> = runCatching {
+    fun init(initialBranch: String? = null): Result<Unit> = runCatching {
         if (isVersioned()) return@runCatching
-        Git.init().setDirectory(root).setInitialBranch(initialBranch).call().use { git ->
+        val branch = initialBranch?.takeIf { it.isNotBlank() }
+            ?: configuredBranch?.takeIf { it.isNotBlank() }
+            ?: "main"
+        Git.init().setDirectory(root).setInitialBranch(branch).call().use { git ->
             // Line endings are pinned to LF in every repository the app creates. JGit would
             // otherwise obey the machine's global git config, and a desktop with Git for
             // Windows sets core.autocrlf=true there — which rewrote checked-out files to
@@ -519,12 +522,32 @@ class GitService(private val root: File) {
 
     private fun identity(git: Git): PersonIdent {
         val cfg = git.repository.config
-        val name = cfg.getString("user", null, "name")?.takeIf { it.isNotBlank() } ?: DEFAULT_USER
-        val email = cfg.getString("user", null, "email")?.takeIf { it.isNotBlank() } ?: DEFAULT_EMAIL
+        val name = configuredName?.takeIf { it.isNotBlank() }
+            ?: cfg.getString("user", null, "name")?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_USER
+        val email = configuredEmail?.takeIf { it.isNotBlank() }
+            ?: cfg.getString("user", null, "email")?.takeIf { it.isNotBlank() }
+            ?: DEFAULT_EMAIL
         return PersonIdent(name, email)
     }
 
     companion object {
+        @Volatile
+        private var configuredName: String? = null
+
+        @Volatile
+        private var configuredEmail: String? = null
+
+        @Volatile
+        private var configuredBranch: String? = null
+
+        /** Applies the Settings > Git identity to new commits and repositories. */
+        fun configure(name: String, email: String, branch: String) {
+            configuredName = name.trim().takeIf { it.isNotEmpty() }
+            configuredEmail = email.trim().takeIf { it.isNotEmpty() }
+            configuredBranch = branch.trim().takeIf { it.isNotEmpty() }
+        }
+
         const val DETACHED = "detached"
         const val DEFAULT_USER = "Closecode"
         const val DEFAULT_EMAIL = "closecode@localhost"

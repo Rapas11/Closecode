@@ -39,9 +39,16 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.closecode.ui.HeroScreen
+import com.closecode.ui.ProjectSetupScreen
+import com.closecode.ui.git.GitService
+import com.closecode.ui.onboarding.OnboardingScreen
+import com.closecode.ui.onboarding.rememberFirstRunStore
 import com.closecode.ui.ide.IdeScreen
 import com.closecode.ui.model.SelectedTemplate
+import com.closecode.ui.model.TemplateTab
 import com.closecode.ui.project.ProjectRecord
+import com.closecode.ui.settings.AccentOptions
+import com.closecode.ui.settings.LocalAnimationsEnabled
 import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.settings.OptionSetting
 import com.closecode.ui.settings.SettingsScreen
@@ -95,6 +102,13 @@ class MainActivity : ComponentActivity() {
             var crashText by rememberSaveable { mutableStateOf(pendingCrash) }
             val settingsStore = rememberSettingsStore()
             var settings by remember(settingsStore) { mutableStateOf(settingsStore.read()) }
+            LaunchedEffect(settings.gitName, settings.gitEmail, settings.gitDefaultBranch) {
+                GitService.configure(
+                    settings.gitName,
+                    settings.gitEmail,
+                    settings.gitDefaultBranch,
+                )
+            }
             // The theme is a preference, not a per-session toggle: System follows the device and
             // Dark or Light is whatever the settings screen was last left on, on every launch.
             val useDark = when (settings.theme) {
@@ -102,7 +116,10 @@ class MainActivity : ComponentActivity() {
                 "Light" -> false
                 else -> isSystemInDarkTheme()
             }
-            ClosecodeTheme(forceDark = useDark) {
+            ClosecodeTheme(
+                forceDark = useDark,
+                accent = AccentOptions[settings.accentIndex.coerceIn(0, AccentOptions.lastIndex)],
+            ) {
                 if (crashText != null) {
                     CrashDialog(
                         trace = crashText.orEmpty(),
@@ -120,6 +137,10 @@ class MainActivity : ComponentActivity() {
                 var githubTokenEpoch by rememberSaveable { mutableStateOf(0) }
 
                 val repository = rememberProjectRepository()
+                val firstRunStore = rememberFirstRunStore()
+                val startRoute = remember {
+                    if (firstRunStore.isCompleted()) "hero" else "onboarding"
+                }
                 val project = ProjectCodec.decode(encoded)
                 // One .closecode.json per project, so this is a directory read — off the
                 // composition path and onto Dispatchers.IO.
@@ -167,8 +188,25 @@ class MainActivity : ComponentActivity() {
                     if (backStack?.destination?.route != "ide") nav.navigate("ide")
                 }
 
-                CompositionLocalProvider(LocalSettings provides settings) {
-                    NavHost(navController = nav, startDestination = "hero") {
+                CompositionLocalProvider(
+                    LocalSettings provides settings,
+                    LocalAnimationsEnabled provides settings.animations,
+                ) {
+                    NavHost(navController = nav, startDestination = startRoute) {
+                        composable("onboarding") {
+                            OnboardingScreen(
+                                onDone = {
+                                    firstRunStore.complete()
+                                    if (nav.previousBackStackEntry == null) {
+                                        nav.navigate("hero") {
+                                            popUpTo("onboarding") { inclusive = true }
+                                        }
+                                    } else {
+                                        nav.popBackStack()
+                                    }
+                                },
+                            )
+                        }
                         composable("hero") {
                             // First Back warns, second within 2 s exits. Never from an inner
                             // screen: those pop their own routes first.
@@ -192,23 +230,46 @@ class MainActivity : ComponentActivity() {
                                 recentCount = recentCount,
                                 tokenEpoch = githubTokenEpoch,
                                 onProjectCreated = { name, selection, templateName, config ->
+                                    // Scaffold and register first. If setup is interrupted, the
+                                    // project is already in Recents and can be opened again.
                                     val record = repository.create(name, selection, config)
-                                    openEncoded(
-                                        ProjectCodec.encode(
-                                            Project(
-                                                record.name,
-                                                selection,
-                                                templateName,
-                                                config,
-                                            ),
+                                    encoded = ProjectCodec.encode(
+                                        Project(
+                                            record.name,
+                                            selection,
+                                            templateName,
+                                            config,
+                                            slug = record.slug,
                                         ),
                                     )
+                                    if (selection.tab == TemplateTab.Web) {
+                                        nav.navigate("ide")
+                                    } else {
+                                        nav.navigate("project-setup")
+                                    }
                                 },
                                 // A clone already owns its directory and its record, so it carries
                                 // its own slug rather than deriving one from the name.
                                 onProjectCloned = { record -> openEncoded(encodeRecord(record)) },
                                 onOpenRecent = { nav.navigate("recent") },
                             )
+                        }
+
+                        composable("project-setup") {
+                            val current = project
+                            if (current == null) {
+                                LaunchedEffect(Unit) { nav.popBackStack("hero", false) }
+                            } else {
+                                ProjectSetupScreen(
+                                    project = current,
+                                    onReady = {
+                                        nav.navigate("ide") {
+                                            popUpTo("project-setup") { inclusive = true }
+                                        }
+                                    },
+                                    onCancel = { nav.popBackStack("hero", false) },
+                                )
+                            }
                         }
 
                         composable("recent") {
@@ -227,6 +288,7 @@ class MainActivity : ComponentActivity() {
                                 settings = settings,
                                 onSettingsChange = { settings = settingsStore.write(it) },
                                 onGitHubChanged = { githubTokenEpoch++ },
+                                onOpenSetupGuide = { nav.navigate("onboarding") },
                             )
                         }
 

@@ -1652,6 +1652,12 @@ val CaretHScrollMargin = 64.dp
  * deliberately left unclamped: the scroller owns the content's real width and coerces to its own
  * maximum, and guessing that width here would mean handing this function a number only the
  * renderer knows.
+ *
+ * An unmeasured viewport has no left or right edge to keep the caret away from, so it must not
+ * move the view at all. Without this guard a zero-width viewport inverted the band: every caret
+ * looked past the right edge and the editor jumped sideways by one margin when it was laid out
+ * again, which is exactly what a tap that opens the keyboard can trigger. Margins are also capped
+ * at half the viewport so a viewport narrower than two margins still has a real band.
  */
 fun targetHScroll(
     caretXPx: Float,
@@ -1659,11 +1665,13 @@ fun targetHScroll(
     viewportWidthPx: Float,
     marginPx: Float,
 ): Float {
-    val left = currentPx + marginPx
-    val right = currentPx + viewportWidthPx - marginPx
+    if (!viewportWidthPx.isFinite() || viewportWidthPx <= 0f) return currentPx
+    val margin = marginPx.coerceIn(0f, viewportWidthPx / 2f)
+    val left = currentPx + margin
+    val right = currentPx + viewportWidthPx - margin
     return when {
-        caretXPx < left -> (caretXPx - marginPx).coerceAtLeast(0f)
-        caretXPx > right -> caretXPx - viewportWidthPx + marginPx
+        caretXPx < left -> (caretXPx - margin).coerceAtLeast(0f)
+        caretXPx > right -> caretXPx - viewportWidthPx + margin
         else -> currentPx
     }
 }

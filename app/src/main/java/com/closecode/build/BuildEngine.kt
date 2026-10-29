@@ -24,6 +24,7 @@ internal object BuildLock {
 
 class BuildEngine(
     private val toolchain: ToolchainStore,
+    private val cache: BuildCache? = null,
 ) {
     private val _state = MutableStateFlow<BuildState>(BuildState.Idle)
     val state: StateFlow<BuildState> = _state
@@ -41,10 +42,11 @@ class BuildEngine(
         checkInput: ProjectCheck.Input = ProjectCheck.Input(),
         tools: BuildTools? = null,
         onLog: (String) -> Unit = {},
+        cacheEnabled: Boolean = true,
     ): BuildOutcome {
         cancelled = false
         return BuildLock.mutex.withLock {
-            buildLocked(projectDir, slug, checkInput, tools, onLog)
+            buildLocked(projectDir, slug, checkInput, tools, onLog, cacheEnabled)
         }
     }
 
@@ -54,6 +56,7 @@ class BuildEngine(
         checkInput: ProjectCheck.Input,
         tools: BuildTools?,
         onLog: (String) -> Unit,
+        cacheEnabled: Boolean,
     ): BuildOutcome = withContext(Dispatchers.IO) {
         _state.value = BuildState.Running(Step.CheckProject, 0f)
         val report = ProjectCheck.check(projectDir, slug, checkInput)
@@ -87,6 +90,36 @@ class BuildEngine(
                 facts.composeCompiler != null ||
                 facts.libraries.any { it.module.startsWith("androidx.compose") },
         )
+        val cacheKey = if (cacheEnabled && cache != null) {
+            runCatching { cache.key(projectDir, config, tools!!) }.getOrNull()
+        } else {
+            null
+        }
+        if (cacheKey != null) {
+            val hit = cache?.lookup(slug, cacheKey)
+            if (hit != null) {
+                val output = File(projectDir, "build/outputs/apk/debug/app-debug.apk")
+                runCatching {
+                    output.parentFile?.mkdirs()
+                    hit.copyTo(output, overwrite = true)
+                }.onSuccess {
+                    val seconds = 0L
+                    _state.value = BuildState.Succeeded(
+                        output,
+                        seconds,
+                        output.length(),
+                        cached = true,
+                    )
+                    onLog("BUILD CACHE HIT · ${hit.name}")
+                    return@withContext BuildOutcome.Built(
+                        output,
+                        output.length(),
+                        seconds,
+                        cached = true,
+                    )
+                }
+            }
+        }
         val started = System.currentTimeMillis()
         _state.value = BuildState.Running(Step.CheckProject, progress(Step.CheckProject))
         val result = BuildChain.build(
@@ -102,6 +135,7 @@ class BuildEngine(
         when {
             failure == null && result.apk != null -> {
                 val apk = result.apk!!
+                if (cacheKey != null) cache?.store(slug, cacheKey, apk)
                 _state.value = BuildState.Succeeded(apk, seconds, apk.length(), result.times)
                 BuildOutcome.Built(apk, apk.length(), seconds)
             }
@@ -162,6 +196,7 @@ sealed interface BuildState {
         val seconds: Long,
         val sizeBytes: Long,
         val times: List<BuildChain.StepTime> = emptyList(),
+        val cached: Boolean = false,
     ) : BuildState
     data class Cancelled(val times: List<BuildChain.StepTime>) : BuildState
 }
@@ -175,6 +210,11 @@ sealed interface BuildOutcome {
         val message: String,
         val diagnostics: List<CompileDriver.Diagnostic> = emptyList(),
     ) : BuildOutcome
-    data class Built(val apk: File, val sizeBytes: Long, val seconds: Long) : BuildOutcome
+    data class Built(
+        val apk: File,
+        val sizeBytes: Long,
+        val seconds: Long,
+        val cached: Boolean = false,
+    ) : BuildOutcome
     data object Cancelled : BuildOutcome
 }

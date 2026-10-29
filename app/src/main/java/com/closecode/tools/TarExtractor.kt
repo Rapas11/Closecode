@@ -116,6 +116,8 @@ class TarExtractor(
     /** Null for an entry outside the package's `usr` tree. */
     private fun relativePath(name: String): String? {
         val normalized = name.replace('\\', '/').trimStart('/').removePrefix("./")
+        // An empty prefix means the caller wants the whole archive, not a Termux tree.
+        if (source.isEmpty()) return normalized
         return when {
             normalized == source -> ""
             normalized.startsWith("$source/") -> normalized.removePrefix("$source/")

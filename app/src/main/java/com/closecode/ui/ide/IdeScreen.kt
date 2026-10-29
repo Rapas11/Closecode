@@ -182,6 +182,7 @@ import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.model.projectTree
 import com.closecode.ui.model.recentFiles
 import com.closecode.ui.theme.LocalPageColors
+import com.closecode.ui.theme.motion
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
 import java.io.File
@@ -309,6 +310,23 @@ internal fun IdeScreen(
     }
     val diskContents = remember(slug) { mutableStateMapOf<String, String>() }
     var activePanel by remember(slug) { mutableStateOf("Code") }
+    // Full pages and tool panels are a real history, not a fixed "Code is underneath"
+    // rule: Terminal -> Logcat -> Back must land on Terminal, and AI -> Terminal -> Back
+    // must land on AI. Back pops this stack; every other panel move pushes the old one.
+    val panelHistory = remember(slug) { mutableStateListOf<String>() }
+    var previousPanel by remember(slug) { mutableStateOf("Code") }
+    var backNavigation by remember(slug) { mutableStateOf(false) }
+    LaunchedEffect(activePanel) {
+        if (activePanel != previousPanel) {
+            if (backNavigation) {
+                backNavigation = false
+            } else {
+                panelHistory.add(previousPanel)
+                if (panelHistory.size > 32) panelHistory.removeAt(0)
+            }
+            previousPanel = activePanel
+        }
+    }
     var explorerOpen by remember { mutableStateOf(false) }
     // How many times the drawer has been opened: the hint line under the tree shows for the
     // first three opens, then never again.
@@ -356,7 +374,7 @@ internal fun IdeScreen(
     val drawerFullWidth = (screenWidthDp * 0.8f).dp.coerceAtMost(320.dp)
     val drawerWidth by animateDpAsState(
         targetValue = if (explorerOpen) drawerFullWidth else 0.dp,
-        animationSpec = tween(200),
+        animationSpec = motion(200),
         label = "explorer-width",
     )
     // Which half of the drawer is showing. Source Control opens first — it holds the account,
@@ -365,6 +383,9 @@ internal fun IdeScreen(
     var searchOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
     var findOpen by remember { mutableStateOf(false) }
+    // AI is a full page rather than an overlay: it keeps the bottom bar and the panel
+    // history remembers where it was opened from. More stays the anchored sheet it has
+    // always been.
     var moreOpen by remember { mutableStateOf(false) }
     // Every one-field tree operation lands here: creating, renaming, moving and copying all ask
     // for a name first, so there is one place a name is asked for and one dialog that asks.
@@ -432,7 +453,10 @@ internal fun IdeScreen(
     var installedPackage by remember { mutableStateOf<String?>(null) }
     // One engine per project: the chain reports its seven steps through this stream.
     val buildEngine = remember(slug) {
-        com.closecode.build.BuildEngine(com.closecode.build.ToolchainHolder.store(context))
+        com.closecode.build.BuildEngine(
+            com.closecode.build.ToolchainHolder.store(context),
+            com.closecode.build.BuildCache(java.io.File(context.cacheDir, "build-cache")),
+        )
     }
     val engineState by buildEngine.state.collectAsState()
     val buildPanel = buildPanelModel(engineState)
@@ -850,12 +874,9 @@ internal fun IdeScreen(
     // line the reader is looking at, not at the end of the buffer.
     var editorCaret by remember { mutableIntStateOf(0) }
     var addBlockOpen by remember { mutableStateOf(false) }
-    // Logcat, Build and Terminal cover the editor, so back has to know what was underneath them
-    // rather than always dropping the reader on Code and losing a Preview they had open.
-    var panelBeforeTool by remember { mutableStateOf("Code") }
-
-    LaunchedEffect(activePanel) {
-        if (activePanel !in ToolPanels) panelBeforeTool = activePanel
+    fun openAiPanel() {
+        if (activePanel == "AI") return
+        activePanel = "AI"
     }
 
     // Spec 4.1: the header's Undo and Redo drive the editor's own history. Requests are counters
@@ -1548,7 +1569,13 @@ internal fun IdeScreen(
                     .toSet(),
             ),
         )
-        val outcome = buildEngine.build(projectRoot, slug, setup.checkInput, setup.tools)
+        val outcome = buildEngine.build(
+            projectRoot,
+            slug,
+            setup.checkInput,
+            setup.tools,
+            cacheEnabled = settings.buildCache,
+        )
         when (outcome) {
             is com.closecode.build.BuildOutcome.Blocked -> {
                 val errors = outcome.findings
@@ -1662,7 +1689,11 @@ internal fun IdeScreen(
                     LogLine(
                         LogLevel.INFO,
                         "Build",
-                        "BUILD SUCCESSFUL · app-debug.apk · %.1f MB · %d s".format(mb, outcome.seconds),
+                        if (outcome.cached) {
+                            "BUILD SUCCESSFUL · app-debug.apk · %.1f MB · cached".format(mb)
+                        } else {
+                            "BUILD SUCCESSFUL · app-debug.apk · %.1f MB · %d s".format(mb, outcome.seconds)
+                        },
                     ),
                 )
                 toast = if (autoOpenAfterBuild) "Installing…" else "Build finished"
@@ -1828,22 +1859,28 @@ internal fun IdeScreen(
                 BackLog.press("main", "${backState()} branch=buildLog")
                 buildLogOpen = false
             }
-            activePanel == "Terminal" || activePanel == "Logcat" || activePanel == "Build" -> {
-                BackLog.press("main", "${backState()} branch=tool-to-$panelBeforeTool")
-                activePanel = panelBeforeTool
-            }
-            // 4. Preview and the other views drop back to Code first.
-            activePanel != "Code" -> {
-                BackLog.press("main", "${backState()} branch=view-to-Code")
-                activePanel = "Code"
-            }
-            // 5. A search result returns to its results sheet, results still there.
+            // 4. A search result returns to its results sheet, results still there.
             findReturn -> {
                 BackLog.press("main", "${backState()} branch=findReturn")
                 findReturn = false
                 findOpen = true
             }
-            // 6. Nothing left open: leave the project (asking about unsaved work first).
+            // 5. Full pages and tool panels return to the place they were opened from.
+            // The stack carries the whole path, so Terminal -> Logcat -> Back is Terminal,
+            // and AI -> Terminal -> Back is AI, rather than both falling through to Code.
+            panelHistory.isNotEmpty() -> {
+                val target = panelHistory.removeLastOrNull() ?: "Code"
+                BackLog.press("main", "${backState()} branch=panel-to-$target")
+                backNavigation = true
+                activePanel = target
+            }
+            // 6. A panel with no history still has the editor underneath it.
+            activePanel != "Code" -> {
+                BackLog.press("main", "${backState()} branch=panel-to-Code")
+                backNavigation = true
+                activePanel = "Code"
+            }
+            // 7. Nothing left open: leave the project (asking about unsaved work first).
             else -> {
                 BackLog.press("main", "${backState()} branch=exit")
                 requestExit()
@@ -1885,10 +1922,11 @@ internal fun IdeScreen(
 
             val activePath = activeFile?.path ?: active
             // Terminal owns its chrome: no app top bar there — drawer, undo, save and run are
-            // editor actions, and the drawer still opens from the left edge. Everywhere else
+            // editor actions, and the drawer still opens from the left edge. AI is a full page
+            // with its own header, so the editor bar would only compete with it. Everywhere else
             // the bar stays exactly as it is. The drawer is a full-height modal over all of
             // this, so nothing here shifts when it opens.
-            if (activePanel != "Terminal") {
+            if (activePanel != "Terminal" && activePanel != "AI") {
             IdeTopBar(
                 projectName = projectName,
                 dirty = isDirtyTab(active),
@@ -1919,13 +1957,16 @@ internal fun IdeScreen(
             }
 
             when (activePanel) {
-                "AI" -> OpenCodeTab(
-                    projectName = projectName,
-                    projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
-                    onChat = { openCodeChat = true },
-                    onAuthenticate = ::authenticateOpenCode,
-                    modifier = Modifier.weight(1f),
-                )
+                "AI" -> Column(Modifier.weight(1f).fillMaxWidth()) {
+                    IdeFullPageBar(title = "AI", onBack = ::handleBackPress)
+                    OpenCodeTab(
+                        projectName = projectName,
+                        projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                        onChat = { openCodeChat = true },
+                        onAuthenticate = ::authenticateOpenCode,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
                 "Logcat" -> IdeLogcatPanel(
                     lines = logLines,
                     onBack = ::handleBackPress,
@@ -2005,7 +2046,7 @@ internal fun IdeScreen(
                             activePanel = "Code"
                         }
                     },
-                    onAskAi = { activePanel = "AI" },
+                    onAskAi = ::openAiPanel,
                     onBack = ::handleBackPress,
                     modifier = Modifier.weight(1f),
                     apkName = builtApk?.let { file ->
@@ -2319,7 +2360,7 @@ internal fun IdeScreen(
                         dismissKeyboard()
                         when (item) {
                             "Search" -> findOpen = true
-                            "AI" -> activePanel = if (activePanel == "AI") "Code" else "AI"
+                            "AI" -> openAiPanel()
                             "More" -> moreOpen = true
                         }
                     },
@@ -2395,8 +2436,8 @@ internal fun IdeScreen(
 
         AnimatedVisibility(
             visible = searchOpen,
-            enter = fadeIn(tween(160)),
-            exit = fadeOut(tween(160)),
+            enter = fadeIn(motion(160)),
+            exit = fadeOut(motion(160)),
             modifier = Modifier.align(Alignment.TopStart),
         ) {
             CommandPalette(
@@ -2504,8 +2545,8 @@ internal fun IdeScreen(
 
         AnimatedVisibility(
             visible = toast != null,
-            enter = fadeIn(tween(200)),
-            exit = fadeOut(tween(200)),
+            enter = fadeIn(motion(200)),
+            exit = fadeOut(motion(200)),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 78.dp),
@@ -3098,6 +3139,51 @@ private fun RowScope.ExitDialogButton(label: String, primary: Boolean, onClick: 
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
+        )
+    }
+}
+
+/**
+ * The header shared by AI and More: both are full pages under the status bar, so neither can
+ * borrow the editor's top bar (that bar belongs to a file). The back button runs the same
+ * handleBackPress as system Back, so the two can never disagree.
+ */
+@Composable
+private fun IdeFullPageBar(title: String, onBack: () -> Unit) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(c.panel)
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .height(52.dp)
+            .drawBehind {
+                drawLine(
+                    color = c.divider,
+                    start = androidx.compose.ui.geometry.Offset(0f, size.height - 0.5f),
+                    end = androidx.compose.ui.geometry.Offset(size.width, size.height - 0.5f),
+                    strokeWidth = 1f,
+                )
+            }
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        HeaderIconButton(
+            icon = CcIcons.ChevronLeft,
+            label = "Back",
+            tint = c.iconTint,
+            onClick = onBack,
+        )
+        Text(
+            text = title,
+            color = c.brightText,
+            fontSize = 14.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
         )
     }
 }
@@ -4228,6 +4314,7 @@ formatRequest: Int = 0,
     // an edit are ignored by the map builder rather than cleaned up, so no bookkeeping here can
     // ever hide the wrong lines.
     var foldedFirstLines by remember(active) { mutableStateOf(setOf<Int>()) }
+    val activeFolds = if (settings.codeFolding) foldedFirstLines else emptySet<Int>()
     // The file as it is on disk: the analysis, the persistence and every structural edit read
     // this, while the field, the layout and the caret read the folded display text below. The
     // two meet only in commit(), commitSource() and the fold toggle — nowhere else.
@@ -4237,14 +4324,18 @@ formatRequest: Int = 0,
     // changes, popups and the keyboard never do. The follow effects key on this alone, so
     // nothing else can move the view no matter how often it recomposes.
     var followSeq by remember { mutableStateOf(0) }
+    // The last sequence the horizontal follow actually handled. A follow that arrives before the
+    // renderer has measured the new window leaves this behind and waits for the layout instead of
+    // guessing from the previous slice.
+    var handledHFollowSeq by remember { mutableStateOf(0) }
     // True while one of this editor's own scroll calls is in flight, so the external-change
     // observer does not mistake our own animation frames for a scroll nobody asked for.
     var selfScrolling by remember { mutableStateOf(false) }
     // True while the horizontal pan handler owns the gesture (raw deltas never mark the state
     // in progress), for the same observer.
     var hPanActive by remember { mutableStateOf(false) }
-    val foldMap = remember(sourceText, foldedFirstLines) {
-        FoldMap.build(sourceText, foldedFirstLines)
+    val foldMap = remember(sourceText, activeFolds) {
+        FoldMap.build(sourceText, activeFolds)
     }
     // Display rows (1-based, gutter numbering) whose source line starts an active fold: the chip
     // rows. The chip sits past the end of the first line, where the hidden body used to continue.
@@ -4322,7 +4413,7 @@ formatRequest: Int = 0,
             // frame, and the second sees the first's field text with the first's map still
             // waiting for recomposition. Mapping across that mismatch indexed past the end of
             // the map and killed the app on the keystroke.
-            val map = FoldMap.build(sourceText, foldedFirstLines)
+            val map = FoldMap.build(sourceText, activeFolds)
             val edit = FoldMap.applyDisplayEdit(
                 map,
                 fieldValue.text,
@@ -4332,7 +4423,7 @@ formatRequest: Int = 0,
             )
             pushUndo()
             sourceText = edit.source
-            val fresh = FoldMap.build(edit.source, foldedFirstLines)
+            val fresh = FoldMap.build(edit.source, activeFolds)
             fieldValue = TextFieldValue(
                 fresh.display,
                 TextRange(
@@ -4357,7 +4448,7 @@ formatRequest: Int = 0,
         followSeq++
         pushUndo()
         sourceText = newSource
-        val map = FoldMap.build(newSource, foldedFirstLines)
+        val map = FoldMap.build(newSource, activeFolds)
         fieldValue = TextFieldValue(
             map.display,
             TextRange(
@@ -4389,6 +4480,7 @@ formatRequest: Int = 0,
     // exist. Toggling clears history: entries hold display snapshots, and a fold changes what
     // every display offset means, so popping one now would restore text the map cannot place.
     fun toggleFold(sourceLine: Int) {
+        if (!settings.codeFolding) return
         val beforeFolds = foldedFirstLines
         foldedFirstLines = if (sourceLine in foldedFirstLines) {
             foldedFirstLines - sourceLine
@@ -4404,7 +4496,7 @@ formatRequest: Int = 0,
         // instead of pointing at a row that no longer exists.
         val caretS = before.sourceAt(fieldValue.selection.start)
         val anchorS = before.sourceAt(fieldValue.selection.end)
-        val map = FoldMap.build(sourceText, foldedFirstLines)
+        val map = FoldMap.build(sourceText, activeFolds)
         fieldValue = TextFieldValue(
             map.display,
             TextRange(
@@ -4439,7 +4531,7 @@ formatRequest: Int = 0,
         undoStack.clear()
         redoStack.clear()
         sourceText = next
-        val map = FoldMap.build(next, foldedFirstLines)
+        val map = FoldMap.build(next, activeFolds)
         fieldValue = TextFieldValue(
             map.display,
             TextRange(caretOffsetAtEndOfCode(map.display)),
@@ -4450,6 +4542,7 @@ formatRequest: Int = 0,
     // drifted out of step with the code and error line numbers pointed at the wrong line.
     val codeScroll = rememberScrollState()
     val codeHScroll = rememberScrollState()
+    val scrollMotion = motion<Float>(200)
     // A scroll nobody asked for — the field's own bring-into-view is the usual suspect — is
     // still caught here, with the timestamp that says which finished job it followed.
     LaunchedEffect(Unit) {
@@ -4616,6 +4709,27 @@ formatRequest: Int = 0,
     LaunchedEffect(cursor) { onCaretChange(foldMap.sourceAt(cursor)) }
 
     var codeLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    // The slice the current layout was measured from. A tap can bump the follow sequence before
+    // the renderer has laid out the new window, and reading the old layout with the new window
+    // would clamp the caret to the wrong character and scroll the code sideways for no reason.
+    var codeLayoutWindowStart by remember { mutableStateOf(-1) }
+    var codeLayoutWindowEnd by remember { mutableStateOf(-1) }
+    // The transparent field must be at least as wide as the glyphs it edits. When it is narrower,
+    // Compose wraps its text while the visible Text stays unwrapped, and a tap maps to a different
+    // character. The field is measured here so a mismatch is visible in the scroll log instead of
+    // only as a caret that jumps to the wrong place.
+    var fieldWidthPx by remember { mutableStateOf(0) }
+    LaunchedEffect(fieldWidthPx, codeLayout) {
+        val layout = codeLayout ?: return@LaunchedEffect
+        if (fieldWidthPx > 0 && fieldWidthPx < layout.size.width - 1) {
+            ScrollLog.record(
+                "field",
+                fieldWidthPx,
+                layout.size.width,
+                "field-narrower-than-text",
+            )
+        }
+    }
     var viewportWidthPx by remember { mutableStateOf(0f) }
     var viewportHeightPx by remember { mutableStateOf(0f) }
     // The keyboard inset as the editor sees it, read live for the scroll forensics below. Under
@@ -4823,11 +4937,13 @@ formatRequest: Int = 0,
     var quickFixLine by remember { mutableStateOf<Int?>(null) }
     var quickFixIndex by remember { mutableStateOf(0) }
 
-    val quickFixActions = remember(quickFixLine, problems, currentAnalysis, code) {
-        buildQuickFixActions(quickFixLine, problems, currentAnalysis, code)
+    val quickFixActions = remember(quickFixLine, problems, currentAnalysis, code, settings.quickFixes) {
+        if (!settings.quickFixes) emptyList()
+        else buildQuickFixActions(quickFixLine, problems, currentAnalysis, code)
     }
 
     fun openQuickFix(line: Int) {
+        if (!settings.quickFixes) return
         quickFixLine = line
         quickFixIndex = 0
         problemSheetLine.value = null
@@ -5124,13 +5240,30 @@ formatRequest: Int = 0,
     // line produces, is animated so the eye can follow where it went; the small corrections typing
     // makes are applied straight away, because an animation restarted on every keystroke never
     // settles and the text ends up swimming.
-    LaunchedEffect(followSeq) {
-        if (followSeq == 0) return@LaunchedEffect
+    //
+    // A follow only runs once the measured layout belongs to the current window and contains the
+    // caret. Tapping a line opens the keyboard at the same moment the follow sequence changes, so
+    // the first pass can still see the previous slice; waiting for that layout to land keeps the
+    // caret's real x instead of clamping it to the end of an old window and scrolling the code away.
+    LaunchedEffect(
+        followSeq,
+        codeLayout,
+        codeLayoutWindowStart,
+        codeLayoutWindowEnd,
+        codeWindow.startOffset,
+        codeWidthPx,
+    ) {
+        if (followSeq == 0 || followSeq == handledHFollowSeq) return@LaunchedEffect
         if (codeHScroll.isScrollInProgress) {
             ScrollLog.record("h", codeHScroll.value, codeHScroll.value, "follow-skipped-dragging")
             return@LaunchedEffect
         }
-        val caretContent = caretX(codeLayout, cursor, codeWindow) ?: return@LaunchedEffect
+        if (codeWidthPx <= 0f) return@LaunchedEffect
+        val layout = codeLayout ?: return@LaunchedEffect
+        if (codeLayoutWindowStart != codeWindow.startOffset) return@LaunchedEffect
+        if (cursor !in codeLayoutWindowStart until codeLayoutWindowEnd) return@LaunchedEffect
+        handledHFollowSeq = followSeq
+        val caretContent = caretX(layout, cursor, codeWindow) ?: return@LaunchedEffect
         val margin = with(autoDensity) { CaretHScrollMargin.toPx() }
         val now = codeHScroll.value.toFloat()
         val wanted = targetHScroll(caretContent, now, codeWidthPx, margin)
@@ -5210,7 +5343,7 @@ formatRequest: Int = 0,
                 selfScrolling = true
                 try {
                     ScrollLog.record("v", codeScroll.value, to, forensics(true))
-                    codeScroll.animateScrollTo(to, animationSpec = tween(200))
+                    codeScroll.animateScrollTo(to, animationSpec = scrollMotion)
                 } finally {
                     selfScrolling = false
                 }
@@ -5230,8 +5363,34 @@ val applySuggestion: (Int) -> Unit = { index ->
             val sourceCursor = foldMap.sourceAt(liveCursor)
             val prefix = if (liveItems != null) currentAnalysis?.prefixAt(sourceCursor).orEmpty() else ""
             val start = (liveCursor - prefix.length).coerceAtLeast(0)
-            val next = liveText.substring(0, start) + insert + liveText.substring(liveCursor)
-            commit(TextFieldValue(next, TextRange(start + insert.length)))
+            val item = liveItems?.getOrNull(index)
+            if (item != null) {
+                val sourceStart = (sourceCursor - prefix.length).coerceAtLeast(0)
+                var next = sourceText.substring(0, sourceStart) + insert +
+                    sourceText.substring(sourceCursor)
+                var caret = sourceStart + insert.length
+                if (settings.autoImport &&
+                    (item.kind == CompletionKind.CLASS || item.kind == CompletionKind.STDLIB_CLASS)
+                ) {
+                    val fqn = item.subtitle?.let { subtitle ->
+                        if (subtitle.endsWith(".${item.label}")) subtitle
+                        else if (subtitle.isNotBlank()) "$subtitle.${item.label}"
+                        else null
+                    }
+                    if (fqn != null && fqn.contains('.')) {
+                        val before = next
+                        val imported = SourceEdits.addImport(next, fqn)
+                        if (imported != before) {
+                            next = imported
+                            caret = SourceEdits.caretAfterAddImport(before, fqn) ?: caret
+                        }
+                    }
+                }
+                commitSource(next, caret.coerceIn(0, next.length))
+            } else {
+                val next = liveText.substring(0, start) + insert + liveText.substring(liveCursor)
+                commit(TextFieldValue(next, TextRange(start + insert.length)))
+            }
             visibleSuggestions.getOrNull(index)?.name?.let { noteSuggestionAccepted(it) }
         }
     }
@@ -5574,8 +5733,9 @@ val applySuggestion: (Int) -> Unit = { index ->
         val caretTopContentEarly = lineTopPx(codeLayout, code, caretLine, codeWindow)
             ?: pillTopPx(caretLine, lineHeightPx)
         val popupEdgePxEarly = with(popupDensity) { POPUP_EDGE_INSET.toPx() }
-        val signatureOptions = remember(code, cursor) {
-            signatureHelpAll(code, cursor, AndroidApiAssets.cached())
+        val signatureOptions = remember(code, cursor, settings.parameterHints) {
+            if (!settings.parameterHints) emptyList()
+            else signatureHelpAll(code, cursor, AndroidApiAssets.cached())
         }
         var sigChoice by remember(code, cursor) { mutableIntStateOf(0) }
         val signatureInfo = signatureOptions.getOrNull(
@@ -5914,7 +6074,11 @@ val applySuggestion: (Int) -> Unit = { index ->
                             // actually sees. Taking it from the transparent BasicTextField below
                             // gave a different line advance, which is what made the gutter rows,
                             // pills and bulb drift away from the code.
-                            onTextLayout = { codeLayout = it },
+                            onTextLayout = {
+                                codeLayout = it
+                                codeLayoutWindowStart = codeWindow.startOffset
+                                codeLayoutWindowEnd = codeWindow.startOffset + it.layoutInput.text.length
+                            },
                         )
                         // The editor draws its own selection bar, so Android's own Copy/Paste
                         // menu is switched off at this field: two toolbars is one too many.
@@ -5986,7 +6150,12 @@ val applySuggestion: (Int) -> Unit = { index ->
                                 imeAction = ImeAction.Default,
                             ),
                             modifier = Modifier
-                                .fillMaxSize()
+                                // Match the column that the visible Text measured, not the viewport.
+                                // With word wrap off the Text is wider than the screen; a field
+                                // pinned to the viewport would wrap its own copy and put every tap
+                                // after the first screenful on the wrong character.
+                                .matchParentSize()
+                                .onSizeChanged { fieldWidthPx = it.width }
                                 // Spec 4.1: the palette advertises Ctrl S, and the reference binds
                                 // the hardware keys for save, undo and redo. Enter is owned here
                                 // too, ahead of the IME, so one press can never produce two rows.
@@ -6138,12 +6307,24 @@ val applySuggestion: (Int) -> Unit = { index ->
                 // keyed by source line — the gutter looks them up by the number it draws, which is
                 // why folding never moves a mark onto the wrong row. Recomputed only when the file
                 // or its text changes, never on scroll: the layer reads the scroll itself.
-                val gitMarks = remember(relativePath, sourceText, projectRoot) {
+                // JGit opens the repository, reads HEAD and diffs the whole buffer. Doing that in
+                // composition on every keystroke was enough work to stall the editor. Wait for a
+                // short pause in typing, then run it off the main thread; a new keystroke cancels
+                // the old job before it starts.
+                val gitMarks by produceState<Map<Int, GitMark>>(
+                    initialValue = emptyMap(),
+                    relativePath,
+                    sourceText,
+                    projectRoot,
+                ) {
                     val path = relativePath
                     val root = projectRoot
                     if (path == null || root == null) {
-                        emptyMap<Int, GitMark>()
-                    } else {
+                        value = emptyMap()
+                        return@produceState
+                    }
+                    delay(180)
+                    value = withContext(Dispatchers.Default) {
                         com.closecode.ui.git.GitService(root).bufferMarks(path, sourceText)
                             .getOrElse { emptyMap() }
                             .mapValues { (_, kind) -> GitMark.valueOf(kind.name) }
@@ -6172,6 +6353,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                         // cannot land on top of the caret line's text. It appears for the caret line
                         // whenever that line has something to offer to fix and no card is open.
                         bulbLine = if (
+                            settings.quickFixes &&
                             problems.on(caretLine).isNotEmpty() && quickFixLine == null
                         ) {
                             caretLine
@@ -6193,8 +6375,8 @@ val applySuggestion: (Int) -> Unit = { index ->
             val menuOffsetX = with(menuDensity) { columnStart.toPx() }
             androidx.compose.animation.AnimatedVisibility(
                 visible = quickFixLine != null && quickFixActions.isNotEmpty(),
-                enter = fadeIn(tween(120)),
-                exit = fadeOut(tween(120)),
+                enter = fadeIn(motion(120)),
+                exit = fadeOut(motion(120)),
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .offset {
@@ -6230,8 +6412,8 @@ val applySuggestion: (Int) -> Unit = { index ->
 
             androidx.compose.animation.AnimatedVisibility(
                 visible = problemSheetLine.value != null,
-                enter = slideInVertically(tween(160)) { it } + fadeIn(tween(160)),
-                exit = slideOutVertically(tween(160)) { it } + fadeOut(tween(160)),
+                enter = slideInVertically(motion(160)) { it } + fadeIn(motion(160)),
+                exit = slideOutVertically(motion(160)) { it } + fadeOut(motion(160)),
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 8.dp),
@@ -6329,8 +6511,8 @@ val applySuggestion: (Int) -> Unit = { index ->
             val popupLeft = placement?.third ?: 0f
             androidx.compose.animation.AnimatedVisibility(
                 visible = sigVisible,
-                enter = fadeIn(tween(120)),
-                exit = fadeOut(tween(120)),
+                enter = fadeIn(motion(120)),
+                exit = fadeOut(motion(120)),
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .offset {
@@ -6369,8 +6551,8 @@ val applySuggestion: (Int) -> Unit = { index ->
                     shownSuggestions.isNotEmpty() &&
                     caretRowVisible &&
                     popupAt != null,
-                enter = fadeIn(tween(120)),
-                exit = fadeOut(tween(120)),
+                enter = fadeIn(motion(120)),
+                exit = fadeOut(motion(120)),
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .offset {
@@ -6488,8 +6670,8 @@ val applySuggestion: (Int) -> Unit = { index ->
                         quickFixLine == null &&
                         visibleSuggestions.isEmpty() &&
                         problemSheetLine.value == null,
-                    enter = fadeIn(tween(120)),
-                    exit = fadeOut(tween(120)),
+                    enter = fadeIn(motion(120)),
+                    exit = fadeOut(motion(120)),
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .offset {
@@ -6582,7 +6764,7 @@ val applySuggestion: (Int) -> Unit = { index ->
         // hide budget: a closed keyboard leaves the bar, never a lingering row.
         val toolRowHeight by animateDpAsState(
             targetValue = if (showToolRow) EditorKeyRowHeight else 0.dp,
-            animationSpec = tween(100),
+            animationSpec = motion(100),
             label = "tool-row-height",
         )
         Box(
@@ -7094,7 +7276,7 @@ private fun BoxScope.EditorScrollbar(
     }
     val thumbAlpha by animateFloatAsState(
         targetValue = if (thumbVisible) 1f else 0f,
-        animationSpec = tween(200),
+        animationSpec = motion(200),
         label = "scrollbar-fade",
     )
     val track = if (horizontal) {

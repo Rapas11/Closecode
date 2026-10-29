@@ -1,6 +1,7 @@
 package com.closecode.ui.model
 
 import androidx.compose.runtime.Immutable
+import com.closecode.build.ProjectPins
 
 private const val FieldSep = "\u0001"
 
@@ -49,6 +50,19 @@ val MinSdkOptions = listOf("21", "23", "24", "26", "29", "31", "33", "34", "35")
 val SdkOptions = listOf("33", "34", "35", "36")
 
 val BuildTypeOptions = listOf("Debug", "Release")
+
+/**
+ * The Gradle version is export metadata, not the on-device compiler, but a desktop build
+ * still needs the selected AGP to understand the selected compileSdk. Null when compatible.
+ */
+fun gradleCompatibilityProblem(config: ProjectConfig): String? {
+    val maxApi = ProjectPins.maxApiForGradle(config.gradleVersion)
+    val compileApi = config.compileSdk.toIntOrNull() ?: return null
+    if (compileApi <= maxApi) return null
+    return "Gradle ${config.gradleVersion} maps to Android Gradle Plugin " +
+        "${ProjectPins.agpForGradle(config.gradleVersion)}, which supports compileSdk $maxApi. " +
+        "Choose a newer Gradle version for SDK $compileApi."
+}
 
 fun defaultPackageName(projectName: String): String {
     val slug = projectName

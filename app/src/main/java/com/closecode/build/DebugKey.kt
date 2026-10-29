@@ -21,6 +21,13 @@ object DebugKey {
 
     data class Pair(val key: PrivateKey, val chain: List<X509Certificate>)
 
+    /** Forgets the debug key; the next build generates a new one. */
+    fun delete(context: Context): Boolean = runCatching {
+        val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        if (store.containsAlias(ALIAS)) store.deleteEntry(ALIAS)
+        true
+    }.getOrDefault(false)
+
     fun ensure(context: Context): Pair {
         val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         (store.getEntry(ALIAS, null) as? KeyStore.PrivateKeyEntry)?.let { entry ->

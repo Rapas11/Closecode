@@ -42,7 +42,7 @@ import com.closecode.ui.model.Templates
 import com.closecode.ui.model.defaultPackageName
 import com.closecode.ui.theme.LocalPageColors
 
-private enum class Step { Pick, Config, Provisioning }
+private enum class Step { Pick, Config }
 
 @Composable
 fun StartProjectSheet(
@@ -79,27 +79,6 @@ fun StartProjectSheet(
     val current = selected?.let { Templates[it.tab].orEmpty().getOrNull(it.index) }
     val canContinue = selected != null && selected.tab == tab && current != null
     val webProject = selected?.tab == TemplateTab.Web
-
-    if (currentStep == Step.Provisioning) {
-        ProvisioningScreen(
-            webProject = webProject,
-            onDone = {
-                if (selected != null) {
-                    onCreate(name, selected, config)
-                } else {
-                    onDismiss()
-                }
-            },
-            onSkip = {
-                if (selected != null) {
-                    onCreate(name, selected, config)
-                } else {
-                    onDismiss()
-                }
-            },
-        )
-        return
-    }
 
     Box(Modifier.fillMaxSize()) {
         // System Back dismisses the sheet, exactly like the scrim tap and the X: without this
@@ -222,7 +201,7 @@ fun StartProjectSheet(
                         onSecondary = { step = Step.Pick.name },
                         onCreate = {
                             if (selected != null) {
-                                step = Step.Provisioning.name
+                                onCreate(name, selected, config)
                             }
                         },
                     )

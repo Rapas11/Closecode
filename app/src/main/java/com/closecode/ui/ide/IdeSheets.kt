@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -60,7 +61,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
-import com.closecode.ui.components.SpecMenu
 import com.closecode.ui.components.SpecMenuItem
 import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
@@ -519,17 +519,12 @@ fun IdeSearchSheet(
                     )
                 }
                 if (optionsOpen) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = { optionsOpen = false },
-                            ),
-                    )
-                    SpecMenu(
-                        modifier = Modifier.align(Alignment.TopEnd),
+                    // Anchor the menu to the sliders button and give it a compact, fixed width.
+                    // The old full-width dismiss layer stretched the menu across the sheet.
+                    DropdownMenu(
+                        expanded = optionsOpen,
+                        onDismissRequest = { optionsOpen = false },
+                        modifier = Modifier.width(200.dp),
                     ) {
                         SpecMenuItem(
                             icon = CcIcons.Check,

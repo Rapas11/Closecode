@@ -1,7 +1,10 @@
 package com.closecode.ui.settings
 
 import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,8 +26,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -99,7 +105,16 @@ private class SettingsFacts(
             version = com.closecode.debug.BuildInfo.label,
             toolchainStatus = toolchainStatus(),
             toolchainVersions = toolchainVersions(),
+            shellToolsStatus = shellToolsStatus(),
         )
+    }
+
+    private fun shellToolsStatus(): String {
+        val store = com.closecode.tools.ShellToolsStore(
+            context,
+            com.closecode.tools.ShellToolsManifest.load(context),
+        )
+        return if (store.isReady()) "Installed" else "Not installed"
     }
 
     /** `1.9.24 · 3.46.0 · 8.13.25` — Kotlin, ECJ, R8, from the shipped pack descriptor. */
@@ -139,6 +154,7 @@ fun SettingsScreen(
     settings: Settings,
     onSettingsChange: (Settings) -> Unit,
     onGitHubChanged: () -> Unit = {},
+    onOpenSetupGuide: () -> Unit = {},
 ) {
     val c = LocalPageColors.current
     val widthDp = LocalConfiguration.current.screenWidthDp
@@ -152,14 +168,54 @@ fun SettingsScreen(
     LaunchedEffect(facts) { live = facts.measure() }
     // On-device toolchain setup: full-screen over settings, dismissed back to it.
     var setupOpen by remember { mutableStateOf(false) }
+    var shellToolsOpen by remember { mutableStateOf(false) }
+    var sdkOpen by remember { mutableStateOf(false) }
+    var signingOpen by remember { mutableStateOf(false) }
+    var credentialsOpen by remember { mutableStateOf(false) }
+    var infoPage by remember { mutableStateOf<String?>(null) }
+    var comingSoon by remember { mutableStateOf<String?>(null) }
+    var editingString by remember { mutableStateOf<StringSetting?>(null) }
     val toolchainStore = remember(context) {
         com.closecode.build.ToolchainHolder.store(context)
+    }
+    if (sdkOpen) {
+        SdkManagerPage(onBack = { sdkOpen = false })
+        return
+    }
+    if (signingOpen) {
+        SigningKeysPage(onBack = { signingOpen = false })
+        return
+    }
+    if (credentialsOpen) {
+        CredentialsPage(onBack = { credentialsOpen = false })
+        return
+    }
+    val page = infoPage
+    if (page != null) {
+        SettingsInfoPage(
+            title = if (page == "privacy") "Privacy" else "Open source licenses",
+            body = if (page == "privacy") PrivacyText else LicensesText,
+            onBack = { infoPage = null },
+        )
+        return
     }
     if (setupOpen) {
         ToolchainSetupScreen(
             store = toolchainStore,
             onClose = {
                 setupOpen = false
+                scope.launch { live = facts.measure() }
+            },
+        )
+        return
+    }
+    if (shellToolsOpen) {
+        ShellToolsPage(
+            onBack = {
+                shellToolsOpen = false
+                scope.launch { live = facts.measure() }
+            },
+            onChanged = {
                 scope.launch { live = facts.measure() }
             },
         )
@@ -204,7 +260,7 @@ fun SettingsScreen(
         return
     }
 
-    val allSections = sections(live, githubLogin)
+    val allSections = sections(live, githubLogin, settings)
     val current = allSections.firstOrNull { it.id == activeId } ?: allSections.first()
 
     // One place that answers what a row asked for, so the narrow and wide layouts agree.
@@ -212,6 +268,7 @@ fun SettingsScreen(
         when (action) {
             SettingsAction.CLEAR_CACHES -> scope.launch { live = facts.clearCaches() }
             SettingsAction.DOWNLOAD_TOOLCHAIN -> setupOpen = true
+            SettingsAction.SETUP_GUIDE -> onOpenSetupGuide()
             SettingsAction.CONNECT_GITHUB -> signInOpen = true
             SettingsAction.DISCONNECT_GITHUB -> {
                 tokenStore.clear()
@@ -223,6 +280,18 @@ fun SettingsScreen(
                     android.widget.Toast.LENGTH_SHORT,
                 ).show()
             }
+            SettingsAction.SDK_MANAGER -> sdkOpen = true
+            SettingsAction.SHELL_TOOLS -> shellToolsOpen = true
+            SettingsAction.SIGNING_KEYS -> signingOpen = true
+            SettingsAction.CREDENTIALS -> credentialsOpen = true
+            SettingsAction.LICENSES -> infoPage = "licenses"
+            SettingsAction.PRIVACY -> infoPage = "privacy"
+            SettingsAction.AI_SETTINGS -> comingSoon = "AI settings"
+            SettingsAction.BIOMETRIC_LOCK -> comingSoon = "Biometric lock"
+            SettingsAction.EDIT_GIT_NAME -> editingString = StringSetting.GIT_NAME
+            SettingsAction.EDIT_GIT_EMAIL -> editingString = StringSetting.GIT_EMAIL
+            SettingsAction.EDIT_GIT_DEFAULT_BRANCH ->
+                editingString = StringSetting.GIT_DEFAULT_BRANCH
         }
     }
 
@@ -285,6 +354,60 @@ fun SettingsScreen(
                 )
             }
         }
+    }
+
+    val editing = editingString
+    if (editing != null) {
+        var draft by remember(editing) { mutableStateOf(settings.text(editing)) }
+        val title = when (editing) {
+            StringSetting.GIT_NAME -> "Git author name"
+            StringSetting.GIT_EMAIL -> "Git author email"
+            StringSetting.GIT_DEFAULT_BRANCH -> "Default branch"
+        }
+        AlertDialog(
+            onDismissRequest = { editingString = null },
+            title = { Text(title) },
+            text = {
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    singleLine = true,
+                    label = { Text(if (editing == StringSetting.GIT_DEFAULT_BRANCH) "Branch" else "Value") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onSettingsChange(settings.withText(editing, draft))
+                        editingString = null
+                    },
+                ) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { editingString = null }) { Text("Cancel") }
+            },
+        )
+    }
+
+    val soon = comingSoon
+    if (soon != null) {
+        AlertDialog(
+            onDismissRequest = { comingSoon = null },
+            title = { Text("Coming soon") },
+            text = {
+                Text(
+                    if (soon == "AI settings") {
+                        "Provider, model and agent permission controls are not available in this build yet."
+                    } else {
+                        "Biometric lock is not available in this build yet."
+                    },
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { comingSoon = null }) { Text("OK") }
+            },
+        )
     }
 }
 
@@ -768,10 +891,12 @@ private fun SettingControl(
         }
 
         is Row.Accents -> {
-            var picked by remember { mutableStateOf(AccentOptions.first()) }
             AccentSwatches(
-                selected = picked,
-                onSelect = { picked = it },
+                selected = AccentOptions[row.selected.coerceIn(0, AccentOptions.lastIndex)],
+                onSelect = { picked ->
+                    val index = AccentOptions.indexOf(picked).coerceAtLeast(0)
+                    onSettingsChange(settings.copy(accentIndex = index))
+                },
             )
         }
 
@@ -816,9 +941,11 @@ private fun ToggleControl(
 @Composable
 private fun SwitchControl(on: Boolean, onChange: (Boolean) -> Unit) {
     val c = LocalPageColors.current
+    val animations = LocalAnimationsEnabled.current
+    val spec: FiniteAnimationSpec<Color> = if (animations) tween(200) else snap()
     val track by animateColorAsState(
         targetValue = if (on) c.ac else c.panel3,
-        animationSpec = tween(200),
+        animationSpec = spec,
         label = "switch",
     )
     Box(

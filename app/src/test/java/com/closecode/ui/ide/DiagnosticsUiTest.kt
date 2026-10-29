@@ -630,6 +630,39 @@ class CaretSideScrollTest {
             0.01f,
         )
     }
+
+    @Test
+    fun anUnmeasuredViewportNeverMovesTheView() {
+        // A tap that opens the keyboard can run before the editor has been measured again. A
+        // zero-width viewport used to make every caret look past the right edge, scrolling the
+        // code sideways by one margin and hiding the line the reader had just tapped.
+        assertEquals(
+            0f,
+            targetHScroll(caretXPx = 0f, currentPx = 0f, viewportWidthPx = 0f, marginPx = margin),
+            0.01f,
+        )
+        assertEquals(
+            120f,
+            targetHScroll(caretXPx = 200f, currentPx = 120f, viewportWidthPx = 0f, marginPx = margin),
+            0.01f,
+        )
+    }
+
+    @Test
+    fun aViewportNarrowerThanTwoMarginsKeepsItsBand() {
+        // With a 100 px viewport the two 64 px margins would cross. Capping each at half the
+        // viewport leaves the caret's own position as the only stable point instead of jumping.
+        assertEquals(
+            0f,
+            targetHScroll(caretXPx = 50f, currentPx = 0f, viewportWidthPx = 100f, marginPx = margin),
+            0.01f,
+        )
+        assertEquals(
+            40f,
+            targetHScroll(caretXPx = 90f, currentPx = 0f, viewportWidthPx = 100f, marginPx = margin),
+            0.01f,
+        )
+    }
 }
 class GutterWindowTest {
 

@@ -37,6 +37,7 @@ import com.closecode.ui.model.LanguageOptions
 import com.closecode.ui.model.MinSdkOptions
 import com.closecode.ui.model.ProjectConfig
 import com.closecode.ui.model.SdkOptions
+import com.closecode.ui.model.gradleCompatibilityProblem
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
 
@@ -47,6 +48,7 @@ fun ConfigForm(
     webProject: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val c = LocalPageColors.current
     Column(
         modifier
             .fillMaxWidth()
@@ -72,6 +74,21 @@ fun ConfigForm(
                 options = GradleOptions,
                 onSelect = { onConfigChange(config.copy(gradleVersion = it)) },
             )
+            Text(
+                text = "Used for desktop builds and export. On-device builds use the " +
+                    "bundled toolchain.",
+                color = c.mu,
+                fontSize = 11.sp,
+                fontFamily = Sans,
+            )
+            gradleCompatibilityProblem(config)?.let { problem ->
+                Text(
+                    text = problem,
+                    color = c.mu,
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                )
+            }
             ConfigDropdown(
                 label = "Minimum SDK",
                 value = config.minSdk,

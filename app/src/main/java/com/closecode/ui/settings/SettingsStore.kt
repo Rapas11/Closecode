@@ -19,6 +19,13 @@ enum class BoolSetting {
     WORD_WRAP,
     RAINBOW_BRACKETS,
     FRAME_STATS,
+    CODE_FOLDING,
+    AUTO_IMPORT,
+    PARAMETER_HINTS,
+    QUICK_FIXES,
+    BUILD_CACHE,
+    COMMAND_HISTORY,
+    ANIMATIONS,
 }
 
 /** Which choice-based field of [Settings] a settings row edits. */
@@ -28,6 +35,14 @@ enum class OptionSetting {
     TAB_SIZE,
     TERMINAL_THEME,
     TERMINAL_FONT_SIZE,
+    SHELL,
+}
+
+/** Which free-text field of [Settings] a settings row edits. */
+enum class StringSetting {
+    GIT_NAME,
+    GIT_EMAIL,
+    GIT_DEFAULT_BRANCH,
 }
 
 /**
@@ -45,6 +60,7 @@ val TerminalFontSizeChoices = listOf("9", "10", "11", "12", "13", "14", "16", "1
 
 /** The choices each [OptionSetting] accepts. Anything else read from storage is rejected. */
 val ThemeChoices = listOf("System", "Dark", "Light")
+val ShellChoices = listOf("System", "Shell tools")
 val FontSizeChoices = listOf("11", "12", "13", "15", "18")
 val TabSizeChoices = listOf("2", "3", "4", "8")
 
@@ -69,6 +85,18 @@ data class Settings(
     val wordWrap: Boolean = false,
     val rainbowBrackets: Boolean = false,
     val frameStats: Boolean = false,
+    val codeFolding: Boolean = true,
+    val autoImport: Boolean = true,
+    val parameterHints: Boolean = true,
+    val quickFixes: Boolean = true,
+    val buildCache: Boolean = true,
+    val commandHistory: Boolean = true,
+    val animations: Boolean = true,
+    val accentIndex: Int = 0,
+    val shell: String = "Shell tools",
+    val gitName: String = "",
+    val gitEmail: String = "",
+    val gitDefaultBranch: String = "main",
     val theme: String = "System",
     val fontSize: Int = 12,
     val tabSize: Int = 2,
@@ -88,6 +116,13 @@ data class Settings(
         BoolSetting.WORD_WRAP -> wordWrap
         BoolSetting.RAINBOW_BRACKETS -> rainbowBrackets
         BoolSetting.FRAME_STATS -> frameStats
+        BoolSetting.CODE_FOLDING -> codeFolding
+        BoolSetting.AUTO_IMPORT -> autoImport
+        BoolSetting.PARAMETER_HINTS -> parameterHints
+        BoolSetting.QUICK_FIXES -> quickFixes
+        BoolSetting.BUILD_CACHE -> buildCache
+        BoolSetting.COMMAND_HISTORY -> commandHistory
+        BoolSetting.ANIMATIONS -> animations
     }
 
     fun withFlag(key: BoolSetting, value: Boolean): Settings = when (key) {
@@ -103,6 +138,13 @@ data class Settings(
         BoolSetting.WORD_WRAP -> copy(wordWrap = value)
         BoolSetting.RAINBOW_BRACKETS -> copy(rainbowBrackets = value)
         BoolSetting.FRAME_STATS -> copy(frameStats = value)
+        BoolSetting.CODE_FOLDING -> copy(codeFolding = value)
+        BoolSetting.AUTO_IMPORT -> copy(autoImport = value)
+        BoolSetting.PARAMETER_HINTS -> copy(parameterHints = value)
+        BoolSetting.QUICK_FIXES -> copy(quickFixes = value)
+        BoolSetting.BUILD_CACHE -> copy(buildCache = value)
+        BoolSetting.COMMAND_HISTORY -> copy(commandHistory = value)
+        BoolSetting.ANIMATIONS -> copy(animations = value)
     }
 
     fun option(key: OptionSetting): String = when (key) {
@@ -111,6 +153,7 @@ data class Settings(
         OptionSetting.TAB_SIZE -> tabSize.toString()
         OptionSetting.TERMINAL_THEME -> terminalTheme
         OptionSetting.TERMINAL_FONT_SIZE -> terminalFontSize.toString()
+        OptionSetting.SHELL -> shell
     }
 
     /**
@@ -142,6 +185,21 @@ data class Settings(
         } else {
             this
         }
+        OptionSetting.SHELL -> if (value in ShellChoices) copy(shell = value) else this
+    }
+
+    fun text(key: StringSetting): String = when (key) {
+        StringSetting.GIT_NAME -> gitName
+        StringSetting.GIT_EMAIL -> gitEmail
+        StringSetting.GIT_DEFAULT_BRANCH -> gitDefaultBranch
+    }
+
+    fun withText(key: StringSetting, value: String): Settings = when (key) {
+        StringSetting.GIT_NAME -> copy(gitName = value.trim())
+        StringSetting.GIT_EMAIL -> copy(gitEmail = value.trim())
+        StringSetting.GIT_DEFAULT_BRANCH -> copy(
+            gitDefaultBranch = value.trim().ifEmpty { "main" },
+        )
     }
 }
 
@@ -166,6 +224,23 @@ class SettingsStore(private val kv: KeyValueStore) {
         wordWrap = kv.getBoolean(KEY_WORD_WRAP, Settings().wordWrap),
         rainbowBrackets = kv.getBoolean(KEY_RAINBOW_BRACKETS, Settings().rainbowBrackets),
         frameStats = kv.getBoolean(KEY_FRAME_STATS, Settings().frameStats),
+        codeFolding = kv.getBoolean(KEY_CODE_FOLDING, Settings().codeFolding),
+        autoImport = kv.getBoolean(KEY_AUTO_IMPORT, Settings().autoImport),
+        parameterHints = kv.getBoolean(KEY_PARAMETER_HINTS, Settings().parameterHints),
+        quickFixes = kv.getBoolean(KEY_QUICK_FIXES, Settings().quickFixes),
+        buildCache = kv.getBoolean(KEY_BUILD_CACHE, Settings().buildCache),
+        commandHistory = kv.getBoolean(KEY_COMMAND_HISTORY, Settings().commandHistory),
+        animations = kv.getBoolean(KEY_ANIMATIONS, Settings().animations),
+        accentIndex = kv.getInt(KEY_ACCENT, Settings().accentIndex)
+            .coerceIn(0, AccentOptions.lastIndex),
+        shell = kv.getString(KEY_SHELL, Settings().shell)
+            ?.takeIf { it in ShellChoices }
+            ?: Settings().shell,
+        gitName = kv.getString(KEY_GIT_NAME, Settings().gitName).orEmpty(),
+        gitEmail = kv.getString(KEY_GIT_EMAIL, Settings().gitEmail).orEmpty(),
+        gitDefaultBranch = kv.getString(KEY_GIT_DEFAULT_BRANCH, Settings().gitDefaultBranch)
+            ?.takeIf { it.isNotBlank() }
+            ?: Settings().gitDefaultBranch,
         theme = kv.getString(KEY_THEME, Settings().theme)
             ?.takeIf { it in ThemeChoices }
             ?: Settings().theme,
@@ -198,6 +273,18 @@ class SettingsStore(private val kv: KeyValueStore) {
         kv.putBoolean(KEY_WORD_WRAP, settings.wordWrap)
         kv.putBoolean(KEY_RAINBOW_BRACKETS, settings.rainbowBrackets)
         kv.putBoolean(KEY_FRAME_STATS, settings.frameStats)
+        kv.putBoolean(KEY_CODE_FOLDING, settings.codeFolding)
+        kv.putBoolean(KEY_AUTO_IMPORT, settings.autoImport)
+        kv.putBoolean(KEY_PARAMETER_HINTS, settings.parameterHints)
+        kv.putBoolean(KEY_QUICK_FIXES, settings.quickFixes)
+        kv.putBoolean(KEY_BUILD_CACHE, settings.buildCache)
+        kv.putBoolean(KEY_COMMAND_HISTORY, settings.commandHistory)
+        kv.putBoolean(KEY_ANIMATIONS, settings.animations)
+        kv.putInt(KEY_ACCENT, settings.accentIndex)
+        kv.putString(KEY_SHELL, settings.shell)
+        kv.putString(KEY_GIT_NAME, settings.gitName)
+        kv.putString(KEY_GIT_EMAIL, settings.gitEmail)
+        kv.putString(KEY_GIT_DEFAULT_BRANCH, settings.gitDefaultBranch)
         kv.putString(KEY_THEME, settings.theme)
         kv.putInt(KEY_FONT_SIZE, settings.fontSize)
         kv.putInt(KEY_TAB_SIZE, settings.tabSize)
@@ -219,6 +306,18 @@ class SettingsStore(private val kv: KeyValueStore) {
         const val KEY_WORD_WRAP = "word_wrap"
         const val KEY_RAINBOW_BRACKETS = "rainbow_brackets"
         const val KEY_FRAME_STATS = "frame_stats"
+        const val KEY_CODE_FOLDING = "code_folding"
+        const val KEY_AUTO_IMPORT = "auto_import"
+        const val KEY_PARAMETER_HINTS = "parameter_hints"
+        const val KEY_QUICK_FIXES = "quick_fixes"
+        const val KEY_BUILD_CACHE = "build_cache"
+        const val KEY_COMMAND_HISTORY = "command_history"
+        const val KEY_ANIMATIONS = "animations"
+        const val KEY_ACCENT = "accent"
+        const val KEY_SHELL = "shell"
+        const val KEY_GIT_NAME = "git_name"
+        const val KEY_GIT_EMAIL = "git_email"
+        const val KEY_GIT_DEFAULT_BRANCH = "git_default_branch"
         const val KEY_THEME = "theme"
         const val KEY_FONT_SIZE = "font_size"
         const val KEY_TAB_SIZE = "tab_size"
@@ -234,6 +333,12 @@ class SettingsStore(private val kv: KeyValueStore) {
  * settings screen is in force the moment the screen is left — no restart, no reload.
  */
 val LocalSettings = staticCompositionLocalOf { Settings() }
+
+/**
+ * Whether motion is wanted this composition. Screens read this instead of asking the settings
+ * store directly so one switch reaches every panel, sheet and control at once.
+ */
+val LocalAnimationsEnabled = staticCompositionLocalOf { true }
 
 @Composable
 fun rememberSettingsStore(): SettingsStore {

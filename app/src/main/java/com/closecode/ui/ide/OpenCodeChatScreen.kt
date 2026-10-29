@@ -136,15 +136,9 @@ fun OpenCodeChatScreen(
         callback.onReceiveValue(uris)
     }
 
-    // The page's own back button: back inside the page first, then leave the page.
-    BackHandler {
-        val view = holder.view
-        if (view != null && view.canGoBack()) {
-            view.goBack()
-        } else {
-            onBack()
-        }
-    }
+    // Leaving the page must not walk OpenCode's router history: Back can land on a
+    // new-session route, which creates a session the reader never asked for.
+    BackHandler { onBack() }
 
     LaunchedEffect(baseUrl, projectUrl, projectDirectory, generation) {
         val view = holder.view ?: return@LaunchedEffect
@@ -522,11 +516,28 @@ private class WebViewHolder {
 
 private const val PAGE_PREFS = "closecode_open_code_page"
 private const val PAGE_PATH_PREFIX = "last:"
+private const val PAGE_PATHS_VERSION = "pathsVersion"
+private const val PAGE_PATHS_VERSION_CURRENT = 2
 private const val RESUME_QUERY = "?closecode_resume=1"
+
+/**
+ * Build 36 could save another project's session under this project after the resume script
+ * force-adopted a pending tab. Drop those saved routes once; the session itself stays in the
+ * page's own storage and the fixed resume script can find it by directory.
+ */
+private fun pagePrefs(context: Context) =
+    context.getSharedPreferences(PAGE_PREFS, Context.MODE_PRIVATE).also { prefs ->
+        if (prefs.getInt(PAGE_PATHS_VERSION, 1) < PAGE_PATHS_VERSION_CURRENT) {
+            prefs.edit()
+                .clear()
+                .putInt(PAGE_PATHS_VERSION, PAGE_PATHS_VERSION_CURRENT)
+                .apply()
+        }
+    }
 
 private fun savedPagePath(context: Context, baseUrl: String, directory: String): String? {
     if (baseUrl.isBlank() || directory.isBlank()) return null
-    val saved = context.getSharedPreferences(PAGE_PREFS, Context.MODE_PRIVATE)
+    val saved = pagePrefs(context)
         .getString(PAGE_PATH_PREFIX + directory, null) ?: return null
     return rebaseOpenCodeServerPath(saved, baseUrl)
         .takeIf { isRestorableOpenCodePage(it) }
@@ -541,7 +552,7 @@ private fun rememberPagePath(
     if (context == null || baseUrl.isBlank() || directory.isBlank()) return
     val path = openCodePagePath(baseUrl, pageUrl) ?: return
     if (!isRestorableOpenCodePage(path)) return
-    context.getSharedPreferences(PAGE_PREFS, Context.MODE_PRIVATE)
+    pagePrefs(context)
         .edit()
         .putString(PAGE_PATH_PREFIX + directory, path)
         .apply()
@@ -609,11 +620,9 @@ private fun installResumeScript(
             var info = read(infoKey) || {};
             var recent = read(recentKey) || {};
             var matches = [];
-            var pendingTabs = [];
             var pending = false;
             var collect = function () {
                 matches = [];
-                pendingTabs = [];
                 pending = false;
                 if (!Array.isArray(tabs)) return;
                 tabs.forEach(function (tab) {
@@ -628,10 +637,7 @@ private fun installResumeScript(
                         if (samePath(record.directory, directory)) matches.push(tab);
                         return;
                     }
-                    if (tab.server === server) {
-                        pending = true;
-                        pendingTabs.push(tab);
-                    }
+                    if (tab.server === server) pending = true;
                 });
             };
             var choose = function () {
@@ -644,7 +650,6 @@ private fun installResumeScript(
                 return chosen || matches[matches.length - 1] || null;
             };
             var go = function (force) {
-                if (force && !matches.length && pendingTabs.length) matches = pendingTabs.slice();
                 var chosen = choose();
                 if (chosen) {
                     if (chosen.type === 'draft' && chosen.server !== server) {

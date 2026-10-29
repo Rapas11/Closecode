@@ -1,14 +1,18 @@
 package com.closecode.ui.ide
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -20,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -34,6 +39,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -50,6 +56,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.ui.components.HashChip
@@ -845,7 +852,7 @@ private fun BranchRow(
                 )
             }
             Spacer(Modifier.weight(1f))
-            BranchIconButton(icon = CcIcons.Clock, label = "History", onClick = onHistory)
+            BranchIconButton(icon = CcIcons.History, label = "History", onClick = onHistory)
             BranchBadgeButton(
                 icon = CcIcons.Download,
                 label = "Pull",
@@ -899,7 +906,7 @@ private fun BranchRow(
                     .width(220.dp),
             ) {
                 SpecMenuItem(
-                    icon = CcIcons.Clock, label = "View history",
+                    icon = CcIcons.History, label = "View history",
                     onClick = { menuOpen = false; onHistory() },
                 )
                 SpecMenuDivider()
@@ -1591,6 +1598,7 @@ internal fun DiffScreen(
     // Unified by default; side by side only on wide screens.
     var unified by remember(path, commitId) { mutableStateOf(true) }
     var wrapLines by remember(path, commitId) { mutableStateOf(false) }
+    var revealed by remember(path, commitId) { mutableStateOf(emptyMap<Int, Int>()) }
     var moreOpen by remember { mutableStateOf(false) }
     var hint by remember(path, commitId) { mutableStateOf<String?>(null) }
     val wide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 600
@@ -1777,29 +1785,49 @@ internal fun DiffScreen(
             unified -> {
                 val unifiedRows = remember(current) { unify(current) }
                 val isNew = unifiedRows.all { it.oldNo == null } && unifiedRows.any { it.added }
-                val isDel = unifiedRows.all { it.newNo == null } && unifiedRows.any { it.removed }
-                Column(
+                val items = remember(unifiedRows, isNew, revealed) {
+                    flattenUnifiedDiff(unifiedRows, isNew, revealed)
+                }
+                val hScroll = rememberScrollState()
+                BoxWithConstraints(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
                         .padding(vertical = 8.dp),
                 ) {
-                    UnifiedFileCard(
-                        fileName = path.substringAfterLast('/'),
-                        folder = path.substringBeforeLast('/', ""),
-                        tag = when {
-                            isNew -> "New file"
-                            isDel -> "Deleted file"
-                            else -> "+$added −$removed"
-                        },
-                        tagAdded = isNew,
-                        tagDeleted = isDel,
-                        added = added,
-                        removed = removed,
-                        rows = unifiedRows,
-                        wrap = wrapLines,
-                    )
+                    val minWidth = maxWidth
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        items(
+                            items = items,
+                            key = { item ->
+                                when (item) {
+                                    is FullDiffItem.Line -> "line:${item.index}"
+                                    is FullDiffItem.Gap -> "gap:${item.id}"
+                                }
+                            },
+                        ) { item ->
+                            when (item) {
+                                is FullDiffItem.Line -> UnifiedDiffRow(
+                                    row = item.row,
+                                    showOld = item.showOld,
+                                    showNew = item.showNew,
+                                    wrap = wrapLines,
+                                    hScroll = hScroll,
+                                    minWidth = minWidth,
+                                )
+                                is FullDiffItem.Gap -> DiffGapRow(
+                                    hidden = item.hidden,
+                                    wrap = wrapLines,
+                                    hScroll = hScroll,
+                                    minWidth = minWidth,
+                                    onClick = {
+                                        revealed = revealed +
+                                            (item.id to ((revealed[item.id] ?: 0) + 100))
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
             else -> {
@@ -1807,28 +1835,25 @@ internal fun DiffScreen(
                 // long line scrolled on one row stays readable while the rows move together.
                 val leftScroll = rememberScrollState()
                 val rightScroll = rememberScrollState()
-                Box(
+                LazyColumn(
                     Modifier
                         .weight(1f)
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
+                        .fillMaxWidth(),
                 ) {
-                    Column {
-                        current.forEach { row ->
-                            Row(Modifier.fillMaxWidth()) {
-                                DiffCell(
-                                    text = row.oldLine,
-                                    changed = row.oldLine != row.newLine,
-                                    isOld = true,
-                                    scroll = leftScroll,
-                                )
-                                DiffCell(
-                                    text = row.newLine,
-                                    changed = row.oldLine != row.newLine,
-                                    isOld = false,
-                                    scroll = rightScroll,
-                                )
-                            }
+                    items(current) { row ->
+                        Row(Modifier.fillMaxWidth()) {
+                            DiffCell(
+                                text = row.oldLine,
+                                changed = row.oldLine != row.newLine,
+                                isOld = true,
+                                scroll = leftScroll,
+                            )
+                            DiffCell(
+                                text = row.newLine,
+                                changed = row.oldLine != row.newLine,
+                                isOld = false,
+                                scroll = rightScroll,
+                            )
                         }
                     }
                 }
@@ -2160,6 +2185,9 @@ private fun UnifiedFileCard(
 ) {
     val c = LocalPageColors.current
     var revealed by remember(fileName) { mutableStateOf(emptyMap<Int, Int>()) }
+    // One horizontal axis for the whole file. A scroll state per row only moved the row under
+    // the finger, so a long diff looked stuck and its other lines never lined up.
+    val hScroll = rememberScrollState()
     Column(
         Modifier
             .fillMaxWidth()
@@ -2226,90 +2254,102 @@ private fun UnifiedFileCard(
         val blocks = remember(rows) { collapseUnified(rows, isNew, emptyMap()) }
         // Re-collapse when a gap opens: revealed grows, blocks recompute.
         val live = collapseUnified(rows, isNew, revealed)
-        (if (revealed.isEmpty()) blocks else live).forEach { block ->
-            when (block) {
-                is DiffBlock.Lines -> {
-                    block.rows.forEach { indexed ->
-                        val row = indexed.value
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .background(
-                                    when {
-                                        row.added -> c.spec.diffAddBg
-                                        row.removed -> c.spec.diffDelBg
-                                        else -> c.fieldBg
-                                    },
-                                )
-                                .then(if (wrap) Modifier else Modifier.horizontalScroll(rememberScrollState()))
-                                .padding(vertical = 1.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = row.oldNo?.toString().orEmpty(),
-                                color = c.textFaint,
-                                fontSize = 11.sp,
-                                fontFamily = Mono,
-                                modifier = Modifier.width(26.dp),
-                                maxLines = 1,
-                            )
-                            if (rows.any { it.oldNo != null } && rows.any { it.newNo != null }) {
-                                Text(
-                                    text = row.newNo?.toString().orEmpty(),
-                                    color = c.textFaint,
-                                    fontSize = 11.sp,
-                                    fontFamily = Mono,
-                                    modifier = Modifier.width(26.dp),
-                                    maxLines = 1,
-                                )
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val minWidth = maxWidth
+            val rowWidth = if (wrap) Modifier.fillMaxWidth() else Modifier.widthIn(min = minWidth)
+            val bodyModifier = if (wrap) {
+                Modifier.fillMaxWidth()
+            } else {
+                // One scroller around every row, not one per row. The card's rows then share an
+                // axis, so a swipe on any line reveals the same left edge on all of them.
+                Modifier.horizontalScroll(hScroll).widthIn(min = minWidth)
+            }
+            Column(bodyModifier) {
+                (if (revealed.isEmpty()) blocks else live).forEach { block ->
+                    when (block) {
+                        is DiffBlock.Lines -> {
+                            block.rows.forEach { indexed ->
+                                val row = indexed.value
+                                Row(
+                                    Modifier
+                                        .then(rowWidth)
+                                        .background(
+                                            when {
+                                                row.added -> c.spec.diffAddBg
+                                                row.removed -> c.spec.diffDelBg
+                                                else -> c.fieldBg
+                                            },
+                                        )
+                                        .padding(vertical = 1.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Text(
+                                        text = row.oldNo?.toString().orEmpty(),
+                                        color = c.textFaint,
+                                        fontSize = 11.sp,
+                                        fontFamily = Mono,
+                                        modifier = Modifier.width(26.dp),
+                                        maxLines = 1,
+                                    )
+                                    if (rows.any { it.oldNo != null } && rows.any { it.newNo != null }) {
+                                        Text(
+                                            text = row.newNo?.toString().orEmpty(),
+                                            color = c.textFaint,
+                                            fontSize = 11.sp,
+                                            fontFamily = Mono,
+                                            modifier = Modifier.width(26.dp),
+                                            maxLines = 1,
+                                        )
+                                    }
+                                    Text(
+                                        text = "${row.sign} ",
+                                        color = when {
+                                            row.added -> c.success
+                                            row.removed -> c.error
+                                            else -> c.spec.diffContext
+                                        },
+                                        fontSize = 11.sp,
+                                        fontFamily = Mono,
+                                        modifier = Modifier.width(14.dp),
+                                        maxLines = 1,
+                                    )
+                                    Text(
+                                        text = row.text,
+                                        color = when {
+                                            row.added || row.removed -> c.text
+                                            else -> c.spec.diffContext
+                                        },
+                                        fontSize = 11.sp,
+                                        fontFamily = Mono,
+                                        lineHeight = 20.sp,
+                                        softWrap = wrap,
+                                        maxLines = if (wrap) Int.MAX_VALUE else 1,
+                                    )
+                                }
                             }
-                            Text(
-                                text = "${row.sign} ",
-                                color = when {
-                                    row.added -> c.success
-                                    row.removed -> c.error
-                                    else -> c.spec.diffContext
-                                },
-                                fontSize = 11.sp,
-                                fontFamily = Mono,
-                                modifier = Modifier.width(14.dp),
-                                maxLines = 1,
-                            )
-                            Text(
-                                text = row.text,
-                                color = when {
-                                    row.added || row.removed -> c.text
-                                    else -> c.spec.diffContext
-                                },
-                                fontSize = 11.sp,
-                                fontFamily = Mono,
-                                lineHeight = 20.sp,
-                                softWrap = wrap,
-                                maxLines = if (wrap) Int.MAX_VALUE else 1,
-                            )
                         }
-                    }
-                }
-                is DiffBlock.Gap -> {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(30.dp)
-                            .background(c.panel2)
-                            .clickable {
-                                revealed = revealed + (block.id to ((revealed[block.id] ?: 0) + 100))
+                        is DiffBlock.Gap -> {
+                            Row(
+                                Modifier
+                                    .then(rowWidth)
+                                    .height(30.dp)
+                                    .background(c.panel2)
+                                    .clickable {
+                                        revealed = revealed + (block.id to ((revealed[block.id] ?: 0) + 100))
+                                    }
+                                    .padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                CcIcon(CcIcons.Down, c.link, 14.dp)
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = "Show ${block.hidden} more lines",
+                                    color = c.link,
+                                    fontSize = 12.sp,
+                                    fontFamily = Sans,
+                                )
                             }
-                            .padding(horizontal = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        CcIcon(CcIcons.Down, c.link, 14.dp)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            text = "Show ${block.hidden} more lines",
-                            color = c.link,
-                            fontSize = 12.sp,
-                            fontFamily = Sans,
-                        )
+                        }
                     }
                 }
             }
@@ -2652,10 +2692,91 @@ internal fun HistoryPage(
     }
 }
 
+private sealed interface CommitDiffState {
+    data object Loading : CommitDiffState
+    data class Loaded(val rows: List<UnifiedRow>) : CommitDiffState
+    data object TooLarge : CommitDiffState
+    data class Failed(val message: String) : CommitDiffState
+}
+
+internal sealed interface FullDiffItem {
+    data class Line(
+        val index: Int,
+        val row: UnifiedRow,
+        val showOld: Boolean,
+        val showNew: Boolean,
+    ) : FullDiffItem
+
+    data class Gap(
+        val id: Int,
+        val hidden: Int,
+    ) : FullDiffItem
+}
+
 /**
- * One commit's detail page: message, author, full hash with copy, file stats, the
- * changed files with their counts, and each file's unified diff inline. The ⋮ menu
- * holds Copy full hash, Checkout this version and Revert this commit.
+ * Flattens one file's collapsed diff into rows that a LazyColumn can draw without composing
+ * hidden context. Both the inline commit list and the full-screen diff use this.
+ */
+internal fun flattenUnifiedDiff(
+    rows: List<UnifiedRow>,
+    isNew: Boolean,
+    revealed: Map<Int, Int>,
+): List<FullDiffItem> {
+    if (rows.isEmpty()) return emptyList()
+    val showOld = rows.any { it.oldNo != null }
+    val showNew = rows.any { it.newNo != null }
+    return buildList {
+        collapseUnified(rows, isNew, revealed).forEach { block ->
+            when (block) {
+                is DiffBlock.Lines -> block.rows.forEach { indexed ->
+                    add(
+                        FullDiffItem.Line(
+                            index = indexed.index,
+                            row = indexed.value,
+                            showOld = showOld,
+                            showNew = showNew,
+                        ),
+                    )
+                }
+                is DiffBlock.Gap -> add(FullDiffItem.Gap(block.id, block.hidden))
+            }
+        }
+    }
+}
+
+private sealed interface CommitDiffItem {
+    data class Header(
+        val path: String,
+        val expanded: Boolean,
+        val state: CommitDiffState?,
+    ) : CommitDiffItem
+
+    data class Notice(
+        val path: String,
+        val text: String,
+        val openFull: Boolean,
+    ) : CommitDiffItem
+
+    data class Row(
+        val path: String,
+        val index: Int,
+        val row: UnifiedRow,
+        val showOld: Boolean,
+        val showNew: Boolean,
+    ) : CommitDiffItem
+
+    data class Gap(
+        val path: String,
+        val id: Int,
+        val hidden: Int,
+    ) : CommitDiffItem
+}
+
+/**
+ * One commit's detail page: message, author, full hash with copy, and the changed files.
+ * File diffs are loaded only when a row is opened, and their rows are drawn by the same
+ * LazyColumn as the headers. A commit with a hundred files therefore costs a hundred small
+ * headers, not a hundred full diffs.
  */
 @Composable
 internal fun CommitPage(
@@ -2671,8 +2792,10 @@ internal fun CommitPage(
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     var commit by remember(commitId) { mutableStateOf<GitCommit?>(null) }
     var files by remember(commitId) { mutableStateOf<List<String>?>(null) }
-    var diffs by remember(commitId) { mutableStateOf<Map<String, List<UnifiedRow>>>(emptyMap()) }
-    var tooLarge by remember(commitId) { mutableStateOf<Set<String>>(emptySet()) }
+    var expanded by remember(commitId) { mutableStateOf(emptySet<String>()) }
+    val diffStates = remember(commitId) { mutableStateMapOf<String, CommitDiffState>() }
+    val revealed = remember(commitId) { mutableStateMapOf<String, Map<Int, Int>>() }
+    val scrollStates = remember(commitId) { mutableMapOf<String, ScrollState>() }
     var menuOpen by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<String?>(null) }
     var note by remember { mutableStateOf<String?>(null) }
@@ -2685,28 +2808,56 @@ internal fun CommitPage(
         }
         commit = found
         if (found == null) return@LaunchedEffect
-        val paths = withContext(Dispatchers.IO) {
+        // Paths only. Each diff is fetched when its file is opened; loading every diff here
+        // was what froze a large commit before the first row could be drawn.
+        files = withContext(Dispatchers.IO) {
             GitService(root).commitFiles(commitId).getOrElse { emptyList() }
         }
-        files = paths
-        withContext(Dispatchers.IO) {
-            paths.forEach { path ->
+    }
+
+    fun loadDiff(path: String) {
+        val root = projectRoot ?: return
+        if (diffStates[path] is CommitDiffState.Loading ||
+            diffStates[path] is CommitDiffState.Loaded ||
+            diffStates[path] is CommitDiffState.TooLarge
+        ) {
+            return
+        }
+        diffStates[path] = CommitDiffState.Loading
+        scope.launch {
+            val loaded = withContext(Dispatchers.IO) {
                 val sides = GitService(root).commitFileContents(commitId, path).getOrNull()
-                if (sides != null) {
+                if (sides == null) {
+                    CommitDiffState.Failed("Could not read this file.")
+                } else {
                     val (before, after) = sides
                     if ((before?.size ?: 0) + (after?.size ?: 0) > 400_000) {
-                        tooLarge = tooLarge + path
+                        CommitDiffState.TooLarge
                     } else {
-                        val rows = unify(
-                            splitDiff(
-                                before?.toString(Charsets.UTF_8).orEmpty(),
-                                after?.toString(Charsets.UTF_8).orEmpty(),
+                        CommitDiffState.Loaded(
+                            unify(
+                                splitDiff(
+                                    before?.toString(Charsets.UTF_8).orEmpty(),
+                                    after?.toString(Charsets.UTF_8).orEmpty(),
+                                ),
                             ),
                         )
-                        diffs = diffs + (path to rows)
                     }
                 }
             }
+            diffStates[path] = loaded
+        }
+    }
+
+    fun toggle(path: String) {
+        if (path in expanded) {
+            expanded = expanded - path
+            return
+        }
+        expanded = expanded + path
+        if (diffStates[path] == null || diffStates[path] is CommitDiffState.Failed) {
+            diffStates.remove(path)
+            loadDiff(path)
         }
     }
 
@@ -2836,181 +2987,487 @@ internal fun CommitPage(
             )
             return@Column
         }
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState()),
-        ) {
-            Text(
-                text = current.summary,
-                color = c.text,
-                fontSize = 15.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(start = 16.dp, end = 14.dp),
-            )
-            Spacer(Modifier.height(6.dp))
-            Row(
-                Modifier.padding(start = 16.dp, end = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier
-                        .size(20.dp)
-                        .clip(CircleShape)
-                        .background(c.panel2),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = current.author.take(1).uppercase(),
-                        color = c.textMuted,
-                        fontSize = 11.sp,
-                        fontFamily = Sans,
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = "${current.author} · ${relativeTime(current.whenMillis)}",
-                    color = c.textMuted,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Row(
-                Modifier.padding(start = 16.dp, end = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = current.id,
-                    color = c.textFaint,
-                    fontSize = 11.sp,
-                    fontFamily = Mono,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
-                Box(
-                    Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(current.id))
-                            note = "Copied."
+        val paths = files
+        val states = diffStates.toMap()
+        val expandedNow = expanded
+        val revealedNow = revealed.toMap()
+        val diffItems = remember(paths, expandedNow, states, revealedNow) {
+            buildList<CommitDiffItem> {
+                paths.orEmpty().forEach { path ->
+                    val state = states[path]
+                    val isExpanded = path in expandedNow
+                    add(CommitDiffItem.Header(path, isExpanded, state))
+                    if (!isExpanded) return@forEach
+                    when (state) {
+                        null, CommitDiffState.Loading ->
+                            add(CommitDiffItem.Notice(path, "Loading diff…", false))
+                        CommitDiffState.TooLarge ->
+                            add(CommitDiffItem.Notice(path, "Too large to show here.", true))
+                        is CommitDiffState.Failed ->
+                            add(CommitDiffItem.Notice(path, state.message, true))
+                        is CommitDiffState.Loaded -> {
+                            val rows = state.rows
+                            if (rows.isEmpty()) {
+                                add(CommitDiffItem.Notice(path, "No differences.", false))
+                            } else {
+                                val isNew = rows.all { it.oldNo == null } && rows.any { it.added }
+                                flattenUnifiedDiff(
+                                    rows = rows,
+                                    isNew = isNew,
+                                    revealed = revealedNow[path].orEmpty(),
+                                ).forEach { item ->
+                                    when (item) {
+                                        is FullDiffItem.Line -> add(
+                                            CommitDiffItem.Row(
+                                                path = path,
+                                                index = item.index,
+                                                row = item.row,
+                                                showOld = item.showOld,
+                                                showNew = item.showNew,
+                                            ),
+                                        )
+                                        is FullDiffItem.Gap -> add(
+                                            CommitDiffItem.Gap(path, item.id, item.hidden),
+                                        )
+                                    }
+                                }
+                            }
                         }
-                        .semantics { contentDescription = "Copy full hash" },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CcIcon(CcIcons.Copy, c.textMuted, 15.dp)
+                    }
                 }
             }
-            note?.let {
-                Text(
-                    text = it,
-                    color = c.success,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    modifier = Modifier.padding(start = 16.dp, end = 14.dp, top = 4.dp),
-                )
-            }
-            val paths = files
-            if (paths == null) {
-                Text(
-                    text = "Reading files…",
-                    color = c.textMuted,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    modifier = Modifier.padding(16.dp),
-                )
-                return@Column
-            }
-            var totalAdded = 0
-            var totalRemoved = 0
-            paths.forEach { path ->
-                diffs[path]?.forEach { row ->
+        }
+        var totalAdded = 0
+        var totalRemoved = 0
+        states.values.forEach { state ->
+            if (state is CommitDiffState.Loaded) {
+                state.rows.forEach { row ->
                     if (row.added) totalAdded++
                     if (row.removed) totalRemoved++
                 }
             }
-            Spacer(Modifier.height(10.dp))
-            Row(
-                Modifier.padding(start = 16.dp, end = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(c.chipBg)
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                ) {
-                    Text(
-                        text = "${paths.size} files",
-                        color = c.text,
-                        fontSize = 12.sp,
-                        fontFamily = Sans,
-                    )
+        }
+        BoxWithConstraints(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+        ) {
+            val minWidth = maxWidth
+            LazyColumn(Modifier.fillMaxSize()) {
+                item(key = "commit-summary") {
+                    Column {
+                        Text(
+                            text = current.summary,
+                            color = c.text,
+                            fontSize = 15.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(start = 16.dp, end = 14.dp),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            Modifier.padding(start = 16.dp, end = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(c.panel2),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = current.author.take(1).uppercase(),
+                                    color = c.textMuted,
+                                    fontSize = 11.sp,
+                                    fontFamily = Sans,
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "${current.author} · ${relativeTime(current.whenMillis)}",
+                                color = c.textMuted,
+                                fontSize = 12.sp,
+                                fontFamily = Sans,
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            Modifier.padding(start = 16.dp, end = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = current.id,
+                                color = c.textFaint,
+                                fontSize = 11.sp,
+                                fontFamily = Mono,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            Box(
+                                Modifier
+                                    .size(30.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(current.id))
+                                        note = "Copied."
+                                    }
+                                    .semantics { contentDescription = "Copy full hash" },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                CcIcon(CcIcons.Copy, c.textMuted, 15.dp)
+                            }
+                        }
+                        note?.let {
+                            Text(
+                                text = it,
+                                color = c.success,
+                                fontSize = 12.sp,
+                                fontFamily = Sans,
+                                modifier = Modifier.padding(start = 16.dp, end = 14.dp, top = 4.dp),
+                            )
+                        }
+                    }
                 }
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(c.chipBg)
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
-                ) {
-                    Text(
-                        text = "+$totalAdded −$totalRemoved",
-                        color = c.text,
-                        fontSize = 12.sp,
-                        fontFamily = Mono,
-                    )
+                if (paths == null) {
+                    item(key = "commit-files-reading") {
+                        Text(
+                            text = "Reading files…",
+                            color = c.textMuted,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                            modifier = Modifier.padding(16.dp),
+                        )
+                    }
+                } else {
+                    item(key = "commit-files-stats") {
+                        Column {
+                            Spacer(Modifier.height(10.dp))
+                            Row(
+                                Modifier.padding(start = 16.dp, end = 14.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(9.dp))
+                                        .background(c.chipBg)
+                                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                                ) {
+                                    Text(
+                                        text = "${paths.size} files",
+                                        color = c.text,
+                                        fontSize = 12.sp,
+                                        fontFamily = Sans,
+                                    )
+                                }
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(9.dp))
+                                        .background(c.chipBg)
+                                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                                ) {
+                                    Text(
+                                        text = "+$totalAdded −$totalRemoved",
+                                        color = c.text,
+                                        fontSize = 12.sp,
+                                        fontFamily = Mono,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                text = "CHANGED FILES",
+                                color = c.textMuted,
+                                fontSize = 11.sp,
+                                fontFamily = Sans,
+                                modifier = Modifier.padding(start = 16.dp, end = 14.dp),
+                            )
+                            Spacer(Modifier.height(6.dp))
+                        }
+                    }
+                    items(
+                        items = diffItems,
+                        key = { item ->
+                            when (item) {
+                                is CommitDiffItem.Header -> "header:${item.path}"
+                                is CommitDiffItem.Notice -> "notice:${item.path}"
+                                is CommitDiffItem.Row -> "row:${item.path}:${item.index}"
+                                is CommitDiffItem.Gap -> "gap:${item.path}:${item.id}"
+                            }
+                        },
+                    ) { item ->
+                        when (item) {
+                            is CommitDiffItem.Header -> CommitFileHeader(
+                                path = item.path,
+                                expanded = item.expanded,
+                                state = item.state,
+                                onToggle = { toggle(item.path) },
+                                onOpenFull = { onDiff(commitId, item.path) },
+                            )
+                            is CommitDiffItem.Notice -> CommitDiffNotice(
+                                text = item.text,
+                                openFull = item.openFull,
+                                onOpenFull = { onDiff(commitId, item.path) },
+                            )
+                            is CommitDiffItem.Row -> {
+                                val hScroll = scrollStates.getOrPut(item.path) { ScrollState(0) }
+                                UnifiedDiffRow(
+                                    row = item.row,
+                                    showOld = item.showOld,
+                                    showNew = item.showNew,
+                                    wrap = false,
+                                    hScroll = hScroll,
+                                    minWidth = minWidth,
+                                )
+                            }
+                            is CommitDiffItem.Gap -> {
+                                val hScroll = scrollStates.getOrPut(item.path) { ScrollState(0) }
+                                DiffGapRow(
+                                    hidden = item.hidden,
+                                    wrap = false,
+                                    hScroll = hScroll,
+                                    minWidth = minWidth,
+                                    onClick = {
+                                        revealed[item.path] = revealed[item.path].orEmpty() +
+                                            (item.id to ((revealed[item.path]?.get(item.id) ?: 0) + 100))
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
+                item(key = "commit-bottom") { Spacer(Modifier.height(16.dp)) }
             }
-            Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun CommitFileHeader(
+    path: String,
+    expanded: Boolean,
+    state: CommitDiffState?,
+    onToggle: () -> Unit,
+    onOpenFull: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    val rows = (state as? CommitDiffState.Loaded)?.rows
+    val added = rows?.count { it.added } ?: 0
+    val removed = rows?.count { it.removed } ?: 0
+    val isNew = rows != null && rows.all { it.oldNo == null } && rows.any { it.added }
+    val isDel = rows != null && rows.all { it.newNo == null } && rows.any { it.removed }
+    val tag = when {
+        state is CommitDiffState.TooLarge -> "Large file"
+        state is CommitDiffState.Failed -> "Error"
+        state is CommitDiffState.Loading -> "Loading…"
+        rows != null && isNew -> "New file"
+        rows != null && isDel -> "Deleted file"
+        rows != null -> "+$added −$removed"
+        else -> "Tap to load"
+    }
+    val (tagBg, tagFg) = when {
+        isNew -> c.spec.diffAddBg to c.success
+        isDel -> c.spec.diffDelBg to c.error
+        state is CommitDiffState.Failed -> c.statusDeletedBg to c.error
+        else -> c.chipBg to c.textMuted
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(c.fieldBg)
+            .clickable(onClick = onToggle)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CcIcon(
+            CcIcons.Chevron,
+            c.textMuted,
+            14.dp,
+            Modifier.graphicsLayer { rotationZ = if (expanded) 90f else 0f },
+        )
+        Spacer(Modifier.width(6.dp))
+        CcIcon(CcIcons.Document, c.textMuted, 15.dp)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = path.substringAfterLast('/'),
+            color = c.text,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(9.dp))
+                .background(tagBg)
+                .padding(horizontal = 8.dp, vertical = 3.dp),
+            contentAlignment = Alignment.Center,
+        ) {
             Text(
-                text = "CHANGED FILES",
-                color = c.textMuted,
+                text = tag,
+                color = tagFg,
                 fontSize = 11.sp,
                 fontFamily = Sans,
-                modifier = Modifier.padding(start = 16.dp, end = 14.dp),
+                maxLines = 1,
             )
-            Spacer(Modifier.height(6.dp))
-            paths.forEach { path ->
-                val rows = diffs[path]
-                val isLarge = path in tooLarge
-                val added = rows?.count { it.added } ?: 0
-                val removed = rows?.count { it.removed } ?: 0
-                val isNew = rows != null && rows.all { it.oldNo == null } && rows.any { it.added }
-                val isDel = rows != null && rows.all { it.newNo == null } && rows.any { it.removed }
-                val tag = when {
-                    isLarge -> "Large file"
-                    isNew -> "New file"
-                    isDel -> "Deleted file"
-                    else -> "+$added −$removed"
-                }
-                UnifiedFileCard(
-                    fileName = path.substringAfterLast('/'),
-                    folder = path.substringBeforeLast('/', ""),
-                    tag = tag,
-                    tagAdded = isNew,
-                    tagDeleted = isDel,
-                    added = added,
-                    removed = removed,
-                    rows = if (isLarge) emptyList() else rows,
-                    onOpenFull = { onDiff(commitId, path) },
-                )
-                if (isLarge) {
-                    Text(
-                        text = "Too large to show here — tap the card to open the full diff.",
-                        color = c.textMuted,
-                        fontSize = 12.sp,
-                        fontFamily = Sans,
-                        modifier = Modifier.padding(start = 16.dp, end = 14.dp, top = 4.dp),
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-            }
-            Spacer(Modifier.height(16.dp))
         }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "Open",
+            color = c.link,
+            fontSize = 11.sp,
+            fontFamily = Sans,
+            modifier = Modifier
+                .clickable(onClick = onOpenFull)
+                .padding(vertical = 4.dp, horizontal = 2.dp),
+        )
+    }
+}
+
+@Composable
+private fun CommitDiffNotice(
+    text: String,
+    openFull: Boolean,
+    onOpenFull: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp)
+            .background(c.fieldBg)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = text,
+            color = c.textMuted,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            modifier = Modifier.weight(1f),
+        )
+        if (openFull) {
+            Text(
+                text = "Open",
+                color = c.link,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                modifier = Modifier
+                    .clickable(onClick = onOpenFull)
+                    .padding(4.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun UnifiedDiffRow(
+    row: UnifiedRow,
+    showOld: Boolean,
+    showNew: Boolean,
+    wrap: Boolean,
+    hScroll: ScrollState,
+    minWidth: Dp,
+) {
+    val c = LocalPageColors.current
+    val bodyModifier = if (wrap) {
+        Modifier.fillMaxWidth()
+    } else {
+        Modifier.horizontalScroll(hScroll).widthIn(min = minWidth)
+    }
+    Row(
+        bodyModifier
+            .background(
+                when {
+                    row.added -> c.spec.diffAddBg
+                    row.removed -> c.spec.diffDelBg
+                    else -> c.fieldBg
+                },
+            )
+            .padding(vertical = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (showOld) {
+            Text(
+                text = row.oldNo?.toString().orEmpty(),
+                color = c.textFaint,
+                fontSize = 11.sp,
+                fontFamily = Mono,
+                modifier = Modifier.width(26.dp),
+                maxLines = 1,
+            )
+        }
+        if (showNew) {
+            Text(
+                text = row.newNo?.toString().orEmpty(),
+                color = c.textFaint,
+                fontSize = 11.sp,
+                fontFamily = Mono,
+                modifier = Modifier.width(26.dp),
+                maxLines = 1,
+            )
+        }
+        Text(
+            text = "${row.sign} ",
+            color = when {
+                row.added -> c.success
+                row.removed -> c.error
+                else -> c.spec.diffContext
+            },
+            fontSize = 11.sp,
+            fontFamily = Mono,
+            modifier = Modifier.width(14.dp),
+            maxLines = 1,
+        )
+        Text(
+            text = row.text,
+            color = when {
+                row.added || row.removed -> c.text
+                else -> c.spec.diffContext
+            },
+            fontSize = 11.sp,
+            fontFamily = Mono,
+            lineHeight = 20.sp,
+            softWrap = wrap,
+            maxLines = if (wrap) Int.MAX_VALUE else 1,
+        )
+    }
+}
+
+@Composable
+private fun DiffGapRow(
+    hidden: Int,
+    wrap: Boolean,
+    hScroll: ScrollState,
+    minWidth: Dp,
+    onClick: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    val bodyModifier = if (wrap) {
+        Modifier.fillMaxWidth()
+    } else {
+        Modifier.horizontalScroll(hScroll).widthIn(min = minWidth)
+    }
+    Row(
+        bodyModifier
+            .height(30.dp)
+            .background(c.panel2)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CcIcon(CcIcons.Down, c.link, 14.dp)
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "Show $hidden more lines",
+            color = c.link,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+        )
     }
 }
 

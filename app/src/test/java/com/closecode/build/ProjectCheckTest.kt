@@ -23,8 +23,16 @@ class ProjectCheckTest {
         minSdk: String = "29",
         targetSdk: String = "35",
         compileSdk: String = "35",
+        language: String = "Kotlin",
     ) {
-        ProjectFixtures.template(tmp.root, packageName, minSdk, targetSdk, compileSdk)
+        ProjectFixtures.template(
+            tmp.root,
+            packageName,
+            minSdk,
+            targetSdk,
+            compileSdk,
+            language = language,
+        )
     }
 
     private fun report(
@@ -102,6 +110,15 @@ class ProjectCheckTest {
     }
 
     @Test
+    fun aJavaTemplatePassesWithoutAKotlinVersion() {
+        template(language = "Java")
+        val report = report()
+        assertTrue(report.errors.toString(), report.ok)
+        assertFalse(File(tmp.root, "app/src/main/java/com/closecode/biz/MainActivity.kt").exists())
+        assertTrue(File(tmp.root, "app/src/main/java/com/closecode/biz/MainActivity.java").isFile)
+    }
+
+    @Test
     fun anotherProjectWithTheSamePackageWarns() {
         template()
         val report = report(otherPackages = setOf("com.closecode.biz"))
@@ -147,8 +164,21 @@ class ProjectCheckTest {
         val report = report(compileSdk = 34)
         assertTrue(
             report.errors.any {
-                it.message == "This phone has build tools for Android ${ProjectPins.COMPILE_SDK} only."
+                it.message ==
+                    "Android 34 is not installed. Open Settings → Build & Toolchain → " +
+                    "SDK Manager to install it."
             },
+        )
+    }
+
+    @Test
+    fun anInstalledCompileSdkIsAccepted() {
+        template(compileSdk = "34")
+        val input = ProjectFixtures.templateInput(compileSdk = 34)
+            .copy(installedCompileSdks = setOf(34))
+        val report = ProjectCheck.check(tmp.root, "biz", input)
+        assertFalse(
+            report.errors.any { it.message.contains("is not installed") },
         )
     }
 
@@ -330,7 +360,9 @@ class ProjectCheckTest {
         template()
         File(tmp.root, "app/src/main/java").deleteRecursively()
         val report = report()
-        assertTrue(report.errors.any { it.message == "No sources. Add at least one .kt file." })
+        assertTrue(
+            report.errors.any { it.message == "No sources. Add at least one .kt or .java file." },
+        )
     }
 
     @Test

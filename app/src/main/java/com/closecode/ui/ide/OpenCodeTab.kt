@@ -49,6 +49,7 @@ import com.closecode.ai.OpenCodePhase
 import com.closecode.ai.OpenCodeService
 import com.closecode.ai.OpenCodeStatus
 import com.closecode.ai.retryCountdownText
+import com.closecode.ai.sameProjectPath
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
@@ -74,7 +75,15 @@ fun OpenCodeTab(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    val status by OpenCode.state
+    val running = OpenCode.state.value
+    val ownStatus = when {
+        running.projectDirectory.isBlank() -> running
+        projectRoot != null &&
+            sameProjectPath(running.projectDirectory, projectRoot.absolutePath) -> running
+        else -> null
+    }
+    val otherStatus = projectRoot?.let { OpenCode.runningForOtherProject(it) }
+    val status = ownStatus ?: OpenCodeStatus()
     val prefs = remember {
         context.getSharedPreferences(OPEN_CODE_PREFS, Context.MODE_PRIVATE)
     }
@@ -131,15 +140,22 @@ fun OpenCodeTab(
         OpenCode.stop()
     }
 
+    fun stopOtherAndStart() {
+        stopServer()
+        reallyStart()
+    }
+
     fun openInBrowser() {
         openOpenCodeInBrowser(context, status.pageUrl.ifBlank { status.url })
     }
 
-    // Open the page once for every server that comes up. The generation is kept on the
-    // OpenCode object, not in this composable: the AI tab leaves composition while the page
-    // covers the screen, and a fresh remember would pop the page open again on the way back.
-    LaunchedEffect(status.phase, status.generation) {
-        if (status.phase == OpenCodePhase.Running &&
+    // Open the page once for every server that comes up for this project. The generation is
+    // kept on the OpenCode object, not in this composable: the AI tab leaves composition while
+    // the page covers the screen, and a fresh remember would pop the page open again on the
+    // way back. A server for another project must never pull this tab into its page.
+    LaunchedEffect(status.phase, status.generation, ownStatus != null) {
+        if (ownStatus != null &&
+            status.phase == OpenCodePhase.Running &&
             status.generation != OpenCode.lastAutoOpenedGeneration
         ) {
             OpenCode.lastAutoOpenedGeneration = status.generation
@@ -154,38 +170,47 @@ fun OpenCodeTab(
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
-        when (status.phase) {
-            OpenCodePhase.Idle -> LauncherCard(
+        when {
+            otherStatus != null -> OtherProjectCard(
+                other = otherStatus,
                 projectName = projectName,
-                onStart = ::startServer,
-            )
-
-            OpenCodePhase.Starting -> StartingCard(
-                status = status,
-                onCancel = ::stopServer,
-            )
-
-            OpenCodePhase.Running -> RunningCard(
-                status = status,
-                onChat = { onChat(status.pageUrl.ifBlank { status.url }) },
-                onAuthenticate = onAuthenticate,
-                onOpenInBrowser = ::openInBrowser,
                 onStop = ::stopServer,
-                details = details,
-                onDetails = { details = !details },
+                onStopAndStart = ::stopOtherAndStart,
             )
 
-            OpenCodePhase.ConnectionLost -> ReconnectingCard(
-                status = status,
-                onStop = ::stopServer,
-            )
+            else -> when (status.phase) {
+                OpenCodePhase.Idle -> LauncherCard(
+                    projectName = projectName,
+                    onStart = ::startServer,
+                )
 
-            OpenCodePhase.Failed -> FailedCard(
-                status = status,
-                onRetry = ::startServer,
-                details = details,
-                onDetails = { details = !details },
-            )
+                OpenCodePhase.Starting -> StartingCard(
+                    status = status,
+                    onCancel = ::stopServer,
+                )
+
+                OpenCodePhase.Running -> RunningCard(
+                    status = status,
+                    onChat = { onChat(status.pageUrl.ifBlank { status.url }) },
+                    onAuthenticate = onAuthenticate,
+                    onOpenInBrowser = ::openInBrowser,
+                    onStop = ::stopServer,
+                    details = details,
+                    onDetails = { details = !details },
+                )
+
+                OpenCodePhase.ConnectionLost -> ReconnectingCard(
+                    status = status,
+                    onStop = ::stopServer,
+                )
+
+                OpenCodePhase.Failed -> FailedCard(
+                    status = status,
+                    onRetry = ::startServer,
+                    details = details,
+                    onDetails = { details = !details },
+                )
+            }
         }
 
         if (details && status.log.isNotEmpty()) {
@@ -283,6 +308,59 @@ private fun LauncherCard(
             fontSize = 11.sp,
             fontFamily = Sans,
             lineHeight = 16.sp,
+        )
+    }
+}
+
+@Composable
+private fun OtherProjectCard(
+    other: OpenCodeStatus,
+    projectName: String,
+    onStop: () -> Unit,
+    onStopAndStart: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    val runningName = other.projectName.ifBlank { other.projectDirectory }
+    val verb = if (other.phase == OpenCodePhase.Starting) "starting" else "running"
+    Card {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(if (other.phase == OpenCodePhase.Starting) c.amber else c.success)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "OpenCode is $verb on $runningName",
+                    color = c.tx,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = projectName,
+                    color = c.mu,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Only one OpenCode server runs at a time. Stop $runningName before " +
+                "starting $projectName.",
+            color = c.mu,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            lineHeight = 18.sp,
+        )
+        Spacer(Modifier.height(12.dp))
+        SecondaryAction(
+            label = "Stop $runningName",
+            onClick = onStop,
+            danger = true,
+        )
+        Spacer(Modifier.height(8.dp))
+        PrimaryAction(
+            label = "Stop and start $projectName",
+            onClick = onStopAndStart,
         )
     }
 }

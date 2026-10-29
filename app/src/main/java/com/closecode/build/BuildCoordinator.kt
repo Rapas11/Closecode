@@ -2,6 +2,7 @@ package com.closecode.build
 
 import android.content.Context
 import com.google.gson.JsonObject
+import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -27,7 +28,11 @@ object BuildCoordinator {
 
     fun engine(context: Context, slug: String): BuildEngine =
         engines.computeIfAbsent(slug) {
-            BuildEngine(ToolchainHolder.store(context.applicationContext))
+            val app = context.applicationContext
+            BuildEngine(
+                ToolchainHolder.store(app),
+                BuildCache(File(app.cacheDir, "build-cache")),
+            )
         }
 
     fun active(): Active? = active
@@ -46,6 +51,7 @@ object BuildCoordinator {
         setup: BuildSetup,
         onEvent: (JsonObject) -> Unit,
         onLog: (String) -> Unit = {},
+        cacheEnabled: Boolean = true,
     ): BuildOutcome {
         val engine = engine(context, project.slug)
         synchronized(this) {
@@ -79,6 +85,7 @@ object BuildCoordinator {
                 checkInput = setup.checkInput,
                 tools = setup.tools,
                 onLog = onLog,
+                cacheEnabled = cacheEnabled,
             )
             val summary = BuildReport.summary(outcome)
             last = Last(project.slug, project.name, outcome, summary)

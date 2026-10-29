@@ -23,6 +23,29 @@ object ProjectPins {
     const val COMPOSE_COMPILER = "1.5.14"
     const val COMPOSE_BOM = "2024.04.01"
 
+    /** The default Gradle version written into a new project's wrapper properties. */
+    const val GRADLE_DEFAULT = "8.13"
+
+    /**
+     * The Android Gradle Plugin each offered Gradle version is paired with. Gradle is not run
+     * on the phone; this mapping is for the wrapper/export metadata a desktop build uses.
+     */
+    fun agpForGradle(gradleVersion: String): String = when (gradleVersion) {
+        "8.13" -> "8.12.0"
+        "8.12" -> "8.10.1"
+        "8.9" -> "8.7.3"
+        "8.5" -> "8.3.2"
+        else -> "8.12.0"
+    }
+
+    /** The newest Android API the mapped AGP supports, for the config warning. */
+    fun maxApiForGradle(gradleVersion: String): Int = when (gradleVersion) {
+        "8.13", "8.12" -> 36
+        "8.9" -> 35
+        "8.5" -> 34
+        else -> 36
+    }
+
     /** Below this, packaging an APK is not worth starting. */
     const val FREE_SPACE_FLOOR_BYTES = 300L * 1024 * 1024
 

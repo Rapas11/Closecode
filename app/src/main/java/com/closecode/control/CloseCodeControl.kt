@@ -16,6 +16,8 @@ import com.closecode.device.DeviceTools
 import com.closecode.tools.ShellToolsManifest
 import com.closecode.tools.ShellToolsStore
 import com.closecode.ui.project.ProjectRepository
+import com.closecode.ui.settings.SettingsStore
+import com.closecode.ui.settings.SharedPreferencesKeyValueStore
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.BufferedOutputStream
@@ -460,7 +462,15 @@ object CloseCodeControl {
             })
         }
         try {
-            val outcome = BuildCoordinator.build(context, resolved, setup, onEvent, onLog)
+            val settings = SettingsStore(SharedPreferencesKeyValueStore(context)).read()
+            val outcome = BuildCoordinator.build(
+                context,
+                resolved,
+                setup,
+                onEvent,
+                onLog,
+                cacheEnabled = settings.buildCache,
+            )
             send(output, JsonObject().apply {
                 addProperty("ok", true)
                 addProperty("event", "done")

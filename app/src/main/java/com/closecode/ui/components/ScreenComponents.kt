@@ -137,7 +137,7 @@ fun PrimaryButton(
     ) {
         Text(
             text = label,
-            color = if (enabled) Color.White else c.textFaint,
+            color = if (enabled) c.af else c.textFaint,
             fontSize = 14.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
