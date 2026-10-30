@@ -3,6 +3,9 @@
 Where the AI-tab work stands and how to pick it up on a fresh clone. Read this
 after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
+> Start here: **`ROADMAP.md`** holds the improvement backlog (32 items), the MuMu
+> input-mapping workarounds, and the exact build-42 device-verification steps.
+
 ## Resume point
 
 - Branch `main`; Step 20 is build 42: AndroidIDE parity — the fixed port is
