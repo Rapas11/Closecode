@@ -3,10 +3,12 @@ package com.closecode.control
 import android.content.Context
 import com.closecode.BuildConfig
 import com.closecode.build.BuildCoordinator
+import com.closecode.build.BuildOutcome
 import com.closecode.build.BuildReport
 import com.closecode.build.BuildSetup
 import com.closecode.build.BuildSetupFactory
 import com.closecode.build.BuildState
+import com.closecode.build.ProjectCheck
 import com.closecode.build.ToolchainHolder
 import com.closecode.build.ToolchainManifest
 import com.closecode.debug.BuildInfo
@@ -15,6 +17,9 @@ import com.closecode.device.CloseCodeAccessibilityService
 import com.closecode.device.DeviceTools
 import com.closecode.tools.ShellToolsManifest
 import com.closecode.tools.ShellToolsStore
+import com.closecode.ui.git.GitService
+import com.closecode.ui.github.GitHubRemote
+import com.closecode.ui.github.TokenStore
 import com.closecode.ui.project.ProjectRepository
 import com.closecode.ui.settings.SettingsStore
 import com.closecode.ui.settings.SharedPreferencesKeyValueStore
@@ -191,6 +196,18 @@ object CloseCodeControl {
                 "build" -> {
                     it.soTimeout = 0
                     runBlocking { build(context, request, output) }
+                }
+                "gradle" -> {
+                    it.soTimeout = 0
+                    runBlocking { gradle(context, request, output) }
+                }
+                "check" -> {
+                    it.soTimeout = 0
+                    runBlocking { send(output, staticCheck(context, request, "check")) }
+                }
+                "github" -> {
+                    it.soTimeout = 0
+                    runBlocking { send(output, github(context, request)) }
                 }
                 else -> send(output, error("Unknown command."))
             }
@@ -423,7 +440,7 @@ object CloseCodeControl {
         context: Context,
         request: JsonObject,
         output: OutputStream,
-    ) {
+    ): BuildRun? {
         val resolved = resolveProject(
             context,
             cwd = string(request, "cwd"),
@@ -431,17 +448,17 @@ object CloseCodeControl {
         )
         if (resolved == null) {
             send(output, error("Run closecode from a registered project folder."))
-            return
+            return null
         }
         if (BuildCoordinator.active() != null) {
             send(output, error("A build is already running."))
-            return
+            return null
         }
         val setup = try {
             BuildSetupFactory.create(context, resolved)
         } catch (error: Throwable) {
             send(output, error(error.message ?: error.javaClass.simpleName))
-            return
+            return null
         }
         send(output, JsonObject().apply {
             addProperty("ok", true)
@@ -481,9 +498,161 @@ object CloseCodeControl {
                     BuildReport.tail(resolved.directory, 20).forEach { add(it) }
                 })
             })
+            return BuildRun(resolved, outcome)
         } catch (error: Throwable) {
             send(output, error(error.message ?: error.javaClass.simpleName))
+            return null
         }
+    }
+
+    private data class BuildRun(val project: BuildSetup.Project, val outcome: BuildOutcome)
+
+    /**
+     * The phone has no Gradle daemon: CloseCode builds with its own engine. This translates the
+     * Gradle task names an agent knows into the same power, and answers the rest with the list
+     * of what the phone can run — so the agent never guesses twice.
+     */
+    private suspend fun gradle(
+        context: Context,
+        request: JsonObject,
+        output: OutputStream,
+    ) {
+        val task = args(request).firstOrNull()
+        if (task == null) {
+            send(output, error(gradleTaskMessage("")))
+            return
+        }
+        if (task !in GRADLE_TASKS) {
+            send(output, error(gradleTaskMessage(task)))
+            return
+        }
+        if (task == "assembleDebug") {
+            build(context, request, output)
+            return
+        }
+        val run = build(context, request, output) ?: return
+        val built = run.outcome as? BuildOutcome.Built
+        if (built == null) {
+            send(output, error("The build did not succeed, so nothing was installed."))
+            return
+        }
+        if (task == "installDebug") {
+            send(output, DeviceTools.install(context, run.project.directory, null))
+            return
+        }
+        val installed = DeviceTools.install(context, run.project.directory, null)
+        if (installed.get("ok")?.asBoolean != true) {
+            send(output, installed)
+            return
+        }
+        send(output, DeviceTools.launch(context, run.project.directory, null))
+    }
+
+    /** `closecode check`: the project's static checks, without building. */
+    private suspend fun staticCheck(context: Context, request: JsonObject, task: String): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: return error("Run closecode from a registered project folder.")
+        val setup = try {
+            BuildSetupFactory.create(context, project)
+        } catch (error: Throwable) {
+            return error(error.message ?: error.javaClass.simpleName)
+        }
+        val report = ProjectCheck.check(project.directory, project.slug, setup.checkInput)
+        return JsonObject().apply {
+            addProperty("ok", report.ok)
+            addProperty("task", task)
+            addProperty("checks", "Static project checks. Real unit tests are not run on the phone.")
+            addProperty("errors", report.errors.size)
+            addProperty("warnings", report.warnings.size)
+            addProperty("notes", report.notes.size)
+            add("findings", com.google.gson.JsonArray().apply {
+                report.findings.forEach { finding ->
+                    add(JsonObject().apply {
+                        addProperty("severity", finding.severity.name.lowercase())
+                        addProperty("message", finding.message)
+                        if (finding.file != null) addProperty("file", finding.file)
+                        if (finding.line != null) addProperty("line", finding.line)
+                    })
+                }
+            })
+        }
+    }
+
+    internal fun gradleTaskMessage(task: String): String =
+        "closecode: gradle '$task' has no phone equivalent. This phone has no Gradle daemon; " +
+            "CloseCode builds with its own engine. Supported tasks: assembleDebug (build an " +
+            "APK), installDebug (build and install), launch (build, install and launch), " +
+            "test, testDebugUnitTest, lint, lintDebug or check (static checks, no build)."
+
+    /** The Gradle names `closecode gradle` accepts; anything else is answered with the list. */
+    internal val GRADLE_TASKS = setOf(
+        "assembleDebug",
+        "installDebug",
+        "launch",
+        "test",
+        "testDebugUnitTest",
+        "lint",
+        "lintDebug",
+        "check",
+        "staticCheck",
+    )
+
+    /** The GitHub verbs `closecode github` accepts; anything else is answered with the usage. */
+    internal val GITHUB_ACTIONS = setOf("push", "pull")
+
+    internal const val GITHUB_USAGE = "usage: closecode github push|pull [--force]"
+
+    /**
+     * Publishes a project to GitHub, or takes what came back.
+     *
+     * The token is read through [TokenStore] inside the app process and handed straight to
+     * JGit's credential provider — it never becomes a command line argument, a log line or part
+     * of the shell's environment, so a shell history or `ps` cannot leak it.
+     */
+    private suspend fun github(context: Context, request: JsonObject): JsonObject {
+        val arguments = args(request)
+        val action = arguments.firstOrNull().orEmpty()
+        if (action !in GITHUB_ACTIONS) return error(GITHUB_USAGE)
+        val force = arguments.drop(1).any { it.matches(Regex("(--)?force", RegexOption.IGNORE_CASE)) }
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: return error("Run closecode from a registered project folder.")
+        val token = TokenStore(context).read()
+            ?: return error("GitHub is not signed in. Sign in from CloseCode's GitHub screen, then try again.")
+        val remote = GitHubRemote(project.directory)
+        if (remote.originUrl() == null) {
+            return error("This project is not linked to GitHub yet. Link it in the GitHub panel first.")
+        }
+        if (action == "pull") {
+            val clean = runCatching {
+                GitService(project.directory).snapshot().getOrNull()
+            }.getOrNull()?.isClean ?: false
+            if (!clean && !force) {
+                return error(
+                    "Your changes would be overwritten by the pull. Commit or stage them first, " +
+                        "or run closecode github pull --force.",
+                )
+            }
+        }
+        val answer = when (action) {
+            "push" -> remote.push(token)
+            else -> remote.pull(token)
+        }
+        return answer.fold(
+            onSuccess = { message ->
+                JsonObject().apply {
+                    addProperty("ok", true)
+                    addProperty("action", action)
+                    addProperty("message", message)
+                }
+            },
+            onFailure = { failure -> error(failure.message ?: failure.javaClass.simpleName) },
+        )
     }
 
     private fun ping(): JsonObject = JsonObject().apply {
@@ -651,10 +820,13 @@ internal fun controlCommandScript(basePath: String): String = """
       d|describe) CMD=describe ;;
       t|tool) CMD=tool ;;
       tools) CMD=tools ;;
+      g|gradle) CMD=gradle ;;
+      chk|check) CMD=check ;;
+      gh|github) CMD=github ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools) ;;
-      *) echo "usage: closecode build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools" >&2; exit 2 ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|gradle|check|github) ;;
+      *) echo "usage: closecode build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|gradle|check|github" >&2; exit 2 ;;
     esac
     [ ${'$'}# -gt 0 ] && shift
     CWD=${'$'}(pwd -P 2>/dev/null || pwd)

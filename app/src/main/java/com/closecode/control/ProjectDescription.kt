@@ -140,6 +140,18 @@ internal object ProjectDescription {
             addProperty("export", "closecode export")
             addProperty("screenshot", "closecode screenshot")
             addProperty("tool", "closecode tool aapt2|d8|r8|kotlinc")
+            addProperty(
+                "gradle",
+                "closecode gradle assembleDebug|installDebug|launch|test|lint|check — " +
+                    "Gradle names translated to this phone's own builder " +
+                    "(no Gradle daemon on the phone).",
+            )
+            addProperty("check", "closecode check — static project checks, no build")
+            addProperty(
+                "github",
+                "closecode github push|pull — publish to GitHub or take what came back; " +
+                    "uses the app's own signed-in token and is never exposed to the shell.",
+            )
         })
     }
 }

@@ -39,6 +39,18 @@ import java.util.concurrent.TimeUnit
  */
 object OpenCode {
 
+    /**
+     * Removes the grounded OpenCode home: its data, config and cache, and with them every
+     * stored session and credential the runtime kept there. OpenCode writes its own config
+     * file again on the next start [OpenCodeConfig.installOnce] takes care of. Returns true
+     * when something was removed.
+     */
+    fun wipeHome(context: Context): Boolean {
+        val home = home(context)
+        if (!home.exists()) return false
+        return runCatching { home.deleteRecursively() }.getOrDefault(false)
+    }
+
     /** What the screens show. */
     val state = androidx.compose.runtime.mutableStateOf(OpenCodeStatus())
 
@@ -384,6 +396,13 @@ object OpenCode {
                 }
 
                 val version = waitForAnswer(port)
+                runCatching { OpenCodeSkill.install(projectRoot) }
+                    .onFailure {
+                        log(
+                            "Skill not written: ${it.message ?: it.javaClass.simpleName}",
+                            warning = true,
+                        )
+                    }
                 if (version != null) {
                     val shown = version.ifBlank { readVersion(context, arch, binary) }
                     val url = "http://${OpenCodeDefaults.HOST}:$port"
@@ -634,9 +653,10 @@ object OpenCode {
 
     /**
      * The home directory the program is given: its own corner of the app's files, not the
-     * phone's.
+     * phone's. Read by the AI tools that live beside the home: serving the settings page and
+     * the model list.
      */
-    private fun home(context: Context): File = File(context.filesDir, "opencode/home")
+    internal fun home(context: Context): File = File(context.filesDir, "opencode/home")
 
     /** The place for files a program is meant to throw away again. */
     private fun tmp(context: Context): File =
@@ -659,7 +679,13 @@ object OpenCode {
         environment["TMPDIR"] = tmp(context).absolutePath
         environment["HOME"] = home.absolutePath
         environment["XDG_DATA_HOME"] = File(home, "data").apply { mkdirs() }.absolutePath
-        environment["XDG_CONFIG_HOME"] = File(home, "config").apply { mkdirs() }.absolutePath
+        val configHome = File(home, "config").apply { mkdirs() }
+        environment["XDG_CONFIG_HOME"] = configHome.absolutePath
+        OpenCodeConfig.installOnce(configHome)
+        // Web search needs no API key, but OpenCode only loads its hosted web tools when one
+        // of these flags is set. The fallback covers a provider whose search goes dry.
+        environment["OPENCODE_ENABLE_EXA"] = "1"
+        environment["OPENCODE_ENABLE_PARALLEL"] = "1"
         environment["XDG_CACHE_HOME"] = File(home, "cache").apply { mkdirs() }.absolutePath
         // The bash wrapper reads this at each shell invocation, so installing the optional
         // shell tools after the server starts still makes them available without a restart.

@@ -427,6 +427,45 @@ the 1.18.35 page is proven on a device.
   refresh, stale/slow scaffolding crash recovery, switching OpenCode projects
   and screenshot visibility, and session listing with `parentID: null`.
 
+## Step 19 (build 41)
+
+- The AI tab no longer falls back to OpenCode's empty home page when a
+  project has no session yet: `OpenCodeChatScreen` opens the project route
+  directly (`targetPagePath`), so OpenCode always registers the project and
+  shows its sessions. This was the build 39 "Projects: empty" report.
+- `closecode gradle <task>` translates Gradle names to the phone's own
+  builder: `assembleDebug` builds, `installDebug` builds and installs,
+  `launch` builds, installs and launches, and `test`, `testDebugUnitTest`,
+  `lint`, `lintDebug`, `check` run the static project checks. Everything else
+  is answered with the supported list; there is no Gradle daemon on the phone.
+- `closecode check` runs the static checks without a build.
+- `closecode github push|pull` talks to the project's linked GitHub remote
+  through the app's stored Device Flow token (JGit credential provider); the
+  token never enters the shell, a log or the AI conversation. A dirty working
+  tree requires `--force` for pulls.
+- The OpenCode server starts with `OPENCODE_ENABLE_EXA=1` and
+  `OPENCODE_ENABLE_PARALLEL=1`, so `websearch`/`webfetch` work on the hosted
+  providers without a personal key. A default
+  `opencode/opencode.json` naming the schema is written once, only when the
+  file is missing (`OpenCodeConfig.installOnce`).
+- Opening a project writes `.opencode/skills/closecode/SKILL.md` once (until
+  the reader deletes it): what `closecode` can do, including the Gradle
+  translation and its limits.
+- Settings → AI is a real page now: server status, default-model choice
+  (OpenCode's durable cache, live server only when needed), per-tool agent
+  permission pickers (Default → Ask → Deny → Default, written through
+  `OpenCodeAiConfig`, preserving unknown config keys), skill editor with
+  preview and OpenCode's naming/description rules, and a danger-zone wipe of
+  OpenCode's own home (`OpenCode.wipeHome`).
+- Tests: `:app:testDebugUnitTest` passed 1390 tests, 8 skipped, 0 failures;
+  `:app:assembleDebug` is green. `closecode-41-debug.apk` is 40 MB
+  (40,054,039 bytes, SHA-256
+  `b046f935380e6e31f3a6cd0f600596463ff38c54b036828ea884355be0d686ff`),
+  package `com.closecode`, versionCode 41, v2-signed, with
+  `lib/arm64-v8a/libaapt2.so` and `lib/arm64-v8a/libclosepty.so`.
+- Real Gradle and real unit tests inside the phone builder were deliberately
+  left out; they stay a future build.
+
 ## Environment on a new machine
 
 1. JDK 21, exported as `JAVA_HOME` (this machine used
@@ -454,7 +493,7 @@ the 1.18.35 page is proven on a device.
 
 ## Latest deliverable
 
-`closecode-40-debug.apk` for Step 18 (debug, since `assembleRelease` is blocked
+`closecode-41-debug.apk` for Step 19 (debug, since `assembleRelease` is blocked
 by an unrelated Gradle lint issue on this machine).
 
 ## Step 12 (build 34)

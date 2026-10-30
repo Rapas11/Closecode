@@ -174,6 +174,7 @@ fun SettingsScreen(
     var credentialsOpen by remember { mutableStateOf(false) }
     var infoPage by remember { mutableStateOf<String?>(null) }
     var comingSoon by remember { mutableStateOf<String?>(null) }
+    var aiOpen by remember { mutableStateOf(false) }
     var editingString by remember { mutableStateOf<StringSetting?>(null) }
     val toolchainStore = remember(context) {
         com.closecode.build.ToolchainHolder.store(context)
@@ -188,6 +189,10 @@ fun SettingsScreen(
     }
     if (credentialsOpen) {
         CredentialsPage(onBack = { credentialsOpen = false })
+        return
+    }
+    if (aiOpen) {
+        AiSettingsPage(onBack = { aiOpen = false })
         return
     }
     val page = infoPage
@@ -286,7 +291,7 @@ fun SettingsScreen(
             SettingsAction.CREDENTIALS -> credentialsOpen = true
             SettingsAction.LICENSES -> infoPage = "licenses"
             SettingsAction.PRIVACY -> infoPage = "privacy"
-            SettingsAction.AI_SETTINGS -> comingSoon = "AI settings"
+            SettingsAction.AI_SETTINGS -> aiOpen = true
             SettingsAction.BIOMETRIC_LOCK -> comingSoon = "Biometric lock"
             SettingsAction.EDIT_GIT_NAME -> editingString = StringSetting.GIT_NAME
             SettingsAction.EDIT_GIT_EMAIL -> editingString = StringSetting.GIT_EMAIL

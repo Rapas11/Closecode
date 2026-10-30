@@ -463,8 +463,8 @@ fun sections(
                 listOf(
                     Row.Nav(
                         "AI settings",
-                        "Provider, model and agent permissions are coming soon.",
-                        "Coming soon",
+                        "Server, default model, agent permissions and skills.",
+                        "Open",
                         id = SettingsAction.AI_SETTINGS,
                     ),
                 ),

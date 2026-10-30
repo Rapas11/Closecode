@@ -105,15 +105,13 @@ fun OpenCodeChatScreen(
     val context = LocalContext.current
     val holder = remember { WebViewHolder() }
     fun pageTarget(): PageTarget {
-        if (baseUrl.isNotBlank() && sessionId.isNotBlank()) {
-            return PageTarget(OpenCodeSessions.sessionPageUrl(baseUrl, sessionId), false)
-        }
-        val saved = savedPagePath(context, baseUrl, projectDirectory)
-        if (saved != null) return PageTarget(openCodePageUrl(baseUrl, saved), false)
-        if (baseUrl.isBlank() || projectUrl.isBlank()) {
-            return PageTarget(projectUrl.ifBlank { baseUrl }, false)
-        }
-        return PageTarget(openCodePageUrl(baseUrl, "/") + RESUME_QUERY, true)
+        val target = targetPagePath(
+            baseUrl = baseUrl,
+            projectUrl = projectUrl,
+            savedPath = savedPagePath(context, baseUrl, projectDirectory),
+            sessionId = sessionId,
+        )
+        return PageTarget(target, false)
     }
     val initialTarget = remember(baseUrl, projectUrl, projectDirectory, sessionId) { pageTarget() }
     var currentUrl by remember { mutableStateOf(initialTarget.url) }
@@ -512,6 +510,27 @@ private fun PageBarButton(
 
 private data class PageTarget(val url: String, val bootstrap: Boolean)
 
+/**
+ * The page the AI tab opens for a project. A missing session must never land on OpenCode's
+ * home screen: the home screen only lists what OpenCode has already registered, so it shows
+ * empty Projects while the session is still being created. The project route always opens
+ * OpenCode on this project instead.
+ */
+internal fun targetPagePath(
+    baseUrl: String,
+    projectUrl: String,
+    savedPath: String?,
+    sessionId: String,
+): String {
+    if (baseUrl.isNotBlank() && sessionId.isNotBlank()) {
+        return OpenCodeSessions.sessionPageUrl(baseUrl, sessionId)
+    }
+    val saved = savedPath?.takeIf { it.isNotBlank() && baseUrl.isNotBlank() }
+    if (saved != null) return openCodePageUrl(baseUrl, saved)
+    if (projectUrl.isBlank()) return baseUrl
+    return projectUrl
+}
+
 /** The one WebView this screen owns, so the back handler can reach it. */
 private class WebViewHolder {
     var view: WebView? = null
@@ -527,7 +546,6 @@ private const val PAGE_PREFS = "closecode_open_code_page"
 private const val PAGE_PATH_PREFIX = "last:"
 private const val PAGE_PATHS_VERSION = "pathsVersion"
 private const val PAGE_PATHS_VERSION_CURRENT = 2
-private const val RESUME_QUERY = "?closecode_resume=1"
 
 /**
  * Build 36 could save another project's session under this project after the resume script
