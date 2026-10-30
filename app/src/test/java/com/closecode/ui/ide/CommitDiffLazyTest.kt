@@ -2,7 +2,6 @@ package com.closecode.ui.ide
 
 import com.closecode.ui.git.splitDiff
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -65,7 +64,9 @@ class CommitDiffLazyTest {
         val changed = unify(splitDiff("a\n", "b\n"))
         val changedItems = flattenUnifiedDiff(changed, isNew = false, revealed = emptyMap())
             .filterIsInstance<FullDiffItem.Line>()
+        assertEquals(2, changedItems.size)
+        assertTrue(changedItems[0].row.removed && !changedItems[0].row.added)
+        assertTrue(changedItems[1].row.added && !changedItems[1].row.removed)
         assertTrue(changedItems.all { it.showOld && it.showNew })
-        assertFalse(changedItems.isEmpty())
     }
 }

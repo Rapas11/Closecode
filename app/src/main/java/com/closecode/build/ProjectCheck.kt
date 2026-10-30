@@ -7,8 +7,8 @@ import java.io.File
  * to build it. Runs first on every build and when a project is opened. Every result
  * is one plain sentence, an error or a warning, with the file and line when there is one.
  *
- * An error stops the build; a warning never does — a foreign-looking package risks an
- * install clash, which the reader is told about, not stopped by.
+ * An error stops the build. A foreign-looking package is only a warning; a package already
+ * reserved by another project is an error, because installing it would replace that app.
  */
 object ProjectCheck {
 
@@ -171,11 +171,11 @@ object ProjectCheck {
             )
         }
         if (packageName != null && isValidPackage(packageName) &&
-            packageName in input.otherPackages
+            packageName.lowercase() in input.otherPackages
         ) {
             findings += Finding(
-                Severity.Warning,
-                "Another project uses this package. Installing this app would replace that one.",
+                Severity.Error,
+                "Another project uses this package. Choose a different package name.",
                 packageFile,
                 packageLine,
             )

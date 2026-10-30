@@ -53,7 +53,7 @@ fun kindColor(kind: FileKind, c: PageColors): Color = when (kind) {
     FileKind.Js -> c.codeType
     FileKind.Markdown -> c.iconTint
     FileKind.Xml, FileKind.Gradle, FileKind.Json, FileKind.Csv,
-    FileKind.Properties, FileKind.Unknown,
+    FileKind.Properties, FileKind.Image, FileKind.Unknown,
     -> c.popupMuted
 }
 
@@ -74,6 +74,7 @@ fun kindGlyph(kind: FileKind): String = when (kind) {
     FileKind.Js -> "JS"
     FileKind.Csv -> "≣"
     FileKind.Markdown, FileKind.Properties -> "◇"
+    FileKind.Image -> "▧"
     FileKind.Unknown -> ""
 }
 

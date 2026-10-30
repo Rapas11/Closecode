@@ -3,6 +3,7 @@ package com.closecode
 import com.closecode.ui.model.ProjectConfig
 import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.model.TemplateTab
+import com.closecode.ui.project.ProjectIdentity
 
 private const val FIELD = "|"
 
@@ -12,6 +13,7 @@ data class Project(
     val templateName: String,
     val config: ProjectConfig = ProjectConfig(),
     val slug: String = slugify(name),
+    val id: String = ProjectIdentity.newId(),
 ) {
     companion object {
         fun slugify(value: String): String = value
@@ -33,12 +35,13 @@ object ProjectCodec {
         esc(project.templateName),
         esc(project.config.encode()),
         esc(project.slug),
+        esc(project.id),
     ).joinToString(FIELD)
 
     fun decode(raw: String): Project? {
         if (raw.isBlank()) return null
         val parts = raw.split(FIELD)
-        if (parts.size != 6) return null
+        if (parts.size != 6 && parts.size != 7) return null
         return runCatching {
             // A project id is one directory name under the projects root, not a path. The record is
             // a saved string, so it is re-checked here: a stale or hand-edited one must fall back to
@@ -48,6 +51,15 @@ object ProjectCodec {
                 slug.isNotBlank() && slug != "." && slug != ".." &&
                     '/' !in slug && '\\' !in slug && slug.none { it.isISOControl() },
             ) { "Illegal project id." }
+            val id = if (parts.size == 7) {
+                unesc(parts[6]).also {
+                    require(it.isNotBlank() && it.none { ch -> ch.isISOControl() }) {
+                        "Illegal project identity."
+                    }
+                }
+            } else {
+                ProjectIdentity.legacyId(slug)
+            }
             Project(
                 name = unesc(parts[0]),
                 selection = SelectedTemplate(
@@ -57,6 +69,7 @@ object ProjectCodec {
                 templateName = unesc(parts[3]),
                 config = ProjectConfig.decode(unesc(parts[4])),
                 slug = slug,
+                id = id,
             )
         }.getOrNull()
     }

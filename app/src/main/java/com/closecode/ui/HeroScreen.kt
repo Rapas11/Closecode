@@ -358,7 +358,7 @@ private fun Headline(size: TextUnit) {
 
 @Composable
 fun HeroScreen(
-    onProjectCreated: (name: String, selection: SelectedTemplate, templateName: String, config: ProjectConfig) -> Unit,
+    onProjectCreated: (name: String, selection: SelectedTemplate, templateName: String, config: ProjectConfig) -> String?,
     onProjectCloned: (ProjectRecord) -> Unit,
     onOpenRecent: () -> Unit,
     recentCount: Int,
@@ -550,13 +550,13 @@ fun HeroScreen(
             recentCount = recentCount,
             onDismiss = { sheetOpen = false },
             onCreate = { projectName, selection, config ->
-                sheetOpen = false
                 val templateName = Templates[selection.tab]
                     .orEmpty()
                     .getOrNull(selection.index)
                     ?.name
                     .orEmpty()
                 onProjectCreated(projectName, selection, templateName, config)
+                    .also { error -> if (error == null) sheetOpen = false }
             },
         )
     }

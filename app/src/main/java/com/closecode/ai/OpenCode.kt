@@ -75,7 +75,12 @@ object OpenCode {
      * still going. A different project stops the old server first; the UI asks the reader to
      * confirm that switch before calling this.
      */
-    fun start(context: Context, projectRoot: File, projectName: String) {
+    fun start(
+        context: Context,
+        projectRoot: File,
+        projectName: String,
+        projectId: String,
+    ) {
         if (isActive) {
             if (isRunningFor(projectRoot)) return
             stop()
@@ -84,7 +89,7 @@ object OpenCode {
         val appContext = context.applicationContext
         CloseCodeControl.start(appContext)
         job = scope.launch {
-            runServer(appContext, projectRoot, projectName)
+            runServer(appContext, projectRoot, projectName, projectId)
         }
     }
 
@@ -221,7 +226,12 @@ object OpenCode {
      * The whole life of the server: launch, wait for its health endpoint, answer, and come
      * back if it goes.
      */
-    private suspend fun runServer(context: Context, projectRoot: File, projectName: String) {
+    private suspend fun runServer(
+        context: Context,
+        projectRoot: File,
+        projectName: String,
+        projectId: String,
+    ) {
         // A force-stop kills this app but not its child. Clean leftovers up before choosing a
         // port, or the old server would keep 4098 and this run would start a second one beside it.
         val orphanPids = killOrphans(context)
@@ -234,6 +244,7 @@ object OpenCode {
                 it.copy(
                     phase = OpenCodePhase.Failed,
                     projectName = projectName,
+                    projectId = projectId,
                     projectFolder = projectRoot.name,
                     error = unsupportedCpuMessage(abis),
                     log = listOf(OpenCodeLogLine("Starting")),
@@ -249,10 +260,12 @@ object OpenCode {
             it.copy(
                 phase = OpenCodePhase.Starting,
                 projectName = projectName,
+                projectId = projectId,
                 projectFolder = projectRoot.name,
                 projectDirectory = projectRoot.absolutePath,
                 url = url,
                 pageUrl = projectPageUrl(url, projectRoot),
+                sessionId = "",
                 port = port,
                 log = buildList {
                     add(OpenCodeLogLine("Starting OpenCode ${OpenCodeDefaults.VERSION}"))
@@ -374,18 +387,36 @@ object OpenCode {
                 if (version != null) {
                     val shown = version.ifBlank { readVersion(context, arch, binary) }
                     val url = "http://${OpenCodeDefaults.HOST}:$port"
+                    val sessionId = runCatching {
+                        OpenCodeSessions.ensure(
+                            context,
+                            url,
+                            projectId,
+                            projectRoot.absolutePath,
+                        )
+                    }.onFailure {
+                        log(
+                            "Project session could not be opened: " +
+                                (it.message ?: it.javaClass.simpleName),
+                            warning = true,
+                        )
+                    }.getOrNull()
                     update {
                         it.copy(
                             phase = OpenCodePhase.Running,
                             version = shown,
+                            projectId = projectId,
                             projectDirectory = projectRoot.absolutePath,
                             url = url,
-                            pageUrl = projectPageUrl(url, projectRoot),
+                            pageUrl = sessionId?.let { id -> OpenCodeSessions.sessionPageUrl(url, id) }
+                                ?: projectPageUrl(url, projectRoot),
+                            sessionId = sessionId.orEmpty(),
                             generation = it.generation + 1,
                             proxyPort = proxyPort ?: 0,
                         )
                     }
                     log("OpenCode is answering at $url")
+                    if (sessionId != null) log("Project session: $sessionId")
                     OpenCodeService.update(context, url, projectName)
                     DebugLog.crumb("AICO", "server answering")
                     // Stay up until the server stops answering or the process ends. A project's

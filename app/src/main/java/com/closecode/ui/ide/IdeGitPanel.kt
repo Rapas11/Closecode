@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -139,7 +138,7 @@ fun IdeGitPanel(
     // in too. Re-keying the read on it is what stops this panel pushing with a token that has
     // since been replaced, which would look exactly like the failure it replaced.
     tokenEpoch: Int = 0,
-    // Opens a side-by-side diff of the file. The panel lives in the drawer, so the route itself
+    // Opens a unified diff of the file. The panel lives in the drawer, so the route itself
     // lives at screen level; this only says which path was tapped.
     onDiff: (String) -> Unit = {},
     // Opens a commit's before/after diff of one file. Same routing: which commit and path.
@@ -1576,12 +1575,10 @@ private fun GitHubSection(
 }
 
 /**
- * A side-by-side diff of one file. Working-tree mode (no commit id): HEAD on the left,
- * the working tree on the right. Commit mode: the commit's parent on the left, the commit
- * itself on the right — the before and after of that commit. Changed rows tint green on
- * the new side and red on the old side; added and removed lines show on their side only.
- * Each side scrolls sideways on its own (one shared state per side, so all rows travel
- * together) while the rows scroll vertically as one.
+ * A unified diff of one file. Working-tree mode (no commit id): HEAD as the old side and the
+ * working tree as the new side. Commit mode: the commit's parent as the old side and the
+ * commit itself as the new side. Removed lines appear before the added lines they replaced,
+ * so a changed row is never shown as an addition with the old text silently missing.
  */
 @Composable
 internal fun DiffScreen(
@@ -1595,13 +1592,9 @@ internal fun DiffScreen(
     var rows by remember(path, commitId) { mutableStateOf<List<com.closecode.ui.git.DiffRow>?>(null) }
     var failed by remember(path, commitId) { mutableStateOf(false) }
     var binary by remember(path, commitId) { mutableStateOf(false) }
-    // Unified by default; side by side only on wide screens.
-    var unified by remember(path, commitId) { mutableStateOf(true) }
     var wrapLines by remember(path, commitId) { mutableStateOf(false) }
     var revealed by remember(path, commitId) { mutableStateOf(emptyMap<Int, Int>()) }
     var moreOpen by remember { mutableStateOf(false) }
-    var hint by remember(path, commitId) { mutableStateOf<String?>(null) }
-    val wide = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp >= 600
 
     LaunchedEffect(path, commitId) {
         val root = projectRoot
@@ -1730,39 +1723,9 @@ internal fun DiffScreen(
                 }
             }
         }
-        com.closecode.ui.components.AppSegmentedControl(
-            items = listOf(
-                com.closecode.ui.components.SegmentItem("Unified"),
-                com.closecode.ui.components.SegmentItem("Side by side"),
-            ),
-            selected = if (unified) 0 else 1,
-            onSelect = {
-                if (it == 1) {
-                    if (wide) {
-                        unified = false
-                        hint = null
-                    } else {
-                        hint = "Rotate to use side by side"
-                    }
-                } else {
-                    unified = true
-                    hint = null
-                }
-            },
-            modifier = Modifier.padding(horizontal = 12.dp),
-        )
-        hint?.let {
-            Text(
-                text = it,
-                color = c.textMuted,
-                fontSize = 12.sp,
-                fontFamily = Sans,
-                modifier = Modifier.padding(start = 16.dp, end = 14.dp, top = 6.dp),
-            )
-        }
         when {
             failed -> DiffNote("Could not read the diff.")
-            binary -> DiffNote("This file is not text, so there is nothing to show side by side.")
+            binary -> DiffNote("This file is not text, so there is nothing to show.")
             current == null -> DiffNote("Reading the diff…")
             current.isEmpty() -> DiffNote("No differences.")
             current.size > 5000 -> {
@@ -1782,7 +1745,7 @@ internal fun DiffScreen(
                     }
                 }
             }
-            unified -> {
+            else -> {
                 val unifiedRows = remember(current) { unify(current) }
                 val isNew = unifiedRows.all { it.oldNo == null } && unifiedRows.any { it.added }
                 val items = remember(unifiedRows, isNew, revealed) {
@@ -1826,34 +1789,6 @@ internal fun DiffScreen(
                                     },
                                 )
                             }
-                        }
-                    }
-                }
-            }
-            else -> {
-                // One sideways state per side: every row's cell shares its side's state, so a
-                // long line scrolled on one row stays readable while the rows move together.
-                val leftScroll = rememberScrollState()
-                val rightScroll = rememberScrollState()
-                LazyColumn(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxWidth(),
-                ) {
-                    items(current) { row ->
-                        Row(Modifier.fillMaxWidth()) {
-                            DiffCell(
-                                text = row.oldLine,
-                                changed = row.oldLine != row.newLine,
-                                isOld = true,
-                                scroll = leftScroll,
-                            )
-                            DiffCell(
-                                text = row.newLine,
-                                changed = row.oldLine != row.newLine,
-                                isOld = false,
-                                scroll = rightScroll,
-                            )
                         }
                     }
                 }
@@ -2052,24 +1987,49 @@ internal data class UnifiedRow(
 internal fun unify(rows: List<com.closecode.ui.git.DiffRow>): List<UnifiedRow> {
     var oldNo = 0
     var newNo = 0
-    return rows.map { row ->
-        if (row.oldLine != null) oldNo++
-        if (row.newLine != null) newNo++
-        val added = row.newLine != null && row.newLine != row.oldLine
-        val removed = row.oldLine != null && row.oldLine != row.newLine
-        UnifiedRow(
-            oldNo = row.oldLine?.let { oldNo },
-            newNo = row.newLine?.let { newNo },
+    val out = ArrayList<UnifiedRow>(rows.size)
+    rows.forEach { row ->
+        val old = row.oldLine
+        val new = row.newLine
+        if (old != null && new != null && old != new) {
+            oldNo++
+            out += UnifiedRow(
+                oldNo = oldNo,
+                newNo = null,
+                sign = '−',
+                text = old,
+                added = false,
+                removed = true,
+            )
+            newNo++
+            out += UnifiedRow(
+                oldNo = null,
+                newNo = newNo,
+                sign = '+',
+                text = new,
+                added = true,
+                removed = false,
+            )
+            return@forEach
+        }
+        if (old != null) oldNo++
+        if (new != null) newNo++
+        val added = old == null && new != null
+        val removed = old != null && new == null
+        out += UnifiedRow(
+            oldNo = old?.let { oldNo },
+            newNo = new?.let { newNo },
             sign = when {
                 added -> '+'
                 removed -> '−'
                 else -> ' '
             },
-            text = row.newLine ?: row.oldLine.orEmpty(),
+            text = new ?: old.orEmpty(),
             added = added,
             removed = removed,
         )
     }
+    return out
 }
 
 internal sealed interface DiffBlock {
@@ -3485,38 +3445,6 @@ private fun DiffNote(text: String) {
             color = c.textMuted,
             fontSize = 13.sp,
             fontFamily = Sans,
-        )
-    }
-}
-
-@Composable
-private fun RowScope.DiffCell(
-    text: String?,
-    changed: Boolean,
-    isOld: Boolean,
-    scroll: androidx.compose.foundation.ScrollState,
-) {
-    val c = LocalPageColors.current
-    val bg = when {
-        text == null -> c.fieldBg
-        !changed -> androidx.compose.ui.graphics.Color.Transparent
-        isOld -> c.statusDeletedBg
-        else -> c.statusAddedBg
-    }
-    Box(
-        Modifier
-            .weight(1f)
-            .background(bg)
-            .horizontalScroll(scroll)
-            .padding(horizontal = 8.dp, vertical = 3.dp),
-    ) {
-        Text(
-            text = text.orEmpty(),
-            color = if (text == null) c.textFaint else c.text,
-            fontSize = 11.sp,
-            fontFamily = Mono,
-            softWrap = false,
-            maxLines = 1,
         )
     }
 }

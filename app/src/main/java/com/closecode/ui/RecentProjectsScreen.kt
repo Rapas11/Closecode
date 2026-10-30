@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -42,10 +43,13 @@ fun RecentProjectsScreen(
     projects: List<RecentProject>,
     onOpen: (RecentProject) -> Unit,
     onDelete: (RecentProject) -> Unit,
+    onRename: (RecentProject, String) -> String?,
     onBack: () -> Unit,
 ) {
     val c = LocalPageColors.current
     var pendingDelete by remember { mutableStateOf<RecentProject?>(null) }
+    var pendingRename by remember { mutableStateOf<RecentProject?>(null) }
+    var actionTarget by remember { mutableStateOf<RecentProject?>(null) }
 
     Column(
         Modifier
@@ -114,15 +118,149 @@ fun RecentProjectsScreen(
                     .fillMaxWidth()
                     .padding(top = 18.dp),
             ) {
-                items(projects, key = { it.slug }) { project ->
+                items(projects, key = { it.id }) { project ->
                     RecentRow(
                         project = project,
                         onClick = { onOpen(project) },
-                        onDelete = { pendingDelete = project },
+                        onLongPress = { actionTarget = project },
                     )
                 }
             }
         }
+    }
+
+    val actions = actionTarget
+    if (actions != null) {
+        AlertDialog(
+            onDismissRequest = { actionTarget = null },
+            title = {
+                Text(
+                    text = actions.name,
+                    color = c.tx,
+                    fontSize = 17.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            },
+            text = {
+                Text(
+                    text = "Rename this project, or delete it and everything in its folder.",
+                    color = c.mu,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    actionTarget = null
+                    pendingRename = actions
+                }) {
+                    Text(
+                        text = "Rename",
+                        color = c.ac,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            },
+            dismissButton = {
+                Row {
+                    TextButton(onClick = {
+                        actionTarget = null
+                        pendingDelete = actions
+                    }) {
+                        Text(
+                            text = "Delete",
+                            color = c.red,
+                            fontSize = 15.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    TextButton(onClick = { actionTarget = null }) {
+                        Text(
+                            text = "Cancel",
+                            color = c.mu,
+                            fontSize = 15.sp,
+                            fontFamily = Sans,
+                        )
+                    }
+                }
+            },
+            containerColor = c.cd,
+        )
+    }
+
+    val renameTarget = pendingRename
+    var renameText by remember(renameTarget) {
+        mutableStateOf(renameTarget?.name.orEmpty())
+    }
+    var renameError by remember(renameTarget) { mutableStateOf<String?>(null) }
+    if (renameTarget != null) {
+        AlertDialog(
+            onDismissRequest = { pendingRename = null },
+            title = {
+                Text(
+                    text = "Rename project",
+                    color = c.tx,
+                    fontSize = 17.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            },
+            text = {
+                Column {
+                    OutlinedTextField(
+                        value = renameText,
+                        onValueChange = {
+                            renameText = it
+                            renameError = null
+                        },
+                        singleLine = true,
+                        label = { Text("Project name") },
+                    )
+                    renameError?.let { message ->
+                        Text(
+                            text = message,
+                            color = c.red,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val error = onRename(renameTarget, renameText)
+                    if (error == null) {
+                        pendingRename = null
+                    } else {
+                        renameError = error
+                    }
+                }) {
+                    Text(
+                        text = "Rename",
+                        color = c.ac,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRename = null }) {
+                    Text(
+                        text = "Cancel",
+                        color = c.mu,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                    )
+                }
+            },
+            containerColor = c.cd,
+        )
     }
 
     val target = pendingDelete
@@ -181,7 +319,7 @@ fun RecentProjectsScreen(
 fun RecentRow(
     project: RecentProject,
     onClick: () -> Unit,
-    onDelete: () -> Unit,
+    onLongPress: () -> Unit,
 ) {
     val c = LocalPageColors.current
     Row(
@@ -191,7 +329,7 @@ fun RecentRow(
             .clip(RoundedCornerShape(14.dp))
             .background(c.cd)
             .border(1.dp, c.ln, RoundedCornerShape(14.dp))
-            .combinedClickable(onClick = onClick, onLongClick = onDelete)
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {

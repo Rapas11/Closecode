@@ -38,7 +38,7 @@ class BuildEngine(
 
     suspend fun build(
         projectDir: File,
-        slug: String,
+        projectId: String,
         checkInput: ProjectCheck.Input = ProjectCheck.Input(),
         tools: BuildTools? = null,
         onLog: (String) -> Unit = {},
@@ -46,20 +46,20 @@ class BuildEngine(
     ): BuildOutcome {
         cancelled = false
         return BuildLock.mutex.withLock {
-            buildLocked(projectDir, slug, checkInput, tools, onLog, cacheEnabled)
+            buildLocked(projectDir, projectId, checkInput, tools, onLog, cacheEnabled)
         }
     }
 
     private suspend fun buildLocked(
         projectDir: File,
-        slug: String,
+        projectId: String,
         checkInput: ProjectCheck.Input,
         tools: BuildTools?,
         onLog: (String) -> Unit,
         cacheEnabled: Boolean,
     ): BuildOutcome = withContext(Dispatchers.IO) {
         _state.value = BuildState.Running(Step.CheckProject, 0f)
-        val report = ProjectCheck.check(projectDir, slug, checkInput)
+        val report = ProjectCheck.check(projectDir, projectId, checkInput)
         if (!report.ok) {
             _state.value = BuildState.Blocked(report.findings)
             return@withContext BuildOutcome.Blocked(report.findings)
@@ -96,7 +96,7 @@ class BuildEngine(
             null
         }
         if (cacheKey != null) {
-            val hit = cache?.lookup(slug, cacheKey)
+            val hit = cache?.lookup(projectId, cacheKey)
             if (hit != null) {
                 val output = File(projectDir, "build/outputs/apk/debug/app-debug.apk")
                 runCatching {
@@ -135,7 +135,7 @@ class BuildEngine(
         when {
             failure == null && result.apk != null -> {
                 val apk = result.apk!!
-                if (cacheKey != null) cache?.store(slug, cacheKey, apk)
+                if (cacheKey != null) cache?.store(projectId, cacheKey, apk)
                 _state.value = BuildState.Succeeded(apk, seconds, apk.length(), result.times)
                 BuildOutcome.Built(apk, apk.length(), seconds)
             }

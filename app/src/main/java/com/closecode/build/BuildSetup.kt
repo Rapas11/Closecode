@@ -15,6 +15,7 @@ data class BuildSetup(
         val slug: String,
         val name: String,
         val directory: File,
+        val id: String = slug,
         val savedPackage: String? = null,
         val savedMinSdk: Int? = null,
         val savedTargetSdk: Int? = null,

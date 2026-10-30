@@ -37,6 +37,8 @@ class FileKindMappingTest {
         assertEquals(FileKind.Html, kindOf("index.html"))
         assertEquals(FileKind.Css, kindOf("style.css"))
         assertEquals(FileKind.Markdown, kindOf("README.md"))
+        assertEquals(FileKind.Image, kindOf("screenshot.png"))
+        assertEquals(FileKind.Image, kindOf("photo.JPEG"))
     }
 
     @Test

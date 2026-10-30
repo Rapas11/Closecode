@@ -251,6 +251,7 @@ fun SheetFooter(
     hint: String,
     onCreate: () -> Unit,
     modifier: Modifier = Modifier,
+    error: String? = null,
     actionLabel: String = "Create project",
     showNameField: Boolean = true,
     secondaryLabel: String? = null,
@@ -365,6 +366,15 @@ fun SheetFooter(
             fontFamily = Sans,
             modifier = Modifier.fillMaxWidth(),
         )
+        error?.let {
+            Text(
+                text = it,
+                color = c.red,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 

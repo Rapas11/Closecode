@@ -23,6 +23,7 @@ fun rememberProjectRepository(): ProjectRepository {
 }
 
 fun ProjectRecord.toRecent(): RecentProject = RecentProject(
+    id = id,
     slug = slug,
     name = name,
     selection = SelectedTemplate(tab, templateIndex),
@@ -48,13 +49,20 @@ class RecentListState(
         projects = withContext(Dispatchers.IO) { repository.listProjects().map { it.toRecent() } }
     }
 
-    fun delete(slug: String) {
-        repository.delete(slug)
+    fun delete(id: String) {
+        repository.deleteById(id)
         refresh()
     }
 
-    fun open(slug: String): ProjectRecord? {
-        val record = repository.touch(slug)
+    fun rename(id: String, name: String): String? {
+        val result = runCatching { repository.renameById(id, name) }
+        refresh()
+        return result.exceptionOrNull()?.message
+            ?: if (result.getOrNull() == null) "That project no longer exists." else null
+    }
+
+    fun open(id: String): ProjectRecord? {
+        val record = repository.touchById(id)
         refresh()
         return record
     }
@@ -71,8 +79,9 @@ fun RecentProjectsRoute(
 
     RecentProjectsScreen(
         projects = state.projects,
-        onOpen = { project -> state.open(project.slug)?.let(onOpen) },
-        onDelete = { project -> state.delete(project.slug) },
+        onOpen = { project -> state.open(project.id)?.let(onOpen) },
+        onDelete = { project -> state.delete(project.id) },
+        onRename = { project, name -> state.rename(project.id, name) },
         onBack = onBack,
     )
 }

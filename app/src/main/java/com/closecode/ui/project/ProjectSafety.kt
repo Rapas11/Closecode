@@ -20,6 +20,9 @@ internal object ProjectSafety {
      *  trip the ANR watchdog, and the editor cannot render it anyway. */
     private const val MAX_READ_BYTES = 8L * 1024 * 1024
 
+    /** Images are decoded for Preview; a 32 MB source is already far past a phone-sized bitmap. */
+    const val MAX_IMAGE_BYTES = 32L * 1024 * 1024
+
     fun isSecretName(name: String): Boolean {
         val base = File(name).name
         return SecretPatterns.any { glob(it, base) }

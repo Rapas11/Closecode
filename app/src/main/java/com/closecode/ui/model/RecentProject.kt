@@ -4,6 +4,7 @@ import androidx.compose.runtime.Immutable
 
 @Immutable
 data class RecentProject(
+    val id: String,
     val slug: String,
     val name: String,
     val selection: SelectedTemplate,

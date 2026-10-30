@@ -92,6 +92,7 @@ class MainActivity : ComponentActivity() {
         // The debug log gets its file and its version line before anything can record an event.
         // The switch stays off — it is turned on per session, and every start begins off.
         DebugLog.attach(filesDir, BuildInfo.label)
+        com.closecode.device.ScreenshotStore.clear(applicationContext)
         CloseCodeControl.start(applicationContext)
         CrashReport.install(filesDir) { BuildInfo.label }
         // A crash leaves its report in a file; the next launch offers it up for copying or
@@ -177,7 +178,7 @@ class MainActivity : ComponentActivity() {
                 // never kill a running server just because the route changed.
                 val sessionHolders = remember { mutableMapOf<String, TerminalSessions>() }
                 val terminalSessions =
-                    sessionHolders.getOrPut(project?.slug ?: "") { TerminalSessions() }
+                    sessionHolders.getOrPut(project?.id ?: "") { TerminalSessions() }
                 // Set by the IDE as edits land; read when leaving it.
                 var ideDirty by rememberSaveable { mutableStateOf(false) }
 
@@ -232,20 +233,26 @@ class MainActivity : ComponentActivity() {
                                 onProjectCreated = { name, selection, templateName, config ->
                                     // Scaffold and register first. If setup is interrupted, the
                                     // project is already in Recents and can be opened again.
-                                    val record = repository.create(name, selection, config)
-                                    encoded = ProjectCodec.encode(
-                                        Project(
-                                            record.name,
-                                            selection,
-                                            templateName,
-                                            config,
-                                            slug = record.slug,
-                                        ),
-                                    )
-                                    if (selection.tab == TemplateTab.Web) {
-                                        nav.navigate("ide")
-                                    } else {
-                                        nav.navigate("project-setup")
+                                    runCatching {
+                                        val record = repository.create(name, selection, config)
+                                        encoded = ProjectCodec.encode(
+                                            Project(
+                                                record.name,
+                                                selection,
+                                                templateName,
+                                                config,
+                                                slug = record.slug,
+                                                id = record.id,
+                                            ),
+                                        )
+                                        if (selection.tab == TemplateTab.Web) {
+                                            nav.navigate("ide")
+                                        } else {
+                                            nav.navigate("project-setup")
+                                        }
+                                        null
+                                    }.getOrElse { failure ->
+                                        failure.message ?: "Could not create the project."
                                     }
                                 },
                                 // A clone already owns its directory and its record, so it carries
@@ -303,10 +310,11 @@ class MainActivity : ComponentActivity() {
                                 // inside the IDE swaps `project` while this route stays put, and
                                 // every per-project holder would otherwise carry the old
                                 // project's contents into the new.
-                                key(current.slug) {
+                                key(current.id) {
                                     IdeScreen(
                                         projectName = current.name,
                                         templateName = current.templateName,
+                                        projectId = current.id,
                                         slug = current.slug,
                                         repository = repository,
                                         tokenEpoch = githubTokenEpoch,
@@ -354,6 +362,7 @@ class MainActivity : ComponentActivity() {
             // The record's own id, not one re-derived from the name: a cloned project's folder is
             // named when the slug is reserved, and re-slugifying could point at a different one.
             slug = record.slug,
+            id = record.id,
         )
     )
 }

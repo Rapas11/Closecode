@@ -11,7 +11,7 @@ plugins {
 // The build number is raised for every APK handed to the user. The More sheet, every log
 // and every report print it beside the version name and the short commit, so whichever
 // APK is installed says which one it is. ("unknown" only when git is not reachable.)
-val closecodeBuild = 38
+val closecodeBuild = 39
 val closecodeGitCommit: String = runCatching {
     providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }
         .standardOutput.asText.get().trim()
@@ -106,6 +106,9 @@ dependencies {
     implementation("androidx.browser:browser:1.8.0")
 
     testImplementation("junit:junit:4.13.2")
+    // Project metadata and the permanent reservation registry are JSON on disk; the Android
+    // org.json stubs are not usable from plain JVM unit tests.
+    testImplementation("org.json:json:20240303")
 
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")

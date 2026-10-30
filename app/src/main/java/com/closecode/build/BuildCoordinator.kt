@@ -12,9 +12,20 @@ import kotlinx.coroutines.launch
 
 object BuildCoordinator {
 
-    data class Active(val slug: String, val name: String, val engine: BuildEngine)
+    data class Active(
+        val id: String,
+        val slug: String,
+        val name: String,
+        val engine: BuildEngine,
+    )
 
-    data class Last(val slug: String, val name: String, val outcome: BuildOutcome, val summary: String)
+    data class Last(
+        val id: String,
+        val slug: String,
+        val name: String,
+        val outcome: BuildOutcome,
+        val summary: String,
+    )
 
     private val engines = ConcurrentHashMap<String, BuildEngine>()
 
@@ -26,8 +37,8 @@ object BuildCoordinator {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    fun engine(context: Context, slug: String): BuildEngine =
-        engines.computeIfAbsent(slug) {
+    fun engine(context: Context, projectId: String): BuildEngine =
+        engines.computeIfAbsent(projectId) {
             val app = context.applicationContext
             BuildEngine(
                 ToolchainHolder.store(app),
@@ -53,13 +64,13 @@ object BuildCoordinator {
         onLog: (String) -> Unit = {},
         cacheEnabled: Boolean = true,
     ): BuildOutcome {
-        val engine = engine(context, project.slug)
+        val engine = engine(context, project.id)
         synchronized(this) {
             val running = active
             if (running != null) {
                 throw IllegalStateException("A build is already running for ${running.name}.")
             }
-            active = Active(project.slug, project.name, engine)
+            active = Active(project.id, project.slug, project.name, engine)
         }
         BuildService.start(context, project.name)
         BuildCancel.register { engine.cancel() }
@@ -81,26 +92,26 @@ object BuildCoordinator {
         try {
             val outcome = engine.build(
                 projectDir = project.directory,
-                slug = project.slug,
+                projectId = project.id,
                 checkInput = setup.checkInput,
                 tools = setup.tools,
                 onLog = onLog,
                 cacheEnabled = cacheEnabled,
             )
             val summary = BuildReport.summary(outcome)
-            last = Last(project.slug, project.name, outcome, summary)
+            last = Last(project.id, project.slug, project.name, outcome, summary)
             BuildService.finish(context, project.name, summary, outcome is BuildOutcome.Built)
             return outcome
         } catch (error: Throwable) {
             val outcome = BuildOutcome.Failed(error.message ?: error.javaClass.simpleName)
             val summary = BuildReport.summary(outcome)
-            last = Last(project.slug, project.name, outcome, summary)
+            last = Last(project.id, project.slug, project.name, outcome, summary)
             BuildService.finish(context, project.name, summary, false)
             throw error
         } finally {
             watcher.cancelAndJoin()
             synchronized(this) {
-                if (active?.slug == project.slug) active = null
+                if (active?.id == project.id) active = null
             }
         }
     }

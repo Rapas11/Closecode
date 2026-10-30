@@ -64,6 +64,7 @@ class OpenCodeService : Service() {
         // The foreground slot is gone, so the server should not keep running with no owner.
         // The Stop action already does this; this covers a service the system destroys.
         OpenCode.stop()
+        com.closecode.device.ScreenshotStore.clear(this)
         super.onDestroy()
     }
 
@@ -194,6 +195,9 @@ class OpenCodeService : Service() {
 class OpenCodeStopReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context?, intent: Intent?) {
         OpenCode.stop()
-        if (context != null) OpenCodeService.stop(context)
+        if (context != null) {
+            com.closecode.device.ScreenshotStore.clear(context)
+            OpenCodeService.stop(context)
+        }
     }
 }

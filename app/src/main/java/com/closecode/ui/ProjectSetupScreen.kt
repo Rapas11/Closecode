@@ -91,6 +91,7 @@ fun ProjectSetupScreen(
                             slug = project.slug,
                             name = project.name,
                             directory = repository.projectDir(project.slug),
+                            id = project.id,
                             savedPackage = project.config.packageName,
                             savedMinSdk = project.config.minSdk.toIntOrNull(),
                             savedTargetSdk = project.config.targetSdk.toIntOrNull(),

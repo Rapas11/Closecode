@@ -265,7 +265,7 @@ object CloseCodeControl {
             return error(error.message ?: error.javaClass.simpleName)
         }
         val store = ToolchainHolder.store(context)
-        val last = BuildCoordinator.last()?.takeIf { it.slug == project.slug }?.let { build ->
+        val last = BuildCoordinator.last()?.takeIf { it.id == project.id }?.let { build ->
             com.google.gson.JsonObject().apply {
                 addProperty("summary", build.summary)
                 add("result", BuildReport.outcome(build.outcome))
@@ -446,6 +446,7 @@ object CloseCodeControl {
         send(output, JsonObject().apply {
             addProperty("ok", true)
             addProperty("event", "start")
+            addProperty("id", resolved.id)
             addProperty("slug", resolved.slug)
             addProperty("project", resolved.name)
             addProperty("build", BuildConfig.VERSION_CODE)
@@ -500,6 +501,7 @@ object CloseCodeControl {
             addProperty("ok", true)
             addProperty("running", active != null)
             if (active != null) {
+                addProperty("id", active.id)
                 addProperty("slug", active.slug)
                 addProperty("project", active.name)
                 add("state", BuildReport.state(active.engine.state.value))
@@ -515,6 +517,7 @@ object CloseCodeControl {
                 add("state", BuildReport.state(BuildState.Idle))
                 if (last != null) {
                     add("last", JsonObject().apply {
+                        addProperty("id", last.id)
                         addProperty("slug", last.slug)
                         addProperty("project", last.name)
                         addProperty("summary", last.summary)
@@ -567,14 +570,12 @@ object CloseCodeControl {
             slug = record.slug,
             name = record.name,
             directory = directory,
+            id = record.id,
             savedPackage = configured?.packageName?.takeIf { it.isNotBlank() },
             savedMinSdk = configured?.minSdk?.toIntOrNull(),
             savedTargetSdk = configured?.targetSdk?.toIntOrNull(),
             savedCompileSdk = configured?.compileSdk?.toIntOrNull(),
-            otherPackages = records
-                .filter { it.slug != record.slug }
-                .mapNotNull { runCatching { repository.packageOf(it) }.getOrNull() }
-                .toSet(),
+            otherPackages = repository.reservedPackages(record.id),
         )
     }
 

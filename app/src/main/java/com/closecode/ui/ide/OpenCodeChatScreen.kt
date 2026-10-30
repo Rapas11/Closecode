@@ -62,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.closecode.ai.OpenCodePageLog
+import com.closecode.ai.OpenCodeSessions
 import com.closecode.ai.isRestorableOpenCodePage
 import com.closecode.ai.openCodePagePath
 import com.closecode.ai.openCodePageUrl
@@ -94,6 +95,7 @@ fun OpenCodeChatScreen(
     baseUrl: String,
     projectUrl: String,
     projectDirectory: String,
+    sessionId: String = "",
     generation: Int = 0,
     onBack: () -> Unit,
     onAuthenticate: () -> Unit,
@@ -103,6 +105,9 @@ fun OpenCodeChatScreen(
     val context = LocalContext.current
     val holder = remember { WebViewHolder() }
     fun pageTarget(): PageTarget {
+        if (baseUrl.isNotBlank() && sessionId.isNotBlank()) {
+            return PageTarget(OpenCodeSessions.sessionPageUrl(baseUrl, sessionId), false)
+        }
         val saved = savedPagePath(context, baseUrl, projectDirectory)
         if (saved != null) return PageTarget(openCodePageUrl(baseUrl, saved), false)
         if (baseUrl.isBlank() || projectUrl.isBlank()) {
@@ -110,7 +115,7 @@ fun OpenCodeChatScreen(
         }
         return PageTarget(openCodePageUrl(baseUrl, "/") + RESUME_QUERY, true)
     }
-    val initialTarget = remember(baseUrl, projectUrl, projectDirectory) { pageTarget() }
+    val initialTarget = remember(baseUrl, projectUrl, projectDirectory, sessionId) { pageTarget() }
     var currentUrl by remember { mutableStateOf(initialTarget.url) }
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
     val fileLauncher = rememberLauncherForActivityResult(
@@ -140,11 +145,12 @@ fun OpenCodeChatScreen(
     // new-session route, which creates a session the reader never asked for.
     BackHandler { onBack() }
 
-    LaunchedEffect(baseUrl, projectUrl, projectDirectory, generation) {
+    LaunchedEffect(baseUrl, projectUrl, projectDirectory, sessionId, generation) {
         val view = holder.view ?: return@LaunchedEffect
         if (holder.baseUrl == baseUrl &&
             holder.projectUrl == projectUrl &&
             holder.projectDirectory == projectDirectory &&
+            holder.sessionId == sessionId &&
             holder.generation == generation
         ) {
             return@LaunchedEffect
@@ -153,6 +159,7 @@ fun OpenCodeChatScreen(
         holder.baseUrl = baseUrl
         holder.projectUrl = projectUrl
         holder.projectDirectory = projectDirectory
+        holder.sessionId = sessionId
         holder.generation = generation
         holder.bootstrap = target.bootstrap
         currentUrl = target.url
@@ -234,6 +241,7 @@ fun OpenCodeChatScreen(
                         holder.baseUrl = baseUrl
                         holder.projectUrl = projectUrl
                         holder.projectDirectory = projectDirectory
+                        holder.sessionId = sessionId
                         holder.generation = generation
                         holder.bootstrap = target.bootstrap
                         settings.javaScriptEnabled = true
@@ -510,6 +518,7 @@ private class WebViewHolder {
     var baseUrl: String = ""
     var projectUrl: String = ""
     var projectDirectory: String = ""
+    var sessionId: String = ""
     var generation: Int = -1
     var bootstrap: Boolean = false
 }

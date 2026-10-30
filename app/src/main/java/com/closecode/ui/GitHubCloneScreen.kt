@@ -299,6 +299,9 @@ fun GitHubCloneScreen(
                             }
                         }
 
+                        val folderTaken = remember(folder) {
+                            folder.isNotBlank() && repository.folderTaken(folder)
+                        }
                         CloneForm(
                             link = link,
                             onLink = { link = it },
@@ -308,9 +311,7 @@ fun GitHubCloneScreen(
                                 folder = it
                                 folderTouched = true
                             },
-                            folderTaken = remember(folder) {
-                                folder.isNotBlank() && repository.folderTaken(folder)
-                            },
+                            folderTaken = folderTaken,
                             onPaste = {
                                 scope.launch {
                                     clipboard.getText()?.text?.trim()?.takeIf { it.isNotEmpty() }
@@ -318,7 +319,7 @@ fun GitHubCloneScreen(
                                 }
                             },
                             canClone = cloneLinkError(link) == null && link.isNotBlank() &&
-                                folder.isNotBlank(),
+                                folder.isNotBlank() && !folderTaken,
                             onClone = {
                                 keyboard?.hide()
                                 startClone(folder, link, token)
@@ -554,7 +555,7 @@ private fun CloneForm(
         )
         if (folderTaken) {
             Text(
-                text = "The folder already exists",
+                text = "That project name or folder is already taken.",
                 color = c.error,
                 fontSize = 12.sp,
                 fontFamily = Sans,

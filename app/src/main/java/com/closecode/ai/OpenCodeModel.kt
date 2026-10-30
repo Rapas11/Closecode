@@ -42,11 +42,15 @@ data class OpenCodeStatus(
     val phase: OpenCodePhase = OpenCodePhase.Idle,
     val projectName: String = "",
     val projectFolder: String = "",
+    /** UUID of the project this server is bound to. Empty while idle. */
+    val projectId: String = "",
     /** Absolute path of the project this server is bound to. Empty while idle. */
     val projectDirectory: String = "",
     val url: String = "",
     /** The server URL that opens this project, not the home screen. Empty until the port is known. */
     val pageUrl: String = "",
+    /** The root OpenCode session reserved for this project. Empty when it could not be opened. */
+    val sessionId: String = "",
     val version: String = "",
     val port: Int = OpenCodeDefaults.PORT,
     /** The log, oldest first. */

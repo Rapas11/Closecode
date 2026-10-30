@@ -79,6 +79,7 @@ internal object ProjectDescription {
         last: JsonObject? = null,
     ): JsonObject = JsonObject().apply {
         addProperty("ok", true)
+        addProperty("id", project.id)
         addProperty("slug", project.slug)
         addProperty("name", project.name)
         addProperty("directory", project.directory.absolutePath)

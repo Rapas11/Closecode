@@ -75,6 +75,7 @@ class ForgeUiSpecTest {
         // Images are recognised by extension, because the decoder never sees the FileKind first.
         assertTrue(isPreviewable(null, "screenshot.png"))
         assertTrue(isPreviewable(FileKind.Unknown, "photo.webp"))
+        assertTrue(isPreviewable(FileKind.Image, "screenshot.png"))
     }
 
     @Test

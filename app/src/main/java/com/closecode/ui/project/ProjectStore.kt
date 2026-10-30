@@ -38,6 +38,11 @@ class ProjectStore(context: Context) {
         val file = ProjectSafety.resolveInProject(projectDir(slug), relative)
         ProjectSafety.ensureWritable(file)
         if (!file.isFile) throw ProjectPathException("Not a file: $relative")
+        if (file.length() > ProjectSafety.MAX_IMAGE_BYTES) {
+            throw ProjectPathException(
+                "${file.name} is too large to preview (${file.length() / 1_048_576} MB).",
+            )
+        }
         return file.readBytes()
     }
 
@@ -204,19 +209,25 @@ internal fun projectEntry(relative: String, isFolder: Boolean): ProjectFile {
     )
 }
 
-internal fun kindOf(name: String): FileKind = when {
-    name.endsWith(".kt") || name.endsWith(".kts") -> FileKind.Kotlin
-    name.endsWith(".xml") -> FileKind.Xml
-    name.endsWith(".html") -> FileKind.Html
-    name.endsWith(".css") -> FileKind.Css
-    name.endsWith(".js") -> FileKind.Js
-    name.endsWith(".json") -> FileKind.Json
-    name.endsWith(".csv") -> FileKind.Csv
-    name.endsWith(".md") -> FileKind.Markdown
-    name.endsWith(".gradle") -> FileKind.Gradle
-    // Anything without a recognised extension gets no badge. Treating it as Gradle made
-    // files like .gitkeep render with a red "G".
-    else -> FileKind.Unknown
+internal fun kindOf(name: String): FileKind {
+    val lower = name.lowercase()
+    return when {
+        lower.endsWith(".kt") || lower.endsWith(".kts") -> FileKind.Kotlin
+        lower.endsWith(".xml") -> FileKind.Xml
+        lower.endsWith(".html") -> FileKind.Html
+        lower.endsWith(".css") -> FileKind.Css
+        lower.endsWith(".js") -> FileKind.Js
+        lower.endsWith(".json") -> FileKind.Json
+        lower.endsWith(".csv") -> FileKind.Csv
+        lower.endsWith(".md") -> FileKind.Markdown
+        lower.endsWith(".gradle") -> FileKind.Gradle
+        lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") ||
+            lower.endsWith(".webp") || lower.endsWith(".gif") || lower.endsWith(".bmp") ->
+            FileKind.Image
+        // Anything without a recognised extension gets no badge. Treating it as Gradle made
+        // files like .gitkeep render with a red "G".
+        else -> FileKind.Unknown
+    }
 }
 
 internal fun languageOf(name: String): String = when {

@@ -345,7 +345,7 @@ class GitService(private val root: File) {
     /**
      * One file's bytes at two points in history: the commit itself and its first parent.
      * Null means "no such file there" — added files have no parent side, deleted files
-     * have no commit side. The pair feeds the same side-by-side diff as the working tree.
+     * have no commit side. The pair feeds the same unified diff as the working tree.
      */
     fun commitFileContents(id: String, relativePath: String): Result<Pair<ByteArray?, ByteArray?>> =
         runCatching {
@@ -612,11 +612,11 @@ class GitService(private val root: File) {
     }
 }
 
-/** One aligned row of a side-by-side diff. A missing side is an added or removed line. */
+/** One aligned row of the diff. A missing side is an added or removed line. */
 internal data class DiffRow(val oldLine: String?, val newLine: String?)
 
 /**
- * Aligns two file texts for a side-by-side diff, row by row. Changed blocks pair up line for
+ * Aligns two file texts for a unified diff, row by row. Changed blocks pair up line for
  * line first (so a one-word edit reads as one row), and only the leftover lines go one-sided.
  * Line lists come from the same [RawText] objects the diff runs on, so the edit indices can
  * never point past them no matter how the text ends. Capped at [maxRows] for very large files.

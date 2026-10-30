@@ -54,14 +54,19 @@ class SplitDiffTest {
     }
 
     @Test
-    fun unifyNumbersBothSides() {
+    fun aReplacementBecomesOneRemovedRowThenOneAddedRow() {
         val rows = com.closecode.ui.ide.unify(splitDiff("a\nb\n", "a\nB\n"))
-        assertEquals(2, rows.size)
+        assertEquals(3, rows.size)
         assertEquals(1 to 1, (rows[0].oldNo to rows[0].newNo))
         assertEquals(' ', rows[0].sign)
-        assertEquals(2 to 2, (rows[1].oldNo to rows[1].newNo))
-        assertEquals('+', rows[1].sign)
-        assertTrue(rows[1].added && rows[1].removed)
+        assertEquals(2 to null, (rows[1].oldNo to rows[1].newNo))
+        assertEquals('−', rows[1].sign)
+        assertEquals("b", rows[1].text)
+        assertTrue(rows[1].removed && !rows[1].added)
+        assertEquals(null to 2, (rows[2].oldNo to rows[2].newNo))
+        assertEquals('+', rows[2].sign)
+        assertEquals("B", rows[2].text)
+        assertTrue(rows[2].added && !rows[2].removed)
     }
 
     @Test

@@ -119,14 +119,14 @@ class ProjectCheckTest {
     }
 
     @Test
-    fun anotherProjectWithTheSamePackageWarns() {
+    fun anotherProjectWithTheSamePackageBlocksTheBuild() {
         template()
         val report = report(otherPackages = setOf("com.closecode.biz"))
-        assertTrue(report.ok)
+        assertFalse(report.ok)
         assertTrue(
-            report.warnings.any {
+            report.errors.any {
                 it.message ==
-                    "Another project uses this package. Installing this app would replace that one."
+                    "Another project uses this package. Choose a different package name."
             },
         )
     }

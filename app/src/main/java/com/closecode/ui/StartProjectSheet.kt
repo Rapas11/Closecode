@@ -49,7 +49,7 @@ fun StartProjectSheet(
     recentCount: Int,
     onOpenRecent: () -> Unit,
     onDismiss: () -> Unit,
-    onCreate: (name: String, selection: SelectedTemplate, config: ProjectConfig) -> Unit,
+    onCreate: (name: String, selection: SelectedTemplate, config: ProjectConfig) -> String?,
 ) {
     val c = LocalPageColors.current
     val screenWidth = LocalConfiguration.current.screenWidthDp
@@ -63,6 +63,7 @@ fun StartProjectSheet(
     var selectedTab by rememberSaveable { mutableStateOf("") }
     var name by rememberSaveable { mutableStateOf("") }
     var configEncoded by rememberSaveable { mutableStateOf(ProjectConfig().encode()) }
+    var createError by rememberSaveable { mutableStateOf<String?>(null) }
 
 
     val currentStep = Step.valueOf(step)
@@ -142,6 +143,7 @@ fun StartProjectSheet(
                             selectedIndex = index
                             selectedTab = tab.name
                             name = Templates[tab].orEmpty()[index].name
+                            createError = null
                             configEncoded = ProjectConfig(
                                 packageName = defaultPackageName(name)
                             ).encode()
@@ -156,8 +158,12 @@ fun StartProjectSheet(
 
                     SheetFooter(
                         name = name,
-                        onNameChange = { name = it },
+                        onNameChange = {
+                            name = it
+                            createError = null
+                        },
                         canCreate = canContinue,
+                        error = createError,
                         hint = if (canContinue) {
                             "${tab.noun} · ${current?.name} · ${current?.tags}"
                         } else {
@@ -178,7 +184,10 @@ fun StartProjectSheet(
                 } else {
                     ConfigForm(
                         config = config,
-                        onConfigChange = { configEncoded = it.encode() },
+                        onConfigChange = {
+                            configEncoded = it.encode()
+                            createError = null
+                        },
                         webProject = webProject,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -191,6 +200,7 @@ fun StartProjectSheet(
                         onNameChange = {},
                         canCreate = selected != null,
                         showNameField = false,
+                        error = createError,
                         hint = if (current != null) {
                             "${current.name} · ${current.tags}"
                         } else {
@@ -201,7 +211,7 @@ fun StartProjectSheet(
                         onSecondary = { step = Step.Pick.name },
                         onCreate = {
                             if (selected != null) {
-                                onCreate(name, selected, config)
+                                createError = onCreate(name, selected, config)
                             }
                         },
                     )

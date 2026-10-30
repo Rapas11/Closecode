@@ -191,6 +191,8 @@ import java.io.File
 @Composable
 internal fun IdeScreen(
     projectName: String,
+    // The permanent identity. Slugs name folders; this names the project across renames.
+    projectId: String,
     // Held by MainActivity rather than created here, so the shells outlive the settings screen.
     terminalSessions: TerminalSessions,
     templateName: String, // kept for the project record; the header shows the project name
@@ -241,18 +243,18 @@ internal fun IdeScreen(
     }
     var collapsedFolders by remember(slug) {
         mutableStateOf(
-            kvStore.getString("collapsed_$slug", null).orEmpty()
+            kvStore.getString("collapsed_$projectId", null).orEmpty()
                 .split('\u001F').filter { it.isNotEmpty() }.toSet(),
         )
     }
     LaunchedEffect(slug, collapsedFolders) {
-        kvStore.putString("collapsed_$slug", collapsedFolders.joinToString(""))
+        kvStore.putString("collapsed_$projectId", collapsedFolders.joinToString(""))
     }
     // Folders start closed: on the first open of a project (no stored choice yet) every
     // folder collapses once the tree loads, so the reader opens only what they need.
     // The choice persists afterwards, so reopening a folder survives relaunches.
     // Captured before the write-back above ever runs, so first-run detection survives it.
-    val hadStoredCollapsed = remember(slug) { kvStore.getString("collapsed_$slug", null) != null }
+    val hadStoredCollapsed = remember(slug) { kvStore.getString("collapsed_$projectId", null) != null }
     var collapsedSeeded by remember(slug) { mutableStateOf(false) }
     LaunchedEffect(slug, diskTree) {
         if (!collapsedSeeded && !hadStoredCollapsed && diskTree.isNotEmpty()) {
@@ -266,14 +268,14 @@ internal fun IdeScreen(
     // and scroll. Entries use the unit separator like the collapsed set; a corrupt value parses
     // to nothing rather than to a tab that does not exist.
     val restoredTabNames = remember(slug) {
-        kvStore.getString("restore_tabs_$slug", null).orEmpty()
+        kvStore.getString("restore_tabs_$projectId", null).orEmpty()
             .split('').filter { it.isNotEmpty() }
     }
     val restoredActive = remember(slug) {
-        kvStore.getString("restore_active_$slug", null)?.takeIf { it.isNotEmpty() }
+        kvStore.getString("restore_active_$projectId", null)?.takeIf { it.isNotEmpty() }
     }
     val restoredCaret = remember(slug) {
-        kvStore.getString("restore_caret_$slug", null).orEmpty()
+        kvStore.getString("restore_caret_$projectId", null).orEmpty()
             .split('').mapNotNull { entry ->
                 val (name, at) = entry.split('', limit = 2).let {
                     it.getOrElse(0) { "" } to it.getOrNull(1)?.toIntOrNull()
@@ -282,7 +284,7 @@ internal fun IdeScreen(
             }.toMap()
     }
     val restoredScroll = remember(slug) {
-        kvStore.getString("restore_scroll_$slug", null).orEmpty()
+        kvStore.getString("restore_scroll_$projectId", null).orEmpty()
             .split('').mapNotNull { entry ->
                 val parts = entry.split('', limit = 2)
                 val counts = parts.getOrNull(1)?.split(',')?.mapNotNull { it.toIntOrNull() }
@@ -295,16 +297,16 @@ internal fun IdeScreen(
     }
     fun persistSession() {
         if (tabs.isEmpty()) return
-        kvStore.putString("restore_tabs_$slug", tabs.joinToString("") { it.path })
-        kvStore.putString("restore_active_$slug", active)
+        kvStore.putString("restore_tabs_$projectId", tabs.joinToString("") { it.path })
+        kvStore.putString("restore_active_$projectId", active)
     }
     fun persistPlaces(caret: Map<String, Int>, scroll: Map<String, Pair<Int, Int>>) {
         kvStore.putString(
-            "restore_caret_$slug",
+            "restore_caret_$projectId",
             caret.entries.joinToString("") { "${it.key}${it.value}" },
         )
         kvStore.putString(
-            "restore_scroll_$slug",
+            "restore_scroll_$projectId",
             scroll.entries.joinToString("") { "${it.key}${it.value.first},${it.value.second}" },
         )
     }
@@ -402,7 +404,7 @@ internal fun IdeScreen(
     // writes it back when it re-authenticates, so the hand-off is just "open it" and there is no
     // second copy of the token to fall out of date.
     var cloneOpen by remember { mutableStateOf(false) }
-    // A side-by-side diff opened from the Source Control tab. Full-screen over everything,
+    // A unified diff opened from the Source Control tab. Full-screen over everything,
     // like the clone route, because a two-column diff has no business inside the drawer.
     var diffPath by remember { mutableStateOf<String?>(null) }
     // A commit's before/after diff opened from a History row. Same full-screen treatment:
@@ -452,7 +454,7 @@ internal fun IdeScreen(
     var installTargetPackage by remember { mutableStateOf("") }
     var installedPackage by remember { mutableStateOf<String?>(null) }
     // One engine per project: the chain reports its seven steps through this stream.
-    val buildEngine = remember(slug) {
+    val buildEngine = remember(projectId) {
         com.closecode.build.BuildEngine(
             com.closecode.build.ToolchainHolder.store(context),
             com.closecode.build.BuildCache(java.io.File(context.cacheDir, "build-cache")),
@@ -1021,10 +1023,7 @@ internal fun IdeScreen(
                     savedMinSdk = templateValue?.config?.minSdk?.toIntOrNull(),
                     savedTargetSdk = templateValue?.config?.targetSdk?.toIntOrNull(),
                     savedCompileSdk = templateValue?.config?.compileSdk?.toIntOrNull(),
-                    otherPackages = repository.listProjects()
-                        .filter { it.slug != slug }
-                        .mapNotNull { runCatching { repository.packageOf(it) }.getOrNull() }
-                        .toSet(),
+                    otherPackages = repository.reservedPackages(projectId),
                     freeBytes = context.filesDir.usableSpace,
                 )
                 val shown = templateValue?.config?.packageName
@@ -1215,7 +1214,7 @@ internal fun IdeScreen(
         // A cached empty copy is not proof that the file is empty: the first read can land
         // before the template's own write finishes, or before an outside edit. Re-read in that
         // case so opening the file recovers instead of showing a stale "Empty file".
-        if (diskContents[file.path].isNullOrEmpty()) {
+        if (file.kind != FileKind.Image && diskContents[file.path].isNullOrEmpty()) {
             // Off the main thread: this runs from a tap on a drawer row, and a cold read of a big
             // file used to be the frame that opened it. The tab shows nothing until it lands rather
             // than freezing — and a freshly opened buffer is never dirty, so no dot flashes.
@@ -1556,6 +1555,7 @@ internal fun IdeScreen(
         val setup = com.closecode.build.BuildSetupFactory.create(
             context,
             com.closecode.build.BuildSetup.Project(
+                id = projectId,
                 slug = slug,
                 name = projectName,
                 directory = projectRoot,
@@ -1563,15 +1563,12 @@ internal fun IdeScreen(
                 savedMinSdk = configured?.config?.minSdk?.toIntOrNull(),
                 savedTargetSdk = configured?.config?.targetSdk?.toIntOrNull(),
                 savedCompileSdk = configured?.config?.compileSdk?.toIntOrNull(),
-                otherPackages = repository.listProjects()
-                    .filter { it.slug != slug }
-                    .mapNotNull { runCatching { repository.packageOf(it) }.getOrNull() }
-                    .toSet(),
+                otherPackages = repository.reservedPackages(projectId),
             ),
         )
         val outcome = buildEngine.build(
             projectRoot,
-            slug,
+            projectId,
             setup.checkInput,
             setup.tools,
             cacheEnabled = settings.buildCache,
@@ -1961,6 +1958,7 @@ internal fun IdeScreen(
                     IdeFullPageBar(title = "AI", onBack = ::handleBackPress)
                     OpenCodeTab(
                         projectName = projectName,
+                        projectId = projectId,
                         projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                         onChat = { openCodeChat = true },
                         onAuthenticate = ::authenticateOpenCode,
@@ -2138,9 +2136,8 @@ internal fun IdeScreen(
                 )
                 "Terminal" -> IdeTerminal(
                     projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
-                    // The slug is the history key: commands are remembered per project, and the
-                    // store needs something to tell one project's list from another's.
-                    projectSlug = slug,
+                    // The UUID is the history key: a rename must not split a project's commands.
+                    projectSlug = projectId,
                     projectName = projectName,
                     // The holder came from above the screen switch, so this panel owns the draw but
                     // not the shells: leaving the terminal and coming back finds the same processes
@@ -2317,11 +2314,11 @@ internal fun IdeScreen(
                                     initialScroll = restoredScroll,
                                     onPlaceChange = { caret, scroll ->
                                         kvStore.putString(
-                                            "restore_caret_$slug",
+                                            "restore_caret_$projectId",
                                             caret.entries.joinToString("") { "${it.key}${it.value}" },
                                         )
                                         kvStore.putString(
-                                            "restore_scroll_$slug",
+                                            "restore_scroll_$projectId",
                                             scroll.entries.joinToString("") {
                                                 "${it.key}${it.value.first},${it.value.second}"
                                             },
@@ -2585,7 +2582,7 @@ internal fun IdeScreen(
             // hits until it does.
             val searchSources by produceState(
                 initialValue = emptyList(),
-                key1 = slug,
+                key1 = projectId,
                 key2 = treeVersion,
             ) {
                 val files = diskTree.filter { it.kind != FileKind.Folder }
@@ -2968,6 +2965,7 @@ internal fun IdeScreen(
                 baseUrl = openCode.url,
                 projectUrl = openCode.pageUrl,
                 projectDirectory = openCode.projectDirectory,
+                sessionId = openCode.sessionId,
                 generation = openCode.generation,
                 onBack = { openCodeChat = false },
                 onAuthenticate = {
@@ -3366,6 +3364,7 @@ internal val PreviewableKinds = setOf(
     FileKind.Xml,
     FileKind.Csv,
     FileKind.Markdown,
+    FileKind.Image,
 )
 
 private val PreviewableExtensions = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp")
@@ -3717,7 +3716,7 @@ private fun IdeExplorer(
     onCloneRequest: () -> Unit,
     // Staged plus unstaged plus untracked: the Source Control tab's count bubble.
     changeCount: Int,
-    // Opens a side-by-side diff of the tapped change row. The route lives at screen level.
+    // Opens a unified diff of the tapped change row. The route lives at screen level.
     onDiff: (String) -> Unit = {},
     // Opens a commit's before/after diff of one history file. Same routing.
     onCommitDiff: (commitId: String, path: String) -> Unit = { _, _ -> },
@@ -4709,6 +4708,9 @@ formatRequest: Int = 0,
     LaunchedEffect(cursor) { onCaretChange(foldMap.sourceAt(cursor)) }
 
     var codeLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+    // The widest line the visible slice actually needs. The transparent field must be at least
+    // this wide or it wraps where the drawn Text does not, and a tap maps to the wrong character.
+    var codeContentWidthPx by remember { mutableStateOf(0f) }
     // The slice the current layout was measured from. A tap can bump the follow sequence before
     // the renderer has laid out the new window, and reading the old layout with the new window
     // would clamp the caret to the wrong character and scroll the code sideways for no reason.
@@ -5986,7 +5988,16 @@ val applySuggestion: (Int) -> Unit = { index ->
                             // The code area is at least as wide as the visible column, so a tap on
                             // the empty space to the right of a short line still reaches the text
                             // field and focuses the editor.
-                            .widthIn(min = with(androidx.compose.ui.platform.LocalDensity.current) { codeWidthPx.toDp() })
+                            .width(
+                                with(androidx.compose.ui.platform.LocalDensity.current) {
+                                    maxOf(
+                                        codeWidthPx,
+                                        codeContentWidthPx +
+                                            columnStart.toPx() +
+                                            CodeLeftInset.toPx(),
+                                    ).toDp()
+                                },
+                            )
                             .height(codeColumnHeight)
                             // Spec 6.3: the code column starts one inset past the gutter divider,
                             // and every overlay inside it reads x from that same origin.
@@ -6076,6 +6087,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                             // pills and bulb drift away from the code.
                             onTextLayout = {
                                 codeLayout = it
+                                codeContentWidthPx = it.size.width.toFloat()
                                 codeLayoutWindowStart = codeWindow.startOffset
                                 codeLayoutWindowEnd = codeWindow.startOffset + it.layoutInput.text.length
                             },

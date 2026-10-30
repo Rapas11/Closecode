@@ -30,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import com.closecode.ai.OpenCodeBinary
 import com.closecode.ai.OpenCodeRuntime
 import com.closecode.build.ToolchainDownloadService
@@ -65,6 +67,8 @@ fun OnboardingScreen(onDone: () -> Unit) {
     val c = LocalPageColors.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var showWelcome by rememberSaveable { mutableStateOf(true) }
+    var focusStep by rememberSaveable { mutableStateOf<Int?>(null) }
 
     val toolchainStore = remember(context) { ToolchainHolder.store(context) }
     val buildState by toolchainStore.state.collectAsState()
@@ -95,6 +99,10 @@ fun OnboardingScreen(onDone: () -> Unit) {
     var aiSkipped by remember { mutableStateOf(false) }
 
     var buildSkipped by remember { mutableStateOf(false) }
+    val buildBusy = buildState is ToolchainState.Downloading ||
+        buildState is ToolchainState.Verifying ||
+        buildState is ToolchainState.Checking
+    val setupBusy = buildBusy || shellBusy || aiBusy
 
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -174,6 +182,12 @@ fun OnboardingScreen(onDone: () -> Unit) {
                 .padding(horizontal = 20.dp, vertical = 28.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            if (showWelcome) {
+                WelcomePanel(
+                    onStart = { showWelcome = false },
+                    onSkip = onDone,
+                )
+            } else {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -235,6 +249,8 @@ fun OnboardingScreen(onDone: () -> Unit) {
                 description = "Kotlin, Java, dex and the signer. After this, builds work offline.",
                 ready = buildReady,
                 skipped = buildSkipped,
+                busy = buildBusy,
+                onFocus = { focusStep = 1 },
                 status = when (val state = buildState) {
                     is ToolchainState.Downloading -> {
                         val percent = if (state.totalBytes > 0) {
@@ -355,6 +371,8 @@ fun OnboardingScreen(onDone: () -> Unit) {
                 description = "Git, Python, Node, curl, zip and jq in the terminal. Optional.",
                 ready = shellReady,
                 skipped = shellSkipped,
+                busy = shellBusy,
+                onFocus = { focusStep = 2 },
                 status = when {
                     shellReady -> "Ready"
                     shellBusy -> "Installing"
@@ -407,6 +425,8 @@ fun OnboardingScreen(onDone: () -> Unit) {
                     "CloseCode downloads it now so the first chat starts faster.",
                 ready = aiReady,
                 skipped = aiSkipped,
+                busy = aiBusy,
+                onFocus = { focusStep = 3 },
                 status = when {
                     aiReady -> "Ready"
                     aiBusy -> "Downloading"
@@ -457,16 +477,224 @@ fun OnboardingScreen(onDone: () -> Unit) {
             }
 
             Spacer(Modifier.height(26.dp))
-            PrimaryButton(label = "Finish setup", onClick = onDone)
+            PrimaryButton(
+                label = "Finish setup",
+                onClick = onDone,
+                enabled = !setupBusy,
+            )
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "You can return to these downloads from Settings > Setup guide.",
+                text = if (setupBusy) {
+                    "Finish setup is available when the active download stops."
+                } else {
+                    "You can return to these downloads from Settings > Setup guide."
+                },
                 color = c.textFaint,
                 fontSize = 12.sp,
                 fontFamily = Sans,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
             Spacer(Modifier.height(18.dp))
+            }
+        }
+    }
+
+    focusStep?.let { step ->
+        FocusPanel(
+            step = step,
+            buildState = buildState,
+            shellProgress = shellProgress,
+            aiProgress = aiProgress,
+            aiStage = aiStage,
+            onDismiss = { focusStep = null },
+        )
+    }
+}
+
+@Composable
+private fun WelcomePanel(onStart: () -> Unit, onSkip: () -> Unit) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(c.brightText),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "C",
+                    color = c.bg,
+                    fontSize = 15.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+            Spacer(Modifier.size(9.dp))
+            Text(
+                text = "Closecode",
+                color = c.brightText,
+                fontSize = 18.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+            )
+        }
+        TextLink(label = "Skip all", onClick = onSkip, color = c.textMuted)
+    }
+
+    Spacer(Modifier.height(54.dp))
+    Text(
+        text = "Build apps\non your phone",
+        color = c.brightText,
+        fontSize = 36.sp,
+        lineHeight = 40.sp,
+        fontFamily = Sans,
+        fontWeight = FontWeight.Bold,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+    )
+    Spacer(Modifier.height(14.dp))
+    Text(
+        text = "An editor, terminal, build tools and an AI assistant, together in one place. " +
+            "Three optional downloads get the phone ready.",
+        color = c.textMuted,
+        fontSize = 14.sp,
+        lineHeight = 21.sp,
+        fontFamily = Sans,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+    )
+    Spacer(Modifier.height(34.dp))
+    ScreenCard {
+        WelcomeLine("1", "Build tools", "Compile Kotlin and Java apps offline.")
+        Spacer(Modifier.height(14.dp))
+        WelcomeLine("2", "Shell tools", "Git, Python, Node and the usual terminal commands.")
+        Spacer(Modifier.height(14.dp))
+        WelcomeLine("3", "OpenCode AI", "Chat with an AI that works inside the project.")
+    }
+    Spacer(Modifier.height(28.dp))
+    PrimaryButton(label = "Get started", onClick = onStart)
+    Spacer(Modifier.height(10.dp))
+    Text(
+        text = "Every download is optional and can be added later from Settings > Setup guide.",
+        color = c.textFaint,
+        fontSize = 12.sp,
+        fontFamily = Sans,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+    )
+}
+
+@Composable
+private fun WelcomeLine(number: String, title: String, detail: String) {
+    val c = LocalPageColors.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(c.chipBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = number,
+                color = c.accent,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.size(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = c.brightText,
+                fontSize = 14.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = detail,
+                color = c.textMuted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                fontFamily = Sans,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FocusPanel(
+    step: Int,
+    buildState: ToolchainState,
+    shellProgress: ShellToolsStore.Progress?,
+    aiProgress: Float,
+    aiStage: String,
+    onDismiss: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    val title = when (step) {
+        1 -> "Build tools"
+        2 -> "Shell tools"
+        else -> "OpenCode AI"
+    }
+    val status = when (step) {
+        1 -> when (buildState) {
+            is ToolchainState.Downloading -> "Downloading build tools"
+            ToolchainState.WaitingForWifi -> "Waiting for Wi-Fi"
+            is ToolchainState.Verifying, ToolchainState.Checking -> "Checking files"
+            else -> "Preparing build tools"
+        }
+        2 -> shellProgress?.message ?: "Installing shell tools"
+        else -> aiStage.ifBlank { "Downloading the AI runtime" }
+    }
+    val progress = when (step) {
+        1 -> {
+            val state = buildState
+            if (state is ToolchainState.Downloading && state.totalBytes > 0) {
+                state.doneBytes.toFloat() / state.totalBytes
+            } else {
+                0f
+            }
+        }
+        2 -> {
+            val p = shellProgress
+            if (p != null && p.totalBytes > 0) p.doneBytes.toFloat() / p.totalBytes else 0f
+        }
+        else -> aiProgress
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        ScreenCard(Modifier.fillMaxWidth()) {
+            Text(
+                text = title,
+                color = c.brightText,
+                fontSize = 17.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = status,
+                color = c.textMuted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+            )
+            Spacer(Modifier.height(12.dp))
+            ProgressBar(progress)
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = "You can leave this panel open or go back. The download continues " +
+                    "while the phone stays awake.",
+                color = c.textFaint,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                fontFamily = Sans,
+            )
+            Spacer(Modifier.height(14.dp))
+            PrimaryButton(label = "Back to setup", onClick = onDismiss)
         }
     }
 }
@@ -480,10 +708,14 @@ private fun SetupStep(
     skipped: Boolean,
     status: String,
     onSkip: () -> Unit,
+    busy: Boolean = false,
+    onFocus: () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalPageColors.current
-    ScreenCard {
+    ScreenCard(
+        modifier = Modifier.clickable(enabled = busy, onClick = onFocus),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
@@ -546,6 +778,12 @@ private fun SetupStep(
         )
         Spacer(Modifier.height(12.dp))
         content()
+        if (busy) {
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.align(Alignment.CenterHorizontally)) {
+                TextLink(label = "View download", onClick = onFocus, color = c.link)
+            }
+        }
         if (!ready && !skipped) {
             Spacer(Modifier.height(8.dp))
             Box(Modifier.align(Alignment.CenterHorizontally)) {

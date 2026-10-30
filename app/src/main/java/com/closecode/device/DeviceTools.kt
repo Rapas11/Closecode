@@ -10,8 +10,6 @@ import com.closecode.build.LogcatReader
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.runBlocking
 
@@ -106,18 +104,16 @@ object DeviceTools {
     }
 
     fun screenshot(context: Context, project: File, argument: String?): JsonObject {
-        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date())
-        val output = if (argument.isNullOrBlank()) {
-            File(project, "build/screenshots/screenshot-$stamp.png")
-        } else {
-            resolve(project, argument) ?: return error("That path is outside the project.")
-        }
-        output.parentFile?.mkdirs()
+        // Captures are private and short-lived. The project argument is kept for the bridge's
+        // signature, but the image never goes into the project or its Git history.
+        val output = ScreenshotStore.newFile(context)
         val result = runBlocking { ScreenshotController.capture(context, output) }
         return if (result.ok) {
             ok().apply {
                 addProperty("path", output.absolutePath)
                 addProperty("bytes", output.length())
+                addProperty("expiresInSeconds", ScreenshotStore.MAX_AGE_MS / 1_000)
+                addProperty("note", "The screenshot is private and is deleted after 10 minutes.")
             }
         } else {
             error(result.message)

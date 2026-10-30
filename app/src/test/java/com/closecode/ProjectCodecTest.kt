@@ -10,6 +10,7 @@ import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.model.TemplateTab
 import com.closecode.ui.model.defaultPackageName
 import com.closecode.ui.model.relativeTime
+import com.closecode.ui.project.ProjectIdentity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -66,6 +67,30 @@ class ProjectCodecTest {
         assertNull(ProjectCodec.decode("a|b|c"))
         assertNull(ProjectCodec.decode("name|Bogus|0|Blank app|"))
         assertNull(ProjectCodec.decode("name|App|not-a-number|Blank app|"))
+    }
+
+
+    @Test
+    fun identitySurvivesTheTrip() {
+        val project = Project("Notes", SelectedTemplate(TemplateTab.App, 2), "Notes")
+        val decoded = ProjectCodec.decode(ProjectCodec.encode(project))
+        assertEquals(project.id, decoded?.id)
+    }
+
+    @Test
+    fun legacySixFieldRecordGetsADeterministicId() {
+        val legacy = "Notes|App|2|Notes||notes"
+        val first = ProjectCodec.decode(legacy)
+        val second = ProjectCodec.decode(legacy)
+        assertEquals(ProjectIdentity.legacyId("notes"), first?.id)
+        assertEquals(first?.id, second?.id)
+        assertEquals("notes", first?.slug)
+    }
+
+    @Test
+    fun malformedIdentityFallsBackToTheStartScreen() {
+        assertNull(ProjectCodec.decode("Notes|App|2|Notes||notes|"))
+        assertNull(ProjectCodec.decode("Notes|App|2|Notes||notes|bad\u0000id"))
     }
 
     @Test

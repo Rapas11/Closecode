@@ -69,6 +69,7 @@ import java.io.File
 @Composable
 fun OpenCodeTab(
     projectName: String,
+    projectId: String,
     projectRoot: File?,
     onChat: (String) -> Unit,
     onAuthenticate: () -> Unit,
@@ -113,7 +114,7 @@ fun OpenCodeTab(
             permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
         OpenCodeService.start(context, "", projectName)
-        OpenCode.start(context, root, projectName)
+        OpenCode.start(context, root, projectName, projectId)
         // The battery question is a one-time nudge, not a dialog on every start. It is kept
         // in the app's preferences so leaving the tab and coming back cannot bring it back.
         if (!prefs.getBoolean(KEY_BATTERY_ASKED, false)) {
@@ -138,6 +139,7 @@ fun OpenCodeTab(
     fun stopServer() {
         OpenCodeService.stop(context)
         OpenCode.stop()
+        com.closecode.device.ScreenshotStore.clear(context)
     }
 
     fun stopOtherAndStart() {
