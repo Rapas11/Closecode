@@ -408,6 +408,13 @@ object OpenCode {
                             warning = true,
                         )
                     }
+                runCatching { OpenCodeAgentMd.install(projectRoot) }
+                    .onFailure {
+                        log(
+                            "AGENTS.md not written: ${it.message ?: it.javaClass.simpleName}",
+                            warning = true,
+                        )
+                    }
                 if (version != null) {
                     val shown = version.ifBlank { readVersion(context, arch, binary) }
                     val url = "http://${OpenCodeDefaults.HOST}:$port"
@@ -695,6 +702,7 @@ object OpenCode {
         val configHome = File(home, "config").apply { mkdirs() }
         environment["XDG_CONFIG_HOME"] = configHome.absolutePath
         OpenCodeConfig.installOnce(configHome)
+        OpenCodeConfig.ensureOpenToTheAgent(configHome)
         // Web search needs no API key, but OpenCode only loads its hosted web tools when one
         // of these flags is set. The fallback covers a provider whose search goes dry.
         environment["OPENCODE_ENABLE_EXA"] = "1"

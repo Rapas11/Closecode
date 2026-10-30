@@ -175,6 +175,7 @@ fun SettingsScreen(
     var infoPage by remember { mutableStateOf<String?>(null) }
     var comingSoon by remember { mutableStateOf<String?>(null) }
     var aiOpen by remember { mutableStateOf(false) }
+    var storageProjectsOpen by remember { mutableStateOf(false) }
     var editingString by remember { mutableStateOf<StringSetting?>(null) }
     val toolchainStore = remember(context) {
         com.closecode.build.ToolchainHolder.store(context)
@@ -192,7 +193,18 @@ fun SettingsScreen(
         return
     }
     if (aiOpen) {
-        AiSettingsPage(onBack = { aiOpen = false })
+        SettingsInfoPage(
+            title = "AI settings",
+            body = "Coming soon.\n\n" +
+                "OpenCode runs everything by itself on this phone — it builds, checks, fixes " +
+                "and publishes without asking. There is nothing to configure yet. When " +
+                "settings arrive, they will appear here.",
+            onBack = { aiOpen = false },
+        )
+        return
+    }
+    if (storageProjectsOpen) {
+        StorageProjectsPage(onBack = { storageProjectsOpen = false })
         return
     }
     val page = infoPage
@@ -292,6 +304,7 @@ fun SettingsScreen(
             SettingsAction.LICENSES -> infoPage = "licenses"
             SettingsAction.PRIVACY -> infoPage = "privacy"
             SettingsAction.AI_SETTINGS -> aiOpen = true
+            SettingsAction.STORAGE_PROJECTS -> storageProjectsOpen = true
             SettingsAction.BIOMETRIC_LOCK -> comingSoon = "Biometric lock"
             SettingsAction.EDIT_GIT_NAME -> editingString = StringSetting.GIT_NAME
             SettingsAction.EDIT_GIT_EMAIL -> editingString = StringSetting.GIT_EMAIL

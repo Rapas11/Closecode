@@ -40,4 +40,33 @@ class DebugReportTest {
         assertTrue(text.contains("line 51\n"))
         assertTrue(text.contains("line 250\n"))
     }
+
+    @Test
+    fun theServerLogSectionSpeaksWhenThereIsNothingAndWhenThereIsSomething() {
+        val text = DebugReport.build("label", null, emptyList(), null)
+        assertTrue(text.contains("--- OpenCode server log ---"))
+        assertTrue(text.contains("(no server log yet)"))
+        assertFalse(text.contains("previous run"))
+
+        val withLog = DebugReport.build("label", null, emptyList(), null, serverLog = "server said hi")
+        assertTrue(withLog.contains("--- OpenCode server log ---\nserver said hi"))
+
+        val withPrev = DebugReport.build(
+            "label", null, emptyList(), null,
+            serverLog = "today", serverPrev = "yesterday",
+        )
+        assertTrue(withPrev.contains("--- OpenCode server log ---\ntoday"))
+        assertTrue(withPrev.contains("--- OpenCode server log (previous run) ---\nyesterday"))
+        // The crash stays the last section, whatever arrives before it.
+        assertTrue(withPrev.indexOf("previous run") < withPrev.indexOf("--- last crash ---"))
+    }
+
+    @Test
+    fun theTailKeepsTheNewestLinesOnly() {
+        val text = (1..500).joinToString("\n") { "row $it" }
+        val tail = DebugReport.tail(text, maxLines = 10)
+        assertTrue(tail.contains("row 500"))
+        assertFalse(tail.contains("row 490"))
+        assertTrue(tail.startsWith("row 491"))
+    }
 }

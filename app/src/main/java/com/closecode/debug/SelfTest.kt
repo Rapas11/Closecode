@@ -11,6 +11,11 @@ import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.android.apksig.ApkSigner
 import com.android.apksig.ApkVerifier
+import com.closecode.ai.OpenCode
+import com.closecode.ai.OpenCodeAiConfig
+import com.closecode.ai.OpenCodeConfig
+import com.closecode.ai.OpenCodeDefaults
+import com.closecode.ai.OpenCodeServerLog
 import com.closecode.build.BuildChain
 import com.closecode.build.BuildConfigValues
 import com.closecode.build.Aapt2Runtime
@@ -89,6 +94,9 @@ object SelfTest {
         "Network",
         "Shell",
         "GitHub sign-in",
+        "OpenCode permissions",
+        "OpenCode server log",
+        "OpenCode server",
     )
 
     /**
@@ -119,6 +127,9 @@ object SelfTest {
                 CHECK_TIMEOUT_MS to { checkNetwork(context) },
                 CHECK_TIMEOUT_MS to { checkShell(context) },
                 CHECK_TIMEOUT_MS to { checkGitHub(context) },
+                CHECK_TIMEOUT_MS to { checkOpenCodePermissions(context) },
+                CHECK_TIMEOUT_MS to { checkOpenCodeServerLog(context) },
+                CHECK_TIMEOUT_MS to { checkOpenCodeServer(context) },
             )
             val results = ArrayList<Check>(checks.size)
             for ((index, entry) in checks.withIndex()) {
@@ -756,6 +767,102 @@ object SelfTest {
             Check(16, names[15], Status.Pass, "Signed in (the token itself is never shown or sent).")
         } else {
             Check(16, names[15], Status.Skipped, "Not signed in yet — the Git panel signs in when needed.")
+        }
+    }
+
+    /**
+     * Build 43's promise: the OpenCode agent runs hands-free, with no "allow?" taps on the
+     * phone. The grounded config is the source of truth — read as data, and the check says
+     * what each tool is actually allowed to do instead of promising.
+     */
+    private fun checkOpenCodePermissions(context: Context): Check {
+        val configHome = File(OpenCode.home(context), "config")
+        val file = OpenCodeConfig.file(configHome)
+        if (!file.isFile) {
+            return Check(
+                17, names[16], Status.Skipped,
+                "OpenCode has not started yet on this phone, so there is no config to read.",
+            )
+        }
+        val json = OpenCodeAiConfig.read(file)
+            ?: return Check(17, names[16], Status.Fail, "The config file could not be read: $file")
+        val allowed = OpenCodeConfig.OPEN_TOOLS.filter {
+            OpenCodeAiConfig.permission(json, it) == OpenCodeAiConfig.ALLOW
+        }
+        val asked = OpenCodeConfig.OPEN_TOOLS.filterNot { it in allowed }
+        return when {
+            allowed.size == OpenCodeConfig.OPEN_TOOLS.size -> Check(
+                17, names[16], Status.Pass,
+                "The agent may edit files, run commands and fetch pages without asking.",
+            )
+            else -> Check(
+                17, names[16], Status.Fail,
+                "The agent would still ask about: ${asked.joinToString(", ")}. " +
+                    "Open the AI settings page and set them to allow.",
+            )
+        }
+    }
+
+    /** The log book build 20 taught OpenCode to keep: it must be there after a first run. */
+    private fun checkOpenCodeServerLog(context: Context): Check {
+        val dir = OpenCodeServerLog.dir(context)
+        val current = File(dir, "server.log")
+        if (!current.isFile) {
+            return Check(
+                18, names[17], Status.Skipped,
+                "OpenCode has not run yet, so no server log exists to read.",
+            )
+        }
+        val age = ageLabel(current.lastModified())
+        return if (File(dir, "server.1.log").isFile) {
+            Check(18, names[17], Status.Pass, "The server log is there ($age); an older run is kept beside it.")
+        } else {
+            Check(18, names[17], Status.Pass, "The server log is there ($age), from the first run so far.")
+        }
+    }
+
+    /**
+     * Build 20 taught the app to reclaim `127.0.0.1:4098` from a stale server at startup.
+     * This check talks to whoever is listening: a health answer proves the port is a live
+     * OpenCode, no answer proves nothing blocked it — both are healthy states.
+     */
+    private fun checkOpenCodeServer(context: Context): Check = runCatching {
+        val url = java.net.URL("http://${OpenCodeDefaults.HOST}:${OpenCodeDefaults.PORT}/global/health")
+        val connection = url.openConnection() as java.net.HttpURLConnection
+        try {
+            connection.connectTimeout = 3_000
+            connection.readTimeout = 3_000
+            connection.requestMethod = "GET"
+            val code = connection.responseCode
+            val body = (connection.inputStream.bufferedReader().readText()).take(160)
+            Check(
+                19, names[18], Status.Pass,
+                "The server answers at 127.0.0.1:${OpenCodeDefaults.PORT} (HTTP $code): $body",
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }.recover { error ->
+        Check(
+            19, names[18], Status.Skipped,
+            "Nothing is listening on port ${OpenCodeDefaults.PORT} right now, which is its " +
+                "resting state (${error.message ?: error.javaClass.simpleName}).",
+        )
+    }.getOrDefault(
+        Check(
+            19, names[18], Status.Skipped,
+            "The health check could not run.",
+        ),
+    )
+
+    /** `3 minutes ago` / `2 hours ago` style line for the shallow facts a person reads. */
+    private fun ageLabel(timestamp: Long): String {
+        val seconds = ((System.currentTimeMillis() - timestamp) / 1000).coerceAtLeast(0)
+        return when {
+            seconds < 90 -> "moments ago"
+            seconds < 3_600 -> "${seconds / 60} minutes ago"
+            seconds < 86_400 -> "${seconds / 3_600} hours ago"
+            else -> "${seconds / 86_400} days ago"
         }
     }
 }

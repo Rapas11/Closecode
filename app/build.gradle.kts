@@ -11,7 +11,7 @@ plugins {
 // The build number is raised for every APK handed to the user. The More sheet, every log
 // and every report print it beside the version name and the short commit, so whichever
 // APK is installed says which one it is. ("unknown" only when git is not reachable.)
-val closecodeBuild = 42
+val closecodeBuild = 43
 val closecodeGitCommit: String = runCatching {
     providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }
         .standardOutput.asText.get().trim()
@@ -32,7 +32,7 @@ android {
         minSdk = 28
         targetSdk = 28
         versionCode = closecodeBuild
-        versionName = "1.0"
+        versionName = "0.43.0"
         buildConfigField("String", "GIT_COMMIT", "\"$closecodeGitCommit\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

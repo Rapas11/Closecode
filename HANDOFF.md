@@ -8,7 +8,12 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 20 is build 42: AndroidIDE parity — the fixed port is
+- Branch `main`; Step 21 is build 43: hands-free OpenCode — AGENTS.md seeding,
+  permission allow for edit/bash/webfetch, Ask AI from build diagnostics, the
+  server-log viewer, report bundles with both server logs, project zip
+  export/import, a CI workflow, and `versionName 0.43.0`; the AI settings page
+  is gone ("Coming soon") because OpenCode runs everything itself. Step 20 is
+  build 42: AndroidIDE parity — the fixed port is
   reclaimed from stale servers the AndroidIDE way (kernel socket tables →
   process match → UID/cmdline-checked kill) before every launch, and the
   server keeps a persistent log at `files/opencode/logs/server.log` with the

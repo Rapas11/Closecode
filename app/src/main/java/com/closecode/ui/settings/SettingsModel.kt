@@ -108,6 +108,7 @@ enum class SettingsAction {
     PRIVACY,
     AI_SETTINGS,
     BIOMETRIC_LOCK,
+    STORAGE_PROJECTS,
     EDIT_GIT_NAME,
     EDIT_GIT_EMAIL,
     EDIT_GIT_DEFAULT_BRANCH,
@@ -463,8 +464,8 @@ fun sections(
                 listOf(
                     Row.Nav(
                         "AI settings",
-                        "Server, default model, agent permissions and skills.",
-                        "Open",
+                        "OpenCode runs everything by itself.",
+                        "Coming soon",
                         id = SettingsAction.AI_SETTINGS,
                     ),
                 ),
@@ -515,8 +516,14 @@ fun sections(
                 ),
             ),
             Group(
-                "",
+                "Projects are safe in one place",
                 listOf(
+                    Row.Nav(
+                        "Project export & import",
+                        "Save a project as one zip anywhere, and bring a zip back.",
+                        "Open",
+                        id = SettingsAction.STORAGE_PROJECTS,
+                    ),
                     Row.Action(
                         "Clear caches",
                         "Delete every temporary file Closecode has written.",

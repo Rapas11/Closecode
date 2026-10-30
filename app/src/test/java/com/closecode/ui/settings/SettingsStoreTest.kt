@@ -180,14 +180,15 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun theScreenIsElevenSectionsAndFortyNineRows() {
+    fun theScreenIsElevenSectionsAndFiftyOneRows() {
         // Eleven sections throughout. The fictional JDK / Android SDK / Build Tools / Gradle rows
         // are gone; the toolchain group now shows the compiler pack, its pinned versions and the
         // download row — all of them real. The account group and the five unwired AI rows are
         // gone too, leaving one "Coming soon" destination for each deferred area. The optional
-        // Termux shell-tools pack adds one real download row under Terminal.
+        // Termux shell-tools pack adds one real download row under Terminal, and the project
+        // export/import row is the real way to move a project as one zip.
         assertEquals(11, sections(SettingsLive()).size)
-        assertEquals(50, rowCount())
+        assertEquals(51, rowCount())
     }
 
     @Test

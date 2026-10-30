@@ -48,6 +48,7 @@ import kotlin.math.roundToInt
 import com.closecode.lang.Diagnostic
 import com.closecode.lang.DiagnosticCodes
 import com.closecode.lang.Severity
+import com.closecode.ui.components.TextLink
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
@@ -1976,6 +1977,7 @@ internal fun ProblemSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     fileLabel: String? = null,
+    onAskAi: (ProjectDiagnostic) -> Unit = {},
 ) {
     val c = LocalPageColors.current
 
@@ -2107,6 +2109,7 @@ internal fun ProblemSheet(
                                     fontFamily = Mono,
                                 )
                             }
+                            TextLink(label = "Ask AI", onClick = { onAskAi(row) })
                         }
                     }
                 }

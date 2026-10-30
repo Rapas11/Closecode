@@ -104,7 +104,7 @@ fun IdeDeveloperSheet(
             }
             DeveloperActionRow(
                 label = "Self-test",
-                note = "Sixteen checks with one plain sentence each.",
+                note = "Nineteen checks with one plain sentence each.",
             ) {
                 onSelfTest()
                 onDismiss()
@@ -118,7 +118,8 @@ fun IdeDeveloperSheet(
             }
             DeveloperActionRow(
                 label = "Share debug report",
-                note = "The version line, the last self-test, the last 200 log lines and the last crash.",
+                note = "The version line, the last self-test, the last 200 log lines, the " +
+                    "OpenCode server log and the last crash.",
             ) {
                 onShareReport()
                 onDismiss()

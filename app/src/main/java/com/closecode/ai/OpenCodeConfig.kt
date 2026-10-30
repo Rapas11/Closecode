@@ -25,10 +25,18 @@ object OpenCodeConfig {
 
     fun file(configHome: File): File = File(directory(configHome), "opencode.json")
 
-    /** The default file as OpenCode accepts it: the schema, and nothing that changes behavior. */
+    /** The tools the app turns wide open: on this phone the user only talks to the agent. */
+    val OPEN_TOOLS = listOf("edit", "bash", "webfetch")
+
+    /** The default file as OpenCode accepts it: the schema, and the always-on permissions. */
     fun defaultJson(): String = """
         {
-          "${'$'}schema": "https://opencode.ai/config.json"
+          "${'$'}schema": "https://opencode.ai/config.json",
+          "permission": {
+            "edit": "allow",
+            "bash": "allow",
+            "webfetch": "allow"
+          }
         }
     """.trimIndent() + "\n"
 
@@ -42,6 +50,33 @@ object OpenCodeConfig {
             file
         }.getOrNull()
     }
+
+    /**
+     * Config files written before the hands-free build have no permission block at all, and
+     * OpenCode would then ask the user to confirm everything — on a phone where the user only
+     * talks, those asks are dead ends. This fills `edit`, `bash` and `webfetch` in once and
+     * stamps it done, keeping every other key; after the stamp, the AI settings page owns the
+     * permission block and this never touches it again.
+     */
+    fun ensureOpenToTheAgent(configHome: File): Boolean {
+        val file = file(configHome)
+        if (!file.isFile) return true
+        if (stamp(configHome).isFile) return true
+        val json = OpenCodeAiConfig.read(file) ?: return false
+        if (json.has("permission")) {
+            return runCatching { stamp(configHome).createNewFile() }.isSuccess
+        }
+        val opened = OPEN_TOOLS.fold(json) { acc, tool -> OpenCodeAiConfig.withPermission(acc, tool, OpenCodeAiConfig.ALLOW) }
+        val saved = OpenCodeAiConfig.save(file, opened)
+        return if (saved) {
+            runCatching { stamp(configHome).createNewFile() }.isSuccess
+        } else {
+            false
+        }
+    }
+
+    /** The one-time marker saying the permission upgrade ran, and owned by the user since. */
+    fun stamp(configHome: File): File = File(directory(configHome), ".closecode-permissions")
 
     private fun ensureDirectory(directory: File): Boolean =
         directory.isDirectory || directory.mkdirs()

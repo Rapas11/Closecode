@@ -881,6 +881,36 @@ internal fun IdeScreen(
         activePanel = "AI"
     }
 
+    /**
+     * Ask AI on one build error: the diagnostic becomes the agent's next message on the
+     * project's session, and the chat page opens while the agent works. When the server is
+     * not up, the prompt lands in the clipboard and the AI panel opens with a note — the
+     * prompt is never silently lost.
+     */
+    fun askAiFromDiagnostic(fileName: String, line: Int, message: String) {
+        val prompt = com.closecode.ai.OpenCodePrompts.diagnosticPrompt(fileName, line, message)
+        val open = com.closecode.ai.OpenCode.state.value
+        val ready = open.phase == com.closecode.ai.OpenCodePhase.Running &&
+            open.url.isNotBlank() && open.sessionId.isNotBlank()
+        activePanel = "AI"
+        if (ready) {
+            fileScope.launch(Dispatchers.IO) {
+                val sent = com.closecode.ai.OpenCodePrompts.send(open.url, open.sessionId, prompt)
+                withContext(Dispatchers.Main) {
+                    if (sent) {
+                        openCodeChat = true
+                    } else {
+                        treeClipboard.setText(androidx.compose.ui.text.AnnotatedString(prompt))
+                        toast = "Server did not take the message; the prompt is in the clipboard."
+                    }
+                }
+            }
+        } else {
+            treeClipboard.setText(androidx.compose.ui.text.AnnotatedString(prompt))
+            toast = "Prompt copied. Start OpenCode, then paste it in the chat."
+        }
+    }
+
     // Spec 4.1: the header's Undo and Redo drive the editor's own history. Requests are counters
     // because only the editor owns the text field; the availability flags travel back up so the
     // icons can dim when there is nothing left to step to.
@@ -2044,7 +2074,7 @@ internal fun IdeScreen(
                             activePanel = "Code"
                         }
                     },
-                    onAskAi = ::openAiPanel,
+                    onAskAi = { row -> askAiFromDiagnostic(row.fileName, row.diagnostic.line, row.diagnostic.message) },
                     onBack = ::handleBackPress,
                     modifier = Modifier.weight(1f),
                     apkName = builtApk?.let { file ->
@@ -2252,6 +2282,9 @@ internal fun IdeScreen(
                                     tabs = tabs,
                                     active = active,
                                     language = language,
+                                    onAskDiagnostic = { name, line, message ->
+                                        askAiFromDiagnostic(name, line, message)
+                                    },
                                     contentFor = { path -> liveBuffers[path] ?: diskContents[path] ?: "" },
                                     onSelectTab = { path ->
                                         dismissKeyboard()
@@ -3040,6 +3073,10 @@ internal fun IdeScreen(
                     buildLogOpen = false
                 },
                 onBack = ::handleBackPress,
+                onAskAi = { row ->
+                    buildLogOpen = false
+                    askAiFromDiagnostic(row.fileName, row.diagnostic.line, row.diagnostic.message)
+                },
             )
         }
 
@@ -4254,6 +4291,8 @@ formatRequest: Int = 0,
     projectDiagnostics: List<ProjectDiagnostic> = emptyList(),
     // Opens another file by name, for a row in the project-wide list.
     onOpenProjectFile: (String) -> Unit = {},
+    // Ask AI on a sheet row: the diagnostic leaves the editor for the agent entirely.
+    onAskDiagnostic: (String, Int, String) -> Unit = { _, _, _ -> },
     // The parent owns the counter; the editor owns the buffer. The bar raises the parent's copy.
     onSelectionFormat: () -> Unit = {},
     undoRequest: Int = 0,
@@ -6453,6 +6492,10 @@ val applySuggestion: (Int) -> Unit = { index ->
                         problemSheetLine.value = null
                     },
                     onDismiss = { problemSheetLine.value = null },
+                    onAskAi = { row ->
+                        problemSheetLine.value = null
+                        onAskDiagnostic(row.fileName, row.diagnostic.line, row.diagnostic.message)
+                    },
                 )
             }
 

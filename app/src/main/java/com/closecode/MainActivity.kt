@@ -14,6 +14,7 @@ import androidx.compose.runtime.key
 import com.closecode.control.CloseCodeControl
 import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
+import com.closecode.debug.DebugReport
 import com.closecode.debug.sharePlainText
 import com.closecode.ui.ide.TerminalSessions
 import androidx.compose.runtime.remember
@@ -400,11 +401,11 @@ private fun CrashDialog(trace: String, onClose: () -> Unit) {
         },
         dismissButton = {
             androidx.compose.foundation.layout.Row {
-                TextButton(
-                    onClick = {
-                        sharePlainText(context, "CloseCode crash report", trace)
-                    },
-                ) { Text("Share") }
+            TextButton(
+                onClick = {
+                    sharePlainText(context, "CloseCode debug report", DebugReport.compose(context))
+                },
+            ) { Text("Share") }
                 TextButton(onClick = onClose) { Text("Dismiss") }
             }
         },

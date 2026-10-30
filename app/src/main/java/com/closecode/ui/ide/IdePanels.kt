@@ -531,7 +531,7 @@ internal fun IdeBuildPanel(
     onViewErrors: () -> Unit = {},
     onOpenLog: () -> Unit = {},
     onOpenFile: (String, Int) -> Unit = { _, _ -> },
-    onAskAi: () -> Unit = {},
+    onAskAi: (ProjectDiagnostic) -> Unit = {},
     modifier: Modifier = Modifier,
     onBack: () -> Unit = {},
     // Phase 3: present only when the engine produced a real APK. Null hides every
@@ -860,7 +860,7 @@ internal fun IdeBuildPanel(
                     BuildErrorCard(
                         row = row,
                         onOpenFile = onOpenFile,
-                        onAskAi = onAskAi,
+                        onAskAi = { onAskAi(row) },
                     )
                 }
                 if (errors.size > 50) {
@@ -969,6 +969,7 @@ internal fun BuildLogScreen(
     elapsedMs: Long,
     onOpenFile: (String, Int) -> Unit,
     onBack: () -> Unit,
+    onAskAi: (ProjectDiagnostic) -> Unit = {},
 ) {
     val c = LocalPageColors.current
     // No BackHandler here: the IDE's single ordered chain owns Back (buildLogOpen branch),
@@ -1016,6 +1017,10 @@ internal fun BuildLogScreen(
                         fontSize = 11.sp,
                         fontFamily = Sans,
                         modifier = Modifier.padding(top = 2.dp),
+                    )
+                    TextLink(
+                        label = "Ask AI",
+                        onClick = { onAskAi(entry) },
                     )
                 }
                 Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))

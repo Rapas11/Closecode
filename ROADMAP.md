@@ -1,16 +1,45 @@
 # CloseCode — Roadmap & Resume Notes
 
-_Updated 2026-10-30, after Step 20 / build 42 (commit `0e7f97f`). This file is the
+_Updated 2026-10-30, after Step 21 / build 43. This file is the
 single artifact to pick the work up from — status, device-test resume steps, the
 full improvement backlog, and what NOT to do._
 
 ## 1. Where things stand
 
-- Remote: `https://github.com/Rapas11/Closecode.git`, branch `main` at `0e7f97f`
-  (Step 20 = build 42). Steps 4–20 are pushed. Conventions: one commit per step,
+- Remote: `https://github.com/Rapas11/Closecode.git`, branch `main` (Step 21 =
+  build 43). Steps 4–21 are pushed. Conventions: one commit per step,
   unit suite green, bump `closecodeBuild` in `app/build.gradle.kts`, build + send
   APK each step, **no force-push**, never commit `real opencode open pc/` or
   `test-output*.txt`.
+- **Build 43 (Step 21 — "hands-free OpenCode"):**
+  - AGENTS.md seeding: `OpenCodeAgentMd` writes/merges a marked block
+    (`<!-- closecode:start(b43) -->`) into the project and OpenCode home
+    `AGENTS.md`, teaching only real `closecode` verbs (no `closecode git`).
+  - Permissions: `OpenCodeConfig` adds `permission: edit/bash/webfetch = allow`
+    and upgrades an existing config once (stamp `.closecode-permissions`), so
+    the agent never stops to ask on the phone.
+  - Self-test: checks 17–19 cover OpenCode permissions, the server log and the
+    server health endpoint; the developer sheet now says nineteen checks.
+  - Ask AI: build diagnostics and problems carry an Ask AI action that posts the
+    failure to the running session (`POST /session/:id/message`) and opens the
+    chat; clipboard fallback when the server is not running.
+  - Server log: read-only viewer in the AI tab (Older/Current, Refresh, Share).
+  - Reports: the crash dialog and Share now bundle both server logs via
+    `DebugReport` (last 300 lines of each).
+  - Projects: export/import as one zip (`ProjectZip`, `StorageProjectsPage`)
+    with a `closecode-project.json` manifest and a zip-slip guard; wired under
+    Settings → Projects.
+  - CI: `.github/workflows/build.yml` runs the unit suite and builds/uploads the
+    debug APK (attaches it to a release for `v*` tags).
+  - `versionName` is now `0.43.0`. The AI settings page was removed: OpenCode
+    runs everything by itself, and Settings shows a "Coming soon" stub.
+- Unit suite: **1412 tests, 0 failures, 8 skipped**. Debug APK 40,061,987 B
+  (`closecode-43-debug.apk`, sha256
+  `5a15ba9bec1527a19113a71ddc25a9cc1c2e4c0e88c2fd143aa10b94c2c5fc25`),
+  versionCode 43, v2-signed, native libs intact.
+- **Still NOT done:** on-device run of build 43 (no device was attached to this
+  workspace), and the build-42 device flows in §2. Self-test checks 17–19 now
+  cover part of the OpenCode health check on the phone.
 - **Build 42 (Step 20 — "AndroidIDE parity", from REA decompile of
   `com.m4coding.ide` 1.3.1):**
   - Fixed-port reclaim: before **every** launch (first + every retry), find the

@@ -93,7 +93,13 @@ fun OpenCodeTab(
     ) { }
     var batteryDialog by remember { mutableStateOf(false) }
     var details by remember { mutableStateOf(false) }
+    var logOpen by remember { mutableStateOf(false) }
     var switchTo by remember { mutableStateOf<OpenCodeStatus?>(null) }
+
+    if (logOpen) {
+        OpenCodeLogPage(onBack = { logOpen = false })
+        return
+    }
 
     fun reallyStart() {
         val root = projectRoot
@@ -218,6 +224,29 @@ fun OpenCodeTab(
         if (details && status.log.isNotEmpty()) {
             Spacer(Modifier.height(16.dp))
             LogSection(status.log)
+        }
+
+        Spacer(Modifier.height(16.dp))
+        val c = LocalPageColors.current
+        Card {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "Server log",
+                        color = c.tx,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        text = "What the OpenCode server printed, in a file.",
+                        color = c.mu,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                }
+                SecondaryAction(label = "Open", onClick = { logOpen = true })
+            }
         }
     }
 
