@@ -119,7 +119,7 @@ Negative path (foreign holder must not die):
   `app/src/main/java/com/closecode/ai/OpenCodeModel.kt`; **1.19.4 crashes older
   WebViews** — never bump casually.
 
-## 4. Improvement backlog (32 items)
+## 4. Improvement backlog (41 items)
 
 Checkbox list; the suggested working order is §5.
 
@@ -216,6 +216,48 @@ Checkbox list; the suggested working order is §5.
 - [ ] 32. **One full-flow run on a real arm64 phone** — everything this cycle
        ran on MuMu x86_64; one real-device run retires the biggest untested
        branch (musl loader, shell-tools repo, health probe on arm64).
+
+### I. Last layer (appended 2026-10-30)
+
+- [ ] 33. **Refresh `README.md` + add `LICENSE`/attribution.** The README is a
+       one-line stub ("# Closecode"): give it what the app is, screenshots, the
+       sideload-install drill, build instructions (JDK 17 + Gradle), and the
+       feature story from HANDOFF. No LICENSE file exists at all — decide
+       proprietary vs open, and add an attribution note: **not affiliated with**
+       AndroidIDE or the OpenCode (sst/opencode) project, which provides the
+       hosted web page.
+- [ ] 34. **Backup rules for the big binaries.** Verify `android:allowBackup`
+       in the manifest: 200 MB OpenCode binaries + the Alpine tree must never
+       ride Android's cloud auto-backup (`dataExtractionRules` on 31+ excludes
+       `files/opencode/opencode*` and `alpine/`; project sources and prefs stay
+       included). Rule out backup timeouts, keep the user's actual work safe.
+- [ ] 35. **SHA-256 pinning for every download.** OpenCode tarball edits, Alpine
+       packages, and the shell-tools (git/python/node) repo downloads all come
+       over the network today; pin expected hashes (and log the computed one in
+       `server.log` on mismatch) so a bad mirror or MITM fails loudly.
+- [ ] 36. **Skill version marker.** `OpenCodeSkill.install` writes once and
+       never overwrites — good for user edits, but projects keep a stale skill
+       forever after an app update improves it. Store the installed skill
+       version in the project; on app-update mismatch offer a one-tap refresh.
+- [ ] 37. **Throttle the health probe while backgrounded.** The one-second
+       `/version` poll runs the whole time the app process lives; drop to
+       10 s when the activity is backgrounded (a running-notification card from
+       #26 keeps it alive) and restore 1 s on resume.
+- [ ] 38. **Close out the build-41 pending device checks.** Still open from
+       HANDOFF's list: 1.18.35 page/model picker in the WebView, proxy
+       CONNECT/HTTPS traffic, `opencode auth login` with the exported CA.
+       Fold into one device checklist along with the build-42 runs in §2.
+- [ ] 39. **Launcher app shortcuts.** Long-press of the icon gets "Continue
+       last project" / "New project" (static shortcuts, no server work) —
+       removes the hero-screen round trip this session fought through.
+- [ ] 40. **`.gitignore` hygiene.** `test-output*.txt` and the local
+       `real opencode open pc/` folder show up as untracked noise after every
+       checkout; ignore them explicitly so `git status` is clean and nobody
+       accidental-commits them.
+- [ ] 41. **Unit-test seam for the reclaim chain.** Step 20's `freePort()` →
+       `clearStalePortHolders()` path is private and device-bound; inject the
+       `/proc` rows (table text + fd dir) so the find-inode → match-PID → gate
+       chain gets a real end-to-end unit test instead of parser-only coverage.
 
 ### Stop list (decisions to keep)
 
