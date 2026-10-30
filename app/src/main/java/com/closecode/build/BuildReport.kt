@@ -32,7 +32,7 @@ object BuildReport {
             }
             is BuildState.Succeeded -> {
                 addProperty("state", "succeeded")
-                addProperty("apk", state.apk.absolutePath)
+                addProperty("apk", state.apk.toString())
                 addProperty("seconds", state.seconds)
                 addProperty("sizeBytes", state.sizeBytes)
                 add("times", times(state.times))
@@ -65,7 +65,7 @@ object BuildReport {
             }
             is BuildOutcome.Built -> {
                 addProperty("state", "succeeded")
-                addProperty("apk", outcome.apk.absolutePath)
+                addProperty("apk", outcome.apk.toString())
                 addProperty("sizeBytes", outcome.sizeBytes)
                 addProperty("seconds", outcome.seconds)
             }

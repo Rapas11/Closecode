@@ -7,6 +7,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume
 import org.junit.Test
 
 /**
@@ -55,6 +56,19 @@ class OpenCodeSkillTest {
 
     @Test
     fun aBlockedProjectWritesNothing() {
+        // The project is a link that pretends to be a directory. Making links is ordinary on
+        // Linux, where the app runs; Windows refuses it without a privilege, so the test skips
+        // there instead of failing on the sandbox.
+        val dir = Files.createTempDirectory("closecode-skill-link-probe").toFile()
+        try {
+            val link = File(dir, "probe")
+            val target = File(dir, "target").apply { writeText("x") }
+            runCatching { Files.createSymbolicLink(link.toPath(), target.toPath()) }
+                .onFailure { Assume.assumeNoException(it) }
+        } finally {
+            dir.deleteRecursively()
+        }
+
         val blocked = File(
             Files.createTempDirectory("closecode-skill-blocked").toFile(),
             "project",

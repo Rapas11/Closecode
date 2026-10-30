@@ -5,7 +5,13 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 18 is build 40: build-cache metadata exclusion, stale
+- Branch `main`; Step 20 is build 42: AndroidIDE parity — the fixed port is
+  reclaimed from stale servers the AndroidIDE way (kernel socket tables →
+  process match → UID/cmdline-checked kill) before every launch, and the
+  server keeps a persistent log at `files/opencode/logs/server.log` with the
+  previous run beside it in `server.1.log`. Step 19 is build 41: AI powers,
+  settings and Gradle translation. Step 18 is build 40: build-cache metadata
+  exclusion, stale
   pending-reservation cleanup, screenshot clearing on OpenCode project switch,
   and null `parentID` root sessions. Step 17 is build 39: stable project
   identity, permanent name/package reservations, per-project OpenCode sessions,
@@ -603,3 +609,32 @@ by an unrelated Gradle lint issue on this machine).
 - Still to check on a device: tap near the start and end of a long line with the
   keyboard opening/closing, horizontal pan on a multi-file commit diff, and the
   new icon weight/size at 15–20 dp in both themes.
+
+## Step 20 (build 42)
+
+- AndroidIDE parity, from the REA findings on `com.m4coding.ide` 1.3.1: the
+  server keeps AndroidIDE's launch recipe minus the proot/container costs.
+- Fixed-port reclaim. `freePort()` first checks whether something sits on
+  4098. When it does, the holder is found the way AndroidIDE's
+  `startOpenCodeWeb.sh` finds them (lsof/ss inside the container): the kernel
+  tables `/proc/net/tcp` and `/proc/net/tcp6` carry LISTEN entries with socket
+  inode numbers, each `/proc/<pid>/fd` link `socket:[inode]` names the
+  process holding one, and `killOrphanPid` decides (same UID + `opencode … web`
+  cmdline) before any `kill -9`. Only a holder that must not be touched makes
+  the launch fall back through `4099..4118` as before. The same clear runs
+  before each `launchProcess`, so a retry relaunch reclaims its port too.
+- Server log file. `OpenCodeServerLog` keeps every app and server line on disk
+  at `files/opencode/logs/server.log`, stamped, warnings marked `!`; the
+  previous run lives in `server.1.log` and a file of over
+  `OpenCodeServerLog.ROTATE_BYTES` (512 KB) moves aside. `runServer` opens it
+  before the port work, `log()` mirrors into it, the failure paths that
+  appended straight to the state now go through `log()` so no failure is
+  missing from the file. `stop()` drops the run's handle; the file itself and
+  the last run stay.
+- Tests: port-table parsing (`aListeningRowNamesTheInodeOfTheFixedPort`,
+  `rowsThatDoNotListenOnThePortCarryNoInode`,
+  `anIpv6ListeningRowIsReadTheSameWay`) and the log file
+  (`OpenCodeServerLogTest`: named runs, rotation, blank lines, file path).
+- Still to check on a device: force-stop, delete the PID file, start again —
+  the log must name the reclaimed port and 4098 must stay the fixed port; the
+  log file must hold the run from before the force-stop in `server.1.log`.

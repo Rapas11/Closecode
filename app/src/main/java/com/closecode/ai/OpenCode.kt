@@ -19,6 +19,8 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.ServerSocket
 import java.net.URL
+import java.nio.file.Files
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 /**
@@ -66,6 +68,13 @@ object OpenCode {
 
     @Volatile
     private var proxy: OpenCodeProxy? = null
+
+    /**
+     * The run's log file, the record AndroidIDE keeps on disk for its server: everything the
+     * server and the app say, surviving app restarts, so a failure is never unexplained.
+     */
+    @Volatile
+    private var serverLog: OpenCodeServerLog? = null
 
     private val processLock = Any()
 
@@ -148,6 +157,7 @@ object OpenCode {
         proxy?.stop()
         proxy = null
         killProcess()
+        serverLog = null
         lastAutoOpenedGeneration = -1
         state.value = OpenCodeStatus()
         DebugLog.crumb("AICO", "stopped")
@@ -244,9 +254,20 @@ object OpenCode {
         projectName: String,
         projectId: String,
     ) {
+        // AndroidIDE appends the whole server output to a log file beside the server, so a
+        // failure stays explainable after the app run that owned the server is long gone. The
+        // same record is kept here, run over run, the last one beside the current one.
+        val logSink = OpenCodeServerLog(OpenCodeServerLog.dir(context))
+        serverLog = logSink
+        logSink.runStarted(
+            "start project=$projectName version=${OpenCodeDefaults.VERSION}",
+        )
         // A force-stop kills this app but not its child. Clean leftovers up before choosing a
         // port, or the old server would keep 4098 and this run would start a second one beside it.
         val orphanPids = killOrphans(context)
+        orphanPids.forEach {
+            logSink.appLine("Removed a server left by the last run (PID $it)", warning = true)
+        }
         val portChoice = freePort()
         val port = portChoice.port
         val abis = Build.SUPPORTED_ABIS.toList()
@@ -284,23 +305,7 @@ object OpenCode {
                     orphanPids.forEach {
                         add(OpenCodeLogLine("Removed a server left by the last run (PID $it)"))
                     }
-                    if (portChoice.fellBack) {
-                        add(
-                            OpenCodeLogLine(
-                                "Port ${OpenCodeDefaults.PORT} is busy; using $port",
-                                warning = true,
-                            ),
-                        )
-                    }
-                    if (portChoice.exhausted) {
-                        add(
-                            OpenCodeLogLine(
-                                "Ports ${OpenCodeDefaults.PORT}-" +
-                                    "${OpenCodeDefaults.PORT + 20} are busy; trying $port",
-                                warning = true,
-                            ),
-                        )
-                    }
+                    portChoice.notes.forEach { add(it) }
                 },
                 error = null,
                 downloading = false,
@@ -340,12 +345,12 @@ object OpenCode {
         } catch (error: Throwable) {
             if (!currentCoroutineContext().isActive) return
             val message = error.message ?: "OpenCode could not be downloaded."
+            log(message, warning = true)
             update {
                 it.copy(
                     phase = OpenCodePhase.Failed,
                     downloading = false,
                     error = message,
-                    log = it.log + OpenCodeLogLine(message, warning = true),
                 )
             }
             OpenCodeService.stop(context)
@@ -383,11 +388,11 @@ object OpenCode {
                 if (failure != null) {
                     if (!currentCoroutineContext().isActive) return
                     val message = "OpenCode could not be started on this phone.\n$failure"
+                    log(message, warning = true)
                     update {
                         it.copy(
                             phase = OpenCodePhase.Failed,
                             error = message,
-                            log = it.log + OpenCodeLogLine(message, warning = true),
                         )
                     }
                     OpenCodeService.stop(context)
@@ -581,6 +586,14 @@ object OpenCode {
             val builder = ProcessBuilder("/system/bin/sh", "-c", launch)
             builder.directory(projectRoot)
             ground(context, builder.environment(), proxyPort)
+            // AndroidIDE's launch script clears the fixed port of stale holders before the
+            // server starts — every start, a retry included. The port choice did it for the
+            // first launch; this repeat handles a port a retry never saw come free.
+            clearStalePortHolders(port).forEach { pid ->
+                if (!stopping) {
+                    log("Removed a server still holding port $port (PID $pid)", warning = true)
+                }
+            }
             // No OPENCODE_SERVER_PASSWORD and no OPENCODE_SERVER_USERNAME: the server is bound
             // to loopback, and OpenCode documents unsecured local use as fine. This is also
             // what makes the page's own fetch/SSE calls work without the WebView having to
@@ -789,23 +802,92 @@ object OpenCode {
     /**
      * The port the server gets.
      *
-     * The spec names 4098. When that port is already taken the app takes the next free one and
-     * says so in the log, rather than failing over a port it cannot use.
+     * AndroidIDE stays on the fixed port at all costs: before its server starts, its script
+     * finds every process still listening on the port and kills it, and the launch aborts only
+     * when the port cannot be brought free. The same is done here — the stale holders are
+     * found through the kernel's own socket tables and are killed when they are this app's own
+     * OpenCode servers — and only an unknown holder of the port, one the app has no right to
+     * kill, makes the launch move to the next free port and say so.
      */
     private fun freePort(): PortChoice {
-        for (candidate in OpenCodeDefaults.PORT..(OpenCodeDefaults.PORT + 20)) {
-            if (!isPortBusy(candidate)) {
-                return PortChoice(candidate, fellBack = candidate != OpenCodeDefaults.PORT)
+        val fixed = OpenCodeDefaults.PORT
+        val notes = mutableListOf<OpenCodeLogLine>()
+
+        val choice = if (!isPortBusy(fixed)) {
+            PortChoice(fixed, fellBack = false)
+        } else {
+            val removed = clearStalePortHolders(fixed)
+            removed.forEach { pid ->
+                notes.add(
+                    OpenCodeLogLine("Removed a server still holding port $fixed (PID $pid)"),
+                )
+            }
+            if (!isPortBusy(fixed)) {
+                PortChoice(fixed, fellBack = false, notes = notes)
+            } else {
+                val candidates = (fixed + 1)..(fixed + 20)
+                val fallback = candidates.firstOrNull { !isPortBusy(it) }
+                if (fallback != null) {
+                    notes.add(
+                        OpenCodeLogLine(
+                            "Port $fixed is busy; using $fallback",
+                            warning = true,
+                        ),
+                    )
+                    PortChoice(fallback, fellBack = true, notes = notes)
+                } else {
+                    notes.add(
+                        OpenCodeLogLine(
+                            "Ports $fixed-" + (fixed + 20) +
+                                " are busy; trying the fixed port",
+                            warning = true,
+                        ),
+                    )
+                    PortChoice(fixed, fellBack = false, exhausted = true, notes = notes)
+                }
             }
         }
-        return PortChoice(OpenCodeDefaults.PORT, fellBack = false, exhausted = true)
+        choice.notes.forEach { serverLog?.appLine(it.text, it.warning) }
+        return choice
     }
 
     private data class PortChoice(
         val port: Int,
         val fellBack: Boolean,
         val exhausted: Boolean = false,
+        val notes: List<OpenCodeLogLine> = emptyList(),
     )
+
+    /**
+     * Brings [port] free the AndroidIDE way when a stale server still holds it: finds the
+     * listeners through /proc, kills the app's own OpenCode ones against the same UID and
+     * cmdline checks that keep every other process safe, and returns the ones it killed. A
+     * port that was free, or is held by something else, is left exactly as found.
+     */
+    private fun clearStalePortHolders(port: Int): List<Int> {
+        if (!isPortBusy(port)) return emptyList()
+        return stalePortHolders(port).filter { killOrphanPid(it) }
+    }
+
+    /**
+     * The processes still listening on [port], found in two steps — the way AndroidIDE's
+     * script, running `ss`/`netstat` inside its container, does it: the kernel's
+     * /proc/net tables give the port's LISTEN entries their socket inode numbers, and each
+     * /proc/&lt;pid&gt;/fd link named `socket:[inode]` is the process holding one. Whether any
+     * of them is killed stays the decision of [killOrphanPid], never of this matching.
+     */
+    private fun stalePortHolders(port: Int): List<Int> {
+        val inodes = procNetListenInodes(readProcNetTable(PROC_NET_TCP), port) +
+            procNetListenInodes(readProcNetTable(PROC_NET_TCP6), port)
+        if (inodes.isEmpty()) return emptyList()
+        return findInodePids(inodes).sorted()
+    }
+
+    /** The rows of a /proc/net table: the first row names the columns, the rest are sockets. */
+    private fun readProcNetTable(path: String): List<String> {
+        return runCatching { File(path).readText().lines().drop(1) }
+            .getOrDefault(emptyList())
+    }
 
     private fun isPortBusy(port: Int): Boolean {
         return try {
@@ -820,9 +902,13 @@ object OpenCode {
         return cache.isFile && cache.delete()
     }
 
-    /** Appends a line to the log, keeping the newest [MAX_LOG_LINES] so it cannot grow forever. */
+    /**
+     * Appends a line to the log, keeping the newest [MAX_LOG_LINES] so it cannot grow forever.
+     * The same line goes to the run's log file on disk, where no cap applies.
+     */
     private fun log(text: String, warning: Boolean = false) {
         if (text.isBlank()) return
+        serverLog?.appLine(text, warning)
         update { status ->
             val lines = status.log + OpenCodeLogLine(text, warning)
             status.copy(
@@ -839,6 +925,8 @@ object OpenCode {
     private const val RETRY_SECONDS = 3
     private const val START_TIMEOUT_MS = 120_000L
     private const val MAX_LOG_LINES = 400
+    private const val PROC_NET_TCP = "/proc/net/tcp"
+    private const val PROC_NET_TCP6 = "/proc/net/tcp6"
 
     private val XDG_OPEN_SCRIPT = """
         #!/system/bin/sh
@@ -884,6 +972,62 @@ internal fun isOpenCodeServerCommandLine(commandLine: String): Boolean {
     val text = commandLine.replace('\u0000', ' ')
     if (!text.contains("opencode")) return false
     return Regex("(^|\\s)web(\\s|$)").containsMatchIn(text)
+}
+
+/**
+ * The socket inode numbers of the LISTEN entries for [port] in /proc/net/{tcp,tcp6} rows.
+ *
+ * The kernel's rows look like this:
+ *
+ * `   0: 0100007F:1002 00000000:0000 0A 00000000:00000000 … 48556 1 …`
+ *
+ * The third field is `0A` when the socket listens (the IPv4 and IPv6 tables write it the
+ * same), the local address carries the port after its colon as hexadecimal, and the tenth
+ * column is the socket's inode. The parse is deliberately loose about the columns the kernel
+ * may grow or the table's header row: anything that is not a LISTEN row for the port is
+ * ignored.
+ */
+internal fun procNetListenInodes(rows: List<String>, port: Int): Set<String> {
+    val wanted = String.format(Locale.US, "%04X", port)
+    val inodes = linkedSetOf<String>()
+    for (row in rows) {
+        val fields = row.trim().split(Regex("\\s+"))
+        if (fields.size < 10) continue
+        if (fields[3] != "0A") continue
+        val localPort = fields[1].substringAfterLast(':')
+        if (!localPort.equals(wanted, ignoreCase = true)) continue
+        fields[9].toLongOrNull()?.let { inodes.add(it.toString()) }
+    }
+    return inodes
+}
+
+/**
+ * The processes that own one of [inodes] as an open socket, matched through /proc's
+ * per-process file descriptors: a link whose target reads `socket:[<inode>]` names the
+ * process holding that socket. PIDs that cannot be read — protected processes of other apps
+ * — are skipped, never guessed.
+ */
+internal fun findInodePids(inodes: Set<String>): Set<Int> {
+    if (inodes.isEmpty()) return emptySet()
+    val pids = mutableSetOf<Int>()
+    val myPid = android.os.Process.myPid()
+    File("/proc").listFiles()?.forEach { entry ->
+        val pid = entry.name.toIntOrNull() ?: return@forEach
+        if (pid == myPid) return@forEach
+        val fdDir = File(entry, "fd")
+        val descriptors = runCatching { fdDir.list() }.getOrNull() ?: return@forEach
+        for (descriptor in descriptors) {
+            val target = runCatching {
+                Files.readSymbolicLink(File(fdDir, descriptor).toPath()).toString()
+            }.getOrNull() ?: continue
+            val inode = target.substringAfter("socket:[", "").removeSuffix("]")
+            if (inode.isNotEmpty() && inode in inodes) {
+                pids.add(pid)
+                break
+            }
+        }
+    }
+    return pids
 }
 
 /**

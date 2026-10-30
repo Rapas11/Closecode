@@ -18,12 +18,16 @@ class BuildReportTest {
 
     @Test
     fun aBuiltAppReportsItsApk() {
+        val apk = File("/tmp/app.apk")
         val json = BuildReport.outcome(
-            BuildOutcome.Built(File("/tmp/app.apk"), sizeBytes = 1234, seconds = 7),
+            BuildOutcome.Built(apk, sizeBytes = 1234, seconds = 7),
         )
 
         assertEquals("succeeded", json["state"].asString)
-        assertEquals("/tmp/app.apk", json["apk"].asString)
+        // The report carries the path the build handed it, byte for byte — no re-rooting, no
+        // re-separation. (A File("/tmp/app.apk") on Windows is itself "\tmp\app.apk"; the point
+        // is that the report never rewrites what it was given.)
+        assertEquals(apk.toString(), json["apk"].asString)
         assertEquals(1234L, json["sizeBytes"].asLong)
         assertEquals(7L, json["seconds"].asLong)
     }

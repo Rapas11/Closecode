@@ -7,12 +7,32 @@ import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assume
 import org.junit.Test
 
 class TarExtractorTest {
 
+    /**
+     * A tar entry that names a symlink becomes a real link on the machine the test runs on.
+     * Creating links is an ordinary thing on Linux, where the extraction runs; Windows refuses
+     * it without a privilege, so the two tests that exercise links skip there instead of
+     * failing on what the sandbox cannot do.
+     */
+    private fun assumeSymlinksSupported() {
+        val dir = Files.createTempDirectory("tar-link-probe").toFile()
+        try {
+            val link = File(dir, "probe")
+            val target = File(dir, "target").apply { writeText("x") }
+            runCatching { Files.createSymbolicLink(link.toPath(), target.toPath()) }
+                .onFailure { Assume.assumeNoException(it) }
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
     @Test
     fun extractsFilesDirectoriesSymlinksAndModes() {
+        assumeSymlinksSupported()
         val root = Files.createTempDirectory("tar-extract").toFile()
         try {
             val tar = tar(
@@ -46,6 +66,7 @@ class TarExtractorTest {
 
     @Test
     fun rewritesAbsoluteSymlinksToTheFinalInstallRoot() {
+        assumeSymlinksSupported()
         val root = Files.createTempDirectory("tar-extract").toFile()
         val final = Files.createTempDirectory("tar-final").toFile()
         try {

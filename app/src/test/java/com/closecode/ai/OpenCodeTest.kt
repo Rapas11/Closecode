@@ -49,6 +49,48 @@ class OpenCodeModelTest {
     }
 
     @Test
+    fun aListeningRowNamesTheInodeOfTheFixedPort() {
+        val rows = listOf(
+            "   0: 0100007F:1002 00000000:0000 0A 00000000:00000000 00:00000000 " +
+                "00000000     0        0 48556 1 ffff000000000000 100 0 0 10 0",
+            "   1: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 " +
+                "00000000     0        0 48557 1 ffff000000000000 100 0 0 10 0",
+        )
+
+        assertEquals(setOf("48556"), procNetListenInodes(rows, 4098))
+        assertEquals(setOf("48557"), procNetListenInodes(rows, 8080))
+    }
+
+    @Test
+    fun rowsThatDoNotListenOnThePortCarryNoInode() {
+        val rows = listOf(
+            "  sl  local_address rem_address st tx_queue rx_queue tr tm->when " +
+                "retrnsmt uid timeout inode",
+            // The same port, but established rather than listening.
+            "   0: 0100007F:1002 0100007F:1F90 01 00000000:00000000 00:00000000 " +
+                "00000000     0        0 77 1 0 100 0 0 10 0",
+            // A listening row on a different port.
+            "   1: 0100007F:1F90 00000000:0000 0A 00000000:00000000 00:00000000 " +
+                "00000000     0        0 78 1 0 100 0 0 10 0",
+            // A row that is too short to hold an inode.
+            "   2:",
+        )
+
+        assertTrue(procNetListenInodes(rows, 4098).isEmpty())
+    }
+
+    @Test
+    fun anIpv6ListeningRowIsReadTheSameWay() {
+        val rows = listOf(
+            "   0: 00000000000000000000000000000000:1002 " +
+                "00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 " +
+                "00000000     0        0 603 1 0 100 0 0 10 0",
+        )
+
+        assertEquals(setOf("603"), procNetListenInodes(rows, 4098))
+    }
+
+    @Test
     fun theCountdownSaysWhenTheNextTryComes() {
         assertEquals("Retrying in 3 s", retryCountdownText(3))
         assertEquals("Retrying in 0 s", retryCountdownText(0))
