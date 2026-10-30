@@ -140,6 +140,13 @@ class ProjectRegistry(private val file: File) {
         }
     }
 
+    fun discardPendingBefore(cutoff: Long) {
+        synchronized(lock) {
+            val entries = load()
+            if (entries.removeAll { it.pending && it.updatedAt < cutoff }) save(entries)
+        }
+    }
+
     fun rename(id: String, newName: String) {
         synchronized(lock) {
             val entries = load()

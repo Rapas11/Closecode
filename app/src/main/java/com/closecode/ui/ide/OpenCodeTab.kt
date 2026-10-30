@@ -226,9 +226,7 @@ fun OpenCodeTab(
             other = other,
             onSwitch = {
                 switchTo = null
-                OpenCodeService.stop(context)
-                OpenCode.stop()
-                reallyStart()
+                stopOtherAndStart()
             },
             onDismiss = { switchTo = null },
         )

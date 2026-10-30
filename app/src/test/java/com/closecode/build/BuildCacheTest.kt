@@ -49,6 +49,18 @@ class BuildCacheTest {
     }
 
     @Test
+    fun openingAProjectDoesNotChangeTheKey() {
+        val cache = BuildCache(tmp.newFolder("cache"))
+        val project = project()
+        val tools = tools()
+        val before = cache.key(project, config, tools)
+
+        File(project, ".closecode.json").writeText("{\"lastOpened\":123}")
+
+        assertEquals(before, cache.key(project, config, tools))
+    }
+
+    @Test
     fun changingALibraryChangesTheKey() {
         val cache = BuildCache(tmp.newFolder("cache"))
         val project = project()

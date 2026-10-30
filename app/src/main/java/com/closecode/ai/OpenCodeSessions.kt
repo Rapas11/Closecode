@@ -49,7 +49,8 @@ object OpenCodeSessions {
         val sessions = runCatching { JSONArray(json ?: return null) }.getOrNull() ?: return null
         val matches = (0 until sessions.length()).mapNotNull { index ->
             val item = sessions.optJSONObject(index) ?: return@mapNotNull null
-            if (item.optString("parentID").isNotBlank()) return@mapNotNull null
+            val parentId = item.optString("parentID")
+            if (parentId.isNotBlank() && parentId != "null") return@mapNotNull null
             val id = item.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
             val folder = item.optString("directory").takeIf { it.isNotBlank() }
                 ?: return@mapNotNull null

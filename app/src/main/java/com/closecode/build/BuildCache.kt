@@ -13,6 +13,8 @@ import java.security.cert.X509Certificate
  * be served by a timestamp accident. Any problem while computing or copying falls back to the
  * normal build — a cache is an optimisation, never a reason a build cannot run.
  */
+private val IgnoredFiles = setOf(".closecode.json")
+
 class BuildCache(private val root: File) {
 
     fun key(projectDir: File, config: BuildConfigValues, tools: BuildTools): String {
@@ -55,7 +57,7 @@ class BuildCache(private val root: File) {
         }
         projectDir.walkTopDown()
             .onEnter { it.name != "build" && it.name != ".git" && it.name != ".gradle" }
-            .filter { it.isFile }
+            .filter { it.isFile && it.relativeTo(projectDir).path !in IgnoredFiles }
             .sortedBy { it.relativeTo(projectDir).path }
             .forEach { file ->
                 text(file.relativeTo(projectDir).path)

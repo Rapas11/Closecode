@@ -5,9 +5,14 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 16 is build 38: first-run onboarding, real project setup
-  before the IDE opens, lazy commit-history diffs, Java-only app templates,
-  and Gradle wrapper/AGP metadata. Step 15 is build 37: Shell tools now has a
+- Branch `main`; Step 18 is build 40: build-cache metadata exclusion, stale
+  pending-reservation cleanup, screenshot clearing on OpenCode project switch,
+  and null `parentID` root sessions. Step 17 is build 39: stable project
+  identity, permanent name/package reservations, per-project OpenCode sessions,
+  unified-only diffs, long-press Rename/Delete, onboarding, private screenshots
+  and the cursor-width fix. Step 16 is build 38: first-run onboarding, real
+  project setup before the IDE opens, lazy commit-history diffs, Java-only app
+  templates, and Gradle wrapper/AGP metadata. Step 15 is build 37: Shell tools now has a
   visible status/download/remove page under Settings → Terminal, and OpenCode
   only shows or opens a server owned by the current project. Step 14 is build
   36: editor horizontal-follow fix, Material icons and shared diff scrolling.
@@ -362,6 +367,66 @@ the 1.18.35 page is proven on a device.
   switch Gradle versions and confirm wrapper/AGP output. No adb/device is
   connected here.
 
+## Step 17 (build 39)
+
+- Projects now have a permanent UUID identity that survives rename, folder move
+  and package changes. `ProjectCodec` writes the seven fields
+  `id`, `slug`, `name`, `tab`, `templateIndex`, `templateName` and `config`,
+  and still decodes the old six-field route.
+  `ProjectRegistry` reserves every name, package and slug case-insensitively
+  forever, including deleted projects; duplicate packages are an error with
+  “Another project uses this package. Choose a different package name.”
+- Create and import claim the identity before scaffolding and cancel on failure.
+  Rename updates metadata only; delete keeps the reservation. Build, terminal,
+  IDE and OpenCode session state are keyed by UUID, not the display slug.
+- OpenCode now discovers the project's root session with
+  `GET /session?directory=…&roots=true&limit=100`, creates one only when needed,
+  verifies the returned directory, prefers the remembered session, and opens
+  `/server/<key>/session/<id>` directly. Deleting a project forgets its session.
+- Diff view is unified only: the side-by-side toggle, wide breakpoint, rotation
+  hint and second renderer are gone. `unify` now emits a removed row then an
+  added row for replacements. Recent projects use long-press for Rename/Delete;
+  there is no three-dot button.
+- Onboarding adds the welcome panel, focused download panels and Finish gating.
+  Screenshots are stored privately under `cache/screenshots`, hidden from the
+  project tree and cleared on app start, service destroy, Stop and tab Stop;
+  image files get a real preview. The editor cursor-width calculation now uses
+  the measured code width plus the left inset.
+- Tests: `:app:testDebugUnitTest` passed 1340 tests, 8 skipped, 0 failures;
+  `:app:assembleDebug` is green. `closecode-39-debug.apk` is 42 MB
+  (43,916,717 bytes, SHA-256
+  `b3d6207024f562f37eb058e1cc78d570955efbb8dc04136f56eddebd3d9c1ed8`),
+  package `com.closecode`, versionCode 39, v2-signed.
+- Still to check on a device: rename/move/package changes keeping identity and
+  history; duplicate-name/package errors; OpenCode session resume across two
+  projects; side-by-side removal and long-press menus; onboarding downloads;
+  image preview; private screenshots; cursor alignment when the keyboard opens.
+
+## Step 18 (build 40)
+
+- The final-APK cache key now ignores the project's root `.closecode.json`, but
+  does not ignore matching files elsewhere in the project. Opening or updating
+  metadata no longer invalidates a valid APK; actual build-config changes are
+  still supplied separately and keep affecting the key.
+- Pending project reservations from an earlier process are discarded the first
+  time `ProjectRepository` is used; claims made in the current process survive.
+  A crash while scaffolding no longer permanently blocks a name or package.
+- The OpenCode project switch dialog now uses the same stop-and-start path as
+  the retry card, so switching projects also clears the private screenshot
+  cache before the new server starts.
+- OpenCode session selection tolerates a JSON `parentID: null`; it now
+  identifies the session as a root rather than treating the string "null" as a
+  parent.
+- Tests: `:app:testDebugUnitTest` passed 1343 tests, 8 skipped, 0 failures;
+  `:app:assembleDebug` is green. `closecode-40-debug.apk` is 40 MB
+  (40,439,249 bytes, SHA-256
+  `2dd8270e0b8f7cc7f3a91d734081ce4eed93016cbaf373f44cf257c15d61f3b8`),
+  package `com.closecode`, versionCode 40, v2-signed, with
+  `lib/arm64-v8a/libaapt2.so` and `lib/arm64-v8a/libclosepty.so`.
+- Still to check on a device: a project build before and after metadata
+  refresh, stale/slow scaffolding crash recovery, switching OpenCode projects
+  and screenshot visibility, and session listing with `parentID: null`.
+
 ## Environment on a new machine
 
 1. JDK 21, exported as `JAVA_HOME` (this machine used
@@ -389,7 +454,7 @@ the 1.18.35 page is proven on a device.
 
 ## Latest deliverable
 
-`closecode-38-debug.apk` for Step 16 (debug, since `assembleRelease` is blocked
+`closecode-40-debug.apk` for Step 18 (debug, since `assembleRelease` is blocked
 by an unrelated Gradle lint issue on this machine).
 
 ## Step 12 (build 34)

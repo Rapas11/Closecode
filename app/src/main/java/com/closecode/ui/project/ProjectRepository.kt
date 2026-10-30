@@ -9,6 +9,8 @@ import com.closecode.ui.model.TemplateTab
 import java.io.File
 import org.json.JSONObject
 
+private val ProcessStartedAt = System.currentTimeMillis()
+
 data class ProjectRecord(
     val id: String,
     val slug: String,
@@ -62,6 +64,10 @@ class ProjectRepository(context: Context) {
     private val appContext = context.applicationContext
     private val store = ProjectStore(context)
     private val registry = ProjectRegistry(File(context.filesDir, "project-registry.json"))
+
+    init {
+        registry.discardPendingBefore(ProcessStartedAt)
+    }
 
     fun listProjects(): List<ProjectRecord> =
         store.listSlugs()

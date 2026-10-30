@@ -107,6 +107,22 @@ class ProjectRegistryTest {
     }
 
     @Test
+    fun pendingCreationsFromAnEarlierProcessAreDiscarded() {
+        val registry = registry()
+        val stale = ProjectIdentity.newId()
+        val current = ProjectIdentity.newId()
+        registry.begin(stale, "stale", "Stale", "com.closecode.stale", now = 1_000)
+        registry.begin(current, "current", "Current", "com.closecode.current", now = 3_000)
+
+        registry.discardPendingBefore(2_000)
+
+        assertNull(registry.entry(stale))
+        assertTrue(registry.entry(current)?.pending == true)
+        assertFalse(registry.nameTaken("Stale"))
+        assertTrue(registry.nameTaken("Current"))
+    }
+
+    @Test
     fun corruptRegistryIsQuarantinedAndCanBeRebuilt() {
         val file = File(tmp.root, "project-registry.json")
         file.writeText("{not json")

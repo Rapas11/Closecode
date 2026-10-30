@@ -33,6 +33,17 @@ class OpenCodeSessionTest {
     }
 
     @Test
+    fun aNullParentIdIsStillARootSession() {
+        val json = """
+            [
+              {"id":"root","directory":"$directory","parentID":null,"time":{"updated":1}}
+            ]
+        """.trimIndent()
+
+        assertEquals("root", OpenCodeSessions.chooseSessionId(json, directory))
+    }
+
+    @Test
     fun aRememberedSessionIsPreferredWhenItStillMatches() {
         val json = """
             [
