@@ -8,9 +8,12 @@ import com.closecode.build.BuildReport
 import com.closecode.build.BuildSetup
 import com.closecode.build.BuildSetupFactory
 import com.closecode.build.BuildState
+import com.closecode.build.GradlePlan
+import com.closecode.build.GradleRunner
 import com.closecode.build.ProjectCheck
 import com.closecode.build.ToolchainHolder
 import com.closecode.build.ToolchainManifest
+import com.closecode.build.BuildCancel
 import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
 import com.closecode.device.CloseCodeAccessibilityService
@@ -38,7 +41,10 @@ import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 
 object CloseCodeControl {
 
@@ -180,6 +186,13 @@ object CloseCodeControl {
                 "export" -> send(output, export(context, request))
                 "screenshot" -> send(output, screenshot(context, request))
                 "input" -> send(output, DeviceTools.input(args(request)))
+                "ui" -> send(output, DeviceTools.ui(args(request)))
+                "app" -> send(output, appStatus(context, request))
+                "stop" -> send(output, stop(context, request))
+                "restart" -> {
+                    it.soTimeout = 0
+                    runBlocking { restart(context, request, output) }
+                }
                 "accessibility" -> send(output, accessibility(context))
                 "describe" -> {
                     it.soTimeout = 0
@@ -197,6 +210,11 @@ object CloseCodeControl {
                     it.soTimeout = 0
                     runBlocking { build(context, request, output) }
                 }
+                "run" -> {
+                    it.soTimeout = 0
+                    runBlocking { run(context, request, output) }
+                }
+                "clean" -> send(output, clean(context, request))
                 "gradle" -> {
                     it.soTimeout = 0
                     runBlocking { gradle(context, request, output) }
@@ -296,6 +314,8 @@ object CloseCodeControl {
             toolchainReady = store.isReady(),
             toolchainMissing = store.missing().map { it.fileName },
             toolchainBytes = store.sizeOnPhone(),
+            gradleReady = setup.gradle != null,
+            gradleMissing = setup.gradleMissing,
             last = last,
         )
         val shellTools = ShellToolsStore(context, ShellToolsManifest.load(context))
@@ -460,6 +480,10 @@ object CloseCodeControl {
             send(output, error(error.message ?: error.javaClass.simpleName))
             return null
         }
+        val arguments = args(request)
+        val useGradle = arguments.any {
+            it == "--gradle" || it == "--full-gradle" || it == "--real"
+        }
         send(output, JsonObject().apply {
             addProperty("ok", true)
             addProperty("event", "start")
@@ -467,8 +491,9 @@ object CloseCodeControl {
             addProperty("slug", resolved.slug)
             addProperty("project", resolved.name)
             addProperty("build", BuildConfig.VERSION_CODE)
+            addProperty("engine", if (useGradle) "gradle" else "closecode")
             add("missing", com.google.gson.JsonArray().apply {
-                setup.missing.forEach { add(it) }
+                (if (useGradle) setup.gradleMissing else setup.missing).forEach { add(it) }
             })
         })
         val onEvent: (JsonObject) -> Unit = { event -> send(output, event) }
@@ -479,6 +504,15 @@ object CloseCodeControl {
                 addProperty("text", text)
             })
         }
+        val buildType = if (args(request).any {
+                it == "release" || it == "--release" ||
+                    it.endsWith("Release", ignoreCase = true)
+            }
+        ) {
+            "release"
+        } else {
+            "debug"
+        }
         try {
             val settings = SettingsStore(SharedPreferencesKeyValueStore(context)).read()
             val outcome = BuildCoordinator.build(
@@ -488,6 +522,8 @@ object CloseCodeControl {
                 onEvent,
                 onLog,
                 cacheEnabled = settings.buildCache,
+                buildType = buildType,
+                useGradle = useGradle,
             )
             send(output, JsonObject().apply {
                 addProperty("ok", true)
@@ -507,27 +543,135 @@ object CloseCodeControl {
 
     private data class BuildRun(val project: BuildSetup.Project, val outcome: BuildOutcome)
 
+    private fun clean(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: return error("Run closecode from a registered project folder.")
+        val build = File(project.directory, "build")
+        val existed = build.exists()
+        val removed = !existed || build.deleteRecursively()
+        return JsonObject().apply {
+            addProperty("ok", removed)
+            addProperty("removed", existed)
+            addProperty("path", build.absolutePath)
+            if (!removed) addProperty("error", "Could not remove the build folder.")
+        }
+    }
+
+    private fun appStatus(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        return DeviceTools.appStatus(context, project?.directory, args(request).firstOrNull())
+    }
+
+    private fun stop(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        val argument = args(request).firstOrNull()
+        if (project == null && argument.isNullOrBlank()) {
+            return error("Run closecode from a registered project folder or pass a package name.")
+        }
+        return DeviceTools.stop(context, project?.directory, argument)
+    }
+
+    private suspend fun restart(context: Context, request: JsonObject, output: OutputStream) {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        val argument = args(request).firstOrNull()
+        if (project == null && argument.isNullOrBlank()) {
+            send(output, error("Run closecode from a registered project folder or pass a package name."))
+            return
+        }
+        val stopped = DeviceTools.stop(context, project?.directory, argument)
+        send(output, stopped)
+        val launched = DeviceTools.launch(context, project?.directory, argument)
+        send(output, launched)
+        if (launched.get("ok")?.asBoolean != true) return
+        send(output, DeviceTools.waitForForeground(project?.directory, argument, 15_000))
+    }
+
+    private suspend fun run(context: Context, request: JsonObject, output: OutputStream) {
+        val run = build(context, request, output) ?: return
+        val built = run.outcome as? BuildOutcome.Built
+        if (built == null) {
+            send(output, error("The build did not succeed, so nothing was installed."))
+            return
+        }
+        val install = DeviceTools.install(
+            context,
+            run.project.directory,
+            built.apk.absolutePath,
+            waitMs = 60_000,
+        )
+        send(output, install)
+        if (install.get("ok")?.asBoolean != true) return
+        if (install.get("needsUser")?.asBoolean == true) return
+        val launch = DeviceTools.launch(context, run.project.directory, null)
+        send(output, launch)
+        if (launch.get("ok")?.asBoolean != true) return
+        send(output, DeviceTools.waitForForeground(run.project.directory, null, 15_000))
+    }
+
     /**
-     * The phone has no Gradle daemon: CloseCode builds with its own engine. This translates the
-     * Gradle task names an agent knows into the same power, and answers the rest with the list
-     * of what the phone can run — so the agent never guesses twice.
+     * CloseCode builds with its own engine by default; an optional downloaded Gradle is used
+     * only when --gradle is passed. This translates the Gradle task names an agent knows into
+     * the same power, and answers the rest with the list of what the phone can run — so the
+     * agent never guesses twice.
      */
     private suspend fun gradle(
         context: Context,
         request: JsonObject,
         output: OutputStream,
     ) {
-        val task = args(request).firstOrNull()
+        val arguments = args(request)
+        val useGradle = arguments.any {
+            it == "--gradle" || it == "--full-gradle" || it == "--real"
+        }
+        val task = arguments.firstOrNull {
+            it != "--gradle" && it != "--full-gradle" && it != "--real"
+        }
         if (task == null) {
             send(output, error(gradleTaskMessage("")))
             return
         }
-        if (task !in GRADLE_TASKS) {
+        if (!isSupportedTask(task)) {
             send(output, error(gradleTaskMessage(task)))
             return
         }
-        if (task == "assembleDebug") {
+        if (task == "assembleDebug" || task == "assembleRelease") {
             build(context, request, output)
+            return
+        }
+        if (task in setOf("test", "testDebugUnitTest", "lint", "lintDebug", "check")) {
+            if (useGradle) {
+                fullGradle(context, request, output, task)
+            } else {
+                send(output, staticCheck(context, request, task))
+            }
+            return
+        }
+        if (task in setOf("bundleDebug", "bundleRelease", "tasks") ||
+            task.startsWith("assemble") || task.startsWith("bundle")
+        ) {
+            if (useGradle) {
+                fullGradle(context, request, output, task)
+            } else {
+                send(output, error(
+                    "closecode: gradle '$task' needs the full Gradle engine. " +
+                        "Add --gradle to use it.",
+                ))
+            }
             return
         }
         val run = build(context, request, output) ?: return
@@ -536,16 +680,134 @@ object CloseCodeControl {
             send(output, error("The build did not succeed, so nothing was installed."))
             return
         }
-        if (task == "installDebug") {
-            send(output, DeviceTools.install(context, run.project.directory, null))
+        if (task == "installDebug" || task == "installRelease") {
+            send(
+                output,
+                DeviceTools.install(context, run.project.directory, built.apk.absolutePath),
+            )
             return
         }
-        val installed = DeviceTools.install(context, run.project.directory, null)
+        val installed = DeviceTools.install(
+            context,
+            run.project.directory,
+            built.apk.absolutePath,
+        )
         if (installed.get("ok")?.asBoolean != true) {
             send(output, installed)
             return
         }
         send(output, DeviceTools.launch(context, run.project.directory, null))
+    }
+
+    /**
+     * Full Gradle tasks that do not produce an APK: unit tests, lint, check, bundles and the
+     * task listing. The output is streamed as log events; the last event names the artifact
+     * (or says the task passed) and the exit code.
+     */
+    private suspend fun fullGradle(
+        context: Context,
+        request: JsonObject,
+        output: OutputStream,
+        task: String,
+    ) {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        if (project == null) {
+            send(output, error("Run closecode from a registered project folder."))
+            return
+        }
+        if (BuildCoordinator.active() != null) {
+            send(output, error("A build is already running."))
+            return
+        }
+        val setup = try {
+            BuildSetupFactory.create(context, project)
+        } catch (error: Throwable) {
+            send(output, error(error.message ?: error.javaClass.simpleName))
+            return
+        }
+        val gradle = setup.gradle
+        if (gradle == null) {
+            send(output, JsonObject().apply {
+                addProperty("ok", false)
+                addProperty("error", "Full Gradle is not ready.")
+                add("missing", com.google.gson.JsonArray().apply {
+                    setup.gradleMissing.forEach { add(it) }
+                })
+            })
+            return
+        }
+        send(output, JsonObject().apply {
+            addProperty("ok", true)
+            addProperty("event", "start")
+            addProperty("id", project.id)
+            addProperty("slug", project.slug)
+            addProperty("project", project.name)
+            addProperty("engine", "gradle")
+            addProperty("task", task)
+        })
+        val cancelled = AtomicBoolean(false)
+        BuildCancel.register { cancelled.set(true) }
+        val result = try {
+            withContext(Dispatchers.IO) {
+                GradleRunner.runTask(
+                    projectDir = project.directory,
+                    task = task,
+                    toolchain = gradle,
+                    onLog = { line ->
+                        send(output, JsonObject().apply {
+                            addProperty("ok", true)
+                            addProperty("event", "log")
+                            addProperty("text", line)
+                        })
+                    },
+                    cancelled = { cancelled.get() },
+                )
+            }
+        } finally {
+            BuildCancel.clear()
+        }
+        if (result.cancelled) {
+            send(output, error("Gradle task cancelled."))
+            return
+        }
+        if (result.timedOut || result.code != 0) {
+            send(output, error(GradleRunner.failureMessage(result)))
+            return
+        }
+        val bundle = if (task.startsWith("bundle")) {
+            GradlePlan.findBundle(project.directory)
+        } else {
+            null
+        }
+        val apk = if (task.startsWith("assemble")) {
+            GradlePlan.findAnyApk(project.directory)
+        } else {
+            null
+        }
+        send(output, JsonObject().apply {
+            addProperty("ok", true)
+            addProperty("task", task)
+            addProperty("exit", result.code)
+            addProperty(
+                "result",
+                when {
+                    bundle != null || apk != null -> "built"
+                    else -> "passed"
+                },
+            )
+            if (bundle != null) {
+                addProperty("bundle", bundle.absolutePath)
+                addProperty("bytes", bundle.length())
+            }
+            if (apk != null) {
+                addProperty("apk", apk.absolutePath)
+                addProperty("bytes", apk.length())
+            }
+        })
     }
 
     /** `closecode check`: the project's static checks, without building. */
@@ -582,16 +844,31 @@ object CloseCodeControl {
     }
 
     internal fun gradleTaskMessage(task: String): String =
-        "closecode: gradle '$task' has no phone equivalent. This phone has no Gradle daemon; " +
-            "CloseCode builds with its own engine. Supported tasks: assembleDebug (build an " +
-            "APK), installDebug (build and install), launch (build, install and launch), " +
-            "test, testDebugUnitTest, lint, lintDebug or check (static checks, no build)."
+        "closecode: gradle '$task' has no phone equivalent. CloseCode builds with its own " +
+            "engine by default; add --gradle to use the downloaded JDK and Gradle distribution. " +
+            "Supported tasks: assembleDebug or assembleRelease (build an APK), " +
+            "installDebug or installRelease (build and install), launch or launchRelease " +
+            "(build, install and launch), test, testDebugUnitTest, lint, lintDebug, check, " +
+            "bundleDebug, bundleRelease, tasks, or a flavour task such as assembleFreeDebug " +
+            "or bundleFreeRelease. Without --gradle, test, lint and check run the phone's " +
+            "static checks and bundles are refused."
+
+    internal fun isSupportedTask(task: String): Boolean =
+        task in GRADLE_TASKS ||
+            Regex("^assemble[A-Z][A-Za-z0-9]*$").matches(task) ||
+            Regex("^bundle[A-Z][A-Za-z0-9]*$").matches(task)
 
     /** The Gradle names `closecode gradle` accepts; anything else is answered with the list. */
     internal val GRADLE_TASKS = setOf(
         "assembleDebug",
+        "assembleRelease",
+        "bundleDebug",
+        "bundleRelease",
+        "tasks",
         "installDebug",
+        "installRelease",
         "launch",
+        "launchRelease",
         "test",
         "testDebugUnitTest",
         "lint",
@@ -807,11 +1084,17 @@ internal fun controlCommandScript(basePath: String): String = """
     CMD="${'$'}{1:-status}"
     case "${'$'}CMD" in
       b|build) CMD=build ;;
+      clean) CMD=clean ;;
       s|status) CMD=status ;;
       c|cancel) CMD=cancel ;;
       p|ping) CMD=ping ;;
       i|install) CMD=install ;;
       l|launch) CMD=launch ;;
+      r|run) CMD=run ;;
+      app|app-status) CMD=app ;;
+      stop) CMD=stop ;;
+      restart) CMD=restart ;;
+      ui) CMD=ui ;;
       log|logcat) CMD=logcat ;;
       x|export) CMD=export ;;
       shot|screenshot) CMD=screenshot ;;
@@ -825,8 +1108,8 @@ internal fun controlCommandScript(basePath: String): String = """
       gh|github) CMD=github ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|gradle|check|github) ;;
-      *) echo "usage: closecode build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|gradle|check|github" >&2; exit 2 ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|gradle|check|github|run|app|stop|restart|ui|clean) ;;
+      *) echo "usage: closecode build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|gradle|check|github|run|app|stop|restart|ui|clean" >&2; exit 2 ;;
     esac
     [ ${'$'}# -gt 0 ] && shift
     CWD=${'$'}(pwd -P 2>/dev/null || pwd)

@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.AlertDialog
@@ -106,6 +107,8 @@ private class SettingsFacts(
             toolchainStatus = toolchainStatus(),
             toolchainVersions = toolchainVersions(),
             shellToolsStatus = shellToolsStatus(),
+            gradleToolsStatus = gradleToolsStatus(),
+            nativeToolsStatus = nativeToolsStatus(),
         )
     }
 
@@ -114,6 +117,19 @@ private class SettingsFacts(
             context,
             com.closecode.tools.ShellToolsManifest.load(context),
         )
+        return if (store.isReady()) "Installed" else "Not installed"
+    }
+
+    private fun gradleToolsStatus(): String {
+        val store = com.closecode.tools.GradleToolsStore(
+            context,
+            com.closecode.tools.GradleToolsManifest.load(context),
+        )
+        return if (store.isReady()) "Installed" else "Not installed"
+    }
+
+    private fun nativeToolsStatus(): String {
+        val store = com.closecode.tools.NativeToolsStore(context)
         return if (store.isReady()) "Installed" else "Not installed"
     }
 
@@ -159,6 +175,7 @@ fun SettingsScreen(
     val c = LocalPageColors.current
     val widthDp = LocalConfiguration.current.screenWidthDp
     val wide = widthDp >= 760
+    var mobileDetail by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val repository = rememberProjectRepository()
@@ -169,6 +186,8 @@ fun SettingsScreen(
     // On-device toolchain setup: full-screen over settings, dismissed back to it.
     var setupOpen by remember { mutableStateOf(false) }
     var shellToolsOpen by remember { mutableStateOf(false) }
+    var gradleToolsOpen by remember { mutableStateOf(false) }
+    var nativeToolsOpen by remember { mutableStateOf(false) }
     var sdkOpen by remember { mutableStateOf(false) }
     var signingOpen by remember { mutableStateOf(false) }
     var credentialsOpen by remember { mutableStateOf(false) }
@@ -238,6 +257,35 @@ fun SettingsScreen(
         )
         return
     }
+    if (gradleToolsOpen) {
+        GradleToolsPage(
+            onBack = {
+                gradleToolsOpen = false
+                scope.launch { live = facts.measure() }
+            },
+            onOpenSdk = { sdkOpen = true },
+            onChanged = {
+                scope.launch { live = facts.measure() }
+            },
+        )
+        return
+    }
+    if (nativeToolsOpen) {
+        NativeToolsPage(
+            onBack = {
+                nativeToolsOpen = false
+                scope.launch { live = facts.measure() }
+            },
+            onOpenGradle = {
+                nativeToolsOpen = false
+                gradleToolsOpen = true
+            },
+            onChanged = {
+                scope.launch { live = facts.measure() }
+            },
+        )
+        return
+    }
 
     // The GitHub account this phone is signed in to. The token itself lives in encrypted
     // storage and never in a composition; what is kept here is whether one is there and which
@@ -299,6 +347,8 @@ fun SettingsScreen(
             }
             SettingsAction.SDK_MANAGER -> sdkOpen = true
             SettingsAction.SHELL_TOOLS -> shellToolsOpen = true
+            SettingsAction.FULL_GRADLE -> gradleToolsOpen = true
+            SettingsAction.NATIVE_TOOLS -> nativeToolsOpen = true
             SettingsAction.SIGNING_KEYS -> signingOpen = true
             SettingsAction.CREDENTIALS -> credentialsOpen = true
             SettingsAction.LICENSES -> infoPage = "licenses"
@@ -313,16 +363,21 @@ fun SettingsScreen(
         }
     }
 
+    BackHandler(enabled = !wide && mobileDetail) { mobileDetail = false }
+
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.bg)
+            .background(c.mock.page)
             .statusBarsPadding(),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        SettingsHeader(onBack = onBack, wide = wide)
-
         if (wide) {
+            SettingsHeader(
+                title = "Settings",
+                subtitle = "Workspace, tools and account",
+                onBack = onBack,
+            )
             Row(
                 Modifier
                     .weight(1f)
@@ -337,7 +392,7 @@ fun SettingsScreen(
                     wide = true,
                     modifier = Modifier.width(235.dp),
                 )
-                Spacer(Modifier.width(44.dp))
+                Spacer(Modifier.width(28.dp))
                 SectionContent(
                     section = current,
                     wide = true,
@@ -347,30 +402,37 @@ fun SettingsScreen(
                     modifier = Modifier.weight(1f),
                 )
             }
+        } else if (mobileDetail) {
+            SettingsHeader(
+                title = current.title,
+                subtitle = current.blurb,
+                onBack = { mobileDetail = false },
+            )
+            SectionContent(
+                section = current,
+                wide = false,
+                settings = settings,
+                onSettingsChange = onSettingsChange,
+                onAction = ::handleAction,
+                modifier = Modifier.weight(1f),
+            )
         } else {
-            Column(
-                Modifier
+            SettingsHeader(
+                title = "Settings",
+                subtitle = "Workspace, tools and account",
+                onBack = onBack,
+            )
+            SettingsMobileList(
+                sections = allSections,
+                activeId = current.id,
+                onSelect = {
+                    onActiveChange(it)
+                    mobileDetail = true
+                },
+                modifier = Modifier
                     .weight(1f)
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp)
-            ) {
-                SettingsNav(
-                    sections = allSections,
-                    activeId = current.id,
-                    onActiveChange = onActiveChange,
-                    wide = false,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(28.dp))
-                SectionContent(
-                    section = current,
-                    wide = false,
-                    settings = settings,
-                    onSettingsChange = onSettingsChange,
-                    onAction = ::handleAction,
-                    modifier = Modifier.weight(1f),
-                )
-            }
+                    .fillMaxWidth(),
+            )
         }
     }
 
@@ -430,52 +492,140 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun SettingsHeader(onBack: () -> Unit, wide: Boolean) {
+private fun SettingsHeader(
+    title: String,
+    subtitle: String,
+    onBack: () -> Unit,
+) {
     val c = LocalPageColors.current
     Row(
         Modifier
             .widthIn(max = 1080.dp)
             .fillMaxWidth()
-            .height(if (wide) 68.dp else 60.dp)
-            .background(c.bg)
-            .bottomRule(c.ln)
-            .padding(horizontal = if (wide) 22.dp else 15.dp),
+            .background(c.mock.page)
+            .padding(horizontal = 18.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
-            Modifier
-                .size(if (wide) 38.dp else 34.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .clickable(onClick = onBack),
-            contentAlignment = Alignment.Center,
-        ) {
+        com.closecode.ui.components.DesignBackButton(onClick = onBack)
+        Column(Modifier.weight(1f)) {
             Text(
-                text = "‹",
-                color = c.mu,
-                fontSize = 26.sp,
+                text = title,
+                color = c.mock.text,
+                fontSize = 20.sp,
                 fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                color = c.mock.muted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(
-            text = "Closecode",
-            color = c.tx,
-            fontSize = 18.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = (-0.4f).sp,
-            modifier = Modifier.padding(start = 10.dp),
-        )
-        if (wide) {
-            Text(
-                text = "Settings",
-                color = c.mu,
-                fontSize = 15.sp,
-                fontFamily = Sans,
-                modifier = Modifier
-                    .padding(start = 16.dp)
-                    .leftRule(c.ln)
-                    .padding(start = 16.dp),
+    }
+}
+
+private fun sectionIcon(id: String) = when (id) {
+    "general" -> com.closecode.ui.ide.CcIcons.Sliders
+    "editor" -> com.closecode.ui.ide.CcIcons.Code
+    "intelligence" -> com.closecode.ui.ide.CcIcons.Bulb
+    "build" -> com.closecode.ui.ide.CcIcons.Zap
+    "terminal" -> com.closecode.ui.ide.CcIcons.Terminal
+    "git" -> com.closecode.ui.ide.CcIcons.Branch
+    "ai" -> com.closecode.ui.ide.CcIcons.Logo
+    "appearance" -> com.closecode.ui.ide.CcIcons.Sun
+    "storage" -> com.closecode.ui.ide.CcIcons.Archive
+    "security" -> com.closecode.ui.ide.CcIcons.Lock
+    else -> com.closecode.ui.ide.CcIcons.Book
+}
+
+@Composable
+private fun SettingsMobileList(
+    sections: List<Section>,
+    activeId: String,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val c = LocalPageColors.current
+    LazyColumn(
+        modifier,
+        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item(key = "settings-account") {
+            com.closecode.ui.components.DesignCard {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    com.closecode.ui.components.DesignAvatar("C", size = 46.dp)
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Closecode workspace",
+                            color = c.mock.text,
+                            fontSize = 15.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            text = "On-device tools and preferences",
+                            color = c.mock.muted,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                        )
+                    }
+                    com.closecode.ui.components.DesignChevron()
+                }
+            }
+        }
+        item(key = "settings-label") {
+            com.closecode.ui.components.DesignSectionLabel(
+                "Preferences",
+                Modifier.padding(start = 4.dp, top = 10.dp, bottom = 2.dp),
             )
+        }
+        items(sections.size, key = { "settings-${sections[it].id}" }) { index ->
+            val section = sections[index]
+            com.closecode.ui.components.DesignCard(
+                onClick = { onSelect(section.id) },
+                radius = 18.dp,
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    com.closecode.ui.components.DesignIconTile(
+                        icon = sectionIcon(section.id),
+                        background = if (section.id == activeId) c.mock.selected else c.mock.content,
+                        tint = c.mock.accent,
+                    )
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = section.label,
+                            color = c.mock.text,
+                            fontSize = 14.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = section.blurb,
+                            color = c.mock.muted,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    com.closecode.ui.components.DesignChevron()
+                }
+            }
         }
     }
 }
@@ -545,22 +695,22 @@ private fun NavItem(
     val pad = if (wide) 12.dp else 10.dp
     Row(
         modifier
-            .clip(RoundedCornerShape(9.dp))
-            .background(if (active) c.ac.copy(alpha = 0.12f) else Color.Transparent)
+            .clip(RoundedCornerShape(14.dp))
+            .background(if (active) c.mock.content else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = pad, vertical = pad),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = section.icon,
-            color = if (active) c.ac else c.mu,
+            color = if (active) c.mock.accent else c.mock.muted,
             fontSize = 15.sp,
             fontFamily = Sans,
             modifier = Modifier.width(19.dp),
         )
         Text(
             text = section.label,
-            color = if (active) c.ac else c.mu,
+            color = if (active) c.mock.text else c.mock.muted,
             fontSize = if (wide) 14.sp else 12.sp,
             fontFamily = Sans,
             maxLines = 1,
@@ -615,13 +765,9 @@ private fun SectionContent(
         section.groups.forEachIndexed { index, group ->
             if (group.title.isNotEmpty()) {
                 item(key = "gt-$index") {
-                    Text(
-                        text = group.title,
-                        color = c.tx,
-                        fontSize = 13.sp,
-                        fontFamily = Sans,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(bottom = 10.dp),
+                    com.closecode.ui.components.DesignSectionLabel(
+                        group.title,
+                        Modifier.padding(start = 4.dp, bottom = 10.dp),
                     )
                 }
             }
@@ -655,9 +801,8 @@ private fun Card(
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(13.dp))
-            .background(c.panel)
-            .border(1.dp, c.ln, RoundedCornerShape(13.dp))
+            .clip(RoundedCornerShape(20.dp))
+            .background(c.mock.card)
     ) {
         rows.forEachIndexed { index, row ->
             if (index > 0) {
@@ -665,7 +810,7 @@ private fun Card(
                     Modifier
                         .fillMaxWidth()
                         .height(1.dp)
-                        .background(c.ln)
+                        .background(c.mock.border.copy(alpha = 0.55f))
                 )
             }
             SettingRow(

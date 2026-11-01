@@ -13,6 +13,29 @@ import org.junit.Test
  */
 class ForgeUiSpecTest {
 
+    // -- left rail ---------------------------------------------------------------------
+
+    @Test
+    fun theRailListsSevenToolsInDesignOrder() {
+        assertEquals(
+            listOf("Files", "Search", "GitHub", "Terminal", "Logcat", "Problems", "OpenCode"),
+            IdeRailTools.map { it.id },
+        )
+    }
+
+    @Test
+    fun everyRailToolHasOneLabelAndOneIcon() {
+        assertEquals(IdeRailTools.size, IdeRailTools.map { it.label }.distinct().size)
+        assertEquals(IdeRailTools.size, IdeRailTools.map { it.icon }.distinct().size)
+    }
+
+    @Test
+    fun openCodeIsTheLastRailToolSoItSitsAfterProblems() {
+        assertEquals("OpenCode", IdeRailTools.last().id)
+        assertTrue(IdeRailTools.indexOfFirst { it.id == "OpenCode" } >
+            IdeRailTools.indexOfFirst { it.id == "Problems" })
+    }
+
     // -- bottom bar ---------------------------------------------------------------------
 
     @Test
@@ -212,7 +235,15 @@ class ForgeUiSpecTest {
     @Test
     fun theBottomMoreSheetOffersThePanelsAndThePreferences() {
         assertEquals(
-            listOf("Logcat", "Build", "Project settings", "Settings", "Toggle theme", "Developer"),
+            listOf(
+                "Logcat",
+                "Build",
+                "UI inspector",
+                "Project settings",
+                "Settings",
+                "Toggle theme",
+                "Developer",
+            ),
             MoreLabels,
         )
     }

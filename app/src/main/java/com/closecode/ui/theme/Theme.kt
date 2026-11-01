@@ -47,6 +47,11 @@ fun ClosecodeTheme(
             af = onAccent,
             selection = picked.copy(alpha = if (useDark) 0.20f else 0.14f),
             glow = picked.copy(alpha = if (useDark) 0.10f else 0.06f),
+            mock = base.mock.copy(
+                accent = picked,
+                onAccent = onAccent,
+                selected = if (useDark) picked.copy(alpha = 0.22f) else lerp(picked, Color.White, 0.84f),
+            ),
         )
     } ?: base
 

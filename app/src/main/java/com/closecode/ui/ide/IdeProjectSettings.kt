@@ -74,7 +74,7 @@ fun IdeProjectSettingsSheet(
     IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
         Text(
             text = "PROJECT SETTINGS",
-            color = c.mu,
+            color = c.mock.faint,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -91,7 +91,7 @@ fun IdeProjectSettingsSheet(
             when {
                 imported -> Text(
                     text = "Imported and cloned projects keep their own package name.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 4.dp),
@@ -147,7 +147,7 @@ fun IdeProjectSettingsSheet(
             when {
                 report == null -> Text(
                     text = "Checking…",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
@@ -246,11 +246,11 @@ private fun SettingsField(
     onValueChange: (String) -> Unit,
 ) {
     val c = LocalPageColors.current
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(12.dp)
     Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {
         Text(
             text = label,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
@@ -258,11 +258,10 @@ private fun SettingsField(
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(40.dp)
+                .height(46.dp)
                 .padding(top = 6.dp)
                 .clip(shape)
-                .background(c.cd)
-                .border(1.dp, c.ln, shape)
+                .background(c.mock.field)
                 .padding(horizontal = 12.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
@@ -272,7 +271,7 @@ private fun SettingsField(
                 enabled = enabled,
                 singleLine = true,
                 textStyle = androidx.compose.material3.LocalTextStyle.current.copy(
-                    color = if (enabled) c.tx else c.mu,
+                    color = if (enabled) c.mock.text else c.mock.faint,
                     fontSize = 14.sp,
                     fontFamily = Mono,
                 ),
@@ -293,11 +292,11 @@ private fun SettingsDropdown(
 ) {
     val c = LocalPageColors.current
     var open by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(12.dp)
     Column(Modifier.padding(horizontal = 18.dp, vertical = 6.dp)) {
         Text(
             text = label,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
@@ -307,32 +306,31 @@ private fun SettingsDropdown(
                 Modifier
                     .fillMaxWidth()
                     .padding(top = 6.dp)
-                    .height(40.dp)
+                    .height(46.dp)
                     .clip(shape)
-                    .background(c.cd)
-                    .border(1.dp, c.ln, shape)
+                    .background(c.mock.field)
                     .clickable(enabled = enabled) { open = !open }
                     .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = value,
-                    color = if (enabled) c.tx else c.mu,
+                    color = if (enabled) c.mock.text else c.mock.faint,
                     fontSize = 14.sp,
                     fontFamily = Mono,
                     modifier = Modifier.weight(1f),
                 )
-                Text(text = "⌄", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+                Text(text = "⌄", color = c.mock.muted, fontSize = 13.sp, fontFamily = Sans)
             }
             if (open && enabled) {
                 Column(
                     Modifier
                         .align(Alignment.TopStart)
-                        .padding(top = 50.dp)
+                        .padding(top = 56.dp)
                         .fillMaxWidth()
                         .clip(shape)
-                        .background(c.cd)
-                        .border(1.dp, c.ln, shape),
+                        .background(c.mock.panel)
+                        .border(1.dp, c.mock.border, shape),
                 ) {
                     options.forEach { option ->
                         Row(
@@ -352,7 +350,7 @@ private fun SettingsDropdown(
                         ) {
                             Text(
                                 text = option,
-                                color = if (option == value) c.ac else c.tx,
+                                color = if (option == value) c.mock.accent else c.mock.text,
                                 fontSize = 13.sp,
                                 fontFamily = Mono,
                             )

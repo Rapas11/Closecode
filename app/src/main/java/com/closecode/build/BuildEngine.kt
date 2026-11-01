@@ -43,10 +43,23 @@ class BuildEngine(
         tools: BuildTools? = null,
         onLog: (String) -> Unit = {},
         cacheEnabled: Boolean = true,
+        buildType: String = "debug",
+        useGradle: Boolean = false,
+        gradle: GradleToolchain? = null,
     ): BuildOutcome {
         cancelled = false
         return BuildLock.mutex.withLock {
-            buildLocked(projectDir, projectId, checkInput, tools, onLog, cacheEnabled)
+            buildLocked(
+                projectDir,
+                projectId,
+                checkInput,
+                tools,
+                onLog,
+                cacheEnabled,
+                buildType,
+                useGradle,
+                gradle,
+            )
         }
     }
 
@@ -57,7 +70,14 @@ class BuildEngine(
         tools: BuildTools?,
         onLog: (String) -> Unit,
         cacheEnabled: Boolean,
+        buildType: String,
+        useGradle: Boolean,
+        gradle: GradleToolchain?,
     ): BuildOutcome = withContext(Dispatchers.IO) {
+        val type = if (buildType == "release") "release" else "debug"
+        if (useGradle) {
+            return@withContext buildWithGradle(projectDir, type, onLog, gradle)
+        }
         _state.value = BuildState.Running(Step.CheckProject, 0f)
         val report = ProjectCheck.check(projectDir, projectId, checkInput)
         if (!report.ok) {
@@ -89,6 +109,7 @@ class BuildEngine(
             useCompose = facts.composeBom != null ||
                 facts.composeCompiler != null ||
                 facts.libraries.any { it.module.startsWith("androidx.compose") },
+            buildType = type,
         )
         val cacheKey = if (cacheEnabled && cache != null) {
             runCatching { cache.key(projectDir, config, tools!!) }.getOrNull()
@@ -98,7 +119,7 @@ class BuildEngine(
         if (cacheKey != null) {
             val hit = cache?.lookup(projectId, cacheKey)
             if (hit != null) {
-                val output = File(projectDir, "build/outputs/apk/debug/app-debug.apk")
+                val output = File(projectDir, "build/outputs/apk/$type/app-$type.apk")
                 runCatching {
                     output.parentFile?.mkdirs()
                     hit.copyTo(output, overwrite = true)
@@ -161,6 +182,59 @@ class BuildEngine(
                 BuildOutcome.Failed("The build stopped without an APK.", emptyList())
             }
         }
+    }
+
+    private fun buildWithGradle(
+        projectDir: File,
+        buildType: String,
+        onLog: (String) -> Unit,
+        gradle: GradleToolchain?,
+    ): BuildOutcome {
+        val manifest = File(projectDir, "app/src/main/AndroidManifest.xml")
+        if (!manifest.isFile) {
+            val message = "Missing app/src/main/AndroidManifest.xml."
+            _state.value = BuildState.Failed(Step.CheckProject, message)
+            return BuildOutcome.Failed(message)
+        }
+        val buildFile = File(projectDir, "app/build.gradle.kts").takeIf { it.isFile }
+            ?: File(projectDir, "app/build.gradle").takeIf { it.isFile }
+        if (buildFile == null) {
+            val message = "Missing app/build.gradle.kts."
+            _state.value = BuildState.Failed(Step.CheckProject, message)
+            return BuildOutcome.Failed(message)
+        }
+        if (gradle == null) {
+            _state.value = BuildState.RequiresSetup(Step.CheckProject)
+            return BuildOutcome.NeedsSetup()
+        }
+        _state.value = BuildState.Running(Step.CheckProject, 0f)
+        onLog("Full Gradle ${gradle.distributionVersion} · ${GradlePlan.taskFor(buildType)}")
+        _state.value = BuildState.Running(Step.CompileCode, 0.5f)
+        val started = System.currentTimeMillis()
+        val result = GradleRunner.run(
+            projectDir = projectDir,
+            buildType = buildType,
+            toolchain = gradle,
+            onLog = onLog,
+            cancelled = { cancelled },
+        )
+        val seconds = ((System.currentTimeMillis() - started) / 1000).coerceAtLeast(0)
+        if (result.cancelled) {
+            _state.value = BuildState.Cancelled(emptyList())
+            return BuildOutcome.Cancelled
+        }
+        val apk = result.apk
+        if (apk != null) {
+            _state.value = BuildState.Succeeded(apk, seconds, apk.length())
+            return BuildOutcome.Built(apk, apk.length(), seconds)
+        }
+        val message = if (result.code == 0 && !result.timedOut) {
+            "Gradle finished but produced no APK."
+        } else {
+            GradleRunner.failureMessage(result)
+        }
+        _state.value = BuildState.Failed(Step.CompileCode, message)
+        return BuildOutcome.Failed(message)
     }
 
     private fun progress(step: Step): Float =

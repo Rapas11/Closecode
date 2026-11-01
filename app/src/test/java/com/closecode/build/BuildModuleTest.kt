@@ -6,6 +6,7 @@ import java.security.MessageDigest
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -268,6 +269,23 @@ class BuildModuleTest {
         )
         val outcome = BuildEngine(toolchain).build(tmp.root, "biz")
         assertTrue(outcome is BuildOutcome.Blocked)
+    }
+
+    @Test
+    fun theBundledAapt2IsPreferredOverTheOlderDownload() {
+        val bundled = File(tmp.root, "libaapt2.so")
+        val downloaded = File(tmp.root, "aapt2")
+        assertEquals(bundled, selectAapt2(bundled, downloaded))
+        assertEquals(downloaded, selectAapt2(null, downloaded))
+        assertNull(selectAapt2(null, null))
+    }
+
+    @Test
+    fun releaseIsABuildTypeAndDebugIsTheDefault() {
+        val debug = BuildConfigValues("com.x", 29, 35, 1, "1.0", false)
+        val release = debug.copy(buildType = "release")
+        assertFalse(debug.isRelease)
+        assertTrue(release.isRelease)
     }
 
     @Test

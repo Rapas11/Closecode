@@ -8,8 +8,8 @@ import org.junit.Test
 
 /**
  * Ask AI: the text that leaves an error row must name the file, the line and the rule that
- * makes the agent finish the job by itself, and the body OpenCode receives must be exactly
- * the shape `POST /session/:id/message` reads, with everything escaped.
+ * makes the agent finish the job by itself, and the body OpenCode V2 receives must be exactly
+ * the shape `POST /api/session/:id/prompt` reads, with everything escaped.
  */
 class OpenCodePromptsTest {
 
@@ -32,23 +32,18 @@ class OpenCodePromptsTest {
     }
 
     @Test
-    fun theBodyIsOneTextPart() {
-        val parts = JsonParser.parseString(OpenCodePrompts.bodyJson("hello world"))
-        val body = parts.asJsonObject
-            .getAsJsonArray("parts")
-            .get(0).asJsonObject
+    fun theBodyIsTheV2TextShape() {
+        val body = JsonParser.parseString(OpenCodePrompts.bodyJson("hello world")).asJsonObject
 
-        assertEquals("text", body.get("type").asString)
         assertEquals("hello world", body.get("text").asString)
+        assertFalse(body.has("parts"))
     }
 
     @Test
     fun theBodyEscapesQuotesAndNewLines() {
         val body = OpenCodePrompts.bodyJson("he said \"no\"\nsecond line")
 
-        val text = JsonParser.parseString(body).asJsonObject
-            .getAsJsonArray("parts").get(0).asJsonObject
-            .get("text").asString
+        val text = JsonParser.parseString(body).asJsonObject.get("text").asString
 
         assertEquals("he said \"no\"\nsecond line", text)
     }
@@ -56,11 +51,11 @@ class OpenCodePromptsTest {
     @Test
     fun theEndpointReachesTheRightSession() {
         assertEquals(
-            "http://127.0.0.1:4098/session/abc/message",
+            "http://127.0.0.1:4098/api/session/abc/prompt",
             OpenCodePrompts.endpoint("http://127.0.0.1:4098/", "abc"),
         )
         assertEquals(
-            "http://127.0.0.1:4098/session/abc/message",
+            "http://127.0.0.1:4098/api/session/abc/prompt",
             OpenCodePrompts.endpoint("http://127.0.0.1:4098", "abc"),
         )
     }

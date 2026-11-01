@@ -9,11 +9,15 @@ import java.nio.file.Files
  * strings are rewritten in place. The replacement has exactly the same byte length:
  * `/data/data/com.closecode/file/u` is the same 31 bytes as the Termux prefix.
  */
-class TermuxPrefix(packageName: String) {
+class TermuxPrefix(
+    packageName: String,
+    prefixName: String = "u",
+    homeName: String = "hh",
+) {
     val oldPrefix = "/data/data/com.termux/files/usr"
-    val newPrefix = ShellToolsRepo.prefixFor(packageName)
+    val newPrefix = ShellToolsRepo.prefixFor(packageName, prefixName)
     val oldHome = "/data/data/com.termux/files/home"
-    val newHome = ShellToolsRepo.homeFor(packageName)
+    val newHome = ShellToolsRepo.homeFor(packageName, homeName)
 
     init {
         require(oldPrefix.length == newPrefix.length) {
@@ -29,6 +33,7 @@ class TermuxPrefix(packageName: String) {
             .onEnter { !Files.isSymbolicLink(it.toPath()) }
             .forEach { file ->
                 if (!file.isFile || Files.isSymbolicLink(file.toPath())) return@forEach
+                if (file.length() > MAX_PATCH_BYTES) return@forEach
                 val before = file.readBytes()
                 val after = patchBytes(before)
                 if (!after.contentEquals(before)) {
@@ -70,5 +75,9 @@ class TermuxPrefix(packageName: String) {
         if (offset + needle.size > bytes.size) return false
         for (i in needle.indices) if (bytes[offset + i] != needle[i]) return false
         return true
+    }
+
+    private companion object {
+        const val MAX_PATCH_BYTES = 32L * 1024 * 1024
     }
 }

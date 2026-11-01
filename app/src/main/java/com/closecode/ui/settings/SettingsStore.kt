@@ -97,7 +97,7 @@ data class Settings(
     val gitName: String = "",
     val gitEmail: String = "",
     val gitDefaultBranch: String = "main",
-    val theme: String = "System",
+    val theme: String = "Light",
     val fontSize: Int = 12,
     val tabSize: Int = 2,
     val terminalTheme: String = "Closecode",

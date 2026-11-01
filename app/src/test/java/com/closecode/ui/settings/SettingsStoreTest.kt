@@ -6,6 +6,7 @@ import com.closecode.ui.ide.lineMatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import androidx.compose.ui.graphics.toArgb
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -43,7 +44,7 @@ class SettingsStoreTest {
         assertEquals("", settings.gitName)
         assertEquals("", settings.gitEmail)
         assertEquals("main", settings.gitDefaultBranch)
-        assertEquals("System", settings.theme)
+        assertEquals("Light", settings.theme)
         assertEquals(12, settings.fontSize)
         assertEquals(2, settings.tabSize)
     }
@@ -81,7 +82,7 @@ class SettingsStoreTest {
         val stored = store.write(Settings(fontSize = 9001, theme = "Neon"))
 
         assertEquals(FontSizeChoices.last().toInt(), stored.fontSize)
-        assertEquals("System", stored.theme)
+        assertEquals("Light", stored.theme)
         assertEquals(stored, store.read())
     }
 
@@ -127,9 +128,9 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun aThemeThatIsNotAChoiceFallsBackToSystem() {
+    fun aThemeThatIsNotAChoiceFallsBackToLight() {
         val store = SettingsStore(InMemoryKeyValueStore(mapOf("theme" to "Solarized")))
-        assertEquals("System", store.read().theme)
+        assertEquals("Light", store.read().theme)
     }
 
     @Test
@@ -180,15 +181,28 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun theScreenIsElevenSectionsAndFiftyOneRows() {
+    fun theScreenIsElevenSectionsAndFiftyThreeRows() {
         // Eleven sections throughout. The fictional JDK / Android SDK / Build Tools / Gradle rows
         // are gone; the toolchain group now shows the compiler pack, its pinned versions and the
         // download row — all of them real. The account group and the five unwired AI rows are
         // gone too, leaving one "Coming soon" destination for each deferred area. The optional
-        // Termux shell-tools pack adds one real download row under Terminal, and the project
-        // export/import row is the real way to move a project as one zip.
+        // Termux shell-tools pack adds one real download row under Terminal, the optional
+        // Full Gradle pack adds one under Build Behavior, the optional native NDK/CMake pack
+        // adds another, and the project export/import row is the real way to move a project
+        // as one zip.
         assertEquals(11, sections(SettingsLive()).size)
-        assertEquals(51, rowCount())
+        assertEquals(53, rowCount())
+    }
+
+    @Test
+    fun theDesignSystemOffersSixDistinctAccents() {
+        assertEquals(6, AccentOptions.size)
+        assertEquals(AccentOptions.size, AccentOptions.distinct().size)
+    }
+
+    @Test
+    fun theFirstAccentIsTheLightMockAccent() {
+        assertEquals(0xFF5865F2.toInt(), AccentOptions.first().toArgb())
     }
 
     @Test
@@ -209,6 +223,28 @@ class SettingsStoreTest {
             .first { it.name == "Shell tools" }
 
         assertEquals(SettingsAction.SHELL_TOOLS, row.id)
+        assertEquals("Not installed", row.action)
+    }
+
+    @Test
+    fun theFullGradleRowOpensTheDownloadPage() {
+        val row = sections(SettingsLive(gradleToolsStatus = "Not installed"))
+            .flatMap { section -> section.groups.flatMap { it.rows } }
+            .filterIsInstance<Row.Nav>()
+            .first { it.name == "Full Gradle" }
+
+        assertEquals(SettingsAction.FULL_GRADLE, row.id)
+        assertEquals("Not installed", row.action)
+    }
+
+    @Test
+    fun theNativeToolsRowOpensTheDownloadPage() {
+        val row = sections(SettingsLive(nativeToolsStatus = "Not installed"))
+            .flatMap { section -> section.groups.flatMap { it.rows } }
+            .filterIsInstance<Row.Nav>()
+            .first { it.name == "Native tools" }
+
+        assertEquals(SettingsAction.NATIVE_TOOLS, row.id)
         assertEquals("Not installed", row.action)
     }
 

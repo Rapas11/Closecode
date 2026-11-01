@@ -9,6 +9,7 @@ import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.util.Log
 import android.webkit.ConsoleMessage
+import android.webkit.HttpAuthHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -66,10 +67,12 @@ import com.closecode.ai.OpenCodeSessions
 import com.closecode.ai.isRestorableOpenCodePage
 import com.closecode.ai.openCodePagePath
 import com.closecode.ai.openCodePageUrl
+import com.closecode.ai.openCodePasswordFromBasicAuth
 import com.closecode.ai.openCodeServerKey
 import com.closecode.ai.rebaseOpenCodeServerPath
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
+import java.net.URLEncoder
 import org.json.JSONObject
 
 /**
@@ -84,10 +87,11 @@ import org.json.JSONObject
  *  - the back button goes back inside the page first, and only leaves the page at its start —
  *    leaving never stops the server.
  *
- * The server is unsecured on loopback, as OpenCode documents for local use, so there is no
- * password box to fill and no HTTP-auth challenge to answer. The page's console and its own
- * network failures are copied into [OpenCodePageLog] so the AI tab can show them when the page
- * loads but does not work.
+ * V2's server is password-protected even on loopback. The official page receives the password
+ * once as `auth_token`, then keeps it in its own storage; the app's own API calls use Basic auth.
+ * The page's console and its own network failures are copied into [OpenCodePageLog] so the AI tab
+ * can show them when the page loads but does not work. The password is stripped from every log
+ * line and from the address shown in the bar.
  */
 @SuppressLint("SetJavaScriptEnabled", "AddVsClear")
 @Composable
@@ -96,6 +100,8 @@ fun OpenCodeChatScreen(
     projectUrl: String,
     projectDirectory: String,
     sessionId: String = "",
+    authToken: String = "",
+    basicAuth: String = "",
     generation: Int = 0,
     onBack: () -> Unit,
     onAuthenticate: () -> Unit,
@@ -111,10 +117,12 @@ fun OpenCodeChatScreen(
             savedPath = savedPagePath(context, baseUrl, projectDirectory),
             sessionId = sessionId,
         )
-        return PageTarget(target, false)
+        return PageTarget(withAuthToken(target, authToken), false)
     }
-    val initialTarget = remember(baseUrl, projectUrl, projectDirectory, sessionId) { pageTarget() }
-    var currentUrl by remember { mutableStateOf(initialTarget.url) }
+    val initialTarget = remember(baseUrl, projectUrl, projectDirectory, sessionId, authToken) {
+        pageTarget()
+    }
+    var currentUrl by remember { mutableStateOf(displayPageUrl(initialTarget.url)) }
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
     val fileLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -143,13 +151,15 @@ fun OpenCodeChatScreen(
     // new-session route, which creates a session the reader never asked for.
     BackHandler { onBack() }
 
-    LaunchedEffect(baseUrl, projectUrl, projectDirectory, sessionId, generation) {
+    LaunchedEffect(baseUrl, projectUrl, projectDirectory, sessionId, authToken, basicAuth, generation) {
         val view = holder.view ?: return@LaunchedEffect
         if (holder.baseUrl == baseUrl &&
             holder.projectUrl == projectUrl &&
             holder.projectDirectory == projectDirectory &&
             holder.sessionId == sessionId &&
-            holder.generation == generation
+            holder.generation == generation &&
+            holder.authToken == authToken &&
+            holder.basicAuth == basicAuth
         ) {
             return@LaunchedEffect
         }
@@ -159,9 +169,11 @@ fun OpenCodeChatScreen(
         holder.projectDirectory = projectDirectory
         holder.sessionId = sessionId
         holder.generation = generation
+        holder.authToken = authToken
+        holder.basicAuth = basicAuth
         holder.bootstrap = target.bootstrap
-        currentUrl = target.url
-        OpenCodePageLog.add("open ${target.url}")
+        currentUrl = displayPageUrl(target.url)
+        OpenCodePageLog.add("open ${displayPageUrl(target.url)}")
         view.loadUrl(target.url)
     }
 
@@ -241,6 +253,8 @@ fun OpenCodeChatScreen(
                         holder.projectDirectory = projectDirectory
                         holder.sessionId = sessionId
                         holder.generation = generation
+                        holder.authToken = authToken
+                        holder.basicAuth = basicAuth
                         holder.bootstrap = target.bootstrap
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
@@ -286,12 +300,13 @@ fun OpenCodeChatScreen(
                                 isReload: Boolean,
                             ) {
                                 if (pageUrl == null) return
-                                currentUrl = pageUrl
+                                val shown = displayPageUrl(pageUrl)
+                                currentUrl = shown
                                 rememberPagePath(
                                     view?.context,
                                     holder.baseUrl,
                                     holder.projectDirectory,
-                                    pageUrl,
+                                    shown,
                                 )
                             }
 
@@ -300,8 +315,8 @@ fun OpenCodeChatScreen(
                                 startedUrl: String?,
                                 favicon: Bitmap?,
                             ) {
-                                if (startedUrl != null) currentUrl = startedUrl
-                                OpenCodePageLog.add("page started: $startedUrl")
+                                if (startedUrl != null) currentUrl = displayPageUrl(startedUrl)
+                                OpenCodePageLog.add("page started: ${displayPageUrl(startedUrl.orEmpty())}")
                                 installPageLog(view)
                                 installViewportFix(view)
                             }
@@ -311,27 +326,20 @@ fun OpenCodeChatScreen(
                             }
 
                             override fun onPageFinished(view: WebView?, finishedUrl: String?) {
-                                OpenCodePageLog.add("page finished: $finishedUrl")
+                                OpenCodePageLog.add("page finished: ${displayPageUrl(finishedUrl.orEmpty())}")
                                 if (finishedUrl != null) {
-                                    currentUrl = finishedUrl
+                                    val shown = displayPageUrl(finishedUrl)
+                                    currentUrl = shown
                                     rememberPagePath(
                                         view?.context,
                                         holder.baseUrl,
                                         holder.projectDirectory,
-                                        finishedUrl,
+                                        shown,
                                     )
                                 }
                                 installPageLog(view)
                                 installViewportFix(view)
-                                if (holder.bootstrap) {
-                                    holder.bootstrap = false
-                                    installResumeScript(
-                                        view,
-                                        holder.baseUrl,
-                                        holder.projectUrl,
-                                        holder.projectDirectory,
-                                    )
-                                }
+                                holder.bootstrap = false
                                 // React can mount a moment after the document finishes; apply
                                 // once more after that so the page fills the WebView at once.
                                 view?.postDelayed({ installViewportFix(view) }, 300)
@@ -354,8 +362,25 @@ fun OpenCodeChatScreen(
                                 errorResponse: WebResourceResponse?,
                             ) {
                                 OpenCodePageLog.add(
-                                    "http ${errorResponse?.statusCode}: ${request?.url}",
+                                    "http ${errorResponse?.statusCode}: " +
+                                        displayPageUrl(request?.url?.toString().orEmpty()),
                                 )
+                            }
+
+                            override fun onReceivedHttpAuthRequest(
+                                view: WebView?,
+                                handler: HttpAuthHandler?,
+                                host: String?,
+                                realm: String?,
+                            ) {
+                                val local = host == "127.0.0.1" ||
+                                    host == "localhost" || host == "::1"
+                                val password = openCodePasswordFromBasicAuth(holder.basicAuth)
+                                if (local && password != null) {
+                                    handler?.proceed("opencode", password)
+                                } else {
+                                    handler?.cancel()
+                                }
                             }
                         }
                         addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
@@ -510,6 +535,22 @@ private fun PageBarButton(
 
 private data class PageTarget(val url: String, val bootstrap: Boolean)
 
+/** Adds V2's one-time `auth_token` to a page URL without touching its path. */
+internal fun withAuthToken(url: String, authToken: String): String {
+    if (url.isBlank() || authToken.isBlank()) return url
+    val separator = if (url.contains('?')) "&" else "?"
+    return url + separator + "auth_token=" + URLEncoder.encode(authToken, "UTF-8")
+}
+
+/** The address that is safe to show, copy, and log: no password in the query string. */
+internal fun displayPageUrl(url: String): String {
+    if (!url.contains("auth_token=")) return url
+    val base = url.substringBefore('?')
+    val query = url.substringAfter('?', "").substringBefore('#')
+    val kept = query.split('&').filter { it.isNotBlank() && !it.startsWith("auth_token=") }
+    return if (kept.isEmpty()) base else base + "?" + kept.joinToString("&")
+}
+
 /**
  * The page the AI tab opens for a project. A missing session must never land on OpenCode's
  * home screen: the home screen only lists what OpenCode has already registered, so it shows
@@ -539,6 +580,8 @@ private class WebViewHolder {
     var projectDirectory: String = ""
     var sessionId: String = ""
     var generation: Int = -1
+    var authToken: String = ""
+    var basicAuth: String = ""
     var bootstrap: Boolean = false
 }
 

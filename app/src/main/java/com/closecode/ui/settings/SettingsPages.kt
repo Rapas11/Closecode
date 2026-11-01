@@ -45,11 +45,15 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.build.PlatformStore
+import com.closecode.build.ProjectPins
 import com.closecode.build.SdkPlatforms
 import com.closecode.build.SigningKeySource
 import com.closecode.build.SigningStore
 import com.closecode.ai.OpenCode
 import com.closecode.ai.OpenCodeDefaults
+import com.closecode.tools.GradleToolsManifest
+import com.closecode.tools.GradleToolsStore
+import com.closecode.tools.NativeToolsStore
 import com.closecode.tools.ShellToolsManifest
 import com.closecode.tools.ShellToolsStore
 import com.closecode.ui.github.TokenStore
@@ -69,6 +73,8 @@ Closecode is built on open-source software.
 Kotlin and the Kotlin compiler are licensed under the Apache License 2.0. The Kotlin standard library and reflection libraries carry the same license.
 
 The Android SDK platform files are used under the Android SDK License. The AndroidIDE build-tools archive is distributed by the AndroidIDE project; its aapt2 is used under the terms of that distribution.
+
+The optional native tools use Android-native NDK and CMake archives distributed by the AndroidIDE project. The NDK and CMake retain their own upstream licenses.
 
 The AndroidX, Jetpack Compose and Material libraries are licensed under the Apache License 2.0.
 
@@ -612,6 +618,557 @@ internal fun SigningKeysPage(onBack: () -> Unit) {
                 TextButton(onClick = { confirmGenerate = false }) { Text("Cancel") }
             },
         )
+    }
+}
+
+@Composable
+internal fun GradleToolsPage(
+    onBack: () -> Unit,
+    onOpenSdk: () -> Unit,
+    onChanged: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val c = LocalPageColors.current
+    val store = remember(context) {
+        GradleToolsStore(context, GradleToolsManifest.load(context))
+    }
+    val platform = remember(context) {
+        PlatformStore(context, SharedPreferencesKeyValueStore(context))
+    }
+    val scope = rememberCoroutineScope()
+    var loaded by remember { mutableStateOf(false) }
+    var ready by remember { mutableStateOf(false) }
+    var sdkReady by remember { mutableStateOf(false) }
+    var bytes by remember { mutableStateOf(0L) }
+    var packages by remember { mutableStateOf(emptyList<String>()) }
+    var installing by remember { mutableStateOf(false) }
+    var removing by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<ShellToolsStore.Progress?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var confirmRemove by remember { mutableStateOf(false) }
+
+    suspend fun refresh() {
+        val snapshot = withContext(Dispatchers.IO) {
+            GradleSnapshot(
+                ready = store.isReady(),
+                sdkReady = platform.androidJar(ProjectPins.COMPILE_SDK)?.isFile == true &&
+                    platform.buildToolsDir() != null,
+                bytes = store.installedBytes(),
+                packages = store.installedPackages(),
+            )
+        }
+        ready = snapshot.ready
+        sdkReady = snapshot.sdkReady
+        bytes = snapshot.bytes
+        packages = snapshot.packages
+        loaded = true
+    }
+
+    fun install() {
+        if (installing) return
+        installing = true
+        error = null
+        progress = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                store.install { update -> scope.launch { progress = update } }
+            }
+            installing = false
+            progress = null
+            refresh()
+            if (!result.ok) {
+                error = result.error ?: "The Gradle tools did not install."
+            } else if (!sdkReady) {
+                error = "The JDK and Gradle are installed. Install Android " +
+                    "${ProjectPins.COMPILE_SDK} and build-tools " +
+                    "${platform.buildToolsVersion()} in SDK Manager before building."
+            } else {
+                onChanged()
+            }
+        }
+    }
+
+    fun remove() {
+        if (removing) return
+        removing = true
+        error = null
+        scope.launch {
+            val removed = withContext(Dispatchers.IO) { store.remove() }
+            removing = false
+            refresh()
+            if (!removed) error = "The Gradle tools could not be removed."
+            onChanged()
+        }
+    }
+
+    LaunchedEffect(store) { refresh() }
+
+    SettingsPageScaffold(title = "Full Gradle", onBack = onBack) {
+        Text(
+            text = "CloseCode builds with its own engine by default. This optional pack adds " +
+                "a Termux OpenJDK 17 and the official Gradle ${store.manifest.distribution.version} " +
+                "distribution, so projects that need Gradle can build with --gradle.",
+            color = c.mu,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            fontFamily = Sans,
+        )
+
+        when {
+            !loaded -> PageCard {
+                Text("Checking Gradle tools…", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+            }
+
+            installing -> PageCard {
+                val current = progress
+                Text(
+                    text = current?.message ?: "Preparing the download…",
+                    color = c.tx,
+                    fontSize = 13.sp,
+                    fontFamily = Sans,
+                )
+                val fraction = if (current != null && current.totalBytes > 0) {
+                    (current.doneBytes.toFloat() / current.totalBytes).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(c.chipBg),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(fraction)
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(c.ac),
+                    )
+                }
+                if (current != null && current.totalBytes > 0) {
+                    Text(
+                        text = "${humanSize(current.doneBytes)} of " +
+                            humanSize(current.totalBytes),
+                        color = c.mu,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                }
+                Text(
+                    text = "Keep CloseCode open while the JDK and Gradle download.",
+                    color = c.mu,
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                )
+            }
+
+            removing -> PageCard {
+                Text("Removing Gradle tools…", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+            }
+
+            ready -> {
+                PageCard {
+                    Text(
+                        text = "JDK and Gradle installed",
+                        color = c.success,
+                        fontSize = 14.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "${humanSize(bytes)} on this phone",
+                        color = c.mu,
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                    )
+                    if (packages.isNotEmpty()) {
+                        Text(
+                            text = packages.joinToString(" · "),
+                            color = c.mu,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                            fontFamily = Sans,
+                        )
+                    }
+                    Text(
+                        text = if (sdkReady) {
+                            "Android SDK packages are ready. Add --gradle to a build to use " +
+                                "the full Gradle engine."
+                        } else {
+                            "Android ${ProjectPins.COMPILE_SDK} and build-tools " +
+                                "${platform.buildToolsVersion()} are still missing. Open SDK " +
+                                "Manager to install them."
+                        },
+                        color = if (sdkReady) c.mu else c.red,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontFamily = Sans,
+                    )
+                }
+                if (!sdkReady) {
+                    PageCard {
+                        PageAction("Open SDK Manager") { onOpenSdk() }
+                    }
+                }
+                PageCard {
+                    PageAction("Remove Gradle tools", danger = true) { confirmRemove = true }
+                }
+            }
+
+            else -> PageCard {
+                Text(
+                    text = "Not installed",
+                    color = c.tx,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "The download includes OpenJDK 17 and Gradle " +
+                        "${store.manifest.distribution.version}. Android " +
+                        "${ProjectPins.COMPILE_SDK} and build-tools " +
+                        "${platform.buildToolsVersion()} are installed from SDK Manager.",
+                    color = c.mu,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    fontFamily = Sans,
+                )
+                Text(
+                    text = "This is a large download and needs several hundred MB free. " +
+                        "A Wi-Fi connection is recommended.",
+                    color = c.mu,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    fontFamily = Sans,
+                )
+                PageAction("Download JDK and Gradle") { install() }
+            }
+        }
+
+        error?.let { message ->
+            PageCard {
+                Text(
+                    text = message,
+                    color = c.red,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    fontFamily = Sans,
+                )
+                if (!installing) PageAction("Try again") { install() }
+            }
+        }
+
+        if (confirmRemove) {
+            PageCard {
+                Text(
+                    text = "Remove the downloaded JDK and Gradle? Projects and project files " +
+                        "are not touched.",
+                    color = c.tx,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    fontFamily = Sans,
+                )
+                if (removing) {
+                    Text("Removing…", color = c.mu, fontSize = 12.sp, fontFamily = Sans)
+                } else {
+                    PageAction("Remove everything", danger = true) {
+                        confirmRemove = false
+                        remove()
+                    }
+                    PageAction("Cancel") { confirmRemove = false }
+                }
+            }
+        }
+
+        PageCard {
+            Text(
+                text = "Full Gradle is slower than CloseCode's engine and downloads project " +
+                    "dependencies on its first build. The Android SDK license and network access " +
+                    "still apply.",
+                color = c.mu,
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                fontFamily = Sans,
+            )
+        }
+    }
+}
+
+private data class GradleSnapshot(
+    val ready: Boolean,
+    val sdkReady: Boolean,
+    val bytes: Long,
+    val packages: List<String>,
+)
+
+private data class NativeSnapshot(
+    val ready: Boolean,
+    val ndkReady: Boolean,
+    val cmakeReady: Boolean,
+    val bytes: Long,
+    val gradleReady: Boolean,
+)
+
+@Composable
+internal fun NativeToolsPage(
+    onBack: () -> Unit,
+    onOpenGradle: () -> Unit,
+    onChanged: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val c = LocalPageColors.current
+    val store = remember(context) { NativeToolsStore(context) }
+    val gradle = remember(context) { GradleToolsStore(context, GradleToolsManifest.load(context)) }
+    val scope = rememberCoroutineScope()
+    var loaded by remember { mutableStateOf(false) }
+    var snapshot by remember { mutableStateOf(NativeSnapshot(false, false, false, 0L, false)) }
+    var installing by remember { mutableStateOf(false) }
+    var removing by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<ShellToolsStore.Progress?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var confirmRemove by remember { mutableStateOf(false) }
+
+    suspend fun refresh() {
+        snapshot = withContext(Dispatchers.IO) {
+            NativeSnapshot(
+                ready = store.isReady(),
+                ndkReady = store.ndkReady(),
+                cmakeReady = store.cmakeReady(),
+                bytes = store.installedBytes(),
+                gradleReady = gradle.isReady(),
+            )
+        }
+        loaded = true
+    }
+
+    fun install() {
+        if (installing) return
+        installing = true
+        error = null
+        progress = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                store.install { update -> scope.launch { progress = update } }
+            }
+            installing = false
+            progress = null
+            refresh()
+            if (!result.ok) {
+                error = result.error ?: "The native tools did not install."
+            } else {
+                onChanged()
+            }
+        }
+    }
+
+    fun remove() {
+        if (removing) return
+        removing = true
+        error = null
+        scope.launch {
+            val removed = withContext(Dispatchers.IO) { store.remove() }
+            removing = false
+            refresh()
+            if (!removed) error = "The native tools could not be removed."
+            onChanged()
+        }
+    }
+
+    LaunchedEffect(store) { refresh() }
+
+    SettingsPageScaffold(title = "Native tools", onBack = onBack) {
+        Text(
+            text = "Projects with C/C++ sources need the Android NDK and CMake. These are " +
+                "optional; projects without native code do not need them. Native projects " +
+                "build with Full Gradle (--gradle).",
+            color = c.mu,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            fontFamily = Sans,
+        )
+
+        when {
+            !loaded -> PageCard {
+                Text("Checking native tools…", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+            }
+
+            installing -> PageCard {
+                val current = progress
+                Text(
+                    text = current?.message ?: "Preparing the download…",
+                    color = c.tx,
+                    fontSize = 13.sp,
+                    fontFamily = Sans,
+                )
+                val fraction = if (current != null && current.totalBytes > 0) {
+                    (current.doneBytes.toFloat() / current.totalBytes).coerceIn(0f, 1f)
+                } else {
+                    0f
+                }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(c.chipBg),
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth(fraction)
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(c.ac),
+                    )
+                }
+                if (current != null && current.totalBytes > 0) {
+                    Text(
+                        text = "${humanSize(current.doneBytes)} of " +
+                            humanSize(current.totalBytes),
+                        color = c.mu,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                }
+                Text(
+                    text = "Keep CloseCode open. The NDK alone is about 540 MB to download " +
+                        "and more once unpacked.",
+                    color = c.mu,
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                )
+            }
+
+            removing -> PageCard {
+                Text("Removing native tools…", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+            }
+
+            snapshot.ready -> {
+                PageCard {
+                    Text(
+                        text = "NDK and CMake installed",
+                        color = c.success,
+                        fontSize = 14.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "${humanSize(snapshot.bytes)} on this phone",
+                        color = c.mu,
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                    )
+                    Text(
+                        text = "NDK ${store.manifest.ndk.version} · " +
+                            "CMake ${store.manifest.cmake.version}",
+                        color = c.mu,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontFamily = Sans,
+                    )
+                    Text(
+                        text = if (snapshot.gradleReady) {
+                            "Full Gradle is installed too. Use closecode build --gradle " +
+                                "for this project."
+                        } else {
+                            "Full Gradle is still missing. Install it to build native projects."
+                        },
+                        color = if (snapshot.gradleReady) c.mu else c.red,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontFamily = Sans,
+                    )
+                }
+                if (!snapshot.gradleReady) {
+                    PageCard {
+                        PageAction("Open Full Gradle") { onOpenGradle() }
+                    }
+                }
+                PageCard {
+                    PageAction("Remove native tools", danger = true) { confirmRemove = true }
+                }
+            }
+
+            else -> PageCard {
+                Text(
+                    text = "Not installed",
+                    color = c.tx,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "NDK ${store.manifest.ndk.version} and CMake " +
+                        "${store.manifest.cmake.version} will be installed inside the " +
+                        "CloseCode SDK folder, where Full Gradle looks for them.",
+                    color = c.mu,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    fontFamily = Sans,
+                )
+                Text(
+                    text = "The NDK download is about 540 MB and the installed tools take " +
+                        "well over 1 GB. A Wi-Fi connection and free storage are recommended.",
+                    color = c.mu,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    fontFamily = Sans,
+                )
+                if (!snapshot.ndkReady && !snapshot.cmakeReady) {
+                    PageAction("Download NDK and CMake") { install() }
+                } else {
+                    PageAction("Finish native tools install") { install() }
+                }
+            }
+        }
+
+        error?.let { message ->
+            PageCard {
+                Text(
+                    text = message,
+                    color = c.red,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    fontFamily = Sans,
+                )
+                if (!installing) PageAction("Try again") { install() }
+            }
+        }
+
+        if (confirmRemove) {
+            PageCard {
+                Text(
+                    text = "Remove the downloaded NDK and CMake? Projects and project files " +
+                        "are not touched. Native projects will stop building until reinstalled.",
+                    color = c.tx,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    fontFamily = Sans,
+                )
+                if (removing) {
+                    Text("Removing…", color = c.mu, fontSize = 12.sp, fontFamily = Sans)
+                } else {
+                    PageAction("Remove everything", danger = true) {
+                        confirmRemove = false
+                        remove()
+                    }
+                    PageAction("Cancel") { confirmRemove = false }
+                }
+            }
+        }
+
+        PageCard {
+            Text(
+                text = "The Android SDK Manager cannot install these packages: Google ships " +
+                    "desktop NDK binaries. CloseCode uses the Android-native NDK and CMake " +
+                    "builds from AndroidIDE-NDK.",
+                color = c.mu,
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                fontFamily = Sans,
+            )
+        }
     }
 }
 

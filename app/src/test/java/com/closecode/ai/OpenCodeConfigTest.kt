@@ -11,8 +11,8 @@ import org.junit.Test
 
 /**
  * The app gives OpenCode its own grounded configuration file. It must exist after a first
- * server start, must never be rewritten, and must not depend on anything outside the app's
- * own storage.
+ * server start, must keep a V2 file as it is, and must not depend on anything outside the
+ * app's own storage.
  */
 class OpenCodeConfigTest {
 
@@ -24,13 +24,25 @@ class OpenCodeConfigTest {
     }
 
     @Test
-    fun theDefaultFileNamesTheSchemaAndOpensEverything() {
-        val json = OpenCodeConfig.defaultJson()
-        assertTrue(json.contains("\"${'$'}schema\": \"https://opencode.ai/config.json\""))
-        assertFalse(json.contains("OPENCODE_ENABLE"))
-        for (tool in listOf("edit", "bash", "webfetch")) {
-            assertTrue(json.contains("\"$tool\": \"allow\""))
-        }
+    fun theDefaultFileNamesTheSchemaAndOpensTheProject() {
+        val json = OpenCodeAiConfig.read(OpenCodeConfig.file(configHome).apply {
+            parentFile?.mkdirs()
+            writeText(OpenCodeConfig.defaultJson())
+        })!!
+
+        assertEquals("https://opencode.ai/config.json", json.get("\u0024schema").asString)
+        assertEquals("disable", json.get("update").asString)
+        assertTrue(OpenCodeAiConfig.hasWildcardAllow(json))
+        assertEquals(
+            OpenCodeAiConfig.ASK,
+            OpenCodeAiConfig.permission(json, "external_directory"),
+        )
+        assertFalse(OpenCodeConfig.defaultJson().contains("OPENCODE_ENABLE"))
+        assertTrue(
+            OpenCodeConfig.defaultJson().contains(
+                "\"action\":\"shell\",\"resource\":\"rm *\",\"effect\":\"ask\"",
+            ),
+        )
     }
 
     @Test
@@ -45,14 +57,15 @@ class OpenCodeConfigTest {
     }
 
     @Test
-    fun aSecondStartNeverRewritesTheFile() {
+    fun aSecondStartNeverRewritesAV2File() {
         val file = OpenCodeConfig.installOnce(configHome)!!
-        file.writeText("{ \"api\": true }")
+        val edited = OpenCodeConfig.defaultJson().replace("\"update\":\"disable\"", "\"update\":\"notify\"")
+        file.writeText(edited)
 
         val written = OpenCodeConfig.installOnce(configHome)
 
         assertEquals(file, written)
-        assertEquals("{ \"api\": true }", file.readText())
+        assertEquals(edited, file.readText())
     }
 
     @Test
@@ -76,19 +89,44 @@ class OpenCodeConfigTest {
     }
 
     @Test
-    fun aConfigFromAnOlderBuildGainsTheOpenPermissionsOnce() {
-        val file = OpenCodeConfig.installOnce(configHome)
-        file?.writeText("{\n  \"${'$'}schema\": \"https://opencode.ai/config.json\"\n}\n")
+    fun aConfigFromV1IsBackedUpAndGainsTheV2Rules() {
+        val file = OpenCodeConfig.installOnce(configHome)!!
+        file.writeText(
+            "{\n" +
+                "  \"${'$'}schema\": \"https://opencode.ai/config.json\",\n" +
+                "  \"model\": \"x/y\",\n" +
+                "  \"permission\": { \"bash\": \"ask\" }\n" +
+                "}\n",
+        )
 
-        assertTrue(OpenCodeConfig.ensureOpenToTheAgent(configHome))
+        assertTrue(OpenCodeConfig.installOnce(configHome)!!.isFile)
 
-        val json = OpenCodeAiConfig.read(OpenCodeConfig.file(configHome))!!
-        for (tool in OpenCodeConfig.OPEN_TOOLS) {
-            assertEquals(OpenCodeAiConfig.ALLOW, OpenCodeAiConfig.permission(json, tool))
-        }
-        assertTrue(OpenCodeConfig.stamp(configHome).isFile)
-        // The keys a reader or model wrote stay put.
-        assertEquals("https://opencode.ai/config.json", json.get("\u0024schema").asString)
+        val json = OpenCodeAiConfig.read(file)!!
+        assertTrue(OpenCodeAiConfig.hasWildcardAllow(json))
+        assertEquals("x/y", json.get("model").asString)
+        assertFalse(json.has("permission"))
+        assertEquals("ask", OpenCodeAiConfig.permission(json, "shell"))
+        val backup = File(OpenCodeConfig.directory(configHome), "opencode.v1-backup.json")
+        assertTrue(backup.isFile)
+        assertTrue(backup.readText().contains("\"permission\""))
+    }
+
+    @Test
+    fun aV1DenyIsCarriedIntoV2InsteadOfBeingOpened() {
+        val file = OpenCodeConfig.installOnce(configHome)!!
+        file.writeText(
+            "{\n" +
+                "  \"\${'$'}schema\": \"https://opencode.ai/config.json\",\n" +
+                "  \"permission\": { \"edit\": \"deny\", \"bash\": \"ask\" }\n" +
+                "}\n",
+        )
+
+        OpenCodeConfig.installOnce(configHome)
+
+        val json = OpenCodeAiConfig.read(file)!!
+        assertEquals(OpenCodeAiConfig.DENY, OpenCodeAiConfig.permission(json, "edit"))
+        assertEquals(OpenCodeAiConfig.ASK, OpenCodeAiConfig.permission(json, "shell"))
+        assertTrue(OpenCodeAiConfig.hasWildcardAllow(json))
     }
 
     @Test
@@ -104,19 +142,15 @@ class OpenCodeConfigTest {
     }
 
     @Test
-    fun aConfigThatAlreadyOwnsPermissionsIsStampedNotRewritten() {
+    fun aV2FileWithoutAStampIsNotRewritten() {
         OpenCodeConfig.installOnce(configHome)
         val file = OpenCodeConfig.file(configHome)
-        file.writeText(
-            "{ " +
-                "\"permission\": { \"bash\": \"ask\" } " +
-                "}",
-        )
+        val original = file.readText()
 
         assertTrue(OpenCodeConfig.ensureOpenToTheAgent(configHome))
 
-        val json = OpenCodeAiConfig.read(file)!!
-        assertEquals(OpenCodeAiConfig.ASK, OpenCodeAiConfig.permission(json, "bash"))
+        assertEquals(original, file.readText())
+        assertTrue(OpenCodeConfig.stamp(configHome).isFile)
     }
 
     @Test

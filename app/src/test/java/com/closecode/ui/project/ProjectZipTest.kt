@@ -45,6 +45,33 @@ class ProjectZipTest {
     }
 
     @Test
+    fun collectSkipsGeneratedFoldersAndSecrets() {
+        writeProject()
+        File(root, ".opencode/skill").mkdirs()
+        File(root, ".opencode/skill/SKILL.md").writeText("generated")
+        File(root, "node_modules/pkg").mkdirs()
+        File(root, "node_modules/pkg/index.js").writeText("generated")
+        File(root, "local.properties").writeText("sdk.dir=/opt/android\n")
+        File(root, ".env").writeText("TOKEN=x\n")
+
+        val files = ProjectZip.collectFiles(root).map { it.relativeTo(root).path }
+
+        assertFalse(files.any { it.startsWith(".opencode") })
+        assertFalse(files.any { it.startsWith("node_modules") })
+        assertFalse(files.any { it == "local.properties" || it == ".env" })
+        assertTrue("app/src/main/java/Main.kt" in files)
+    }
+
+    @Test
+    fun safeEntryPathRejectsGeneratedAndSecretEntries() {
+        assertNull(ProjectZip.safeEntryPath(".opencode/skill/SKILL.md"))
+        assertNull(ProjectZip.safeEntryPath("node_modules/pkg/index.js"))
+        assertNull(ProjectZip.safeEntryPath("local.properties"))
+        assertNull(ProjectZip.safeEntryPath("release.jks"))
+        assertEquals("app/src/Main.kt", ProjectZip.safeEntryPath("app/src/Main.kt"))
+    }
+
+    @Test
     fun aRoundTripGivesTheSameFiles() {
         writeProject()
         val manifest = ProjectZip.manifest("My App", "my-app", 1234, "label")

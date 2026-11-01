@@ -138,46 +138,21 @@ fun ProjectSetupScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.bg)
+            .background(c.mock.page)
             .statusBarsPadding()
             .verticalScroll(rememberScrollState())
-            .padding(22.dp),
+            .padding(vertical = 16.dp),
     ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = "Setting up ${project.name}",
-                    color = c.brightText,
-                    fontSize = 20.sp,
-                    fontFamily = Sans,
-                    fontWeight = FontWeight.SemiBold,
-                    lineHeight = 25.sp,
-                )
-                Text(
-                    text = "The project is already created. This step prepares the tools it needs.",
-                    color = c.textMuted,
-                    fontSize = 13.sp,
-                    fontFamily = Sans,
-                    lineHeight = 19.sp,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-            }
-            TextLink(label = "Close", onClick = onCancel, color = c.textMuted)
-        }
+        com.closecode.ui.components.DesignPageHeader(
+            title = "Setting up ${project.name}",
+            subtitle = "The project is created. This step prepares its tools.",
+            onBack = onCancel,
+        )
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(4.dp))
 
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp))
-                .background(c.surface)
-                .border(1.dp, c.surfaceBorder, RoundedCornerShape(12.dp))
-                .padding(14.dp),
-        ) {
+        Column(Modifier.padding(horizontal = 20.dp)) {
+        com.closecode.ui.components.DesignCard {
             Column {
                 Text(
                     text = when {
@@ -187,8 +162,8 @@ fun ProjectSetupScreen(
                         missing.isNotEmpty() -> "Some build tools are missing."
                         else -> "Preparing…"
                     },
-                    color = if (toolsReady) c.success else c.text,
-                    fontSize = 14.sp,
+                    color = if (toolsReady) c.mock.green else c.mock.text,
+                    fontSize = 15.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Medium,
                 )
@@ -197,7 +172,7 @@ fun ProjectSetupScreen(
                     checking -> {
                         Text(
                             text = "Reading the project and the files on this phone.",
-                            color = c.textMuted,
+                            color = c.mock.muted,
                             fontSize = 12.sp,
                             fontFamily = Sans,
                         )
@@ -205,7 +180,7 @@ fun ProjectSetupScreen(
                     checkError != null -> {
                         Text(
                             text = checkError.orEmpty(),
-                            color = c.error,
+                            color = c.mock.danger,
                             fontSize = 12.sp,
                             fontFamily = Sans,
                         )
@@ -215,7 +190,7 @@ fun ProjectSetupScreen(
                     toolsReady -> {
                         Text(
                             text = "Opening the editor…",
-                            color = c.textMuted,
+                            color = c.mock.muted,
                             fontSize = 12.sp,
                             fontFamily = Sans,
                         )
@@ -224,7 +199,7 @@ fun ProjectSetupScreen(
                         if (missing.isNotEmpty()) {
                             Text(
                                 text = missing.joinToString(", "),
-                                color = c.textMuted,
+                                color = c.mock.muted,
                                 fontSize = 12.sp,
                                 fontFamily = Sans,
                             )
@@ -236,7 +211,7 @@ fun ProjectSetupScreen(
                                     text = "Downloading ${state.index} of ${state.count} · " +
                                         "${state.doneBytes / 1_048_576} MB of " +
                                         "${state.totalBytes / 1_048_576} MB",
-                                    color = c.text,
+                                    color = c.mock.text,
                                     fontSize = 12.sp,
                                     fontFamily = Sans,
                                 )
@@ -275,7 +250,7 @@ fun ProjectSetupScreen(
                             ToolchainState.WaitingForWifi -> {
                                 Text(
                                     text = "The download is waiting for Wi-Fi.",
-                                    color = c.text,
+                                    color = c.mock.text,
                                     fontSize = 12.sp,
                                     fontFamily = Sans,
                                 )
@@ -288,7 +263,7 @@ fun ProjectSetupScreen(
                             is ToolchainState.Failed -> {
                                 Text(
                                     text = state.message,
-                                    color = c.error,
+                                    color = c.mock.danger,
                                     fontSize = 12.sp,
                                     fontFamily = Sans,
                                 )
@@ -319,7 +294,7 @@ fun ProjectSetupScreen(
             Text(
                 text = "You can close this screen. The download continues in the notification, " +
                     "and ${project.name} stays in Recents.",
-                color = c.textFaint,
+                color = c.mock.faint,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
                 fontFamily = Sans,
@@ -331,10 +306,11 @@ fun ProjectSetupScreen(
         Spacer(Modifier.height(10.dp))
         Text(
             text = "CloseCode never opens a project before its build tools are ready.",
-            color = c.textFaint,
+            color = c.mock.faint,
             fontSize = 11.sp,
             fontFamily = Sans,
         )
+        }
     }
 }
 
@@ -346,14 +322,14 @@ private fun ProgressBar(value: Float) {
             .fillMaxWidth()
             .height(7.dp)
             .clip(RoundedCornerShape(4.dp))
-            .background(c.panel2),
+            .background(c.mock.cardMuted),
     ) {
         Box(
             Modifier
                 .fillMaxWidth(value.coerceIn(0f, 1f))
                 .height(7.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(c.accent),
+                .background(c.mock.accent),
         )
     }
 }

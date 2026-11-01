@@ -26,19 +26,19 @@ object ProjectZip {
     /** Top-level or nested folder named this is build output, never exported or imported. */
     internal val SKIP_DIRS = setOf("build")
 
-    /** Dirs that belong to CloseCode's git tooling only, but stay exportable — keep it simple:
-     * everything except build output travels. */
+    /** Sources travel; generated folders and secrets stay on the phone. */
     fun collectFiles(root: File): List<File> {
         if (!root.isDirectory) return emptyList()
         val out = ArrayList<File>()
-        fun walk(dir: File) {
+        fun walk(dir: File, prefix: String) {
             val children = dir.listFiles() ?: return
             for (child in children.sortedBy { it.name }) {
-                if (child.isDirectory && child.name in SKIP_DIRS) continue
-                if (child.isDirectory) walk(child) else out.add(child)
+                val relative = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
+                if (GeneratedPaths.isProtectedRelative(relative)) continue
+                if (child.isDirectory) walk(child, relative) else out.add(child)
             }
         }
-        walk(root)
+        walk(root, "")
         return out
     }
 
@@ -89,10 +89,12 @@ object ProjectZip {
         val clean = entry.replace('\\', '/').split('/')
             .filter { it.isNotBlank() && it != "." }
         if (clean.isEmpty()) return null
-        // Climbs out of the folder and build folders of any depth are refused; build output
-        // is skipped on the way in too.
+        // Climbs out of the folder, generated folders and secrets of any depth are refused;
+        // they are skipped on the way out too.
         if (clean.any { it == ".." || it in SKIP_DIRS }) return null
-        return clean.joinToString("/")
+        val relative = clean.joinToString("/")
+        if (GeneratedPaths.isProtectedRelative(relative)) return null
+        return relative
     }
 
     /** Writes the project at [root] into [out]: the manifest first, then every collected file. */

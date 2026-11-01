@@ -1,5 +1,6 @@
 package com.closecode.ui.git
 
+import com.closecode.ui.project.GeneratedPaths
 import java.io.File
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.Status
@@ -151,6 +152,13 @@ class GitService(private val root: File) {
 
     /** Adds work-tree changes to the index so the next commit picks them up. */
     fun stage(paths: List<String>): Result<Unit> = runCatching {
+        val protected = paths.filter { GeneratedPaths.isProtectedRelative(it) }
+        if (protected.isNotEmpty()) {
+            throw IllegalArgumentException(
+                "Closecode keeps generated and secret files out of Git: " +
+                    protected.joinToString(", "),
+            )
+        }
         open().use { git ->
             paths.forEach { path ->
                 if (File(root, path).exists()) {
@@ -558,11 +566,41 @@ class GitService(private val root: File) {
         /** The line the app's block of rules starts with, so it is recognisable on a second run. */
         internal const val EXCLUDE_MARKER = "# Closecode local excludes"
 
+        /** Closes the app's block so rules a user adds below it survive an update. */
+        internal const val EXCLUDE_END = "# End Closecode local excludes"
+
         /**
          * What a repository Closecode touches gets in its local exclude file, so generated files
-         * never look like edits. Local only: none of it can reach a commit or anyone else's clone.
+         * and secrets never look like edits. Local only: none of it can reach a commit or anyone
+         * else's clone.
          */
         internal val DEFAULT_EXCLUDES = """
+            # Closecode local excludes
+            # The app's own project state. It changes every time the project is opened.
+            .closecode.json
+
+            # Machine-local settings, generated folders and secrets.
+            local.properties
+            .env
+            google-services.json
+            *.jks
+            *.keystore
+            *.pem
+            .gradle/
+            build/
+            .idea/
+            .opencode/
+            node_modules/
+            *.iml
+            captures/
+            .externalNativeBuild/
+            .cxx/
+            *.apk
+            *.aab
+            # End Closecode local excludes
+        """.trimIndent()
+
+        private val LEGACY_EXCLUDES = """
             # Closecode local excludes
             # The app's own project state. It changes every time the project is opened.
             .closecode.json
@@ -585,13 +623,30 @@ class GitService(private val root: File) {
          *
          * The block sits behind [EXCLUDE_MARKER], so a second run finds it and hands the file
          * straight back: nothing the user added before or after it is rewritten, and the rules
-         * never land twice. An empty file gets the block on its own; a file with content in it
-         * gets a blank line and then the block, so the two stay readable side by side.
+         * never land twice. An older block without [EXCLUDE_END] is replaced, keeping anything
+         * the user added after the known rules. An empty file gets the block on its own; a file
+         * with content in it gets a blank line and then the block, so the two stay readable.
          */
         internal fun mergeExcludes(existing: String): String {
-            if (EXCLUDE_MARKER in existing) return existing
-            val head = if (existing.isEmpty()) "" else existing.trimEnd('\n') + "\n\n"
-            return head + DEFAULT_EXCLUDES
+            val start = existing.indexOf(EXCLUDE_MARKER)
+            if (start < 0) {
+                val head = if (existing.isEmpty()) "" else existing.trimEnd('\n') + "\n\n"
+                return head + DEFAULT_EXCLUDES
+            }
+
+            val end = existing.indexOf(EXCLUDE_END, start)
+            val blockEnd = if (end >= 0) {
+                val lineEnd = existing.indexOf('\n', end)
+                if (lineEnd < 0) existing.length else lineEnd + 1
+            } else {
+                val legacy = existing.substring(start)
+                if (legacy.startsWith(LEGACY_EXCLUDES)) start + LEGACY_EXCLUDES.length else existing.length
+            }
+
+            val prefix = existing.substring(0, start)
+            val suffix = existing.substring(blockEnd).trimStart('\n')
+            val merged = prefix + DEFAULT_EXCLUDES
+            return if (suffix.isBlank()) merged else "$merged\n\n$suffix"
         }
 
         /**

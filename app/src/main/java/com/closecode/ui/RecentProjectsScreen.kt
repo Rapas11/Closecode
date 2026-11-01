@@ -54,48 +54,18 @@ fun RecentProjectsScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.bg)
+            .background(c.mock.page)
             .statusBarsPadding()
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 22.dp, end = 22.dp, top = 22.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(c.cd)
-                    .border(1.dp, c.ln, RoundedCornerShape(10.dp))
-                    .clickable(onClick = onBack),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(text = "‹", color = c.mu, fontSize = 26.sp, fontFamily = Sans)
-            }
-            Column(Modifier.padding(start = 12.dp)) {
-                Text(
-                    text = "Recent projects",
-                    color = c.tx,
-                    fontSize = 22.sp,
-                    fontFamily = Sans,
-                    fontWeight = FontWeight.SemiBold,
-                    lineHeight = 26.sp,
-                )
-                Text(
-                    text = when (projects.size) {
-                        0 -> "Nothing here yet."
-                        1 -> "1 project on this device."
-                        else -> "${projects.size} projects on this device."
-                    },
-                    color = c.mu,
-                    fontSize = 14.5.sp,
-                    fontFamily = Sans,
-                    lineHeight = 21.sp,
-                )
-            }
-        }
+        com.closecode.ui.components.DesignPageHeader(
+            title = "Projects",
+            subtitle = when (projects.size) {
+                0 -> "Nothing here yet"
+                1 -> "1 project on this device"
+                else -> "${projects.size} projects on this device"
+            },
+            onBack = onBack,
+        )
 
         if (projects.isEmpty()) {
             Box(
@@ -106,7 +76,7 @@ fun RecentProjectsScreen(
             ) {
                 Text(
                     text = "Projects you create will show up here.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 14.sp,
                     fontFamily = Sans,
                 )
@@ -116,7 +86,7 @@ fun RecentProjectsScreen(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(top = 18.dp),
+                    .padding(top = 6.dp, bottom = 24.dp),
             ) {
                 items(projects, key = { it.id }) { project ->
                     RecentRow(
@@ -325,29 +295,18 @@ fun RecentRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 22.dp, vertical = 5.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(c.cd)
-            .border(1.dp, c.ln, RoundedCornerShape(14.dp))
+            .padding(horizontal = 18.dp, vertical = 5.dp)
+            .clip(RoundedCornerShape(20.dp))
+            .background(c.mock.card)
             .combinedClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            Modifier
-                .size(40.dp)
-                .clip(RoundedCornerShape(11.dp))
-                .background(c.ac.copy(alpha = 0.14f)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = project.name.firstOrNull()?.uppercase() ?: "?",
-                color = c.ac,
-                fontSize = 17.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
-            )
-        }
+        com.closecode.ui.components.DesignAvatar(
+            label = project.name.firstOrNull()?.uppercase() ?: "?",
+            size = 44.dp,
+            background = c.mock.accent,
+        )
         Column(
             Modifier
                 .weight(1f)
@@ -355,8 +314,8 @@ fun RecentRow(
         ) {
             Text(
                 text = project.name,
-                color = c.tx,
-                fontSize = 16.sp,
+                color = c.mock.text,
+                fontSize = 15.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -364,14 +323,14 @@ fun RecentRow(
             )
             Text(
                 text = "${project.templateName} · ${relativeTime(project.lastOpened)}",
-                color = c.mu,
-                fontSize = 13.sp,
+                color = c.mock.muted,
+                fontSize = 12.sp,
                 fontFamily = Sans,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 2.dp),
             )
         }
-        ArrowGlyph(color = c.mu)
+        com.closecode.ui.components.DesignChevron()
     }
 }

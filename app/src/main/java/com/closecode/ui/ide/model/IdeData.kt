@@ -116,7 +116,7 @@ sealed interface AgentLine {
 
 val AgentIntro: List<AgentLine> = listOf(
     AgentLine.Answer("✻ Welcome. This is a terminal-style coding agent demo for an Android project."),
-    AgentLine.Note("Type a request or tap a suggestion. Edits and commands ask for permission first."),
+    AgentLine.Note("Type a request or tap a suggestion. The agent can edit and run commands inside the project."),
 )
 
 val AgentWelcome: List<AgentLine> = listOf(

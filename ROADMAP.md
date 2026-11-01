@@ -1,16 +1,48 @@
 # CloseCode — Roadmap & Resume Notes
 
-_Updated 2026-10-30, after Step 21 / build 43. This file is the
+_Updated 2026-11-01, after build 45 (light redesign). This file is the
 single artifact to pick the work up from — status, device-test resume steps, the
 full improvement backlog, and what NOT to do._
 
 ## 1. Where things stand
 
-- Remote: `https://github.com/Rapas11/Closecode.git`, branch `main` (Step 21 =
-  build 43). Steps 4–21 are pushed. Conventions: one commit per step,
-  unit suite green, bump `closecodeBuild` in `app/build.gradle.kts`, build + send
-  APK each step, **no force-push**, never commit `real opencode open pc/` or
-  `test-output*.txt`.
+- Remote: `https://github.com/Rapas11/Closecode.git`. Step 21 / build 43 is on
+  `main`; build 45 is on the uncommitted `opencode-v2` branch. Conventions: one
+  commit per step, unit suite green, bump `closecodeBuild` in
+  `app/build.gradle.kts`, build + send APK each step, **no force-push**, never
+  commit `real opencode open pc/` or `test-output*.txt`.
+- **Build 45 (light redesign, uncommitted on `opencode-v2`):**
+  - Full light visual system: `MockColors`, rail/panel shell, rounded cards and
+    sheets, light Settings master/detail, Recents, Welcome, project setup.
+  - OpenCode keeps its rail entry after Problems; More and all existing actions
+    remain reachable. Default theme is Light.
+  - `versionName` is `0.45.1466` (build 45, 1466 passing tests), versionCode 45.
+    Unit suite: **1466 tests, 0 failures, 0 errors, 8 skipped**. Debug APK is
+    40,497,679 B, SHA-256
+    `7335b2b12fd948ef612154a8dc4a802ef97c464ddac5e9c38dcc88d339c030ba`.
+  - Still not device-tested; the PDF design handoff could not be read here, so
+    remaining pixel-level matching needs visual QA against the PNGs.
+- **Build 44 (Plans 1–7, uncommitted on `opencode-v2`):**
+  - Device loop: `closecode run/app/stop/restart/ui/input` with foreground waits,
+    accessibility find/tap/scroll, UI assertions and install polling.
+  - Build correctness: aapt2 35.x preference, release signing/paths, `clean`,
+    build types, generated BuildConfig fields.
+  - Git safety: generated/secret path detection, explorer hiding,
+    `.git/info/exclude`, stage/pre-push guards, export/import filters.
+  - UI inspector: `IdeUiInspector` for the running CloseCode screen.
+  - Optional Full Gradle: resumable Gradle 8.13 + Termux/JDK pack, full SDK
+    platform extraction, build-tools 34.0.4, real `assembleDebug/Release`.
+  - Optional Native tools: NDK r27b + CMake 3.22.1 installed into the CloseCode
+    SDK, detected only for C/C++ projects, wired into Full Gradle.
+  - Gradle depth: real `bundleDebug/Release`, `test`, `lint`, `check`, `tasks`,
+    flavour tasks such as `assembleFreeDebug`, APK/AAB discovery, and R8 via the
+    project's own release config.
+  - `versionName` is `0.44.1461` (build 44, 1461 passing tests), versionCode 44.
+    Unit suite: **1461 tests, 0 failures, 0 errors, 8 skipped**. Debug APK
+    (`closecode-0.44.1461-debug.apk`) is 40,416,471 B, SHA-256
+    `ba7f3acef41270fcfabbe3dcfacb9972f212a94cca3e8d8b10e8a994a9dccf23`.
+  - Still not device-tested: Full Gradle/NDK execution, install confirmation,
+    and the device flows listed below.
 - **Build 43 (Step 21 — "hands-free OpenCode"):**
   - AGENTS.md seeding: `OpenCodeAgentMd` writes/merges a marked block
     (`<!-- closecode:start(b43) -->`) into the project and OpenCode home

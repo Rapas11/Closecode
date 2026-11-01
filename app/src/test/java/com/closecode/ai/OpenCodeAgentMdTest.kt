@@ -41,8 +41,8 @@ class OpenCodeAgentMdTest {
         val text = OpenCodeAgentMd.section()
         // Real verbs, from the shell script's own usage line.
         for (verb in listOf(
-            "describe", "check", "build", "install", "launch", "logcat", "screenshot",
-            "export", "gradle", "github",
+            "describe", "check", "build", "run", "install", "launch", "app", "stop",
+            "restart", "ui", "logcat", "screenshot", "export", "gradle", "github",
         )) {
             assertTrue("should mention [$verb]", text.contains("`closecode $verb") || text.contains("closecode $verb"))
         }

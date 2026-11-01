@@ -3,8 +3,8 @@ package com.closecode.ai
 import java.io.File
 
 /**
- * AGENTS.md, the project file OpenCode always loads on its own, in every version — pinned
- * 1.18.35 included, where the newer `.opencode/skills` discovery may not fire yet.
+ * AGENTS.md, the project file OpenCode always loads on its own, in every version — including
+ * the pinned V2 runtime, where the newer `.opencode/skills` discovery may not fire yet.
  *
  * CloseCode seeds it with the phone's rules so the model can build, check, fix, install and
  * publish the project without being told once: the user's only tool here is talking. The
@@ -24,30 +24,47 @@ object OpenCodeAgentMd {
         ## CloseCode phone rules
 
         This project lives on an Android phone, built by CloseCode's own engine. There is no
-        Gradle daemon here, no Python, no desktop browser, and nothing one could `./gradlew`.
+        Python, no desktop browser, and no `./gradlew`; a downloaded Gradle is optional.
 
         Everything is the `closecode` command. It is already on PATH. Run every command from
         this project root:
 
         - `closecode describe` — the project's facts (package, SDK levels, sources, toolchain).
         - `closecode check` — the static checks, no build.
-        - `closecode build` — a debug APK with the phone's engine.
+        - `closecode build` — a debug APK with the phone's engine; add `--release` for release.
+        - `closecode clean` — delete the project's build output.
+        - `closecode run` — build, install, launch, and wait until the app is in front.
         - `closecode install`, `closecode launch` — put the APK on this phone, then open it.
+        - `closecode app`, `closecode stop`, `closecode restart` — inspect, stop or relaunch it.
+        - `closecode ui dump` — the current screen as JSON; `closecode ui tap --text TEXT`,
+          `ui wait`, `ui assert` and `ui scroll` drive and check it.
         - `closecode logcat`, `closecode screenshot` — the installed app's log, and its screen.
         - `closecode export` — move a file or folder out of the project, when the user asks.
-        - `closecode gradle` translates Gradle names it knows: assembleDebug (build),
-          installDebug (build + install), launch (build + install + launch), and
-          test, testDebugUnitTest, lint, lintDebug or check (static checks only).
+        - `closecode gradle` accepts assembleDebug/assembleRelease, installDebug/installRelease,
+          launch/launchRelease, bundleDebug/bundleRelease, test/testDebugUnitTest, lint/lintDebug,
+          check, tasks, and flavour tasks such as assembleFreeDebug. Add `--gradle` for real
+          Gradle: dependencies, variants, R8 and App Bundles. Without it, test/lint/check run
+          the phone's static checks and bundles are refused.
+        - Native C/C++ projects need Full Gradle plus Native tools (NDK/CMake) in Settings;
+          build them with `closecode build --gradle`.
         - `closecode github push|pull` — publish this project to its GitHub repository, or take
           what came back. CloseCode signs in by itself; you never need a token.
         - `closecode tool aapt2|d8|r8|kotlinc` — one toolchain tool at a time.
 
         The rules:
-        - Never run `./gradlew`; the translated commands above are the only way to build.
+        - Never run `./gradlew`; use the commands above. The custom engine is the default;
+          `--gradle` is only for projects it cannot handle, and only when Full Gradle is
+          installed in CloseCode settings.
         - When a build, check or the app's logcat shows an error, read it, fix the sources, and
           run the command again yourself until it passes. Do that without asking.
-        - On this phone the user only talks to you. There is no terminal for them to use and
-          nobody to click "allow" for a command. Build, check, fix and report by yourself.
+        - Test the running app with `closecode run`, then `ui dump` and `ui assert`. Fix what
+          is broken and run again. Stop after five failed fixes and tell the user what remains.
+        - Only inspect and drive the app you just built. Do not tap system dialogs or other
+          apps. Android still shows its own install confirmation; if `run` says `needsUser`,
+          ask the user to confirm and then run `closecode app`.
+        - On this phone the user only talks to you. Routine build, check and fix commands run
+          by themselves. Destructive shell work and access outside the project ask in the
+          OpenCode page; wait for the user's answer instead of trying to bypass it.
         - When the app itself misbehaves, tell the user to open CloseCode → AI → Server log;
           the file lives at `files/opencode/logs/server.log` in the app's private storage.
     """.trimIndent() + "\n"

@@ -311,7 +311,8 @@ class ProjectRepository(context: Context) {
     fun copyPath(slug: String, relative: String, destination: String): String =
         store.copyPath(slug, relative, destination)
 
-    fun tree(slug: String): List<ProjectFile> = store.readTree(slug)
+    fun tree(slug: String, showGenerated: Boolean = false): List<ProjectFile> =
+        store.readTree(slug, showGenerated)
 
     /** The record for a path just created, without walking the tree to rediscover it. */
     fun entryFor(slug: String, relative: String, isFolder: Boolean): ProjectFile =

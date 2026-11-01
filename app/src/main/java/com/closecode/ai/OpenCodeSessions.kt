@@ -26,10 +26,20 @@ object OpenCodeSessions {
     private const val TIMEOUT_MS = 10_000
 
     internal fun sessionsPath(directory: String): String =
-        "/session?directory=${URLEncoder.encode(directory, "UTF-8")}&roots=true&limit=100"
+        "/api/session?directory=${URLEncoder.encode(directory, "UTF-8")}" +
+            "&parentID=null&limit=100&order=desc"
 
-    internal fun createSessionPath(directory: String): String =
-        "/session?directory=${URLEncoder.encode(directory, "UTF-8")}"
+    internal fun createSessionPath(directory: String): String = "/api/session"
+
+    /** The V2 create body: the location carries the canonical project directory. */
+    internal fun createSessionBody(directory: String): String {
+        val canonical = runCatching { java.io.File(directory).canonicalPath }
+            .getOrDefault(directory)
+        return JSONObject().apply {
+            put("title", "CloseCode")
+            put("location", JSONObject().put("directory", canonical))
+        }.toString()
+    }
 
     /** The direct route that opens [sessionId] instead of OpenCode's new-session prompt. */
     internal fun sessionPageUrl(baseUrl: String, sessionId: String): String =
@@ -46,13 +56,18 @@ object OpenCodeSessions {
         directory: String,
         preferred: String? = null,
     ): String? {
-        val sessions = runCatching { JSONArray(json ?: return null) }.getOrNull() ?: return null
+        if (json == null) return null
+        val sessions = runCatching { JSONArray(json) }.getOrNull()
+            ?: runCatching { JSONObject(json).optJSONArray("data") }.getOrNull()
+            ?: return null
         val matches = (0 until sessions.length()).mapNotNull { index ->
             val item = sessions.optJSONObject(index) ?: return@mapNotNull null
             val parentId = item.optString("parentID")
             if (parentId.isNotBlank() && parentId != "null") return@mapNotNull null
             val id = item.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val folder = item.optString("directory").takeIf { it.isNotBlank() }
+            val folder = item.optJSONObject("location")?.optString("directory")
+                ?.takeIf { it.isNotBlank() }
+                ?: item.optString("directory").takeIf { it.isNotBlank() }
                 ?: return@mapNotNull null
             if (!sameProjectPath(folder, directory)) return@mapNotNull null
             val time = item.optJSONObject("time")
@@ -68,9 +83,12 @@ object OpenCodeSessions {
     /** Reads the ID from a create answer, but only when the answer names the same directory. */
     internal fun createdSessionId(json: String?, directory: String): String? {
         val root = runCatching { JSONObject(json ?: return null) }.getOrNull() ?: return null
-        val item = root.optJSONObject("session") ?: root
+        val item = root.optJSONObject("data") ?: root.optJSONObject("session") ?: root
         val id = item.optString("id").takeIf { it.isNotBlank() } ?: return null
-        val folder = item.optString("directory").takeIf { it.isNotBlank() } ?: return null
+        val folder = item.optJSONObject("location")?.optString("directory")
+            ?.takeIf { it.isNotBlank() }
+            ?: item.optString("directory").takeIf { it.isNotBlank() }
+            ?: return null
         return id.takeIf { sameProjectPath(folder, directory) }
     }
 
@@ -84,18 +102,31 @@ object OpenCodeSessions {
         baseUrl: String,
         projectId: String,
         directory: String,
+        basicAuth: String = "",
     ): String? {
         if (baseUrl.isBlank() || directory.isBlank()) return null
-        val key = key(projectId, directory)
+        val canonical = runCatching { java.io.File(directory).canonicalPath }
+            .getOrDefault(directory)
+        val key = key(projectId, canonical)
         val preferred = prefs(context).getString(key, null)
-        val list = request("GET", baseUrl.trimEnd('/') + sessionsPath(directory), null)
-        chooseSessionId(list, directory, preferred)?.let { id ->
-            remember(context, projectId, directory, id)
+        val list = request(
+            "GET",
+            baseUrl.trimEnd('/') + sessionsPath(canonical),
+            null,
+            basicAuth,
+        )
+        chooseSessionId(list, canonical, preferred)?.let { id ->
+            remember(context, projectId, canonical, id)
             return id
         }
-        val created = request("POST", baseUrl.trimEnd('/') + createSessionPath(directory), "{}")
-        val id = createdSessionId(created, directory) ?: return null
-        remember(context, projectId, directory, id)
+        val created = request(
+            "POST",
+            baseUrl.trimEnd('/') + createSessionPath(directory),
+            createSessionBody(canonical),
+            basicAuth,
+        )
+        val id = createdSessionId(created, canonical) ?: return null
+        remember(context, projectId, canonical, id)
         return id
     }
 
@@ -114,13 +145,21 @@ object OpenCodeSessions {
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    private fun request(method: String, url: String, body: String?): String? {
+    private fun request(
+        method: String,
+        url: String,
+        body: String?,
+        basicAuth: String,
+    ): String? {
         val connection = runCatching {
             (URL(url).openConnection() as HttpURLConnection).apply {
                 requestMethod = method
                 connectTimeout = TIMEOUT_MS
                 readTimeout = TIMEOUT_MS
                 setRequestProperty("Accept", "application/json")
+                if (basicAuth.isNotBlank()) {
+                    setRequestProperty("Authorization", "Basic $basicAuth")
+                }
                 if (body != null) {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")

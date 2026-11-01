@@ -61,17 +61,17 @@ fun TemplateCard(
     onClick: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(18.dp)
     val isWeb = tab == TemplateTab.Web
 
     Column(
         Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(c.cd)
+            .background(if (selected) c.mock.selected else c.mock.card)
             .border(
-                width = 1.dp,
-                color = if (selected) c.ac else c.ln,
+                width = if (selected) 1.5.dp else 1.dp,
+                color = if (selected) c.mock.accent else Color.Transparent,
                 shape = shape,
             )
             .clickable(onClick = onClick)
@@ -95,15 +95,15 @@ fun TemplateCard(
         }
         Text(
             text = template.name,
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 16.sp,
             fontFamily = Sans,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Bold,
             lineHeight = 22.sp,
         )
         Text(
             text = template.description,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 13.5.sp,
             fontFamily = Sans,
             lineHeight = 19.6.sp,
@@ -111,12 +111,12 @@ fun TemplateCard(
         Row(Modifier.padding(top = 4.dp)) {
             Box(
                 Modifier
-                    .border(1.dp, c.ln, RoundedCornerShape(6.dp))
+                    .background(c.mock.cardMuted, RoundedCornerShape(6.dp))
                     .padding(horizontal = 7.dp, vertical = 1.dp)
             ) {
                 Text(
                     text = template.tags,
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 11.5.sp,
                     fontFamily = Mono,
                     fontWeight = FontWeight.Medium,
@@ -135,13 +135,13 @@ fun TabChip(label: String, active: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .clip(shape)
-            .background(if (active) c.ab else Color.Transparent)
+            .background(if (active) c.mock.selected else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp, vertical = 8.dp),
     ) {
         Text(
             text = label,
-            color = if (active) c.af else c.mu,
+            color = if (active) c.mock.accent else c.mock.muted,
             fontSize = 14.5.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -266,13 +266,13 @@ fun SheetFooter(
             .fillMaxWidth()
             .drawBehind {
                 drawLine(
-                    color = c.ln,
+                    color = c.mock.border,
                     start = Offset(0f, 0f),
                     end = Offset(size.width, 0f),
                     strokeWidth = 1f,
                 )
             }
-            .background(c.bg)
+            .background(c.mock.panel)
             .padding(start = 22.dp, end = 22.dp, top = 14.dp, bottom = 16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -287,15 +287,14 @@ fun SheetFooter(
                         .weight(1f)
                         .height(46.dp)
                     .clip(fieldShape)
-                    .background(c.cd)
-                    .border(1.dp, c.ln, fieldShape)
+                    .background(c.mock.field)
                     .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 if (name.isEmpty()) {
                     Text(
                         text = "Project name",
-                        color = c.mu,
+                        color = c.mock.faint,
                         fontSize = 16.sp,
                         fontFamily = Sans,
                     )
@@ -305,7 +304,7 @@ fun SheetFooter(
                     onValueChange = onNameChange,
                     singleLine = true,
                     textStyle = LocalTextStyle.current.copy(
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 16.sp,
                         fontFamily = Sans,
                     ),
@@ -321,14 +320,14 @@ fun SheetFooter(
                     Modifier
                         .height(46.dp)
                         .clip(buttonShape)
-                        .border(1.dp, c.ln, buttonShape)
+                        .border(1.dp, c.mock.border, buttonShape)
                         .clickable(onClick = onSecondary)
                         .padding(horizontal = 18.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
                         text = secondaryLabel,
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.SemiBold,
@@ -338,20 +337,20 @@ fun SheetFooter(
 
             Row(
                 Modifier
-                    .height(46.dp)
-                    .clip(buttonShape)
+                    .height(52.dp)
+                    .clip(RoundedCornerShape(16.dp))
                     .background(
-                        if (canCreate) c.ab else c.mu.copy(alpha = 0.28f)
+                        if (canCreate) c.mock.accent else c.mock.card
                     )
                     .clickable(enabled = canCreate, onClick = onCreate)
                     .padding(horizontal = 22.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(9.dp),
             ) {
-                PlusGlyph(color = if (canCreate) c.af else c.mu)
+                PlusGlyph(color = if (canCreate) c.mock.onAccent else c.mock.faint)
                 Text(
                     text = actionLabel,
-                    color = if (canCreate) c.af else c.mu,
+                    color = if (canCreate) c.mock.onAccent else c.mock.faint,
                     fontSize = 15.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.SemiBold,
@@ -361,7 +360,7 @@ fun SheetFooter(
 
         Text(
             text = hint,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 13.5.sp,
             fontFamily = Sans,
             modifier = Modifier.fillMaxWidth(),
@@ -369,7 +368,7 @@ fun SheetFooter(
         error?.let {
             Text(
                 text = it,
-                color = c.red,
+                color = c.mock.danger,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 modifier = Modifier.fillMaxWidth(),
@@ -389,37 +388,37 @@ fun SheetHeader(
     Row(
         modifier
             .fillMaxWidth()
-            .padding(start = 22.dp, end = 22.dp, top = 22.dp),
+            .padding(start = 22.dp, end = 18.dp, top = 20.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Column(Modifier.weight(1f)) {
             Text(
                 text = title,
-                color = c.tx,
-                fontSize = 22.sp,
+                color = c.mock.text,
+                fontSize = 24.sp,
                 fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
-                lineHeight = 26.sp,
+                fontWeight = FontWeight.Bold,
+                lineHeight = 29.sp,
             )
             Text(
                 text = subtitle,
-                color = c.mu,
-                fontSize = 14.5.sp,
+                color = c.mock.muted,
+                fontSize = 14.sp,
                 fontFamily = Sans,
-                lineHeight = 21.sp,
+                lineHeight = 20.sp,
+                modifier = Modifier.padding(top = 4.dp),
             )
         }
         Box(
             Modifier
                 .padding(start = 12.dp)
                 .size(38.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(c.cd)
-                .border(1.dp, c.ln, RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(12.dp))
+                .background(c.mock.card)
                 .clickable(onClick = onClose),
             contentAlignment = Alignment.Center,
         ) {
-            CrossGlyph(color = c.mu)
+            CrossGlyph(color = c.mock.muted)
         }
     }
 }

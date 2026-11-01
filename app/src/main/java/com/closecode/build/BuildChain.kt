@@ -436,9 +436,9 @@ object BuildChain {
                 package ${config.packageName};
 
                 public final class BuildConfig {
-                    public static final boolean DEBUG = true;
+                    public static final boolean DEBUG = ${!config.isRelease};
                     public static final String APPLICATION_ID = "${config.packageName}";
-                    public static final String BUILD_TYPE = "debug";
+                    public static final String BUILD_TYPE = "${config.buildType}";
                     public static final String VERSION_NAME = "${config.versionName}";
                     public static final int VERSION_CODE = ${config.versionCode};
                 }
@@ -507,12 +507,14 @@ object BuildChain {
         }
 
         private fun sign(unsigned: File): File {
-            val output = outputApk ?: File(projectDir, "build/outputs/apk/debug/app-debug.apk")
+            val type = if (config.isRelease) "release" else "debug"
+            val output = outputApk
+                ?: File(projectDir, "build/outputs/apk/$type/app-$type.apk")
             output.parentFile?.mkdirs()
             val temp = File(output.parentFile, "${output.name}.tmp")
             temp.delete()
             val signer = ApkSigner.SignerConfig.Builder(
-                "closecode-debug",
+                "closecode-$type",
                 tools.signer.key,
                 tools.signer.chain,
             ).build()

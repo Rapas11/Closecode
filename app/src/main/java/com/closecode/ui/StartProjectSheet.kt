@@ -112,12 +112,12 @@ fun StartProjectSheet(
                     .heightIn(max = maxSheetHeight)
                     .clip(
                         if (wide) {
-                            RoundedCornerShape(22.dp)
+                            RoundedCornerShape(28.dp)
                         } else {
-                            RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp)
+                            RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
                         }
                     )
-                    .background(c.bg)
+                    .background(c.mock.panel)
             ) {
                 SheetHeader(
                     onClose = onDismiss,

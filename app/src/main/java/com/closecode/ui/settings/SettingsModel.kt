@@ -102,6 +102,8 @@ enum class SettingsAction {
     DISCONNECT_GITHUB,
     SDK_MANAGER,
     SHELL_TOOLS,
+    FULL_GRADLE,
+    NATIVE_TOOLS,
     CREDENTIALS,
     SIGNING_KEYS,
     LICENSES,
@@ -129,10 +131,12 @@ data class Section(
 
 /** The accent swatches offered by [Row.Accents]. */
 val AccentOptions = listOf(
-    Color(0xFFF97316),
+    Color(0xFF5865F2),
     Color(0xFF3B82F6),
     Color(0xFF10B981),
+    Color(0xFFF97316),
     Color(0xFF8B5CF6),
+    Color(0xFFEC4899),
 )
 
 /**
@@ -152,6 +156,8 @@ data class SettingsLive(
     val toolchainStatus: String = "…",
     val toolchainVersions: String = "…",
     val shellToolsStatus: String = "…",
+    val gradleToolsStatus: String = "…",
+    val nativeToolsStatus: String = "…",
 )
 
 /**
@@ -200,6 +206,32 @@ fun sections(
                         "Download build tools, shell tools and the AI runtime again.",
                         "Open",
                         id = SettingsAction.SETUP_GUIDE,
+                    ),
+                ),
+            ),
+        ),
+    ),
+    Section(
+        id = "appearance",
+        label = "Appearance",
+        icon = "◐",
+        title = "Appearance",
+        blurb = "Customize the look and feel of Closecode.",
+        groups = listOf(
+            Group(
+                "Theme",
+                listOf(
+                    Row.Options(
+                        "Theme",
+                        "Follow the system, or pick one.",
+                        OptionSetting.THEME,
+                        ThemeChoices,
+                    ),
+                    Row.Accents("Accent color", settings.accentIndex),
+                    Row.Toggle(
+                        "Animations",
+                        "Let panels and controls move.",
+                        BoolSetting.ANIMATIONS,
                     ),
                 ),
             ),
@@ -352,6 +384,18 @@ fun sections(
                         "Open",
                         id = SettingsAction.SDK_MANAGER,
                     ),
+                    Row.Nav(
+                        "Full Gradle",
+                        "OpenJDK 17 and Gradle for projects that need Gradle. Optional download.",
+                        live.gradleToolsStatus,
+                        SettingsAction.FULL_GRADLE,
+                    ),
+                    Row.Nav(
+                        "Native tools",
+                        "NDK and CMake for projects with C/C++. Optional, used with Full Gradle.",
+                        live.nativeToolsStatus,
+                        SettingsAction.NATIVE_TOOLS,
+                    ),
                 ),
             ),
         ),
@@ -467,32 +511,6 @@ fun sections(
                         "OpenCode runs everything by itself.",
                         "Coming soon",
                         id = SettingsAction.AI_SETTINGS,
-                    ),
-                ),
-            ),
-        ),
-    ),
-    Section(
-        id = "appearance",
-        label = "Appearance",
-        icon = "◐",
-        title = "Appearance",
-        blurb = "Customize the look and feel of Closecode.",
-        groups = listOf(
-            Group(
-                "Theme",
-                listOf(
-                    Row.Options(
-                        "Theme",
-                        "Follow the system, or pick one.",
-                        OptionSetting.THEME,
-                        ThemeChoices,
-                    ),
-                    Row.Accents("Accent color", settings.accentIndex),
-                    Row.Toggle(
-                        "Animations",
-                        "Let panels and controls move.",
-                        BoolSetting.ANIMATIONS,
                     ),
                 ),
             ),

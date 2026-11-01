@@ -19,31 +19,32 @@ class OpenCodeModelTest {
 
         assertTrue(message.contains("armeabi-v7a, armeabi"))
         assertTrue(message.contains("arm64-v8a"))
-        assertTrue(message.contains("x86_64"))
+        assertFalse(message.contains("x86_64"))
     }
 
     @Test
     fun aHealthyServerReportsItsVersion() {
-        assertEquals("1.18.35", healthyVersion("""{"healthy":true,"version":"1.18.35"}"""))
-        assertEquals("", healthyVersion("""{"healthy":true}"""))
-        assertNull(healthyVersion("""{"healthy":false,"version":"1.18.35"}"""))
+        assertEquals("2.2.5", healthyVersion("""{"version":"2.2.5","pid":1}"""))
+        assertNull(healthyVersion("""{"pid":1}"""))
+        assertNull(healthyVersion("""{"healthy":false,"version":"2.2.5"}"""))
         assertNull(healthyVersion("not json"))
     }
 
     @Test
     fun thePinnedVersionMatchesTheReleaseTag() {
-        assertEquals("1.18.35", OpenCodeDefaults.VERSION)
-        assertEquals("v1.18.35", OpenCodeDefaults.TAG)
+        assertEquals("2.2.5", OpenCodeDefaults.VERSION)
+        assertEquals("v2.2.5", OpenCodeDefaults.TAG)
     }
 
     @Test
     fun theOrphanMatcherOnlyFindsTheWebServer() {
         assertTrue(
             isOpenCodeServerCommandLine(
-                "/data/opencode\u0000web\u0000--hostname\u0000127.0.0.1\u0000--port\u00004098",
+                "/data/opencode\u0000serve\u0000--hostname\u0000127.0.0.1\u0000--port\u00004098",
             ),
         )
         assertFalse(isOpenCodeServerCommandLine("/data/opencode\u0000auth\u0000login"))
+        assertTrue(isOpenCodeServerCommandLine("/system/bin/sh\u0000-c\u0000opencode serve"))
         assertTrue(isOpenCodeServerCommandLine("/system/bin/sh\u0000-c\u0000opencode web"))
         assertFalse(isOpenCodeServerCommandLine("/system/bin/sh\u0000-c\u0000echo opencode"))
     }
@@ -117,7 +118,7 @@ class OpenCodeModelTest {
     @Test
     fun theLaunchLineIsTheCommandTheAppRuns() {
         assertEquals(
-            "Launch: opencode web --hostname 127.0.0.1 --port 4098",
+            "Launch: opencode --print-logs serve --hostname 127.0.0.1 --port 4098",
             OpenCodeDefaults.launchLine(),
         )
     }
@@ -128,11 +129,9 @@ class OpenCodeModelTest {
     }
 
     @Test
-    fun thePageUrlSelectsTheProjectSession() {
+    fun theFallbackPageIsTheProjectAwareHome() {
         assertEquals(
-            "http://127.0.0.1:4098/" +
-                "L2RhdGEvdXNlci8wL2NvbS5jbG9zZWNvZGUvZmlsZXMvcHJvamVjdHMvbGFuZGluZy1wYWdlLTI" +
-                "/session",
+            "http://127.0.0.1:4098/",
             projectPageUrl(
                 "http://127.0.0.1:4098/",
                 "/data/user/0/com.closecode/files/projects/landing-page-2",
@@ -141,26 +140,26 @@ class OpenCodeModelTest {
     }
 
     @Test
-    fun thePageUrlUsesTheDirectoryRouteThePageUnderstands() {
+    fun thePageUrlNoLongerUsesTheV1DirectoryRoute() {
         val url = projectPageUrl("http://127.0.0.1:4098", "/data/user/0/com.closecode/files/p")
 
-        assertTrue(url.startsWith("http://127.0.0.1:4098/L2RhdGEvdXNlci8wL2NvbS5jbG9zZWNvZGU"))
-        assertTrue(url.endsWith("/session"))
+        assertEquals("http://127.0.0.1:4098/", url)
         assertFalse(url.contains("project-session"))
+        assertFalse(url.contains("/session"))
     }
 
     @Test
-    fun thePageUrlEncodesTheDirectoryAsUnpaddedBase64UrlUtf8() {
-        val directory = "/data/user/0/com.closecode/files/проект"
-        val url = projectPageUrl("http://127.0.0.1:4098", directory)
-
+    fun theAuthTokenIsTheV2WebUiBootstrapValue() {
         assertEquals(
-            "http://127.0.0.1:4098/" +
-                "L2RhdGEvdXNlci8wL2NvbS5jbG9zZWNvZGUvZmlsZXMv0L_RgNC-0LXQutGC" +
-                "/session",
-            url,
+            "b3BlbmNvZGU6c2VjcmV0",
+            openCodeAuthToken("secret"),
         )
-        assertFalse(url.contains("="))
+        assertEquals(
+            "b3BlbmNvZGU6c2VjcmV0",
+            openCodeBasicAuth("secret"),
+        )
+        assertEquals("secret", openCodePasswordFromBasicAuth(openCodeBasicAuth("secret")))
+        assertNull(openCodePasswordFromBasicAuth("not-base64"))
     }
 
     @Test
@@ -298,29 +297,23 @@ class OpenCodeBinaryTest {
     @Test
     fun anArmPhoneGetsTheArmBuild() {
         assertEquals(
-            "opencode-linux-arm64-musl.tar.gz",
+            "@opencode/cli-linux-arm64-musl",
             OpenCodeBinary.assetForAbis(listOf("arm64-v8a", "armeabi-v7a")),
         )
     }
 
     @Test
-    fun anEmulatorGetsTheX64Build() {
-        assertEquals(
-            "opencode-linux-x64-musl.tar.gz",
-            OpenCodeBinary.assetForAbis(listOf("x86_64", "x86")),
-        )
+    fun anEmulatorGetsNoBuild() {
+        assertNull(OpenCodeBinary.assetForAbis(listOf("x86_64", "x86")))
     }
 
     @Test
     fun thePreferredAbiDecidesEvenWhenAnotherOneIsThere() {
         // A phone can list an ABI it only translates as well as the one it runs. The first
         // ABI is the phone's own, so it decides; a translated build is a build that crashes.
+        assertNull(OpenCodeBinary.assetForAbis(listOf("x86_64", "arm64-v8a", "x86")))
         assertEquals(
-            "opencode-linux-x64-musl.tar.gz",
-            OpenCodeBinary.assetForAbis(listOf("x86_64", "arm64-v8a", "x86")),
-        )
-        assertEquals(
-            "opencode-linux-arm64-musl.tar.gz",
+            "@opencode/cli-linux-arm64-musl",
             OpenCodeBinary.assetForAbis(listOf("arm64-v8a", "armeabi-v7a", "armeabi")),
         )
     }
@@ -331,12 +324,12 @@ class OpenCodeBinaryTest {
     }
 
     @Test
-    fun theDownloadComesFromTheReleaseThatMatchesThePinnedVersion() {
-        val url = OpenCodeBinary.downloadUrl("opencode-linux-arm64-musl.tar.gz")
+    fun theDownloadComesFromThePinnedNpmTarball() {
+        val url = OpenCodeBinary.downloadUrl(OpenCodeDefaults.NPM_PACKAGE)
 
-        assertTrue(url.startsWith("https://github.com/anomalyco/opencode/releases/download/"))
-        assertTrue(url.endsWith("/opencode-linux-arm64-musl.tar.gz"))
-        assertTrue(url.contains(OpenCodeDefaults.TAG))
+        assertTrue(url.startsWith("https://registry.npmjs.org/@opencode/cli-linux-arm64-musl/"))
+        assertTrue(url.endsWith("/cli-linux-arm64-musl-2.2.5.tgz"))
+        assertTrue(url.contains(OpenCodeDefaults.VERSION))
     }
 
     @Test
@@ -512,6 +505,28 @@ class TarReaderTest {
         assertEquals(4096L, into.length())
         assertEquals((0 % 251).toByte(), into.readBytes()[0])
         // The half-written file is renamed into place, so nothing is left beside it.
+        assertFalse(File(dir, "opencode.part").exists())
+    }
+
+    @Test
+    fun readsTheNamedProgramFromAnNpmTarball() {
+        val archive = tarGz(
+            "package/package.json" to "{\"name\":\"cli\"}".toByteArray(),
+            "package/bin/opencode" to ByteArray(4096) { (it % 251).toByte() },
+            "package/README.md" to "read me".toByteArray(),
+        )
+        val into = File(dir, "opencode")
+
+        val entry = TarReader.extractFile(
+            ByteArrayInputStream(archive),
+            "package/bin/opencode",
+            into,
+        )
+
+        assertNotNull(entry)
+        assertEquals("package/bin/opencode", entry!!.name)
+        assertEquals(4096L, into.length())
+        assertEquals((0 % 251).toByte(), into.readBytes()[0])
         assertFalse(File(dir, "opencode.part").exists())
     }
 

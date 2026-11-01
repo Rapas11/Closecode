@@ -8,11 +8,17 @@ after cloning if you are continuing the MuMu/phone testing of the OpenCode page.
 
 ## Resume point
 
-- Branch `main`; Step 21 is build 43: hands-free OpenCode — AGENTS.md seeding,
-  permission allow for edit/bash/webfetch, Ask AI from build diagnostics, the
-  server-log viewer, report bundles with both server logs, project zip
-  export/import, a CI workflow, and `versionName 0.43.0`; the AI settings page
-  is gone ("Coming soon") because OpenCode runs everything itself. Step 20 is
+- Branch `opencode-v2`; build 45 (uncommitted) is the full light-theme
+  redesign: mock tokens, left rail, rounded panels, light Settings, Recents,
+  Welcome, project setup and sheets. `versionName 0.45.1466` (build 45, 1466
+  passing tests), versionCode 45. Build 44 covers Plans 1–7: the device loop,
+  build correctness, Git safety, UI inspector, optional Full Gradle, optional
+  NDK/CMake, and Gradle depth (bundles, tests, lint, tasks, flavours). Step 21 is build 43 on `main`:
+  hands-free OpenCode — AGENTS.md seeding, permission allow for
+  edit/bash/webfetch, Ask AI from build diagnostics, the server-log viewer,
+  report bundles with both server logs, project zip export/import, a CI
+  workflow, and `versionName 0.43.0`; the AI settings page is gone ("Coming
+  soon") because OpenCode runs everything itself. Step 20 is
   build 42: AndroidIDE parity — the fixed port is
   reclaimed from stale servers the AndroidIDE way (kernel socket tables →
   process match → UID/cmdline-checked kill) before every launch, and the
@@ -440,6 +446,28 @@ the 1.18.35 page is proven on a device.
 - Still to check on a device: a project build before and after metadata
   refresh, stale/slow scaffolding crash recovery, switching OpenCode projects
   and screenshot visibility, and session listing with `parentID: null`.
+
+## Build 44 (Plans 1–7)
+
+- Device loop: `closecode run/app/stop/restart/ui/input`, foreground waits,
+  accessibility find/tap/scroll, UI assertions, install polling.
+- Build correctness: aapt2 35.x preference, release signing/paths, `clean`,
+  build types, generated BuildConfig fields.
+- Git safety: generated/secret path detection, explorer hiding,
+  `.git/info/exclude`, stage/pre-push guards, export/import filters.
+- UI inspector: `IdeUiInspector` and the More-menu entry.
+- Optional Full Gradle: Gradle 8.13, Termux OpenJDK 17 path repair, full
+  `platforms/android-35` extraction, build-tools 34.0.4, real APK builds.
+- Optional Native tools: NDK r27b + CMake 3.22.1 in the CloseCode SDK, detected
+  only for C/C++ projects, wired into Full Gradle. Install on demand from
+  Settings → Build Behavior → Native tools.
+- Gradle depth: real App Bundles, unit tests, lint, check, tasks and flavour
+  tasks; `--gradle` uses the project's dependencies, variants and R8 config.
+- Unit suite: **1461 tests, 0 failures, 0 errors, 8 skipped**. Debug APK
+  `closecode-0.44.1461-debug.apk` is 40,416,471 B, SHA-256
+  `ba7f3acef41270fcfabbe3dcfacb9972f212a94cca3e8d8b10e8a994a9dccf23`.
+- Device validation still pending: Full Gradle/NDK execution, install
+  confirmation, and the build-42 flows in `ROADMAP.md` §2.
 
 ## Step 19 (build 41)
 

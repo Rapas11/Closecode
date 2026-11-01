@@ -255,7 +255,7 @@ fun IdeAnchoredSheet(
         Box(
             Modifier
                 .fillMaxSize()
-                .background(c.scrim)
+                .background(c.mock.scrim)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -280,9 +280,8 @@ fun IdeAnchoredSheet(
                         }
                     },
                 )
-                .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                .background(c.mock.panel)
                 // An enabled no-op, not `enabled = false`: a disabled clickable adds no input
                 // handler at all, so taps on the sheet body would fall through to the scrim
                 // and dismiss the sheet the user is reading.
@@ -315,6 +314,7 @@ fun IdeAnchoredSheet(
 internal val MoreLabels = listOf(
     "Logcat",
     "Build",
+    "UI inspector",
     "Project settings",
     "Settings",
     "Toggle theme",
@@ -391,6 +391,41 @@ fun IdeMoreSheet(
             )
         }
     }
+}
+
+/**
+ * The More sheet with its rows wired. Kept out of the screen composable because the screen is
+ * already at the JVM method-size limit and every inline lambda there counts.
+ */
+@Composable
+fun IdeMoreOverlay(
+    open: Boolean,
+    onDismiss: () -> Unit,
+    onLogcat: () -> Unit,
+    onBuild: () -> Unit,
+    onUiInspector: () -> Unit,
+    onProjectSettings: () -> Unit,
+    onSettings: () -> Unit,
+    onToggleTheme: () -> Unit,
+    onDeveloper: () -> Unit,
+    versionLabel: String,
+    barHeight: androidx.compose.ui.unit.Dp,
+) {
+    if (!open) return
+    IdeMoreSheet(
+        actions = listOf(
+            MoreAction("Logcat", "≡", onLogcat),
+            MoreAction("Build", "✓", onBuild),
+            MoreAction("UI inspector", "◇", onUiInspector),
+            MoreAction("Project settings", "▤", onProjectSettings),
+            MoreAction("Settings", "⚙", onSettings),
+            MoreAction("Toggle theme", "◐", onToggleTheme),
+            MoreAction("Developer", "◆", onDeveloper),
+        ),
+        onDismiss = onDismiss,
+        versionLabel = versionLabel,
+        barHeight = barHeight,
+    )
 }
 
 /**

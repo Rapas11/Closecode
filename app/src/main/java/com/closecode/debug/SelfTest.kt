@@ -786,19 +786,22 @@ object SelfTest {
         }
         val json = OpenCodeAiConfig.read(file)
             ?: return Check(17, names[16], Status.Fail, "The config file could not be read: $file")
-        val allowed = OpenCodeConfig.OPEN_TOOLS.filter {
-            OpenCodeAiConfig.permission(json, it) == OpenCodeAiConfig.ALLOW
-        }
-        val asked = OpenCodeConfig.OPEN_TOOLS.filterNot { it in allowed }
+        val wildcard = OpenCodeAiConfig.hasWildcardAllow(json)
+        val external = OpenCodeAiConfig.permission(json, "external_directory")
         return when {
-            allowed.size == OpenCodeConfig.OPEN_TOOLS.size -> Check(
+            wildcard && external == OpenCodeAiConfig.ASK -> Check(
                 17, names[16], Status.Pass,
-                "The agent may edit files, run commands and fetch pages without asking.",
+                "The agent may work inside the project without asking; outside folders and " +
+                    "environment files still ask.",
+            )
+            wildcard -> Check(
+                17, names[16], Status.Pass,
+                "The agent may work without asking; check the outside-folder rule in AI settings.",
             )
             else -> Check(
                 17, names[16], Status.Fail,
-                "The agent would still ask about: ${asked.joinToString(", ")}. " +
-                    "Open the AI settings page and set them to allow.",
+                "The V2 permission rules are missing. Restart OpenCode so CloseCode can add " +
+                    "the defaults.",
             )
         }
     }
@@ -827,14 +830,22 @@ object SelfTest {
      * OpenCode, no answer proves nothing blocked it — both are healthy states.
      */
     private fun checkOpenCodeServer(context: Context): Check = runCatching {
-        val url = java.net.URL("http://${OpenCodeDefaults.HOST}:${OpenCodeDefaults.PORT}/global/health")
+        val url = java.net.URL("http://${OpenCodeDefaults.HOST}:${OpenCodeDefaults.PORT}/api/info")
         val connection = url.openConnection() as java.net.HttpURLConnection
         try {
             connection.connectTimeout = 3_000
             connection.readTimeout = 3_000
             connection.requestMethod = "GET"
+            val auth = OpenCode.state.value.basicAuth
+            if (auth.isNotBlank()) {
+                connection.setRequestProperty("Authorization", "Basic $auth")
+            }
             val code = connection.responseCode
-            val body = (connection.inputStream.bufferedReader().readText()).take(160)
+            val body = if (code in 200..299) {
+                connection.inputStream.bufferedReader().readText().take(160)
+            } else {
+                "no body"
+            }
             Check(
                 19, names[18], Status.Pass,
                 "The server answers at 127.0.0.1:${OpenCodeDefaults.PORT} (HTTP $code): $body",

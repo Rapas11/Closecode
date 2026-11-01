@@ -1,6 +1,5 @@
 package com.closecode.ai
 
-import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -17,8 +16,8 @@ object OpenCodePrompts {
         "A build error needs you, not me. Fix the sources and re-run closecode gradle " +
             "assembleDebug (closecode check first when the wording is unclear) until it passes"
 
-    /** The server path that starts one turn in a session. */
-    internal const val MESSAGE_PATH = "/session/%s/message"
+    /** The server path that starts one turn in a V2 session. */
+    internal const val MESSAGE_PATH = "/api/session/%s/prompt"
 
     /** A slow turn is normal; the server answers after the agent's reply is in. */
     internal const val CONNECT_TIMEOUT_MS = 5_000
@@ -34,17 +33,9 @@ object OpenCodePrompts {
     fun diagnosticPrompt(fileName: String, line: Int, message: String): String =
         fixPrompt(fileName, line.coerceAtLeast(0), message)
 
-    /** The request body OpenCode's `POST /session/:id/message` accepts for one text part. */
-    internal fun bodyJson(prompt: String): String {
-        val part = JsonObject().apply {
-            addProperty("type", "text")
-            addProperty("text", prompt)
-        }
-        val body = JsonObject().apply {
-            add("parts", JsonArray().apply { add(part) })
-        }
-        return body.toString()
-    }
+    /** The request body V2's `POST /api/session/:id/prompt` accepts. */
+    internal fun bodyJson(prompt: String): String =
+        JsonObject().apply { addProperty("text", prompt) }.toString()
 
     /** The URL one message goes to. */
     internal fun endpoint(baseUrl: String, sessionId: String): String =
@@ -54,7 +45,12 @@ object OpenCodePrompts {
      * Sends the prompt into [sessionId] on the running server. True when the server accepted
      * the message (the turn runs on; the chat page shows it as it works).
      */
-    fun send(baseUrl: String, sessionId: String, prompt: String): Boolean {
+    fun send(
+        baseUrl: String,
+        sessionId: String,
+        prompt: String,
+        basicAuth: String = "",
+    ): Boolean {
         if (baseUrl.isBlank() || sessionId.isBlank()) return false
         val body = bodyJson(prompt)
         return try {
@@ -66,6 +62,9 @@ object OpenCodePrompts {
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.setRequestProperty("Accept", "application/json")
+                if (basicAuth.isNotBlank()) {
+                    connection.setRequestProperty("Authorization", "Basic $basicAuth")
+                }
                 connection.outputStream.use { it.write(body.toByteArray()) }
                 connection.responseCode in 200..299
             } finally {

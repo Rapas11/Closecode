@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -402,120 +403,176 @@ fun HeroScreen(
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val viewport = maxWidth
-        val headlineSize = (viewport.value * 0.082f).coerceIn(38f, 76f).sp
-        val subSize = (viewport.value * 0.024f).coerceIn(16f, 19f).sp
+        val headlineSize = (viewport.value * 0.082f).coerceIn(38f, 46f).sp
 
-        PageBackground()
-
-        Column(
-            Modifier
-                .fillMaxSize()
-                .systemBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 22.dp, vertical = 48.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Reveal(1) { Wordmark() }
-            Spacer(Modifier.height(34.dp))
-
-            Reveal(2) {
-                Text(
-                    text = "THE ANDROID IDE FOR YOUR PHONE",
-                    color = c.ac,
-                    fontSize = 12.5.sp,
-                    fontFamily = Mono,
-                    fontWeight = FontWeight.Medium,
-                    letterSpacing = 0.08.em,
-                    textAlign = TextAlign.Center,
-                )
-            }
-            Spacer(Modifier.height(18.dp))
-
-            Reveal(3) { Headline(headlineSize) }
-
-            Spacer(Modifier.height(22.dp))
-
-            Reveal(4) {
-                Text(
-                    text = "Write, build and ship real apps straight from your device. " +
-                        "No laptop, no setup, no compromise.",
-                    color = c.mu,
-                    fontSize = subSize,
-                    lineHeight = subSize * 1.6f,
-                    fontFamily = Sans,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.widthIn(max = 460.dp),
-                )
-            }
-
-            Spacer(Modifier.height(34.dp))
-
-            Reveal(5) {
-                Column(horizontalAlignment = Alignment.End) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Pill(
-                            label = "Start a project",
-                            primary = true,
-                            onClick = { sheetOpen = true },
-                        ) {
-                            PlusGlyph(color = c.af)
-                        }
-                        Pill(
-                            label = "GitHub",
-                            primary = false,
-                            onClick = { githubOpen = !githubOpen },
-                            leading = {
-                                CodeGlyph(color = c.tx)
-                            },
-                        )
-                    }
-                    AnimatedVisibility(
-                        visible = githubOpen,
-                        enter = expandVertically(tween(260)) + fadeIn(tween(220)),
-                        exit = shrinkVertically(tween(200)) + fadeOut(tween(160)),
-                    ) {
-                        GitHubDisclosure(
-                            signedIn = githubToken != null,
-                            account = githubAccount,
-                            onSignIn = {
-                                if (githubToken != null) {
-                                    toast = "Signed in to GitHub."
-                                } else {
-                                    signInOpen = true
-                                }
-                            },
-                            onClone = { cloneOpen = true },
+        com.closecode.ui.components.DesignPage(modifier = Modifier.fillMaxSize(), background = c.mock.shell) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .systemBarsPadding()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 22.dp, vertical = 28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Row(
+                    Modifier
+                        .widthIn(max = 560.dp)
+                        .fillMaxWidth()
+                        .padding(bottom = 28.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    com.closecode.ui.components.DesignIconTile(
+                        icon = com.closecode.ui.ide.CcIcons.Logo,
+                        background = c.mock.content,
+                        tint = c.mock.accent,
+                        size = 38.dp,
+                        radius = 12.dp,
+                        iconSize = 18.dp,
+                    )
+                    Text(
+                        text = "Closecode",
+                        color = c.mock.text,
+                        fontSize = 17.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (recentCount > 0) {
+                        com.closecode.ui.components.DesignPill(
+                            label = "Recent · $recentCount",
+                            selected = false,
+                            onClick = onOpenRecent,
                         )
                     }
                 }
-            }
 
-            Spacer(Modifier.height(56.dp))
-
-            Reveal(6) { CodeCard() }
-
-            Spacer(Modifier.height(38.dp))
-
-            Reveal(7) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(22.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Facts.forEach { fact ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                Modifier
-                                    .size(6.dp)
-                                    .background(c.ac, RoundedCornerShape(3.dp))
+                Spacer(Modifier.height(22.dp))
+                Reveal(1) {
+                    com.closecode.ui.components.DesignIconTile(
+                        icon = com.closecode.ui.ide.CcIcons.Logo,
+                        background = c.mock.accent,
+                        tint = c.mock.onAccent,
+                        size = 74.dp,
+                        radius = 24.dp,
+                        iconSize = 34.dp,
+                    )
+                }
+                Spacer(Modifier.height(22.dp))
+                Reveal(2) {
+                    Text(
+                        text = "Build Android apps,\nanywhere.",
+                        color = c.mock.text,
+                        fontSize = headlineSize,
+                        lineHeight = headlineSize * 1.05f,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.045f).em,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.widthIn(max = 560.dp),
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                Reveal(3) {
+                    Text(
+                        text = "Write, build and ship real apps straight from your device. " +
+                            "No laptop, no setup, no compromise.",
+                        color = c.mock.muted,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
+                        fontFamily = Sans,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.widthIn(max = 430.dp),
+                    )
+                }
+                Spacer(Modifier.height(28.dp))
+                Reveal(4) {
+                    Column(
+                        Modifier.widthIn(max = 430.dp).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        com.closecode.ui.components.DesignPrimaryButton(
+                            label = "Start a project",
+                            onClick = { sheetOpen = true },
+                            leading = com.closecode.ui.ide.CcIcons.Plus,
+                        )
+                        if (recentCount > 0) {
+                            com.closecode.ui.components.ScreenCard {
+                                Row(
+                                    Modifier.clickable(onClick = onOpenRecent),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    com.closecode.ui.components.DesignIconTile(
+                                        icon = com.closecode.ui.ide.CcIcons.Clock,
+                                        background = c.mock.content,
+                                        tint = c.mock.accent,
+                                        size = 42.dp,
+                                    )
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Recent projects",
+                                            color = c.mock.text,
+                                            fontSize = 14.sp,
+                                            fontFamily = Sans,
+                                            fontWeight = FontWeight.Bold,
+                                        )
+                                        Text(
+                                            text = "$recentCount ready to open",
+                                            color = c.mock.muted,
+                                            fontSize = 12.sp,
+                                            fontFamily = Sans,
+                                        )
+                                    }
+                                    com.closecode.ui.components.DesignChevron()
+                                }
+                            }
+                        }
+                        com.closecode.ui.components.OutlineButton(
+                            label = if (githubOpen) "Hide GitHub options" else "GitHub",
+                            onClick = { githubOpen = !githubOpen },
+                        )
+                        AnimatedVisibility(
+                            visible = githubOpen,
+                            enter = expandVertically(tween(260)) + fadeIn(tween(220)),
+                            exit = shrinkVertically(tween(200)) + fadeOut(tween(160)),
+                        ) {
+                            GitHubDisclosure(
+                                signedIn = githubToken != null,
+                                account = githubAccount,
+                                onSignIn = {
+                                    if (githubToken != null) {
+                                        toast = "Signed in to GitHub."
+                                    } else {
+                                        signInOpen = true
+                                    }
+                                },
+                                onClone = { cloneOpen = true },
                             )
-                            Text(
-                                text = fact,
-                                color = c.mu,
-                                fontSize = 14.sp,
-                                fontFamily = Sans,
-                                modifier = Modifier.padding(start = 8.dp),
-                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(34.dp))
+                Reveal(5) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Facts.forEach { fact ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    Modifier
+                                        .size(6.dp)
+                                        .background(c.mock.accent, RoundedCornerShape(3.dp)),
+                                )
+                                Text(
+                                    text = fact,
+                                    color = c.mock.muted,
+                                    fontSize = 11.sp,
+                                    fontFamily = Sans,
+                                    modifier = Modifier.padding(start = 6.dp),
+                                )
+                            }
                         }
                     }
                 }
