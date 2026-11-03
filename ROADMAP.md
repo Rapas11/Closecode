@@ -259,6 +259,66 @@ Checkbox list; the suggested working order is §5.
        `/proc` rows (table text + fd dir) so the find-inode → match-PID → gate
        chain gets a real end-to-end unit test instead of parser-only coverage.
 
+### J. Design restyle (all 57 screens + Icon manager, light + dark themes)
+
+_Source: `CloseCode-developer-guide-with-code-v9-1.docx` (extracted Nov 2026) + dark-theme screenshots in `CloseCode-dark-screens-1.pdf` / `CloseCode-dark-screens-2/`._
+
+### Scope rules from the doc (must be followed)
+- **OpenCode must not be included** — leave everything about OpenCode exactly as it is today.
+- **Real data only** — no fake projects, files, commits, sample content, or hard-coded example values.
+- **Navigation**: editor is the root screen; sidebar opens only by swipe from left edge (40 dp strip always works); back button first in every header; origin screen shown in bold + current screen muted; sheets/menus/dialogs close before back.
+- **States**: every list shows empty / loading / error; no sample items.
+- **Icon manager (screens 52–57)** is NEW — build it after the restyle, doesn't touch existing logic.
+- **Missing screens** (AI tab, OpenCode pages, etc.) restyled with the same design system tokens/components.
+
+### Step order (one commit per step, suite green, versionCode bump, build APK, push)
+
+| Step | Screens / work |
+|------|----------------|
+| J1 | **Design tokens + `CcTheme.kt`** — all colours, typography, spacing, radii from the doc; light + dark complete |
+| J2 | **Icon set `CcIcons.kt`** — every SVG path from the doc (folder, refresh, branch, history, down, up, more, plus, check, search, filter, copy, file, undo, redo, save, term, menu, x, bolt, kbd, code, layers, image, trash, share, bug, flask, alert, gh, send, cog, ext, play, user, panel, globe, moon, sun, lock, info, db) |
+| J3 | **Base components** — primary/success/secondary/destructive buttons, text fields, chips, segmented control, toggle, progress bar, tick box, badge pill, sheets, menus, dialogs, toast |
+| J4 | **Lists & trees** — panel row (42 dp tile), tree row, status dot, settings group rows, result cards |
+| J5 | **Navigation system** — `AppNav`, `SidebarHost`, `ToolRail`, `SidePanel`, swipe-to-open sidebar (only from left 40 dp), back rules, header with origin-bold/current-muted |
+| J6 | Screen 01 — Welcome |
+| J7 | Screen 02 — Start a project |
+| J8 | Screen 03 — Switch project |
+| J9 | Screen 04 — Clone a repository |
+| J10 | Screen 05 — Cloning progress |
+| J11 | Screen 06 — First-time setup |
+| J12 | Screens 07–08 — Editor + keyboard overlay |
+| J13 | Screen 09 — Swipe sidebar |
+| J14 | Screen 10 — Files |
+| J15 | Screen 11 — Files menu |
+| J16 | Screens 12–13 — Search + Search options |
+| J17 | Screens 14–16 — GitHub (account, not connected, sign in) |
+| J18 | Screens 17–18 — Source control + more menu |
+| J19 | Screens 19–21 — History, Commit detail, Diff |
+| J20 | Screens 22–24 — Terminal, session, new command |
+| J21 | Screens 25–26 — Run/build, Build finished |
+| J22 | Screens 27–28 — Website preview, Console |
+| J23 | Screens 29–31 — Compose previews, Logcat, Problems |
+| J24 | Screens 32 Settings list + 33 General |
+| J25 | Screens 34 Editor + 35 Code intelligence |
+| J26 | Screens 36 Build/toolchain + 37 Terminal |
+| J27 | Screens 38 GitHub + 40 Appearance + 41 Storage |
+| J28 | Screens 42 Security + 43 About + 44 Developer |
+| J29 | Screen 45 — Project settings |
+| J30 | Screen 46 — App icon |
+| J31 | Screens 47–48 — Signing keys + Release key ready |
+| J32 | Screen 49 — Create a key |
+| J33 | Screen 50 — Import a key |
+| J34 | Screen 51 — Self-test |
+| J35 | Screen 52 — Icon manager project |
+| J36 | Screen 53 — Icon manager empty |
+| J37 | Screen 54 — Icon manager download |
+| J38 | Screen 55 — Icon manager library |
+| J39 | Screen 56 — Icon manager add (bottom sheet) |
+| J40 | Screen 57 — Icon manager compose |
+| J41 | Restyle missing screens (AI tab, OpenCode pages, etc.) with design system |
+| J42 | Empty/loading/error states on every list |
+| J43 | Test on real device + acceptance checklist |
+
 ### Stop list (decisions to keep)
 
 - **No analytics/telemetry.** The failure story is device-local logs + manual
