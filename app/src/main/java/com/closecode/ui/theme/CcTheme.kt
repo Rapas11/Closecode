@@ -102,32 +102,32 @@ data class LightCcColors(
 @Immutable
 data class DarkCcColors(
     // -- Core surface colours ---------------------------------------------------
-    override val rail: Color = Color(0xFF0B0F16),
-    override val panel: Color = Color(0xFF131923),
-    override val content: Color = Color(0xFF0A0B0F),
-    override val field: Color = Color(0xFF0B0D12),
+    override val rail: Color = Color(0xFF1E1F22),
+    override val panel: Color = Color(0xFF2B2D31),
+    override val content: Color = Color(0xFF313338),
+    override val field: Color = Color(0xFF383A40),
 
     // -- Selection --------------------------------------------------------------
-    override val selectedRow: Color = Color(0xFF1C2A52),
-    override val selectedFile: Color = Color(0xFF1B2850),
+    override val selectedRow: Color = Color(0xFF404249),
+    override val selectedFile: Color = Color(0xFF404249),
 
     // -- Borders ----------------------------------------------------------------
-    override val border: Color = Color(0xFF232938),
-    override val divider: Color = Color(0xFF232938),
-    override val toggleOff: Color = Color(0xFF566078),
+    override val border: Color = Color(0xFF3F4147),
+    override val divider: Color = Color(0xFF26272B),
+    override val toggleOff: Color = Color(0xFF4A4D55),
 
     // -- Text -------------------------------------------------------------------
-    override val text: Color = Color(0xFFE7ECF5),
-    override val text2: Color = Color(0xFFD4D7DE),
-    override val textSoft: Color = Color(0xFF7D869A),
-    override val muted: Color = Color(0xFF7D869A),
-    override val faint: Color = Color(0xFF566078),
+    override val text: Color = Color(0xFFF2F3F5),
+    override val text2: Color = Color(0xFFDBDEE1),
+    override val textSoft: Color = Color(0xFFB5BAC1),
+    override val muted: Color = Color(0xFF949BA4),
+    override val faint: Color = Color(0xFF6D6F78),
 
     // -- Brand / status colours -------------------------------------------------
     override val accent: Color = Color(0xFF5865F2),
-    override val green: Color = Color(0xFF248046),
-    override val amber: Color = Color(0xFFC98A0A),
-    override val red: Color = Color(0xFFDA373C),
+    override val green: Color = Color(0xFF23A559),
+    override val amber: Color = Color(0xFFF0B232),
+    override val red: Color = Color(0xFFF23F42),
     override val blue: Color = Color(0xFF2F6FE0),
     override val purple: Color = Color(0xFF7B5CE0),
     override val yellow: Color = Color(0xFFD99A06),
@@ -135,15 +135,15 @@ data class DarkCcColors(
     override val orange: Color = Color(0xFFD97706),
     override val pink: Color = Color(0xFFDB4C9B),
 
-    // -- Syntax colours (dark) ------------------------------------------------
+    // -- Syntax colours (dark, brighter per spec) ------------------------------
     override val syntaxKeyword: Color = Color(0xFFC792EA),
-    override val syntaxType: Color = Color(0xFFE5C07B),
-    override val syntaxString: Color = Color(0xFF98C379),
-    override val syntaxFunction: Color = Color(0xFF61AFEF),
-    override val syntaxNumber: Color = Color(0xFFFFA86B),
-    override val syntaxComment: Color = Color(0xFF5D6A82),
-    override val syntaxVariable: Color = Color(0xFF7FB2FF),
-    override val syntaxPlain: Color = Color(0xFFD4D7DE),
+    override val syntaxType: Color = Color(0xFF4EC9B0),
+    override val syntaxString: Color = Color(0xFFCE9178),
+    override val syntaxFunction: Color = Color(0xFFDCDCAA),
+    override val syntaxNumber: Color = Color(0xFFB5CEA8),
+    override val syntaxComment: Color = Color(0xFF6A9955),
+    override val syntaxVariable: Color = Color(0xFF9CDCFE),
+    override val syntaxPlain: Color = Color(0xFFDBDEE1),
 
     // -- App screens accent colours (same hues as light) ------------------------
     override val projectColours: List<Color> = listOf(
@@ -156,9 +156,9 @@ data class DarkCcColors(
     ),
 
     // -- Overlays ---------------------------------------------------------------
-    override val dim: Color = Color(0x4C1E2332),
-    override val dimFirstDialog: Color = Color(0x611E2332),
-    override val dimSmallMenu: Color = Color(0x2E1E2332),
+    override val dim: Color = Color(0x80000000), // rgba(0,0,0,0.50)
+    override val dimFirstDialog: Color = Color(0x80000000),
+    override val dimSmallMenu: Color = Color(0x50000000),
     override val shadow: Color = Color(0x401E2332),
     override val iconTileTint: Color = Color(0x22000000),
 ) : CcColors
