@@ -320,6 +320,66 @@ Checkbox list; the suggested working order is §5.
        `/proc` rows (table text + fd dir) so the find-inode → match-PID → gate
        chain gets a real end-to-end unit test instead of parser-only coverage.
 
+### J. Design restyle (all 57 screens + Icon manager, light + dark themes)
+
+_Source: `CloseCode-developer-guide-with-code-v9-1.docx` (extracted Nov 2026) + dark-theme screenshots in `CloseCode-dark-screens-1.pdf` / `CloseCode-dark-screens-2/`._
+
+### Scope rules from the doc (must be followed)
+- **OpenCode must not be included** — leave everything about OpenCode exactly as it is today.
+- **Real data only** — no fake projects, files, commits, sample content, or hard-coded example values.
+- **Navigation**: editor is the root screen; sidebar opens only by swipe from left edge (40 dp strip always works); back button first in every header; origin screen shown in bold + current screen muted; sheets/menus/dialogs close before back.
+- **States**: every list shows empty / loading / error; no sample items.
+- **Icon manager (screens 52–57)** is NEW — build it after the restyle, doesn't touch existing logic.
+- **Missing screens** (AI tab, OpenCode pages, etc.) restyled with the same design system tokens/components.
+
+### Step order (one commit per step, suite green, versionCode bump, build APK, push)
+
+| Step | Screens / work |
+|------|----------------|
+| J1 | **Design tokens + `CcTheme.kt`** — all colours, typography, spacing, radii from the doc; light + dark complete |
+| J2 | **Icon set `CcIcons.kt`** — every SVG path from the doc (folder, refresh, branch, history, down, up, more, plus, check, search, filter, copy, file, undo, redo, save, term, menu, x, bolt, kbd, code, layers, image, trash, share, bug, flask, alert, gh, send, cog, ext, play, user, panel, globe, moon, sun, lock, info, db) |
+| J3 | **Base components** — primary/success/secondary/destructive buttons, text fields, chips, segmented control, toggle, progress bar, tick box, badge pill, sheets, menus, dialogs, toast |
+| J4 | **Lists & trees** — panel row (42 dp tile), tree row, status dot, settings group rows, result cards |
+| J5 | **Navigation system** — `AppNav`, `SidebarHost`, `ToolRail`, `SidePanel`, swipe-to-open sidebar (only from left 40 dp), back rules, header with origin-bold/current-muted |
+| J6 | Screen 01 — Welcome |
+| J7 | Screen 02 — Start a project |
+| J8 | Screen 03 — Switch project |
+| J9 | Screen 04 — Clone a repository |
+| J10 | Screen 05 — Cloning progress |
+| J11 | Screen 06 — First-time setup |
+| J12 | Screens 07–08 — Editor + keyboard overlay |
+| J13 | Screen 09 — Swipe sidebar |
+| J14 | Screen 10 — Files |
+| J15 | Screen 11 — Files menu |
+| J16 | Screens 12–13 — Search + Search options |
+| J17 | Screens 14–16 — GitHub (account, not connected, sign in) |
+| J18 | Screens 17–18 — Source control + more menu |
+| J19 | Screens 19–21 — History, Commit detail, Diff |
+| J20 | Screens 22–24 — Terminal, session, new command |
+| J21 | Screens 25–26 — Run/build, Build finished |
+| J22 | Screens 27–28 — Website preview, Console |
+| J23 | Screens 29–31 — Compose previews, Logcat, Problems |
+| J24 | Screens 32 Settings list + 33 General |
+| J25 | Screens 34 Editor + 35 Code intelligence |
+| J26 | Screens 36 Build/toolchain + 37 Terminal |
+| J27 | Screens 38 GitHub + 40 Appearance + 41 Storage |
+| J28 | Screens 42 Security + 43 About + 44 Developer |
+| J29 | Screen 45 — Project settings |
+| J30 | Screen 46 — App icon |
+| J31 | Screens 47–48 — Signing keys + Release key ready |
+| J32 | Screen 49 — Create a key |
+| J33 | Screen 50 — Import a key |
+| J34 | Screen 51 — Self-test |
+| J35 | Screen 52 — Icon manager project |
+| J36 | Screen 53 — Icon manager empty |
+| J37 | Screen 54 — Icon manager download |
+| J38 | Screen 55 — Icon manager library |
+| J39 | Screen 56 — Icon manager add (bottom sheet) |
+| J40 | Screen 57 — Icon manager compose |
+| J41 | Restyle missing screens (AI tab, OpenCode pages, etc.) with design system |
+| J42 | Empty/loading/error states on every list |
+| J43 | Test on real device + acceptance checklist |
+
 ### Stop list (decisions to keep)
 
 - **No analytics/telemetry.** The failure story is device-local logs + manual
@@ -332,9 +392,47 @@ Checkbox list; the suggested working order is §5.
 - **No ACP native chat** unless a concrete gap appears (WebView page is the
   chosen chat surface; AndroidIDE-parity is otherwise complete).
 
-## 5. Suggested order after verification
+## 5. Where the restyle stopped (Nov 2026) — resume on another PC
 
-Step 21 = **#11 project export/import** (data safety first) → Step 22 =
-**#7 + #8** AI-diagnostic hand-off → then **#2 + #3** (log viewer + sessions
-drawer pair) → then the release chain (**#17 → #18 → #19**). Items #14–#16 slots
-naturally into whichever step touches `OpenCode.kt` next.
+**Rule: clone once, read this section, work top to bottom, do not skip.**
+
+### 5.1 What is DONE and pushed (branch `main`, no force-push)
+
+| Commit | Step | What landed |
+|--------|------|-------------|
+| `f554e99` | J1 | `app/src/main/java/com/closecode/ui/theme/CcTheme.kt` — design token palette, **light + dark, spec-exact values** (accent `#5865F2` blurple, dark: rail `#1E1F22`, panel `#2B2D31`, content `#313338`, field `#383A40`, text `#F2F3F5`, green `#23A559`, red `#F23F42`, amber `#F0B232`, dim `rgba(0,0,0,0.50)`, syntax: brighter dark hexes), CcSpace, CcMotion, CcType, CcIconSpec, `CompositionLocalProvider` |
+| `0719b40` | J2 | `app/src/main/java/com/closecode/ui/CcIcons.kt` — icon set **redone in `0448bd5`**: raw SVG path strings in one map, parsed once via `PathParser().parsePathString(...).toNodes()`, cached, single `CcIcon(name, tint, size, strokeWidth)` composable, `play` is the only filled icon, all 57 icons incl. gh (Octicons), stroke 1.8 / 2.2 chevrons / 2.4 ticks |
+| `0448bd5` | J2-fix | Icons rewritten to the spec's exact PathParser approach (previous hand-written vectors removed) |
+| `191c3a2` | J3 | `app/src/main/java/com/closecode/ui/components/Basics.kt` — `OneLine`, `PrimaryButton`, `SuccessButton`, `SecondaryButton`, `CcToggle`, `CcChip`, `CcTextField`, `SectionLabel` |
+| `0ea08d3` | J1-fix | Dark palette aligned to the spec's dark table (was a different dark theme; mockups are the law) |
+
+**Worktree state:** only untracked leftovers (`real opencode open pc/`, `test-output.txt`, `test-output2.txt`) — **do not commit them**. Everything else is pushed.
+
+### 5.2 What is NOT done (in order)
+
+1. **J4 — Lists & trees:** `PanelRow` (58 dp min, 42 dp tile radius 13, 13% tint, selected → `selectedRow` radius 14 margin 8), tree row (10 dp indent per level, no guide lines, joined folders `src/main`, name takes remaining width + ellipsis; M amber / A green / D red git letters), status dot (14 dp, 3 dp ring panel), `SettingsGroup` + `SettingRow` (card radius 18, field fill, tile 36 radius 12 tint 13%, dividers from x=62), search result rows (match bg/text highlight tokens).
+2. **J5 — Navigation (the biggest structural step):** `SidebarHost` (edge-swipe from anywhere on the editor, 40 dp left edge always works, spring damping 0.85 / stiffness 400, dim 0.30 × progress, card slides 300 dp, 60 dp strip visible, corners radius 26 × progress), `ToolRail` (66 dp wide, items 46 dp radius 23→15 when selected, white pill 5×30 on left edge, badge 19 dp red circle, project avatar 46 dp radius 15 + chevron, Settings pinned bottom), `SidePanel` (234 dp, **top-left AND top-right corners radius 26**, 21 sp / 800 title, 38×38 action buttons radius 12 field-fill icon 18), `RunCard` (floating, 64 dp, radius 22, green icon-only Run 40×40, project tile + `branch · state`), back-button + system back rules (sheets/menus close first, stack pops, sidebar closes, then 2 s double-back → exit toast), header = **origin bold + current muted** from the real back stack (not hard-coded).
+3. **J6–J11** — screens 01–06 (Welcome → First-time setup), **J12** 07–08 Editor + keyboard, **J13** 09 Swipe sidebar, **J14** 10 Files, **J15** 11 Files menu, **J16** 12–13 Search + options, **J17** 14–16 GitHub, **J18** 17–18 Source control, **J19** 19–21 History / Commit detail / Diff, **J20** 22–24 Terminal, **J21** 25–26 Run / Build finished, **J22** 27–28 Preview / Console, **J23** 29–31 Compose previews / Logcat / Problems, **J24–J28** 32–44 Settings list + all pages, **J29** 45 Project settings, **J30** 46 App icon, **J31** 47–48 Signing keys / Release key ready, **J32** 49 Create key, **J33** 50 Import key, **J34** 51 Self-test, **J35–J40** 52–57 Icon manager (new feature), **J41** restyle missing screens (AI tab, OpenCode pages — visual only), **J42** every list gets empty/loading/error states, **J43** device test + acceptance checklist.
+
+### 5.3 Spec sources the other PC needs (NOT in git)
+
+Copy `C:\Users\HomePC\Downloads\Phone Link\` to the other PC before starting:
+
+- `CloseCode-developer-guide-with-code-v9-1.docx` — the full spec (read this; the PDF is image-only). Extracted text is 178 KB; re-extract on the new machine or read sections on demand.
+- `CloseCode-dark-screens-2/` — 56 dark screenshots (screens 01–57, example data only).
+- `CloseCode-dark-screens-1.pdf` / `CloseCode-dark-screens-2.pdf` — same, lower quality.
+- `AndroidIDE.apk`, `Screenshot_2026-10-23-13-50-30-091_com.closecode.jpg`, `31263…31268.jpg` — reference only.
+- **Never** copy proprietary AndroidIDE source/assets into CloseCode.
+
+### 5.4 Proving the spec is met (acceptance checklist from the doc)
+
+**Data** — no project/file/commit/user/count/path typed in; zero-project install shows empty states; create/rename/delete updates every list; settings show & save real values. **Scope** — existing features all keep working; OpenCode stays untouched. **Look** — accent is `#5865F2`, never the old blue; rail only while sidebar open; rail icon-only, selected = accent tile + white pill; panel rounded top-left+top-right radius 26; Run card floats at bottom on Files/Search/Terminal/Logcat/Problems; header one line + ellipsis; no wraps in headers/buttons/rows. **Navigation** — back first in every header, same as system Back; origin bold + current muted from the real back stack; double-Back at editor → toast → exit; sheets close before back. **Quality** — works 360–430 dp + large fonts; keyboard never hides field/key row; touch targets ≥ 44 dp; every error shows the real message + Retry.
+
+### 5.5 Keep the old PC's remaining backlog (41 items, §4 A–I) in parallel
+
+Priority after restyle verification: **#11 export/import** (data safety) → **#7+#8** AI-diagnostic hand-off → **#2+#3** log viewer + sessions drawer → **#17→#18→#19** release chain (CI matrix, signed release/R8, in-app update). Device checks still open: build-42 health probe, log file, port 4098 reclaim.
+
+### 5.6 Build discipline (unchanged)
+
+One commit per step; suite green (`:app:testDebugUnitTest`); bump `closecodeBuild` in `app/build.gradle.kts` (currently **42**); build + install APK; no force-push; never commit `real opencode open pc/` or `test-output*.txt`. Gradle needs JDK 17 — set `$env:JAVA_HOME="$env:LOCALAPPDATA\Jdks\jdk-17"` (or the equivalent JDK 17 path on the other PC).
+
