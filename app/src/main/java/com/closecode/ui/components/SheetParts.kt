@@ -9,8 +9,13 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -31,6 +36,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -49,9 +56,11 @@ import com.closecode.ui.model.Templates
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
+import com.closecode.ui.ide.CcIcon
+import com.closecode.ui.ide.CcIcons
 
 private val ColumnGap = 12.dp
-private const val MIN_TILE = 220
+private const val MIN_TILE = 140
 
 @Composable
 fun TemplateCard(
@@ -64,65 +73,95 @@ fun TemplateCard(
     val shape = RoundedCornerShape(18.dp)
     val isWeb = tab == TemplateTab.Web
 
-    Column(
+    Box(
         Modifier
             .fillMaxWidth()
-            .clip(shape)
-            .background(if (selected) c.mock.selected else c.mock.card)
-            .border(
-                width = if (selected) 1.5.dp else 1.dp,
-                color = if (selected) c.mock.accent else Color.Transparent,
-                shape = shape,
-            )
-            .clickable(onClick = onClick)
-            .padding(15.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+            .aspectRatio(1f),
     ) {
-        Box(
+        Column(
             Modifier
-                .size(42.dp)
-                .background(
-                    Color.hsl(template.hue, 0.65f, 0.55f, 0.16f),
-                    RoundedCornerShape(12.dp),
-                ),
-            contentAlignment = Alignment.Center,
+                .fillMaxSize()
+                .clip(shape)
+                .background(c.mock.content)
+                .border(
+                    width = if (selected) 2.dp else 1.dp,
+                    color = if (selected) c.mock.accent else Color.Transparent,
+                    shape = shape,
+                )
+                .clickable(onClick = onClick)
+                .padding(13.dp),
         ) {
-            if (isWeb) {
-                WebGlyph(color = Color.hsl(template.hue, 0.65f, 0.48f))
-            } else {
-                PhoneGlyph(color = Color.hsl(template.hue, 0.65f, 0.48f))
-            }
-        }
-        Text(
-            text = template.name,
-            color = c.mock.text,
-            fontSize = 16.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Bold,
-            lineHeight = 22.sp,
-        )
-        Text(
-            text = template.description,
-            color = c.mock.muted,
-            fontSize = 13.5.sp,
-            fontFamily = Sans,
-            lineHeight = 19.6.sp,
-        )
-        Row(Modifier.padding(top = 4.dp)) {
             Box(
                 Modifier
-                    .background(c.mock.cardMuted, RoundedCornerShape(6.dp))
-                    .padding(horizontal = 7.dp, vertical = 1.dp)
+                    .size(40.dp)
+                    .background(
+                        Color.hsl(template.hue, 0.65f, 0.55f, 0.18f),
+                        RoundedCornerShape(13.dp),
+                    ),
+                contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = template.tags,
-                    color = c.mock.muted,
-                    fontSize = 11.5.sp,
-                    fontFamily = Mono,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Clip,
-                )
+                if (isWeb) {
+                    WebGlyph(color = Color.hsl(template.hue, 0.65f, 0.48f))
+                } else {
+                    PhoneGlyph(color = Color.hsl(template.hue, 0.65f, 0.48f))
+                }
+            }
+            Text(
+                text = template.name,
+                color = c.mock.text,
+                fontSize = 15.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                lineHeight = 19.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 10.dp),
+            )
+            Text(
+                text = template.description,
+                color = c.mock.muted,
+                fontSize = 12.5.sp,
+                fontFamily = Sans,
+                lineHeight = 17.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 3.dp),
+            )
+            Spacer(Modifier.weight(1f))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                template.tags.split("·").map { it.trim() }.filter { it.isNotEmpty() }.forEach { tag ->
+                    Box(
+                        Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(c.mock.field)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                    ) {
+                        Text(
+                            text = tag,
+                            color = c.mock.textSoft,
+                            fontSize = 10.5.sp,
+                            fontFamily = Mono,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
+        }
+        if (selected) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = (-10).dp, y = (10).dp)
+                    .size(22.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(c.mock.accent)
+                    .semantics { contentDescription = "Selected" },
+                contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(CcIcons.Check, c.mock.onAccent, 13.dp)
             }
         }
     }
@@ -158,17 +197,33 @@ fun SegmentedTabs(
     val c = LocalPageColors.current
     Row(
         modifier
-            .border(1.dp, c.ln, RoundedCornerShape(12.dp))
-            .background(c.cd, RoundedCornerShape(12.dp))
-            .padding(4.dp),
+            .fillMaxWidth()
+            .height(42.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(c.mock.track)
+            .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         TemplateTab.entries.forEach { entry ->
-            TabChip(
-                label = entry.label,
-                active = entry == tab,
-                onClick = { onSelect(entry) },
-            )
+            val active = entry == tab
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(if (active) c.mock.accent else Color.Transparent)
+                    .clickable { onSelect(entry) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = entry.label,
+                    color = if (active) c.mock.onAccent else c.mock.textSoft,
+                    fontSize = 13.5.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+            }
         }
     }
 }

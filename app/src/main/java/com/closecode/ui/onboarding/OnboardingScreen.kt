@@ -180,7 +180,7 @@ fun OnboardingScreen(onDone: () -> Unit) {
                 .systemBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 28.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
+            horizontalAlignment = Alignment.Start,
         ) {
             if (showWelcome) {
                 WelcomePanel(
@@ -223,23 +223,22 @@ fun OnboardingScreen(onDone: () -> Unit) {
 
             Spacer(Modifier.height(30.dp))
             Text(
-                text = "Set up your\nbuild environment",
+                text = "Set up your build environment",
                 color = c.brightText,
                 fontSize = 30.sp,
                 lineHeight = 34.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
             )
             Spacer(Modifier.height(10.dp))
             Text(
-                text = "Three one-time downloads. Skip any of them and add it later from " +
-                    "Settings > Setup guide.",
+                text = "One-time downloads. You can skip any and add it later in Settings.",
                 color = c.textMuted,
                 fontSize = 14.sp,
                 lineHeight = 21.sp,
                 fontFamily = Sans,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
             )
             Spacer(Modifier.height(26.dp))
 
@@ -368,7 +367,7 @@ fun OnboardingScreen(onDone: () -> Unit) {
             SetupStep(
                 number = 2,
                 title = "Shell tools",
-                description = "Git, Python, Node, curl, zip and jq in the terminal. Optional.",
+                description = "Git, Python, Node, curl, zip and jq",
                 ready = shellReady,
                 skipped = shellSkipped,
                 busy = shellBusy,
@@ -377,7 +376,7 @@ fun OnboardingScreen(onDone: () -> Unit) {
                     shellReady -> "Ready"
                     shellBusy -> "Installing"
                     shellError != null -> "Needs attention"
-                    else -> "Not installed"
+                    else -> "Optional"
                 },
                 onSkip = { shellSkipped = true },
             ) {
@@ -421,8 +420,7 @@ fun OnboardingScreen(onDone: () -> Unit) {
             SetupStep(
                 number = 3,
                 title = "OpenCode AI",
-                description = "The OpenCode program and the Linux libraries it runs through. " +
-                    "CloseCode downloads it now so the first chat starts faster.",
+                description = "Runtime and Linux libraries",
                 ready = aiReady,
                 skipped = aiSkipped,
                 busy = aiBusy,

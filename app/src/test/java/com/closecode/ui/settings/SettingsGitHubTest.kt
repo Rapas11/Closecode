@@ -15,30 +15,27 @@ import org.junit.Test
  */
 class SettingsGitHubTest {
 
-    private fun gitHubRow(login: String?): Row.Nav {
-        val section = sections(SettingsLive(), login).first { it.id == "git" }
-        val group = section.groups.first { it.title == "GitHub" }
-        val row = group.rows.first { it.name == "GitHub account" }
-        assertTrue("the GitHub row is a link row", row is Row.Nav)
-        return row as Row.Nav
-    }
+    private fun gitHubSection(login: String?) = sections(SettingsLive(), login)
+        .first { it.id == "git" }
+        .groups.first { it.title == "Account" }
 
     @Test
     fun theRowAsksToConnectWhenSignedOut() {
-        val row = gitHubRow(null)
+        val row = gitHubSection(null).rows.first { it.name == "GitHub account" } as Row.Nav
 
-        assertEquals("Connect", row.action)
+        assertEquals("Sign in", row.action)
         assertEquals(SettingsAction.CONNECT_GITHUB, row.id)
         assertNotNull("the row has something to say", row.description)
     }
 
     @Test
     fun theRowSaysWhichAccountIsConnected() {
-        val row = gitHubRow("octocat")
+        val row = gitHubSection("octocat").rows.first { it.name == "octocat" } as Row.Account
 
-        assertEquals("Disconnect", row.action)
-        assertEquals(SettingsAction.DISCONNECT_GITHUB, row.id)
-        assertEquals("Connected as @octocat.", row.description)
+        assertEquals("Sign out", row.action)
+        assertEquals("octocat", row.name)
+        assertEquals("Signed in with GitHub", row.subtitle)
+        assertEquals("O", row.initials)
     }
 
     @Test
@@ -69,6 +66,28 @@ class SettingsGitHubTest {
                     }
             }
 
-        assertEquals(SettingsAction.entries.toSet(), asked.toSet())
+        assertEquals(
+            setOf(
+                SettingsAction.PROJECT_LOCATION,
+                SettingsAction.SETUP_GUIDE,
+                SettingsAction.SHELL_TOOLS,
+                SettingsAction.AI_SETTINGS,
+                SettingsAction.DELETE_BUILD_TOOLS,
+                SettingsAction.SAVED_COMMANDS,
+                SettingsAction.CONNECT_GITHUB,
+                SettingsAction.EDIT_GIT_NAME,
+                SettingsAction.EDIT_GIT_EMAIL,
+                SettingsAction.AI_PROVIDER_KEY,
+                SettingsAction.UPDATE_RUNTIME,
+                SettingsAction.STORAGE_INSPECT_PROJECTS,
+                SettingsAction.STORAGE_INSPECT_BUILD_TOOLS,
+                SettingsAction.STORAGE_INSPECT_SHELL_TOOLS,
+                SettingsAction.CLEAR_CACHES,
+                SettingsAction.SAVED_SIGN_INS,
+                SettingsAction.SOURCE_CODE,
+                SettingsAction.LICENSES,
+            ),
+            asked.toSet(),
+        )
     }
 }

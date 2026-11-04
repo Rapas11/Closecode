@@ -59,11 +59,11 @@ fun DesignBackButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
         modifier
             .size(36.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(c.mock.card)
+            .background(c.mock.field)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        CcIcon(CcIcons.ChevronLeft, c.mock.text, 18.dp)
+        CcIcon(CcIcons.ChevronLeft, c.mock.text2, 20.dp)
     }
 }
 
@@ -79,16 +79,17 @@ fun DesignPageHeader(
     Row(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+            .height(56.dp)
+            .padding(start = if (onBack != null) 12.dp else 18.dp, end = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (onBack != null) DesignBackButton(onBack)
         Column(Modifier.weight(1f)) {
             Text(
                 text = title,
                 color = c.mock.text,
-                fontSize = 18.sp,
+                fontSize = 16.5.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
@@ -135,7 +136,7 @@ fun DesignCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     background: Color? = null,
-    radius: Dp = 20.dp,
+    radius: Dp = 18.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalPageColors.current
@@ -165,7 +166,7 @@ fun DesignListRow(
         modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -174,7 +175,7 @@ fun DesignListRow(
             Text(
                 text = title,
                 color = if (danger) c.mock.danger else c.mock.text,
-                fontSize = 14.sp,
+                fontSize = 14.5.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -217,26 +218,28 @@ fun DesignPrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     leading: ImageVector? = null,
+    height: Dp = 48.dp,
+    radius: Dp = 15.dp,
 ) {
     val c = LocalPageColors.current
     Row(
         modifier
             .fillMaxWidth()
-            .height(54.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(if (enabled) c.mock.accent else c.mock.card)
+            .height(height)
+            .clip(RoundedCornerShape(radius))
+            .background(if (enabled) c.mock.accent else c.mock.field)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
         if (leading != null) {
-            CcIcon(leading, if (enabled) c.mock.onAccent else c.mock.faint, 18.dp)
+            CcIcon(leading, if (enabled) c.mock.onAccent else c.mock.muted, 17.dp)
             Spacer(Modifier.width(8.dp))
         }
         Text(
             text = label,
-            color = if (enabled) c.mock.onAccent else c.mock.faint,
+            color = if (enabled) c.mock.onAccent else c.mock.muted,
             fontSize = 15.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -255,16 +258,16 @@ fun DesignPill(
     val c = LocalPageColors.current
     Box(
         modifier
-            .height(34.dp)
-            .clip(RoundedCornerShape(17.dp))
-            .background(if (selected) c.mock.accent else c.mock.card)
+            .height(30.dp)
+            .clip(RoundedCornerShape(15.dp))
+            .background(if (selected) c.mock.accent else c.mock.field)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 13.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = if (selected) c.mock.onAccent else c.mock.muted,
+            color = if (selected) c.mock.onAccent else c.mock.textSoft,
             fontSize = 12.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -314,17 +317,17 @@ fun DesignSwitch(checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifi
     val c = LocalPageColors.current
     Box(
         modifier
-            .width(44.dp)
-            .height(26.dp)
+            .width(42.dp)
+            .height(25.dp)
             .clip(CircleShape)
-            .background(if (checked) c.mock.accent else c.mock.grayBg)
+            .background(if (checked) c.mock.accent else c.mock.toggleOff)
             .clickable { onChange(!checked) }
             .padding(3.dp),
         contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
         Box(
             Modifier
-                .size(20.dp)
+                .size(19.dp)
                 .clip(CircleShape)
                 .background(Color.White),
         )

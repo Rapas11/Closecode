@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -14,6 +15,11 @@ import org.junit.Test
  * Keystore leaves a phone in. The old code fell back to plain text there; it must not.
  */
 class TokenStoreTest {
+
+    @Before
+    fun resetSession() {
+        resetTokenSessionForTest()
+    }
 
     /** In-memory stand-in for one preferences file, counting what happened to it. */
     private class FakeFile(var token: String? = null) : TokenFile {
@@ -50,6 +56,21 @@ class TokenStoreTest {
         assertFalse(store.write("fresh-token"))
         assertNull("nothing lands in the clear", legacy.token)
         assertEquals(0, legacy.writes)
+    }
+
+    @Test
+    fun aBrokenStoreKeepsTheSignInForThisProcess() {
+        val store = TokenStore(secure = null, legacy = FakeFile())
+
+        assertFalse(store.write("fresh-token"))
+        assertEquals("fresh-token", store.read())
+        assertEquals(
+            "every screen shares the session",
+            "fresh-token",
+            TokenStore(secure = null, legacy = FakeFile()).read(),
+        )
+        store.clear()
+        assertNull(store.read())
     }
 
     @Test

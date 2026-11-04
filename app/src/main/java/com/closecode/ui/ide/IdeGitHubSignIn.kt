@@ -5,7 +5,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -38,10 +38,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.debug.DebugLog
-import com.closecode.ui.components.OutlineButton
-import com.closecode.ui.components.PrimaryButton
-import com.closecode.ui.components.SheetHeader
-import com.closecode.ui.components.TextLink
 import com.closecode.ui.github.DeviceCode
 import com.closecode.ui.github.DevicePoll
 import com.closecode.ui.github.GitHubClient
@@ -61,9 +57,6 @@ import kotlinx.coroutines.withContext
 internal fun describeFailure(error: Throwable, fallback: String): String {
     val head = error.message?.takeIf { it.isNotBlank() }
         ?: "${error::class.simpleName ?: "IOException"}: no detail"
-    // JGit wraps transport failures several deep — a push failure is "Exception caught during
-    // execution of push command" around a TransportException around the HTTP status that
-    // actually says why. One level of cause keeps the sentence useless, so walk a few.
     val seen = mutableSetOf(head)
     val chain = mutableListOf<String>()
     var current: Throwable? = error.cause
@@ -113,11 +106,8 @@ internal fun countdownText(totalSec: Int): String {
 }
 
 /**
- * The GitHub Device Flow sign-in, as a full-screen page.
- *
- * GitHub hands out a short code, the user types it at github.com/login/device on whatever
- * device is near them, and this screen polls until they approve. No browser callback, no
- * client secret, and no token ever leaves this process except to GitHub itself.
+ * Screen 16: the GitHub Device Flow sign-in as a full page. GitHub hands out a short code,
+ * the user types it at github.com/login/device, and this page polls until approval.
  */
 @Composable
 fun GitHubSignIn(
@@ -132,17 +122,17 @@ fun GitHubSignIn(
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.panel),
+            .background(c.mock.page),
     ) {
-        SheetHeader(
-            onClose = onDismiss,
-            title = "Connect GitHub",
-            subtitle = "Three quick steps. This only links the app to your GitHub account.",
+        GitPageHeader(
+            origin = "GitHub",
+            current = "Sign in",
+            onBack = onDismiss,
         )
         GitHubSignInBody(
             onSignedIn = onSignedIn,
             onCancel = onDismiss,
-            modifier = Modifier.padding(horizontal = 16.dp),
+            modifier = Modifier.padding(horizontal = 18.dp),
         )
     }
 }
@@ -151,8 +141,7 @@ fun GitHubSignIn(
  * The device-flow steps on their own: the code, what it is waiting for, and the way out.
  *
  * [onCancel] is nullable because the steps have two homes. Full-screen they need a Cancel;
- * embedded in the clone screen they do not — the screen behind them is the way out, and a
- * Cancel there would say the wrong thing.
+ * embedded in the clone screen they do not — the screen behind them is the way out.
  */
 @Composable
 internal fun GitHubSignInBody(
@@ -172,9 +161,9 @@ internal fun GitHubSignInBody(
     var refused by remember { mutableStateOf<String?>(null) }
     var offline by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
+    var reconnecting by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
     var remainingSec by remember { mutableStateOf(0) }
-    // Bumped by "Try again" and "Get a new code": re-keying the effect restarts the request.
     var attempt by remember { mutableStateOf(0) }
 
     fun reset() {
@@ -185,6 +174,7 @@ internal fun GitHubSignInBody(
         refused = null
         offline = false
         failure = null
+        reconnecting = false
         attempt++
     }
 
@@ -195,8 +185,6 @@ internal fun GitHubSignInBody(
         }
     }
 
-    // The code's own clock, independent of the poll loop: even if a poll is slow, the
-    // countdown says how long the code lives.
     LaunchedEffect(code) {
         val start = code ?: return@LaunchedEffect
         val deadline = System.currentTimeMillis() + start.expiresInSec * 1_000L
@@ -209,42 +197,56 @@ internal fun GitHubSignInBody(
     }
 
     LaunchedEffect(attempt) {
-        // HttpURLConnection blocks, and Android answers that with NetworkOnMainThreadException —
-        // whose message is null, which is why this runs off the main thread and classifies
-        // offline separately instead of printing a bare exception sentence.
         val requested = withContext(Dispatchers.IO) { client.requestDeviceCode() }
         val start = requested.getOrElse { error ->
+            val reason = describeFailure(error, "GitHub could not start the sign-in.")
             if (isOfflineFailure(error)) {
                 offline = true
                 DebugLog.crumb("GITHUB", "sign-in offline")
             } else {
-                failure = describeFailure(error, "GitHub could not start the sign-in.")
-                DebugLog.crumb("GITHUB", "sign-in could not start")
+                failure = reason
+                DebugLog.crumb("GITHUB", "sign-in could not start: $reason")
             }
             return@LaunchedEffect
         }
         code = start
         waiting = true
         DebugLog.crumb("GITHUB", "sign-in code shown")
-        // GitHub names its own pace; never ask faster than every 5 seconds.
+        val deadlines = System.currentTimeMillis() + start.expiresInSec * 1_000L
         var interval = maxOf(start.intervalSec, 5)
         while (true) {
-            delay(interval * 1_000L)
-            val polled = withContext(Dispatchers.IO) { client.pollForToken(start.deviceCode) }
-            val step = polled.getOrElse { error ->
+            if (System.currentTimeMillis() >= deadlines) {
                 waiting = false
-                if (isOfflineFailure(error)) {
-                    offline = true
-                    DebugLog.crumb("GITHUB", "sign-in offline")
-                } else {
-                    failure = describeFailure(error, "GitHub could not finish the sign-in.")
-                    DebugLog.crumb("GITHUB", "sign-in failed")
-                }
+                offline = false
+                failure = null
+                reconnecting = false
+                expired = true
+                DebugLog.crumb("GITHUB", "sign-in code expired while offline")
                 return@LaunchedEffect
             }
+            delay(interval * 1_000L)
+            val polled = withContext(Dispatchers.IO) { client.pollForToken(start.deviceCode) }
+            val step = polled.getOrNull()
+            if (step == null) {
+                // A single failed poll is not the end: the phone hopped networks while the
+                // browser had the focus. Keep asking until the code expires; the status line
+                // says the connection dropped and is trying again.
+                val error = polled.exceptionOrNull() ?: return@LaunchedEffect
+                if (isOfflineFailure(error)) {
+                    reconnecting = true
+                    interval = minOf(interval + 2, 15)
+                    DebugLog.crumb("GITHUB", "poll lost, retrying")
+                    continue
+                }
+                waiting = false
+                reconnecting = false
+                failure = describeFailure(error, "GitHub could not finish the sign-in.")
+                DebugLog.crumb("GITHUB", "sign-in failed")
+                return@LaunchedEffect
+            }
+            reconnecting = false
             when (step) {
                 is DevicePoll.Authorized -> {
-                    // The name for the success line, then a beat to read it before leaving.
                     val login = withContext(Dispatchers.IO) {
                         client.currentUser(step.accessToken).getOrNull()?.login
                     }
@@ -274,188 +276,155 @@ internal fun GitHubSignInBody(
     }
 
     fun openGitHub() {
+        // The device page belongs to the phone's own browser: Custom Tabs die with the app's
+        // task and fight the polling on the way back, so the default browser it is. A chooser
+        // catches phones without a default set.
         val uri = android.net.Uri.parse("https://github.com/login/device")
         runCatching {
-            androidx.browser.customtabs.CustomTabsIntent.Builder().build().launchUrl(context, uri)
+            context.startActivity(
+                Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
         }.onFailure {
-            context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+            context.startActivity(
+                Intent.createChooser(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), "Open with"),
+            )
         }
+    }
+
+    val statusText = when {
+        username != null -> "Connected as @$username"
+        expired -> "Code expired"
+        refused != null -> refusedText(refused.orEmpty())
+        offline -> "No internet connection"
+        failure != null -> failure.orEmpty()
+        reconnecting -> "Connection lost, trying again…"
+        waiting -> "Waiting for you to approve..."
+        else -> "Asking GitHub for a code…"
+    }
+    val statusColor = when {
+        username != null -> c.mock.green
+        expired || refused != null || offline || failure != null -> c.mock.danger
+        else -> c.mock.muted
     }
 
     Column(
         modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(bottom = 20.dp),
+            .padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        SignInStep(number = 1, title = "Copy this code") {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(c.fieldBg)
-                    .border(1.dp, c.fieldBorder, RoundedCornerShape(10.dp))
-                    .padding(start = 14.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = code?.userCode ?: "····-····",
-                    color = c.link,
-                    fontSize = 20.sp,
-                    fontFamily = Mono,
-                    letterSpacing = 2.8.sp,
-                    maxLines = 1,
-                    modifier = Modifier.weight(1f),
-                )
-                Box(
-                    Modifier
-                        .height(32.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(c.popupSelected)
-                        .clickable(enabled = code != null) {
-                            code?.userCode?.let { clipboard.setText(AnnotatedString(it)) }
-                            copied = true
-                        }
-                        .padding(horizontal = 14.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = if (copied) "Copied" else "Copy",
-                        color = androidx.compose.ui.graphics.Color.White,
-                        fontSize = 12.sp,
-                        fontFamily = Sans,
-                    )
-                }
-            }
-        }
+        Text(
+            text = "Open the link below and enter this code.",
+            color = c.mock.muted,
+            fontSize = 13.sp,
+            fontFamily = Sans,
+        )
 
-        SignInStep(
-            number = 2,
-            title = "Open GitHub",
-            subtitle = "It opens github.com/login/device in your browser.",
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(78.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(c.mock.field)
+                .border(1.dp, c.mock.border, RoundedCornerShape(18.dp)),
+            contentAlignment = Alignment.Center,
         ) {
-            OutlineButton(label = "Open GitHub", onClick = ::openGitHub)
+            Text(
+                text = code?.userCode ?: "····-····",
+                color = c.mock.text,
+                fontSize = 34.sp,
+                fontFamily = Mono,
+                letterSpacing = 6.sp,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Clip,
+            )
         }
 
-        SignInStep(
-            number = 3,
-            title = "Paste the code and tap Authorize",
-            subtitle = "Come back here. It connects by itself.",
-        ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GitSmallButton(
+                label = if (copied) "Copied" else "Copy code",
+                icon = CcIcons.Copy,
+                enabled = code != null,
+                onClick = {
+                    code?.userCode?.let { clipboard.setText(AnnotatedString(it)) }
+                    copied = true
+                },
+            )
+            GitSmallButton(
+                label = "Open github.com",
+                icon = CcIcons.External,
+                enabled = code != null,
+                onClick = ::openGitHub,
+            )
         }
 
-        // One status row for every outcome, so the steps above never have to change shape.
-        val statusText = when {
-            username != null -> "Connected as @$username"
-            expired -> "Code expired"
-            refused != null -> refusedText(refused.orEmpty())
-            offline -> "No internet connection"
-            failure != null -> failure.orEmpty()
-            waiting -> if (code != null) {
-                "Waiting for approval · code expires in ${countdownText(remainingSec)}"
-            } else {
-                "Waiting for approval…"
-            }
-            else -> "Asking GitHub for a code…"
-        }
-        val dot = when {
-            username != null -> c.success
-            expired || refused != null || offline || failure != null -> c.error
-            waiting -> c.warning
-            else -> c.textFaint
-        }
         Row(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .background(c.surface)
-                .padding(12.dp),
+                .padding(top = 4.dp),
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (username == null) {
-                Box(
-                    Modifier
-                        .size(8.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(dot),
-                )
-                Spacer(Modifier.width(10.dp))
-            } else {
-                CcIcon(CcIcons.Check, c.success, 16.dp)
-                Spacer(Modifier.width(10.dp))
+            when {
+                username != null -> CcIcon(CcIcons.Check, c.mock.green, 15.dp)
+                waiting || reconnecting || code == null && failure == null && !expired && !offline -> {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(15.dp),
+                        color = c.mock.accent,
+                        strokeWidth = 2.dp,
+                    )
+                }
+                else -> Unit
+            }
+            if (username != null || waiting || reconnecting || code == null && failure == null && !expired && !offline) {
+                Spacer(Modifier.width(8.dp))
             }
             Text(
                 text = statusText,
-                color = if (username != null) c.success else c.textMuted,
-                fontSize = 12.sp,
+                color = when {
+                    username != null -> c.mock.green
+                    else -> statusColor
+                },
+                fontSize = 13.sp,
                 fontFamily = Sans,
+                textAlign = TextAlign.Center,
             )
         }
 
         when {
-            expired || refused != null -> PrimaryButton(label = "Get a new code", onClick = ::reset)
-            offline || failure != null -> OutlineButton(label = "Try again", onClick = ::reset)
+            expired || refused != null -> GitPrimaryButton(
+                label = "Get a new code",
+                onClick = ::reset,
+            )
+            offline || failure != null -> GitSecondaryButton(
+                label = "Try again",
+                onClick = ::reset,
+            )
+            else -> {
+                if (onCancel != null) {
+                    GitSecondaryButton(label = "Cancel", onClick = onCancel)
+                    if (code != null && !expired) {
+                        Text(
+                            text = "Code expires in ${countdownText(remainingSec)}",
+                            color = c.mock.faint,
+                            fontSize = 11.sp,
+                            fontFamily = Sans,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
         }
 
         Text(
             text = "Your password is never shared with this app. You can disconnect any time in settings.",
-            color = c.textFaint,
+            color = c.mock.faint,
             fontSize = 11.sp,
             fontFamily = Sans,
             lineHeight = 16.sp,
         )
-
-        if (onCancel != null) {
-            TextLink(label = "Cancel", onClick = onCancel)
-        }
-    }
-}
-
-/** One numbered step: a 22 dp circle, a title, an optional subtitle, and its control. */
-@Composable
-private fun SignInStep(
-    number: Int,
-    title: String,
-    subtitle: String? = null,
-    content: @Composable () -> Unit,
-) {
-    val c = LocalPageColors.current
-    Row(verticalAlignment = Alignment.Top) {
-        Box(
-            Modifier
-                .size(22.dp)
-                .clip(androidx.compose.foundation.shape.CircleShape)
-                .background(c.popupSelected),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = number.toString(),
-                color = c.link,
-                fontSize = 12.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Medium,
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                text = title,
-                color = c.text,
-                fontSize = 14.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Medium,
-            )
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    color = c.textMuted,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                )
-            }
-            content()
-        }
     }
 }
 

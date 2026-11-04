@@ -83,6 +83,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.drawWithCache
@@ -175,6 +176,7 @@ import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.project.ProjectRecord
 import com.closecode.ui.project.ProjectRepository
+import com.closecode.ui.project.headBranch
 import com.closecode.ui.project.ProjectPathException
 import com.closecode.ui.project.languageOf
 import com.closecode.ui.project.ProjectSafety
@@ -206,6 +208,10 @@ internal fun IdeScreen(
     // caller decides where that lands; this screen never navigates itself.
     onProjectCloned: (ProjectRecord) -> Unit = {},
     onToggleTheme: () -> Unit = {},
+    /** The real projects, shown by the rail avatar's project switcher. */
+    projectRecords: List<ProjectRecord> = emptyList(),
+    onOpenProject: (ProjectRecord) -> Unit = {},
+    onNewProject: () -> Unit = {},
     // Moves when the GitHub account changes elsewhere — a sign-in or a disconnect done on the
     // settings screen. The token is read again when it does, so the Source Control tab never
     // keeps showing an account that is no longer connected.
@@ -335,6 +341,10 @@ internal fun IdeScreen(
         }
     }
     var explorerOpen by remember { mutableStateOf(false) }
+    // True while the code view has been scrolled sideways: the sidebar swipe then belongs to the
+    // code until it has been scrolled back to its left end (see IdeWorkspace.canScrollLeft).
+    val codeCanScrollLeft = remember { mutableStateOf(false) }
+    var projectSwitcherOpen by remember { mutableStateOf(false) }
     // How many times the drawer has been opened: the hint line under the tree shows for the
     // first three opens, then never again.
     var drawerOpens by remember { mutableStateOf(kvStore.getInt("drawer_hint_opens", 0)) }
@@ -371,24 +381,25 @@ internal fun IdeScreen(
             }
         }
     }
-    // The drawer's width, kept here rather than inside the drawer so the scrim that closes it
-    // starts exactly where the drawer ends. Two numbers computed apart drift the moment either one
-    // animates, and a scrim that overlaps the drawer would swallow the file list. The drawer takes
-    // most of the width so files are readable, while the tab strip's chevron and the first
-    // characters of code stay visible behind it.
-    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-    val drawerFullWidth = (screenWidthDp * 0.82f).dp.coerceAtMost(292.dp)
-    val drawerWidth by animateDpAsState(
-        targetValue = if (explorerOpen) drawerFullWidth else 0.dp,
-        animationSpec = motion(200),
-        label = "explorer-width",
-    )
+    // The branch the repository is really on, for the run card's second line. Null means there
+    // is no repository, and the card then shows only the state.
+    var gitBranch by remember(slug) { mutableStateOf<String?>(null) }
+    LaunchedEffect(slug, gitRevision) {
+        val root = runCatching { repository.projectDir(slug) }.getOrNull() ?: return@LaunchedEffect
+        val branch = withContext(Dispatchers.Default) {
+            runCatching { com.closecode.ui.git.GitService(root).snapshot() }
+                .getOrNull()?.getOrNull()?.branch
+        }?.takeIf { it.isNotBlank() }
+        gitBranch = branch
+    }
     // Which half of the drawer is showing. Source Control opens first — it holds the account,
     // clone and publish controls, none of which need this project to have a repository of its own.
     var explorerTab by remember { mutableStateOf(ExplorerTabs.first()) }
     var searchOpen by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
-    var findOpen by remember { mutableStateOf(false) }
+    // v7: which non-explorer tool the sidebar is showing — Search, Terminal, Logcat or Problems.
+    // Null means the sidebar shows the explorer's own tabs (Files or Source Control).
+    var sidebarTool by remember { mutableStateOf<String?>(null) }
     // AI is a full page rather than an overlay: it keeps the bottom bar and the panel
     // history remembers where it was opened from. More stays the anchored sheet it has
     // always been.
@@ -553,6 +564,8 @@ internal fun IdeScreen(
     // The build and logcat streams. The log still carries nothing but what a build reports; the
     // build now reports a real sweep of the project's own files.
     val logLines = remember { mutableStateListOf<LogLine>() }
+    // v7: the side panel's own level chip. The full Logcat page keeps its own state inside.
+    var logcatFilter by remember { mutableStateOf<LogLevel?>(null) }
     // Scroll forensics, on demand: while Frame stats is on, every programmatic scroll move
     // (and every move nobody asked for) is mirrored into the Logcat panel, so the phone
     // itself produces the log — no adb needed. Off otherwise, so ordinary scrolling never
@@ -609,6 +622,15 @@ internal fun IdeScreen(
     // Run means build → install → open. Build means only build. Each step is a real
     // Android call; nothing is called installed or opened without the system saying so.
     var autoOpenAfterBuild by remember { mutableStateOf(false) }
+    // The run family (screens 25/26): the sheet the bottom card opens — build type, whether the
+    // finished app opens itself — and the run page the sheet lands on after the install, when
+    // the app does not open itself.
+    var runSheetOpen by remember { mutableStateOf(false) }
+    var runOpenAfterInstall by remember { mutableStateOf(true) }
+    var runningFromSheet by remember { mutableStateOf(false) }
+    var runInstallWaitingForPage by remember { mutableStateOf(false) }
+    var runFinished by remember { mutableStateOf<com.closecode.ui.ide.RunResultInfo?>(null) }
+    var runFinishedOpen by remember { mutableStateOf(false) }
     var pendingInstall by remember { mutableStateOf<java.io.File?>(null) }
     var pendingOverlayOpen by remember { mutableStateOf<String?>(null) }
     var overlayAsked by remember { mutableStateOf(kvStore.getBoolean("overlay_asked", false)) }
@@ -741,6 +763,10 @@ internal fun IdeScreen(
         if (autoOpenAfterInstall) {
             autoOpenAfterInstall = false
             openBuiltApp(packageName)
+        } else if (runInstallWaitingForPage) {
+            // A sheet run with the toggle off: the install landed, so the run page can.
+            runInstallWaitingForPage = false
+            runFinishedOpen = true
         }
     }
     // Stored like the other preferences; the PTY backend that will read it is not built yet,
@@ -805,8 +831,6 @@ internal fun IdeScreen(
     // How far in from the left edge a pull open may start, and how far that pull has to travel.
     // The system's own slop is used for the second so the gesture feels like every other panel on
     // the phone; the band is fixed, because it is a region of the screen rather than a tolerance.
-    val drawerEdgePx = with(LocalDensity.current) { DrawerEdgeBand.toPx() }
-    val drawerSlopPx = LocalViewConfiguration.current.touchSlop
     // Live editor buffers keyed by file name. The editor owns its TextFieldValue, so this mirror is
     // how the parent saves before Preview and counts diagnostics across the whole project.
     val liveBuffers = remember { mutableStateMapOf<String, String>() }
@@ -856,7 +880,8 @@ internal fun IdeScreen(
     var buildSymbolsMs by remember { mutableStateOf(0L) }
     var buildFilesMs by remember { mutableStateOf(0L) }
     // Whether a build has ever finished: the "last build" line only exists after one.
-    var hasBuilt by remember { mutableStateOf(false) }
+    // Keyed on the project: a switch must not carry the last project's "built" word over.
+    var hasBuilt by remember(slug) { mutableStateOf(false) }
     // Every name declared anywhere in the project. The editor's own per-file pass needs it so a
     // composable defined in Theme.kt is not reported as missing in MainActivity.kt.
     var projectNames by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -1607,6 +1632,11 @@ internal fun IdeScreen(
             setup.checkInput,
             setup.tools,
             cacheEnabled = settings.buildCache,
+            buildType = if ((projectRecord?.config?.buildType ?: "Debug").equals("Release", true)) {
+                "release"
+            } else {
+                "debug"
+            },
         )
         when (outcome) {
             is com.closecode.build.BuildOutcome.Blocked -> {
@@ -1685,6 +1715,23 @@ internal fun IdeScreen(
                 buildPhase = BuildPhase.DONE
                 buildProgress = 1f
                 toast = "Build failed · see the errors"
+                repository.setStatus(
+                    slug,
+                    (gitBranch?.takeIf { it.isNotBlank() }?.plus(" · ") ?: "") +
+                        "${outcome.diagnostics.size} problems",
+                )
+                if (runningFromSheet) {
+                    runningFromSheet = false
+                    runSheetOpen = false
+                    runFinished = com.closecode.ui.ide.RunResultInfo(
+                        false,
+                        "",
+                        0.0,
+                        0,
+                        "${outcome.diagnostics.size} compile errors",
+                    )
+                    runFinishedOpen = true
+                }
             }
             is com.closecode.build.BuildOutcome.Failed -> {
                 DebugLog.crumb("BUILD", "failed · ${outcome.message}")
@@ -1707,6 +1754,22 @@ internal fun IdeScreen(
                 buildPhase = BuildPhase.DONE
                 buildProgress = 1f
                 toast = "Build failed · see the log"
+                repository.setStatus(
+                    slug,
+                    (gitBranch?.takeIf { it.isNotBlank() }?.plus(" · ") ?: "") + "Build failed",
+                )
+                if (runningFromSheet) {
+                    runningFromSheet = false
+                    runSheetOpen = false
+                    runFinished = com.closecode.ui.ide.RunResultInfo(
+                        false,
+                        "",
+                        0.0,
+                        0,
+                        outcome.message.take(140),
+                    )
+                    runFinishedOpen = true
+                }
             }
             is com.closecode.build.BuildOutcome.Built -> {
                 builtApkPath = outcome.apk.absolutePath
@@ -1717,6 +1780,11 @@ internal fun IdeScreen(
                 buildProgress = 1f
                 buildElapsedMs = outcome.seconds * 1000
                 val mb = outcome.sizeBytes / (1024.0 * 1024.0)
+        val projRecord = repository.setStatus(
+            slug,
+            (gitBranch?.takeIf { it.isNotBlank() }?.plus(" · ") ?: "") + "Build ok",
+        )
+        if (projRecord != null) projectRecord = projRecord
                 logLines.appendCapped(
                     LogLine(
                         LogLevel.INFO,
@@ -1736,6 +1804,21 @@ internal fun IdeScreen(
                 if (autoOpenAfterBuild) {
                     autoOpenAfterBuild = false
                     autoOpenAfterInstall = true
+                    // A sheet run with the toggle on: the app opens itself and the sheet goes.
+                    runSheetOpen = false
+                    runningFromSheet = false
+                    installNow(outcome.apk)
+                } else if (runningFromSheet) {
+                    // A sheet run with the toggle off: install, then land on the run page.
+                    runningFromSheet = false
+                    runFinished = com.closecode.ui.ide.RunResultInfo(
+                        true,
+                        outcome.apk.name,
+                        mb,
+                        outcome.seconds,
+                    )
+                    runSheetOpen = false
+                    runInstallWaitingForPage = true
                     installNow(outcome.apk)
                 }
             }
@@ -1746,6 +1829,9 @@ internal fun IdeScreen(
                 buildProgress = 0f
                 autoOpenAfterBuild = false
                 autoOpenAfterInstall = false
+                // A sheet run that stopped: the sheet stays up with its steps, ready for Run.
+                runningFromSheet = false
+                runInstallWaitingForPage = false
                 DebugLog.crumb("BUILD", "cancelled")
             }
         }
@@ -1784,6 +1870,8 @@ internal fun IdeScreen(
             "prompt".takeIf { prompt != null },
             "confirmDelete".takeIf { confirmDelete != null },
             "clone".takeIf { cloneOpen },
+            "runSheet".takeIf { runSheetOpen },
+            "runPage".takeIf { runFinishedOpen },
             "problems".takeIf { problemSheet.value != null },
             "more".takeIf { moreOpen },
             "uiInspector".takeIf { uiInspectorOpen },
@@ -1791,8 +1879,8 @@ internal fun IdeScreen(
             "selfTest".takeIf { selfTestOpen },
             "crash".takeIf { crashView != null },
             "projectSettings".takeIf { projectSettingsOpen },
-            "find".takeIf { findOpen },
             "search".takeIf { searchOpen },
+            "sidebarTool".takeIf { explorerOpen && sidebarTool != null },
             "menu".takeIf { menuOpen },
             "explorer".takeIf { explorerOpen },
             "diff".takeIf { diffPath != null },
@@ -1826,6 +1914,14 @@ internal fun IdeScreen(
                 BackLog.press("main", "${backState()} branch=clone")
                 cloneOpen = false
             }
+            runSheetOpen -> {
+                BackLog.press("main", "${backState()} branch=runSheet")
+                runSheetOpen = false
+            }
+            runFinishedOpen -> {
+                BackLog.press("main", "${backState()} branch=runPage")
+                runFinishedOpen = false
+            }
             problemSheet.value != null -> {
                 BackLog.press("main", "${backState()} branch=problems")
                 problemSheet.value = null
@@ -1854,12 +1950,6 @@ internal fun IdeScreen(
                 BackLog.press("main", "${backState()} branch=projectSettings")
                 projectSettingsOpen = false
             }
-            findOpen -> {
-                BackLog.press("main", "${backState()} branch=find")
-                findOpen = false
-                findQuery = ""
-            }
-
             searchOpen -> {
                 BackLog.press("main", "${backState()} branch=search")
                 searchOpen = false
@@ -1896,11 +1986,12 @@ internal fun IdeScreen(
                 BackLog.press("main", "${backState()} branch=buildLog")
                 buildLogOpen = false
             }
-            // 4. A search result returns to its results sheet, results still there.
+            // 4. A search result returns to its results panel, results still there.
             findReturn -> {
                 BackLog.press("main", "${backState()} branch=findReturn")
                 findReturn = false
-                findOpen = true
+                sidebarTool = "Search"
+                explorerOpen = true
             }
             // 5. Full pages and tool panels return to the place they were opened from.
             // The stack carries the whole path, so Terminal -> Logcat -> Back is Terminal,
@@ -1946,51 +2037,74 @@ internal fun IdeScreen(
         }
     }
 
+    // Screen 25: every Run button (bottom card, path bar) opens the run sheet instead of
+    // starting a build behind the reader's back — the type and the open-after toggle live there.
+    fun openRunSheet() {
+        if (projectErrors > 0) {
+            toast = blockedByErrors(projectErrorList, "running")
+            problemSheet.value = problemSheet.value ?: 1
+            problemSheetScope = ProblemScope.PROJECT
+            activePanel = "Code"
+        } else {
+            runSheetOpen = true
+        }
+    }
+
+    // v7: the run card is the same on every side panel — Files, Search, Terminal, Logcat and
+    // Problems all float it at the bottom — so it is built once here and handed down.
+    val runCard: @Composable () -> Unit = {
+        IdeRunCard(
+            projectName = projectName,
+            branch = gitBranch,
+            state = runCardUiOf(
+                building = building,
+                progress = buildProgress,
+                errorCount = projectErrors,
+                hasBuilt = hasBuilt,
+            ),
+            onRun = ::openRunSheet,
+        )
+    }
+
     fun selectRailTool(tool: String) {
         dismissKeyboard()
+        // A tool panel lives over the editor. Leaving a full page (AI, Logcat, Build, a terminal
+        // session) would otherwise keep that page behind the card after the sidebar closes.
+        if (tool != "OpenCode" && tool != "Settings") activePanel = "Code"
         when (tool) {
             "Files" -> {
-                if (explorerOpen && explorerTab == FilesTab) {
-                    explorerOpen = false
-                } else {
-                    explorerTab = FilesTab
-                    explorerOpen = true
-                }
+                sidebarTool = null
+                explorerTab = FilesTab
+                explorerOpen = true
             }
             "GitHub" -> {
-                if (explorerOpen && explorerTab == SourceControlTab) {
-                    explorerOpen = false
-                } else {
-                    explorerTab = SourceControlTab
-                    explorerOpen = true
-                }
+                sidebarTool = null
+                explorerTab = SourceControlTab
+                explorerOpen = true
             }
+            // v7: these four are panels of the sidebar, not full screens. The full versions of
+            // them stay reachable: Terminal and Logcat from inside their panels, Problems from
+            // the Run blockers and the editor.
             "Search" -> {
-                if (findOpen) {
-                    findOpen = false
-                    findQuery = ""
-                } else {
-                    findOpen = true
-                }
+                sidebarTool = "Search"
+                explorerOpen = true
             }
             "Terminal" -> {
-                explorerOpen = false
-                activePanel = if (activePanel == "Terminal") "Code" else "Terminal"
+                sidebarTool = "Terminal"
+                explorerOpen = true
             }
             "Logcat" -> {
-                explorerOpen = false
-                activePanel = if (activePanel == "Logcat") "Code" else "Logcat"
+                sidebarTool = "Logcat"
+                explorerOpen = true
             }
             "Problems" -> {
-                if (problemSheet.value != null) {
-                    problemSheet.value = null
-                } else {
-                    problemSheetScope = ProblemScope.PROJECT
-                    problemSheet.value = 1
-                    activePanel = "Code"
-                }
+                sidebarTool = "Problems"
+                explorerOpen = true
             }
             "OpenCode" -> {
+                // AI is a full page, so the sidebar gets out of its way instead of staying on
+                // top of it the way the side panels do.
+                explorerOpen = false
                 if (activePanel == "AI") activePanel = "Code" else openAiPanel()
             }
             "Settings" -> {
@@ -2000,25 +2114,190 @@ internal fun IdeScreen(
         }
     }
 
+    // v7 correction 9: the highlighted tool must match the panel that is showing. The sidebar's
+    // panels move it — Files, GitHub and now Search, Terminal, Logcat and Problems too; the full
+    // surfaces of those tools do not, and neither does the AI page.
     val activeRailTool = when {
-        activePanel == "Terminal" -> "Terminal"
-        activePanel == "Logcat" -> "Logcat"
-        activePanel == "AI" -> "OpenCode"
-        problemSheet.value != null -> "Problems"
+        explorerOpen && sidebarTool != null -> sidebarTool
         explorerOpen && explorerTab == FilesTab -> "Files"
         explorerOpen && explorerTab == SourceControlTab -> "GitHub"
-        findOpen -> "Search"
+        activePanel == "AI" -> "OpenCode"
         else -> null
     }
 
     IdeWorkspace(
-        projectName = projectName,
-        activeTool = activeRailTool,
-        problemCount = projectErrors,
-        changeCount = gitLetters.size,
-        onTool = ::selectRailTool,
-        onRun = ::runProject,
-        onSettings = { saveActiveFile(notify = false); onOpenSettings() },
+        sidebarOpen = explorerOpen,
+        onSidebarOpenChange = { open ->
+            explorerOpen = open
+            if (open) dismissKeyboard()
+        },
+        keyboardVisible = imeOpen,
+        canScrollLeft = { codeCanScrollLeft.value },
+        sidebar = {
+            Row(Modifier.fillMaxHeight()) {
+                IdeRail(
+                    projectName = projectName,
+                    activeTool = activeRailTool,
+                    problemCount = projectErrors,
+                    changeCount = gitLetters.size,
+                    onTool = ::selectRailTool,
+                    onRun = ::openRunSheet,
+                    onSettings = { saveActiveFile(notify = false); onOpenSettings() },
+                    onProjectClick = { projectSwitcherOpen = true },
+                    onProjectSettings = { projectSettingsOpen = true },
+                    onDeveloper = { developerOpen = true },
+                )
+                // v7: the sidebar's panel is the open tool's own panel. The Files and GitHub
+                // tabs stay the explorer; the other four tools are side panels, and the full
+                // versions of them stay reachable from inside.
+                val sideTool = sidebarTool
+                if (sideTool == "Search") {
+                    IdeSearchSidePanel(
+                        projectId = projectId,
+                        files = diskTree,
+                        treeVersion = treeVersion,
+                        query = findQuery,
+                        onQueryChange = { findQuery = it },
+                        caseSensitive = findCaseSensitive,
+                        regex = findRegex,
+                        wholeWord = findWholeWord,
+                        onCaseSensitiveChange = { findCaseSensitive = it },
+                        onRegexChange = { findRegex = it },
+                        onWholeWordChange = { findWholeWord = it },
+                        read = { path -> repository.readFile(slug, path) },
+                        onOpen = { hit ->
+                            diskTree.firstOrNull { it.path == hit.path }?.let { openFile(it) }
+                            activePanel = "Code"
+                            explorerOpen = false
+                            // Back from the opened file returns here, results intact.
+                            findReturn = true
+                        },
+                        runCard = runCard,
+                    )
+                } else if (sideTool == "Terminal") {
+                    IdeTerminalSidePanel(
+                        sessions = terminalSessions,
+                        onOpen = { number ->
+                            terminalSessions.select(number)
+                            activePanel = "Terminal"
+                            explorerOpen = false
+                        },
+                        onNew = {
+                            terminalSessions.openNew()
+                            activePanel = "Terminal"
+                            explorerOpen = false
+                        },
+                        runCard = runCard,
+                    )
+                } else if (sideTool == "Logcat") {
+                    IdeLogcatSidePanel(
+                        lines = logLines,
+                        filter = logcatFilter,
+                        onFilterChange = { logcatFilter = it },
+                        onClear = { logLines.clear() },
+                        runCard = runCard,
+                    )
+                } else if (sideTool == "Problems") {
+                    IdeProblemsSidePanel(
+                        errors = projectErrorList,
+                        warnings = projectWarningList,
+                        onOpen = { row ->
+                            diskTree.firstOrNull { it.name == row.fileName }?.let { file ->
+                                openFile(file)
+                                val text = liveBuffers[file.path]
+                                    ?: diskContents[file.path].orEmpty()
+                                caretRequest = offsetOfLine(text, row.diagnostic.line)
+                                sourceRevision++
+                            }
+                            activePanel = "Code"
+                            explorerOpen = false
+                        },
+                        runCard = runCard,
+                    )
+                } else {
+                    IdeExplorer(
+                        runCard = runCard,
+                        projectName = projectName,
+                    onRun = ::openRunSheet,
+                    slug = slug,
+                    tree = diskTree,
+                    activePath = activeFile?.path,
+                    revealPath = selectedPath,
+                    collapsed = collapsedFolders,
+                    query = explorerFilter,
+                    onQueryChange = { explorerFilter = it },
+                    openTabs = tabs,
+                    onOpenTab = { file -> openFile(file); explorerOpen = false },
+                    tab = explorerTab,
+                    gitRevision = gitRevision,
+                    onTab = { explorerTab = it },
+                    onCreateFile = { prompt = TreePrompt.New(isFolder = false) },
+                    onCreateFolder = { prompt = TreePrompt.New(isFolder = true) },
+                    onRefresh = { refreshTree() },
+                    onCollapseAll = {
+                        collapsedFolders = diskTree
+                            .filter { it.kind == FileKind.Folder }
+                            .map { it.path }.toSet()
+                    },
+                    showGenerated = showGenerated,
+                    onToggleGenerated = {
+                        val next = !showGenerated
+                        showGenerated = next
+                        kvStore.putBoolean("show_generated_$projectId", next)
+                    },
+                    gitLetters = gitLetters,
+                    dirtyPaths = dirtyPaths,
+                    hintVisible = drawerOpens <= 3,
+                    // One letter per changed path, so the map's size is the tab's
+                    // count bubble: no second source to drift apart from.
+                    changeCount = gitLetters.size,
+                                            onDiff = { diffPath = it },
+                                            onCommitDiff = { id, path -> commitDiff = id to path },
+                                            onHistory = { historyOpen = true },
+                                            onCommitOpen = { commitOpen = it },
+                    onAction = { action, file -> onTreeAction(action, file) },
+                    onSelect = { file ->
+                        // The row is the working point for the next creation whether it
+                        // is a folder or a file, so it is recorded either way; only a
+                        // file also becomes the file being read.
+                        selectedPath = file.path
+                        if (file.kind == FileKind.Folder) {
+                            collapsedFolders = toggleCollapsed(collapsedFolders, file.path)
+                        } else {
+                            openFile(file)
+                            explorerOpen = false
+                        }
+                    },
+                    onCloneRequest = { cloneOpen = true },
+                    githubTokenEpoch = gitTokenEpoch,
+                    projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                    onClose = { explorerOpen = false },
+                )
+                }
+            }
+        },
+        overlays = {
+            if (projectSwitcherOpen) {
+                com.closecode.ui.ProjectsSheet(
+                    projects = projectRecords,
+                    openProjectId = projectId,
+                    branchOf = { record -> repository.headBranch(record.slug) },
+                    onOpen = { record ->
+                        projectSwitcherOpen = false
+                        onOpenProject(record)
+                    },
+                    onNewProject = {
+                        projectSwitcherOpen = false
+                        onNewProject()
+                    },
+                    onTemplates = {
+                        projectSwitcherOpen = false
+                        onNewProject()
+                    },
+                    onClose = { projectSwitcherOpen = false },
+                )
+            }
+        },
     ) {
         // The sheets pin themselves to the bottom bar's top edge, so its measured height lives
         // at this scope: 0 while the keyboard hides the bar, its real height otherwise.
@@ -2032,14 +2311,6 @@ internal fun IdeScreen(
                 // toast does nothing at all, because those are siblings of this Column rather than
                 // children of it.
                 .pinchToZoom { scale -> editorScale = (editorScale * scale).coerceIn(EditorScaleRange) }
-                // Pulling right from the left edge opens the drawer. Armed only while it is shut,
-                // so the same drag over an open drawer is left to the scrim below it.
-                .edgeSwipeToOpenDrawer(
-                    enabled = !explorerOpen,
-                    edgePx = drawerEdgePx,
-                    slopPx = drawerSlopPx,
-                    onOpen = { explorerOpen = true },
-                ),
         ) {
 
             when (activePanel) {
@@ -2258,26 +2529,11 @@ internal fun IdeScreen(
                     // code is always one `<>` tap away.
                     IdePathBar(
                         filePath = activeFile?.path ?: active,
-                        previewable = isPreviewable(activeFile?.kind, active),
-                        // Every file can be projected, not just Kotlin: non-Kotlin sources have no
-                        // live projection, so the panel renders the honest empty state instead of
-                        // hiding the button that would have explained why.
-                        blockable = true,
-                        previewActive = activePanel == "Preview",
-                        blocksActive = activePanel == "Blocks",
                         canUndo = canUndo,
                         canRedo = canRedo,
                         onUndo = { undoRequest++ },
                         onRedo = { redoRequest++ },
-                        onMore = { moreOpen = true },
-                        onCode = { activePanel = "Code" },
-                        onBlocks = { activePanel = "Blocks" },
-                        onPreview = {
-                            val buffer = liveBuffers[active]
-                            val saved = diskContents[active]
-                            if (buffer != null && buffer != saved) saveActiveFile()
-                            activePanel = "Preview"
-                        },
+                        onRun = ::openRunSheet,
                     )
                     when (activePanel) {
                         "Preview" -> IdePreviewPanel(
@@ -2430,6 +2686,7 @@ internal fun IdeScreen(
                                         canUndo = undo
                                         canRedo = redo
                                     },
+                                    codeScrollLeft = codeCanScrollLeft,
                                     onSuggestionsOpen = { suggestionsOpen = it },
                                     showToolRow = showToolRow(imeOpen, suggestionsOpen),
                                     imeOpen = imeOpen,
@@ -2444,75 +2701,6 @@ internal fun IdeScreen(
 
         }
 
-        // Full-height side panel over the editor, with the rail left visible.
-        if (drawerWidth > 0.dp) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(c.mock.scrim)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { explorerOpen = false },
-                    ),
-            )
-        }
-        IdeExplorer(
-            expanded = explorerOpen,
-            fullWidth = drawerFullWidth,
-            width = drawerWidth,
-            projectName = projectName,
-            slug = slug,
-            tree = diskTree,
-            activePath = activeFile?.path,
-            revealPath = selectedPath,
-            collapsed = collapsedFolders,
-            query = explorerFilter,
-            tab = explorerTab,
-            gitRevision = gitRevision,
-            onTab = { explorerTab = it },
-            onCreateFile = { prompt = TreePrompt.New(isFolder = false) },
-            onCreateFolder = { prompt = TreePrompt.New(isFolder = true) },
-            onRefresh = { refreshTree() },
-            onCollapseAll = {
-                collapsedFolders = diskTree
-                    .filter { it.kind == FileKind.Folder }
-                    .map { it.path }.toSet()
-            },
-            showGenerated = showGenerated,
-            onToggleGenerated = {
-                val next = !showGenerated
-                showGenerated = next
-                kvStore.putBoolean("show_generated_$projectId", next)
-            },
-            gitLetters = gitLetters,
-            dirtyPaths = dirtyPaths,
-            hintVisible = drawerOpens <= 3,
-            // One letter per changed path, so the map's size is the tab's
-            // count bubble: no second source to drift apart from.
-            changeCount = gitLetters.size,
-                                    onDiff = { diffPath = it },
-                                    onCommitDiff = { id, path -> commitDiff = id to path },
-                                    onHistory = { historyOpen = true },
-                                    onCommitOpen = { commitOpen = it },
-            onAction = { action, file -> onTreeAction(action, file) },
-            onSelect = { file ->
-                // The row is the working point for the next creation whether it
-                // is a folder or a file, so it is recorded either way; only a
-                // file also becomes the file being read.
-                selectedPath = file.path
-                if (file.kind == FileKind.Folder) {
-                    collapsedFolders = toggleCollapsed(collapsedFolders, file.path)
-                } else {
-                    openFile(file)
-                    explorerOpen = false
-                }
-            },
-            onCloneRequest = { cloneOpen = true },
-            githubTokenEpoch = gitTokenEpoch,
-            projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
-            onClose = { explorerOpen = false },
-        )
 
         AnimatedVisibility(
             visible = searchOpen,
@@ -2656,59 +2844,8 @@ internal fun IdeScreen(
             )
         }
 
-        // Find in project. The sheet stays up while results are tapped so the match and the code
-        // it came from are on screen together; the scrim is what closes it.
-        if (findOpen) {
-            // Reading every file in the project is disk work, and inside `remember` it ran on the
-            // composition path — one full project read between frames. `produceState` moves the read
-            // to Dispatchers.IO and hands the list back when it lands; the sheet simply shows no
-            // hits until it does.
-            val searchSources by produceState(
-                initialValue = emptyList(),
-                key1 = projectId,
-                key2 = treeVersion,
-            ) {
-                val files = diskTree.filter { it.kind != FileKind.Folder }
-                value = withContext(Dispatchers.IO) {
-                    files.mapNotNull { file ->
-                        val text = runCatching { repository.readFile(slug, file.path) }.getOrNull()
-                        if (text == null || text.length > MAX_SEARCH_FILE_CHARS) null
-                        else file to text
-                    }
-                }
-            }
-            val hits = remember(findQuery, searchSources) {
-                findInSources(
-            findQuery,
-            searchSources,
-            caseSensitive = findCaseSensitive,
-            regex = findRegex,
-            wholeWord = findWholeWord,
-        )
-            }
-            IdeSearchSheet(
-                query = findQuery,
-                onQueryChange = { findQuery = it },
-                hits = hits,
-                caseSensitive = findCaseSensitive,
-                regex = findRegex,
-                wholeWord = findWholeWord,
-                onCaseSensitiveChange = { findCaseSensitive = it },
-                onRegexChange = { findRegex = it },
-                onWholeWordChange = { findWholeWord = it },
-                onOpen = { hit ->
-                    diskTree.firstOrNull { it.path == hit.path }?.let { openFile(it) }
-                    activePanel = "Code"
-                    // Back from the opened file returns here, with results intact.
-                    findReturn = true
-                },
-                onDismiss = {
-                    findOpen = false
-                    findQuery = ""
-                },
-                barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
-            )
-        }
+        // Find in project lives in the sidebar's own Search panel now (IdeSearchSidePanel); the
+        // rail toggle and Back-from-a-result route readers there. There is no more sheet.
 
         if (addBlockOpen) {
             IdeAddBlockSheet(
@@ -2747,6 +2884,50 @@ internal fun IdeScreen(
             barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
         )
 
+        if (runSheetOpen) {
+            IdeRunSheet(
+                appName = projectName,
+                buildType = projectRecord?.config?.buildType ?: "Debug",
+                onBuildType = { next ->
+                    val record = projectRecord
+                    if (record != null) {
+                        projectRecord = repository.updateConfig(
+                            slug,
+                            record.config.copy(buildType = next),
+                        )
+                    }
+                },
+                openAfterInstall = runOpenAfterInstall,
+                onOpenAfterInstall = { runOpenAfterInstall = it },
+                building = building,
+                progress = buildProgress,
+                steps = buildPanel.rows,
+                canRun = projectErrors == 0,
+                onStop = {
+                    buildEngine.cancel()
+                    toast = "Cancelling…"
+                },
+                onRun = {
+                    runningFromSheet = true
+                    // The run follows the sheet's own decisions: the type was chosen there, and
+                    // the install opens the app only if the toggle says so.
+                    autoOpenAfterBuild = runOpenAfterInstall
+                    building = true
+                },
+                onDismiss = { runSheetOpen = false },
+            )
+        }
+        if (runFinishedOpen) {
+            val result = runFinished
+            if (result != null) {
+                IdeRunFinishedPage(
+                    result = result,
+                    onBack = { runFinishedOpen = false },
+                    onOpenApp = { runFinishedOpen = false; openBuiltApp(packageOfProject()) },
+                    onOpenLog = { runFinishedOpen = false; buildLogOpen = true },
+                )
+            }
+        }
         if (projectSettingsOpen) {
             val record = projectRecord
             IdeProjectSettingsSheet(
@@ -2919,6 +3100,7 @@ internal fun IdeScreen(
             is TreePrompt.New -> IdeNameDialog(
                 title = if (current.isFolder) "New folder" else "New file",
                 hint = if (current.isFolder) "feature" else "MainActivity.kt",
+                horizontalBias = PROMPT_BIAS,
                 onCreate = {
                     prompt = null
                     createEntry(isFolder = current.isFolder, rawName = it)
@@ -2931,6 +3113,7 @@ internal fun IdeScreen(
                 hint = current.target.name,
                 initial = current.target.name,
                 confirmLabel = "Rename",
+                horizontalBias = PROMPT_BIAS,
                 onCreate = {
                     prompt = null
                     renameEntry(current.target, it)
@@ -2943,6 +3126,7 @@ internal fun IdeScreen(
                 hint = "app/src/main/java/Main.kt",
                 initial = current.target.path,
                 confirmLabel = if (current.copy) "Copy" else "Move",
+                horizontalBias = PROMPT_BIAS,
                 onCreate = {
                     prompt = null
                     transferEntry(current.target, it, current.copy)
@@ -3417,17 +3601,20 @@ internal fun HeaderIconButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     tint: Color,
-    background: Color = Color.Transparent,
+    background: Color? = null,
     enabled: Boolean = true,
-    boxSize: Dp = 34.dp,
-    iconSize: Dp = 19.dp,
+    boxSize: Dp = 38.dp,
+    iconSize: Dp = 18.dp,
     onClick: () -> Unit,
 ) {
+    // Panel actions are 38 x 38 rounded buttons on the field colour. The editor header's
+    // undo/redo pass background = Color.Transparent because screen 07 draws them as bare icons.
+    val fill = background ?: LocalPageColors.current.mock.field
     Box(
         Modifier
             .size(boxSize)
-            .clip(RoundedCornerShape(9.dp))
-            .background(background)
+            .clip(RoundedCornerShape(12.dp))
+            .background(fill)
             .clickable(enabled = enabled, onClick = onClick)
             .androidxSemantics(label),
         contentAlignment = Alignment.Center,
@@ -3603,6 +3790,13 @@ private const val MAX_IMPORT_BYTES = 8 * 1024 * 1024
 private const val MAX_IMPORT_PROBE = 8 * 1024
 
 /**
+ * Name dialogs (new file, rename, move) are asked from the Files panel, so they sit over that
+ * panel instead of the center of the screen, where the editor is. Bias -1 pins to the left
+ * edge, +1 to the right; -0.22 lands on the panel's middle.
+ */
+private const val PROMPT_BIAS = -0.22f
+
+/**
  * The name a picker gave the file, if it gave one. The display name is the only reliable source:
  * `uri.lastPathSegment` is a document id on most providers, not something anybody would recognise.
  */
@@ -3683,79 +3877,63 @@ internal fun retainTabs(
 @Composable
 private fun IdePathBar(
     filePath: String,
-    previewable: Boolean,
-    blockable: Boolean,
-    previewActive: Boolean,
-    blocksActive: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
-    onMore: () -> Unit,
-    onCode: () -> Unit,
-    onBlocks: () -> Unit,
-    onPreview: () -> Unit,
+    onRun: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    val crumbs = breadcrumbOf(filePath)
+    val fileName = filePath.substringAfterLast('/').ifBlank { "No file" }
     Row(
         Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .height(56.dp)
             .background(c.mock.content)
-            .drawBehind {
-                drawLine(
-                    color = c.mock.border,
-                    start = androidx.compose.ui.geometry.Offset(0f, size.height - 0.5f),
-                    end = androidx.compose.ui.geometry.Offset(size.width, size.height - 0.5f),
-                    strokeWidth = 1f,
-                )
-            }
-            .padding(horizontal = 10.dp),
+            .padding(start = 18.dp, end = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        // One text, one ellipsis. This used to be three sibling Texts with only the folder part
-        // weighted, which meant the separator and the file name were measured first and the folders
-        // got whatever was left — on a narrow phone that could be nothing, and the whole point of
-        // the bar is to say where the file is. As a single AnnotatedString the path truncates as a
-        // unit, and breadcrumbOf has already capped it at three crumbs, so it almost never has to.
-        val parts = crumbs.ifEmpty { listOf("No file") }
-        val path = buildAnnotatedString {
-            parts.forEachIndexed { index, crumb ->
-                if (index > 0) append(" › ")
-                val leaf = index == parts.lastIndex
-                withStyle(
-                    SpanStyle(
-                        color = when {
-                            !leaf -> c.mock.muted
-                            previewActive || blocksActive -> c.mock.accent
-                            else -> c.mock.text
-                        },
-                        fontWeight = if (leaf) FontWeight.Medium else FontWeight.Normal,
-                    ),
-                ) {
-                    append(crumb)
-                }
-            }
-        }
         Text(
-            text = path,
-            fontSize = 12.sp,
-            fontFamily = Mono,
+            text = fileName,
+            color = c.mock.text,
+            fontSize = 16.5.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        PathBarButton(CcIcons.Undo, "Undo", selected = false, onClick = { if (canUndo) onUndo() })
-        PathBarButton(CcIcons.Redo, "Redo", selected = false, onClick = { if (canRedo) onRedo() })
-        PathBarButton(CcIcons.More, "More", selected = false, onClick = onMore)
-        // The three doors out of the code: stay on it, reshape it as blocks, or run it.
-        PathBarButton(CcIcons.Code, "Code", selected = !previewActive && !blocksActive, onClick = onCode)
-        if (blockable) {
-            PathBarButton(CcIcons.Layers, "Blocks", selected = blocksActive, onClick = onBlocks)
-        }
-        if (previewable) {
-            PathBarButton(CcIcons.Image, "Preview", selected = previewActive, onClick = onPreview)
+        HeaderIconButton(
+            icon = CcIcons.Undo,
+            label = "Undo",
+            tint = if (canUndo) c.mock.text2 else c.mock.faint.copy(alpha = 0.4f),
+            background = Color.Transparent,
+            enabled = canUndo,
+            boxSize = 34.dp,
+            iconSize = 19.dp,
+            onClick = onUndo,
+        )
+        Spacer(Modifier.width(4.dp))
+        HeaderIconButton(
+            icon = CcIcons.Redo,
+            label = "Redo",
+            tint = if (canRedo) c.mock.text2 else c.mock.faint.copy(alpha = 0.4f),
+            background = Color.Transparent,
+            enabled = canRedo,
+            boxSize = 34.dp,
+            iconSize = 19.dp,
+            onClick = onRedo,
+        )
+        Box(
+            Modifier
+                .padding(start = 6.dp)
+                .size(36.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(c.mock.green)
+                .clickable(onClick = onRun),
+            contentAlignment = Alignment.Center,
+        ) {
+            CcIcon(CcIcons.Play, c.mock.onGreen, 17.dp)
         }
     }
 }
@@ -3785,12 +3963,10 @@ private fun PathBarButton(
 
 @Composable
 private fun IdeExplorer(
-    expanded: Boolean,
-    // The width the drawer is open at, and the width it is drawn at this frame. Both are computed
-    // up on the screen so the scrim that closes it can start exactly where the drawer ends.
-    fullWidth: Dp,
-    width: Dp,
     projectName: String,
+    // v7: the run card every side panel floats at its bottom. Null when the caller has none.
+    runCard: (@Composable () -> Unit)?,
+    onRun: () -> Unit,
     slug: String,
     tree: List<ProjectFile>,
     // Highlighted row: the file being read, looked up by path. Two files that share a name are
@@ -3803,6 +3979,9 @@ private fun IdeExplorer(
     // entry, from the screen that knows what was just created.
     collapsed: Set<String>,
     query: String,
+    onQueryChange: (String) -> Unit,
+    openTabs: List<ProjectFile>,
+    onOpenTab: (ProjectFile) -> Unit,
     tab: String,
     gitRevision: Int,
     onTab: (String) -> Unit,
@@ -3887,143 +4066,157 @@ private fun IdeExplorer(
         }
     }
 
-    // Closed folders carry their item count; open ones show their children instead.
-    // Counted once per tree rather than per row, so a big project does not pay
-    // a scan for every folder on every frame.
-    val childCounts = remember(tree) {
-        tree.filter { it.kind == FileKind.Folder }.associate { folder ->
-            val prefix = folder.path + "/"
-            folder.path to tree.count { it.path.startsWith(prefix) }
-        }
-    }
-
-    Column(
+    Box(
         Modifier
-            .width(width)
+            .width(234.dp)
             .fillMaxHeight()
-            .padding(top = 8.dp, bottom = 8.dp)
-            .clip(RoundedCornerShape(24.dp))
+            // v7: the panel is a rounded card — BOTH top corners are 26, not only the left one.
+            .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
             .background(c.mock.panel)
             .windowInsetsPadding(WindowInsets.statusBars)
             .clipToBounds(),
     ) {
-        // Header: folder icon plus project name. Then the tab switch, then the project
-        // row: the switch says which half is showing, and the row says where its
-        // buttons act.
+    Column(Modifier.fillMaxSize()) {
+        if (tab == FilesTab) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 14.dp, end = 14.dp, top = 16.dp, bottom = 10.dp),
+                .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CcIcon(CcIcons.FolderOpen, c.mock.accent, 18.dp)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = projectName,
-                color = c.mock.text,
-                fontSize = 16.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            HeaderIconButton(
-                icon = CcIcons.Cross,
-                label = "Close panel",
-                tint = c.mock.muted,
-                boxSize = 30.dp,
-                iconSize = 16.dp,
-                onClick = onClose,
-            )
-        }
-        com.closecode.ui.components.AppSegmentedControl(
-            items = listOf(
-                com.closecode.ui.components.SegmentItem("Files"),
-                com.closecode.ui.components.SegmentItem("Source Control", changeCount),
-            ),
-            selected = if (tab == SourceControlTab) 1 else 0,
-            onSelect = { onTab(if (it == 1) SourceControlTab else FilesTab) },
-            modifier = Modifier.padding(horizontal = 12.dp),
-        )
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(40.dp)
-                .padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = projectName.uppercase(),
-                color = c.textFaint,
-                fontSize = 11.sp,
-                fontFamily = Sans,
-                letterSpacing = 0.77.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            // Each tab owns its header: file actions on Files, version-control
-            // actions on Source Control — never file buttons on the Git side.
-            if (tab == FilesTab) {
-                HeaderIconButton(
-                    icon = CcIcons.FilePlus,
-                    label = "New file",
-                    tint = c.iconTint,
-                    boxSize = 30.dp,
-                    iconSize = 17.dp,
-                    onClick = onCreateFile,
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "Files",
+                    color = c.mock.text,
+                    fontSize = 21.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.ExtraBold,
                 )
-                HeaderIconButton(
-                    icon = CcIcons.FolderPlus,
-                    label = "New folder",
-                    tint = c.iconTint,
-                    boxSize = 30.dp,
-                    iconSize = 17.dp,
-                    onClick = onCreateFolder,
-                )
-                HeaderIconButton(
-                    icon = CcIcons.Refresh,
-                    label = "Refresh",
-                    tint = c.iconTint,
-                    boxSize = 30.dp,
-                    iconSize = 17.dp,
-                    onClick = onRefresh,
-                )
-                HeaderIconButton(
-                    icon = CcIcons.CollapseAll,
-                    label = "Collapse all",
-                    tint = c.iconTint,
-                    boxSize = 30.dp,
-                    iconSize = 17.dp,
-                    onClick = onCollapseAll,
-                )
-                HeaderIconButton(
-                    icon = if (showGenerated) CcIcons.VisibilityOff else CcIcons.Visibility,
-                    label = if (showGenerated) "Hide generated files" else "Show generated files",
-                    tint = c.iconTint,
-                    boxSize = 30.dp,
-                    iconSize = 17.dp,
-                    onClick = onToggleGenerated,
-                )
-            } else {
-                HeaderIconButton(
-                    icon = CcIcons.Refresh,
-                    label = "Refresh status",
-                    tint = c.iconTint,
-                    boxSize = 30.dp,
-                    iconSize = 17.dp,
-                    onClick = onRefresh,
+                Text(
+                    text = projectName,
+                    color = c.mock.muted,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+            HeaderIconButton(
+                icon = CcIcons.Plus,
+                label = "New file",
+                tint = c.mock.text2,
+                iconSize = 18.dp,
+                onClick = onCreateFile,
+            )
+            HeaderIconButton(
+                icon = CcIcons.FolderPlus,
+                label = "New folder",
+                tint = c.mock.text2,
+                iconSize = 18.dp,
+                onClick = onCreateFolder,
+            )
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp)
+                .height(40.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(c.mock.field)
+                .padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            CcIcon(CcIcons.Search, c.mock.muted, 15.dp)
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    color = c.mock.text,
+                    fontSize = 13.sp,
+                    fontFamily = Sans,
+                ),
+                modifier = Modifier.weight(1f),
+                decorationBox = { inner ->
+                    if (query.isEmpty()) {
+                        Text(
+                            text = "Filter files",
+                            color = c.mock.muted,
+                            fontSize = 13.sp,
+                            fontFamily = Sans,
+                        )
+                    }
+                    inner()
+                },
+            )
+        }
+        if (openTabs.isNotEmpty()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 14.dp, top = 14.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "OPEN · ${openTabs.size}",
+                    color = c.mock.muted,
+                    fontSize = 10.5.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.6.sp,
+                )
+            }
+            LazyRow(
+                Modifier.fillMaxWidth(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(openTabs, key = { it.path }) { file ->
+                    val selected = file.path == activePath
+                    Text(
+                        text = file.name,
+                        color = if (selected) c.mock.text else c.mock.textSoft,
+                        fontSize = 12.5.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .widthIn(max = 118.dp)
+                            .height(30.dp)
+                            .clip(RoundedCornerShape(15.dp))
+                            .background(c.mock.field)
+                            .clickable { onOpenTab(file) }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                    )
+                }
+            }
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, top = 12.dp, bottom = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "FILES",
+                color = c.mock.muted,
+                fontSize = 10.5.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.6.sp,
+                modifier = Modifier.weight(1f),
+            )
         }
 
+        }
         // Both lists stay composed so the Source Control tab never loses a half-typed commit message
         // or cancels a commit that is already running on disk.
         Box(
             Modifier
                 .weight(1f)
-                .width(if (expanded) fullWidth else 0.dp)
+                .fillMaxWidth()
                 .fillMaxHeight(),
         ) {
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
@@ -4036,10 +4229,19 @@ private fun IdeExplorer(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                text = "No files yet",
+                                text = "This folder is empty",
                                 color = c.textMuted,
                                 fontSize = 13.sp,
                                 fontFamily = Sans,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "Create a file or a folder.",
+                                color = c.textFaint,
+                                fontSize = 12.sp,
+                                fontFamily = Sans,
+                                textAlign = TextAlign.Center,
                             )
                             Spacer(Modifier.height(12.dp))
                             com.closecode.ui.components.OutlineButton(
@@ -4062,23 +4264,24 @@ private fun IdeExplorer(
                         label = row.label,
                         depth = file.depth + 1,
                         bold = false,
-                        icon = if (open) CcIcons.FolderOpen else CcIcons.Document,
-                        iconTint = kindColor(file.kind, c),
-                        // The chevron points where the row is: right when there is something
-                        // behind it that is not being shown, down when it is being shown.
-                        chevron = when {
-                            !open -> null
-                            closed -> CcIcons.Chevron
-                            else -> CcIcons.Down
+                        icon = com.closecode.ui.model.fileIconName(file.kind),
+                        iconTint = when {
+                            file.kind == FileKind.Folder -> c.mock.yellow
+                            file.kind == FileKind.Kotlin ||
+                                file.kind == FileKind.Xml ||
+                                file.kind == FileKind.Gradle ||
+                                file.kind == FileKind.Properties ||
+                                file.kind == FileKind.Json ||
+                                file.kind == FileKind.Css ||
+                                file.kind == FileKind.Js -> c.mock.purple
+                            else -> c.mock.blue
                         },
-                        chevronTint = c.textFaint,
+                        chevron = if (open) "cr" else null,
+                        chevronOpen = !closed,
+                        chevronTint = c.mock.muted,
                         active = file.path == activePath,
                         gitStatus = gitLetters[file.path],
                         dirty = file.path in dirtyPaths,
-                        childCount = if (closed) childCounts[file.path] else null,
-                        // Both kinds of row report the tap: opening a folder and selecting it as
-                        // the place a new file lands are the same gesture, so the screen that owns
-                        // the collapsed set decides which one happened.
                         onClick = { onSelect(file) },
                         actions = actionsForTree(file),
                         onAction = { action -> onAction(action, file) },
@@ -4122,6 +4325,21 @@ private fun IdeExplorer(
                     Modifier.size(0.dp)
                 },
             )
+        }
+        // v7: the run card floats above the panel's bottom; the panel only reserves its
+        // strip so the last rows of either tab are never hidden behind it.
+        Spacer(Modifier.height(84.dp))
+    }
+        // Files, like every side panel, floats the run card. The Source Control tab does not
+        // (its commit controls own the bottom strip).
+        if (tab == FilesTab && runCard != null) {
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(start = 10.dp, end = 10.dp, bottom = 12.dp),
+            ) {
+                runCard()
+            }
         }
     }
 }
@@ -4169,19 +4387,14 @@ internal fun actionsForTree(file: ProjectFile): List<TreeAction> =
         listOf(
             TreeAction.NEW_FILE,
             TreeAction.NEW_FOLDER,
-            TreeAction.DUPLICATE,
             TreeAction.RENAME,
-            TreeAction.MOVE,
-            TreeAction.COPY,
-            TreeAction.IMPORT,
+            TreeAction.DUPLICATE,
             TreeAction.DELETE,
         )
     } else {
-        // The spec's four file actions: rename it, copy it, copy its path, delete it.
         listOf(
             TreeAction.RENAME,
             TreeAction.DUPLICATE,
-            TreeAction.COPY_PATH,
             TreeAction.DELETE,
         )
     }
@@ -4192,82 +4405,69 @@ private fun TreeRow(
     label: String,
     depth: Int,
     bold: Boolean,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: String,
     iconTint: Color,
-    // A folder says whether it is open; a file has nothing to say, and the slot it would have
-    // used stays empty so its label still lines up under the label of the folder above it.
-    chevron: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    chevron: String? = null,
+    chevronOpen: Boolean = false,
     chevronTint: Color = Color.Unspecified,
     active: Boolean,
-    // The file's Git letter (A/M/D/U), and whether it has unsaved changes. Null and false draw
-    // nothing, so rows outside version control look exactly as before.
     gitStatus: com.closecode.ui.components.StatusKind? = null,
     dirty: Boolean = false,
-    // Closed folders carry their item count; open folders show their children instead.
-    childCount: Int? = null,
     onClick: () -> Unit,
     actions: List<TreeAction> = emptyList(),
     onAction: (TreeAction) -> Unit = {},
 ) {
     val c = LocalPageColors.current
     var menuOpen by remember { mutableStateOf(false) }
-    // One indent step per level. The guides run down the middle of each step the row sits in.
-    val indentStart = 12.dp
-    val indentStep = 16.dp
+    // v9 screen 10: 10 dp per level (not 16), no guide lines, 38 dp rows, 11 dp radius.
+    val indentStep = 10.dp
+    val chevRotation by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (chevron != null && chevronOpen) 90f else 0f,
+        animationSpec = tween(durationMillis = 120),
+        label = "chevron",
+    )
+    val (gitColor, gitLetter) = when (gitStatus) {
+        com.closecode.ui.components.StatusKind.Added -> c.mock.green to "A"
+        com.closecode.ui.components.StatusKind.Modified -> c.mock.warning to "M"
+        com.closecode.ui.components.StatusKind.Deleted -> c.mock.danger to "D"
+        com.closecode.ui.components.StatusKind.Untracked -> c.mock.muted to "U"
+        null -> Color.Unspecified to null
+    }
 
     Box {
         Row(
             Modifier
+                .padding(horizontal = 8.dp, vertical = 1.dp)
                 .fillMaxWidth()
-                .height(36.dp)
-                .background(if (active) c.fileRowActive else Color.Transparent)
+                .height(38.dp)
+                .clip(RoundedCornerShape(11.dp))
+                .background(if (active) c.mock.selectedFile else Color.Transparent)
                 .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
-                .drawBehind {
-                    for (level in 0 until depth) {
-                        val x = (indentStart + indentStep * level + indentStep / 2).toPx()
-                        drawLine(
-                            color = c.indentGuide,
-                            start = androidx.compose.ui.geometry.Offset(x, 0f),
-                            end = androidx.compose.ui.geometry.Offset(x, size.height),
-                            strokeWidth = 1.dp.toPx(),
-                        )
-                    }
-                    if (active) {
-                        // The open file's bar: 3 dp on the left edge with a 4 dp inset top and
-                        // bottom. Drawn, not laid out, so the text never shifts when it appears.
-                        drawRoundRect(
-                            color = c.accent,
-                            topLeft = androidx.compose.ui.geometry.Offset(0f, 4.dp.toPx()),
-                            size = androidx.compose.ui.geometry.Size(
-                                3.dp.toPx(),
-                                size.height - 8.dp.toPx(),
-                            ),
-                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx()),
-                        )
-                    }
-                }
-                .padding(start = indentStart + indentStep * depth, end = 12.dp),
+                .padding(start = 8.dp + indentStep * depth, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                Modifier.width(15.dp).height(15.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (chevron != null) CcIcon(chevron, chevronTint, 14.dp)
+            Box(Modifier.width(13.dp).height(13.dp), contentAlignment = Alignment.Center) {
+                if (chevron != null) {
+                    com.closecode.ui.CcIcon(
+                        chevron,
+                        if (chevronTint == Color.Unspecified) c.mock.muted else chevronTint,
+                        13.dp,
+                        2.2f,
+                        Modifier.rotate(chevRotation),
+                    )
+                }
             }
-            CcIcon(icon, iconTint, 16.dp, Modifier.padding(start = 2.dp, end = 7.dp))
+            com.closecode.ui.CcIcon(icon, iconTint, 17.dp, 1.7f, Modifier.padding(start = 3.dp, end = 7.dp))
             Text(
                 text = label,
-                color = if (active) c.tx else c.tx.copy(alpha = 0.86f),
-                fontSize = 13.sp,
+                color = if (active) c.mock.text else c.mock.text2,
+                fontSize = 13.5.sp,
                 fontFamily = Sans,
-                fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal,
+                fontWeight = if (bold || active) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
-                // Middle ellipsis needs a newer Compose than this project vendors; end
-                // ellipsis keeps long names readable until that upgrade lands.
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
             )
-            // The yellow dot reads before the row's tail: unsaved is about the name, not the edge.
             if (dirty) {
                 Box(
                     Modifier
@@ -4277,55 +4477,53 @@ private fun TreeRow(
                         .background(c.warning),
                 )
             }
-            Spacer(Modifier.weight(1f))
-            if (childCount != null && childCount > 0) {
+            if (gitLetter != null) {
                 Text(
-                    text = childCount.toString(),
-                    color = c.textFaint,
+                    text = gitLetter,
+                    color = gitColor,
                     fontSize = 11.sp,
-                    fontFamily = Sans,
-                    maxLines = 1,
-                    modifier = Modifier.padding(end = 8.dp),
-                )
-            }
-            if (gitStatus != null) {
-                val (letter, tone) = when (gitStatus) {
-                    com.closecode.ui.components.StatusKind.Added -> "A" to c.gitAdded
-                    com.closecode.ui.components.StatusKind.Modified -> "M" to c.warning
-                    com.closecode.ui.components.StatusKind.Deleted -> "D" to c.error
-                    com.closecode.ui.components.StatusKind.Untracked -> "U" to c.textMuted
-                }
-                Text(
-                    text = letter,
-                    color = tone,
-                    fontSize = 11.sp,
-                    fontFamily = Sans,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
+                    fontFamily = Mono,
+                    fontWeight = FontWeight.Bold,
                 )
             }
         }
-
-        if (actions.isNotEmpty()) {
-            DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-            ) {
-                actions.forEach { action ->
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                text = action.label,
-                                fontFamily = Sans,
-                                color = if (action == TreeAction.DELETE) c.red else c.tx,
-                            )
-                        },
-                        onClick = {
-                            menuOpen = false
-                            onAction(action)
-                        },
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            modifier = Modifier
+                .widthIn(min = 200.dp, max = 220.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(c.mock.panel)
+                .border(1.dp, c.mock.border, RoundedCornerShape(16.dp)),
+        ) {
+            actions.forEach { action ->
+                val destructive = action == TreeAction.DELETE
+                if (destructive) {
+                    Box(
+                        Modifier
+                            .padding(vertical = 4.dp)
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(c.mock.divider),
                     )
                 }
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = action.label,
+                            color = if (destructive) c.mock.danger else c.mock.text2,
+                            fontFamily = Sans,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    },
+                    onClick = {
+                        menuOpen = false
+                        onAction(action)
+                    },
+                )
             }
         }
     }
@@ -4393,6 +4591,10 @@ formatRequest: Int = 0,
     // Ctrl S from a hardware keyboard, which the palette advertises as the save shortcut.
     onSaveRequest: () -> Unit = {},
     onHistoryState: (Boolean, Boolean) -> Unit = { _, _ -> },
+    // Fed from the code's sideways scroll: true while the code can still move further left.
+    // The sidebar swipe reads it so a swipe over sideways code scrolls the code instead of
+    // opening the panel.
+    codeScrollLeft: MutableState<Boolean> = mutableStateOf(false),
     // The file's path inside the project, for the version-control margin marks. The tab name is
     // not enough: two folders can hold the same name, and only the path addresses the git object.
     relativePath: String? = null,
@@ -4662,6 +4864,11 @@ formatRequest: Int = 0,
     // drifted out of step with the code and error line numbers pointed at the wrong line.
     val codeScroll = rememberScrollState()
     val codeHScroll = rememberScrollState()
+    // The workspace's swipe reads this: sideways code eats a right swipe until it has been
+    // scrolled back to its left end (the 40 dp edge still opens the panel either way).
+    LaunchedEffect(codeHScroll) {
+        snapshotFlow { codeHScroll.value > 0 }.collect { codeScrollLeft.value = it }
+    }
     val scrollMotion = motion<Float>(200)
     // A scroll nobody asked for — the field's own bring-into-view is the usual suspect — is
     // still caught here, with the timestamp that says which finished job it followed.
@@ -5703,35 +5910,18 @@ val applySuggestion: (Int) -> Unit = { index ->
             }
         }
 
-        // The tab strip holds only tabs. The drawer opens from the top bar's Menu, so the
-        // chevron cell that used to sit here duplicated that door and ate 44 dp of file names.
+        // File chips. The active file is a blurple pill; the rest are quiet grey pills.
         Row(
             Modifier
                 .fillMaxWidth()
-                // The strip needs a bounded height. A Row inside a Column hands its children the
-                // height that is still free, so an unbounded child would otherwise stretch this
-                // strip over the whole editor and squeeze the code area out of existence.
                 .height(TAB_STRIP_HEIGHT)
-                .background(c.editorBg)
-                // A single 1 dp bottom border. The strip is not a box, and the tabs are not boxes.
-                .drawBehind {
-                    val y = size.height - 0.5f
-                    drawLine(
-                        color = c.divider,
-                        start = androidx.compose.ui.geometry.Offset(0f, y),
-                        end = androidx.compose.ui.geometry.Offset(size.width, y),
-                        strokeWidth = 1f,
-                    )
-                },
+                .background(c.editorBg),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LazyRow(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    // The fade over the overflowing edge, drawn over the list's own right-hand
-                    // edge. It used to stop dead there, so a file name was cut in half mid-letter
-                    // with nothing to say there was more of it.
                     .drawWithCache {
                         val fadeWidth = minOf(TAB_EDGE_FADE_WIDTH.toPx(), size.width)
                         val brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
@@ -5750,7 +5940,6 @@ val applySuggestion: (Int) -> Unit = { index ->
                         }
                     },
                 state = tabListState,
-                // Tabs breathe: 12 dp on each side, nothing above or below, in a 34 dp strip.
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(
                     start = 12.dp,
                     end = 12.dp,
@@ -5760,10 +5949,7 @@ val applySuggestion: (Int) -> Unit = { index ->
             ) {
                 itemsIndexed(tabs, key = { _, t -> "tab-${t.path}" }) { _, tab ->
                     val isActive = tab.path == active
-                    // The unsaved dot shows only while the buffer differs from last saved.
                     val dirty = dirtyOf(tab.path)
-                    // Tabs sharing a name show their parent folder: two index.js rows that read
-                    // the same are a mis-tap away from editing the wrong file.
                     val duplicates = tabs.count { it.name == tab.name } > 1
                     val tabLabel = if (duplicates) {
                         tab.path.substringBeforeLast('/').substringAfterLast('/')
@@ -5771,51 +5957,41 @@ val applySuggestion: (Int) -> Unit = { index ->
                     } else {
                         tab.name
                     }
-                    val tabDensity = androidx.compose.ui.platform.LocalDensity.current
                     Box {
                         Row(
                             Modifier
                                 .height(TAB_HEIGHT)
-                                .drawBehind {
-                                    if (!isActive) return@drawBehind
-                                    val y = size.height - 1f
-                                    drawLine(
-                                        color = c.accent,
-                                        start = androidx.compose.ui.geometry.Offset(0f, y),
-                                        end = androidx.compose.ui.geometry.Offset(size.width, y),
-                                        strokeWidth = with(tabDensity) { TAB_UNDERLINE_THICKNESS.toPx() },
-                                    )
-                                }
+                                .clip(RoundedCornerShape(15.dp))
+                                .background(if (isActive) c.mock.accent else c.mock.field)
                                 .combinedClickable(
                                     onClick = { selectTabKeepingPlace(tab.path) },
                                     onLongClick = { tabMenuFor = tab.path },
                                 )
-                                .padding(horizontal = 12.dp),
+                                .padding(horizontal = 14.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            // The dot comes first: it marks the tab, and a mark reads before a name.
                             if (dirty) {
                                 Box(
                                     Modifier
                                         .size(6.dp)
                                         .clip(CircleShape)
-                                        .background(c.warnText),
+                                        .background(
+                                            if (isActive) Color.White else c.mock.warning,
+                                        ),
                                 )
                             }
                             Text(
                                 text = ellipsizeMiddle(tabLabel),
-                                color = if (isActive) c.brightText else c.hintText,
-                                fontSize = 12.sp,
+                                color = if (isActive) Color.White else c.mock.text2,
+                                fontSize = 12.5.sp,
                                 fontFamily = Sans,
-                                fontWeight = FontWeight.Normal,
+                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.widthIn(max = 150.dp),
                             )
                         }
-                        // No close button on the tab itself. A long press is the deliberate gesture;
-                        // a visible × is a mis-tap away from closing the file being read.
                         DropdownMenu(
                             expanded = tabMenuFor == tab.path,
                             onDismissRequest = { tabMenuFor = null },
@@ -6469,7 +6645,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                         lineHeightPx = lineHeightPx,
                         problems = problems,
                         caretLine = caretLine,
-                        gitMarks = gitMarks,
+                        gitMarks = emptyMap(),
                         sourceLines = foldMap.displayLines,
                         // Rows come from the layout that drew the glyphs, not from a second row model.
                         layout = codeLayout,
@@ -7718,7 +7894,7 @@ private fun IdeToast(text: String) {
 private const val MAX_ANALYZED_CHARS = 200_000
 
 /** Files larger than this are skipped by find-in-project; their content would swamp the sheet. */
-private const val MAX_SEARCH_FILE_CHARS = 200_000
+internal const val MAX_SEARCH_FILE_CHARS = 200_000
 /** How long a burst of keystrokes is left alone before the per-file pass runs. */
 private const val ANALYSIS_DEBOUNCE_MS = 200L
 
@@ -7818,10 +7994,10 @@ internal const val TreeListHeaderItems = 0
  * child would otherwise stretch this strip over the whole editor and squeeze the code area out of
  * existence.
  */
-internal val TAB_STRIP_HEIGHT = 34.dp
+internal val TAB_STRIP_HEIGHT = 40.dp
 
 /** Spec 6.1: the tab's own height inside the strip. */
-internal val TAB_HEIGHT = 34.dp
+internal val TAB_HEIGHT = 30.dp
 
 /**
  * The rule under the open tab.

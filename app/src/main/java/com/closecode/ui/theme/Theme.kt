@@ -50,7 +50,7 @@ fun ClosecodeTheme(
             mock = base.mock.copy(
                 accent = picked,
                 onAccent = onAccent,
-                selected = if (useDark) picked.copy(alpha = 0.22f) else lerp(picked, Color.White, 0.84f),
+                selected = base.mock.selected,
             ),
         )
     } ?: base
@@ -59,12 +59,15 @@ fun ClosecodeTheme(
     val window = view.context.activityOrNull()?.window
     SideEffect {
         if (window != null) {
+            window.statusBarColor = colors.mock.rail.toArgb()
             window.navigationBarColor = colors.bg.toArgb()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 window.isNavigationBarContrastEnforced = false
             }
-            WindowCompat.getInsetsController(window, view)
-                .isAppearanceLightNavigationBars = !useDark
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = !useDark
+                isAppearanceLightNavigationBars = !useDark
+            }
         }
     }
 

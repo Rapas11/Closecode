@@ -26,6 +26,10 @@ enum class BoolSetting {
     BUILD_CACHE,
     COMMAND_HISTORY,
     ANIMATIONS,
+    PERFORMANCE_OVERLAY,
+    USE_PIPE_TERMINAL,
+    APP_LOCK,
+    SEND_USAGE_DATA,
 }
 
 /** Which choice-based field of [Settings] a settings row edits. */
@@ -36,6 +40,11 @@ enum class OptionSetting {
     TERMINAL_THEME,
     TERMINAL_FONT_SIZE,
     SHELL,
+    BUILD_TYPE,
+    DOWNLOAD_NETWORK,
+    START_FOLDER,
+    CODE_FONT,
+    SYNTAX_COLORS,
 }
 
 /** Which free-text field of [Settings] a settings row edits. */
@@ -59,10 +68,15 @@ val TerminalThemeChoices = listOf("Closecode", "Dracula", "One Dark", "Monokai",
 val TerminalFontSizeChoices = listOf("9", "10", "11", "12", "13", "14", "16", "18")
 
 /** The choices each [OptionSetting] accepts. Anything else read from storage is rejected. */
-val ThemeChoices = listOf("System", "Dark", "Light")
+val ThemeChoices = listOf("Light", "Dark", "System")
 val ShellChoices = listOf("System", "Shell tools")
-val FontSizeChoices = listOf("11", "12", "13", "15", "18")
-val TabSizeChoices = listOf("2", "3", "4", "8")
+val FontSizeChoices = (10..22).map { it.toString() }
+val TabSizeChoices = listOf("2", "4", "8")
+val BuildTypeChoices = listOf("Debug", "Release")
+val DownloadNetworkChoices = listOf("Wi-Fi only", "Wi-Fi and mobile")
+val StartFolderChoices = listOf("Project root", "Home")
+val CodeFontChoices = listOf("JetBrains Mono")
+val SyntaxColorChoices = listOf("Default light", "Default dark")
 
 /**
  * Every knob the app actually honours.
@@ -92,16 +106,25 @@ data class Settings(
     val buildCache: Boolean = true,
     val commandHistory: Boolean = true,
     val animations: Boolean = true,
+    val performanceOverlay: Boolean = false,
+    val usePipeTerminal: Boolean = false,
+    val appLock: Boolean = false,
+    val sendUsageData: Boolean = false,
     val accentIndex: Int = 0,
     val shell: String = "Shell tools",
+    val buildType: String = "Debug",
+    val downloadNetwork: String = "Wi-Fi and mobile",
+    val startFolder: String = "Project root",
+    val codeFont: String = "JetBrains Mono",
+    val syntaxColors: String = "Default light",
     val gitName: String = "",
     val gitEmail: String = "",
     val gitDefaultBranch: String = "main",
     val theme: String = "Light",
-    val fontSize: Int = 12,
-    val tabSize: Int = 2,
+    val fontSize: Int = 14,
+    val tabSize: Int = 4,
     val terminalTheme: String = "Closecode",
-    val terminalFontSize: Int = 13,
+    val terminalFontSize: Int = 12,
 ) {
     fun flag(key: BoolSetting): Boolean = when (key) {
         BoolSetting.OPEN_LAST_PROJECT -> openLastProject
@@ -123,11 +146,15 @@ data class Settings(
         BoolSetting.BUILD_CACHE -> buildCache
         BoolSetting.COMMAND_HISTORY -> commandHistory
         BoolSetting.ANIMATIONS -> animations
+        BoolSetting.PERFORMANCE_OVERLAY -> performanceOverlay
+        BoolSetting.USE_PIPE_TERMINAL -> usePipeTerminal
+        BoolSetting.APP_LOCK -> appLock
+        BoolSetting.SEND_USAGE_DATA -> sendUsageData
     }
 
     fun withFlag(key: BoolSetting, value: Boolean): Settings = when (key) {
         BoolSetting.OPEN_LAST_PROJECT -> copy(openLastProject = value)
-        BoolSetting.AUTO_SAVE -> copy(autoSave = value)
+        BoolSetting.AUTO_SAVE -> copy(autoSave = true)
         BoolSetting.LINE_NUMBERS -> copy(lineNumbers = value)
         BoolSetting.AUTO_INDENT -> copy(autoIndent = value)
         BoolSetting.AUTO_CLOSE_BRACKETS -> copy(autoCloseBrackets = value)
@@ -145,6 +172,10 @@ data class Settings(
         BoolSetting.BUILD_CACHE -> copy(buildCache = value)
         BoolSetting.COMMAND_HISTORY -> copy(commandHistory = value)
         BoolSetting.ANIMATIONS -> copy(animations = value)
+        BoolSetting.PERFORMANCE_OVERLAY -> copy(performanceOverlay = value)
+        BoolSetting.USE_PIPE_TERMINAL -> copy(usePipeTerminal = value)
+        BoolSetting.APP_LOCK -> copy(appLock = value)
+        BoolSetting.SEND_USAGE_DATA -> copy(sendUsageData = value)
     }
 
     fun option(key: OptionSetting): String = when (key) {
@@ -154,6 +185,11 @@ data class Settings(
         OptionSetting.TERMINAL_THEME -> terminalTheme
         OptionSetting.TERMINAL_FONT_SIZE -> terminalFontSize.toString()
         OptionSetting.SHELL -> shell
+        OptionSetting.BUILD_TYPE -> buildType
+        OptionSetting.DOWNLOAD_NETWORK -> downloadNetwork
+        OptionSetting.START_FOLDER -> startFolder
+        OptionSetting.CODE_FONT -> codeFont
+        OptionSetting.SYNTAX_COLORS -> syntaxColors
     }
 
     /**
@@ -186,6 +222,23 @@ data class Settings(
             this
         }
         OptionSetting.SHELL -> if (value in ShellChoices) copy(shell = value) else this
+        OptionSetting.BUILD_TYPE -> if (value in BuildTypeChoices) copy(buildType = value) else this
+        OptionSetting.DOWNLOAD_NETWORK -> if (value in DownloadNetworkChoices) {
+            copy(downloadNetwork = value)
+        } else {
+            this
+        }
+        OptionSetting.START_FOLDER -> if (value in StartFolderChoices) {
+            copy(startFolder = value)
+        } else {
+            this
+        }
+        OptionSetting.CODE_FONT -> if (value in CodeFontChoices) copy(codeFont = value) else this
+        OptionSetting.SYNTAX_COLORS -> if (value in SyntaxColorChoices) {
+            copy(syntaxColors = value)
+        } else {
+            this
+        }
     }
 
     fun text(key: StringSetting): String = when (key) {
@@ -213,7 +266,9 @@ class SettingsStore(private val kv: KeyValueStore) {
 
     fun read(): Settings = Settings(
         openLastProject = kv.getBoolean(KEY_OPEN_LAST_PROJECT, Settings().openLastProject),
-        autoSave = kv.getBoolean(KEY_AUTO_SAVE, Settings().autoSave),
+        // Auto-save is part of the editor, not a preference: the row shows On and the store
+        // always reports it on, so a stale older value cannot turn it off behind the screen.
+        autoSave = true,
         lineNumbers = kv.getBoolean(KEY_LINE_NUMBERS, Settings().lineNumbers),
         autoIndent = kv.getBoolean(KEY_AUTO_INDENT, Settings().autoIndent),
         autoCloseBrackets = kv.getBoolean(KEY_AUTO_CLOSE, Settings().autoCloseBrackets),
@@ -231,11 +286,36 @@ class SettingsStore(private val kv: KeyValueStore) {
         buildCache = kv.getBoolean(KEY_BUILD_CACHE, Settings().buildCache),
         commandHistory = kv.getBoolean(KEY_COMMAND_HISTORY, Settings().commandHistory),
         animations = kv.getBoolean(KEY_ANIMATIONS, Settings().animations),
+        performanceOverlay = kv.getBoolean(KEY_PERFORMANCE_OVERLAY, Settings().performanceOverlay),
+        // The terminal reads the historical integer key. Read it first so a change made
+        // from the terminal's own menu is what this screen reports, then fall back to the
+        // settings key when the legacy key has never been written.
+        usePipeTerminal = kv.getInt(
+            KEY_TERMINAL_USE_PIPE_LEGACY,
+            if (kv.getBoolean(KEY_USE_PIPE_TERMINAL, Settings().usePipeTerminal)) 1 else 0,
+        ) == 1,
+        appLock = kv.getBoolean(KEY_APP_LOCK, Settings().appLock),
+        sendUsageData = kv.getBoolean(KEY_SEND_USAGE_DATA, Settings().sendUsageData),
         accentIndex = kv.getInt(KEY_ACCENT, Settings().accentIndex)
             .coerceIn(0, AccentOptions.lastIndex),
         shell = kv.getString(KEY_SHELL, Settings().shell)
             ?.takeIf { it in ShellChoices }
             ?: Settings().shell,
+        buildType = kv.getString(KEY_BUILD_TYPE, Settings().buildType)
+            ?.takeIf { it in BuildTypeChoices }
+            ?: Settings().buildType,
+        downloadNetwork = kv.getString(KEY_DOWNLOAD_NETWORK, Settings().downloadNetwork)
+            ?.takeIf { it in DownloadNetworkChoices }
+            ?: Settings().downloadNetwork,
+        startFolder = kv.getString(KEY_START_FOLDER, Settings().startFolder)
+            ?.takeIf { it in StartFolderChoices }
+            ?: Settings().startFolder,
+        codeFont = kv.getString(KEY_CODE_FONT, Settings().codeFont)
+            ?.takeIf { it in CodeFontChoices }
+            ?: Settings().codeFont,
+        syntaxColors = kv.getString(KEY_SYNTAX_COLORS, Settings().syntaxColors)
+            ?.takeIf { it in SyntaxColorChoices }
+            ?: Settings().syntaxColors,
         gitName = kv.getString(KEY_GIT_NAME, Settings().gitName).orEmpty(),
         gitEmail = kv.getString(KEY_GIT_EMAIL, Settings().gitEmail).orEmpty(),
         gitDefaultBranch = kv.getString(KEY_GIT_DEFAULT_BRANCH, Settings().gitDefaultBranch)
@@ -262,7 +342,7 @@ class SettingsStore(private val kv: KeyValueStore) {
      */
     fun write(settings: Settings): Settings {
         kv.putBoolean(KEY_OPEN_LAST_PROJECT, settings.openLastProject)
-        kv.putBoolean(KEY_AUTO_SAVE, settings.autoSave)
+        kv.putBoolean(KEY_AUTO_SAVE, true)
         kv.putBoolean(KEY_LINE_NUMBERS, settings.lineNumbers)
         kv.putBoolean(KEY_AUTO_INDENT, settings.autoIndent)
         kv.putBoolean(KEY_AUTO_CLOSE, settings.autoCloseBrackets)
@@ -280,8 +360,18 @@ class SettingsStore(private val kv: KeyValueStore) {
         kv.putBoolean(KEY_BUILD_CACHE, settings.buildCache)
         kv.putBoolean(KEY_COMMAND_HISTORY, settings.commandHistory)
         kv.putBoolean(KEY_ANIMATIONS, settings.animations)
+        kv.putBoolean(KEY_PERFORMANCE_OVERLAY, settings.performanceOverlay)
+        kv.putBoolean(KEY_USE_PIPE_TERMINAL, settings.usePipeTerminal)
+        kv.putInt(KEY_TERMINAL_USE_PIPE_LEGACY, if (settings.usePipeTerminal) 1 else 0)
+        kv.putBoolean(KEY_APP_LOCK, settings.appLock)
+        kv.putBoolean(KEY_SEND_USAGE_DATA, settings.sendUsageData)
         kv.putInt(KEY_ACCENT, settings.accentIndex)
         kv.putString(KEY_SHELL, settings.shell)
+        kv.putString(KEY_BUILD_TYPE, settings.buildType)
+        kv.putString(KEY_DOWNLOAD_NETWORK, settings.downloadNetwork)
+        kv.putString(KEY_START_FOLDER, settings.startFolder)
+        kv.putString(KEY_CODE_FONT, settings.codeFont)
+        kv.putString(KEY_SYNTAX_COLORS, settings.syntaxColors)
         kv.putString(KEY_GIT_NAME, settings.gitName)
         kv.putString(KEY_GIT_EMAIL, settings.gitEmail)
         kv.putString(KEY_GIT_DEFAULT_BRANCH, settings.gitDefaultBranch)
@@ -313,7 +403,17 @@ class SettingsStore(private val kv: KeyValueStore) {
         const val KEY_BUILD_CACHE = "build_cache"
         const val KEY_COMMAND_HISTORY = "command_history"
         const val KEY_ANIMATIONS = "animations"
+        const val KEY_PERFORMANCE_OVERLAY = "performance_overlay"
+        const val KEY_USE_PIPE_TERMINAL = "use_pipe_terminal"
+        const val KEY_TERMINAL_USE_PIPE_LEGACY = "terminal_use_pipe"
+        const val KEY_APP_LOCK = "app_lock"
+        const val KEY_SEND_USAGE_DATA = "send_usage_data"
         const val KEY_ACCENT = "accent"
+        const val KEY_BUILD_TYPE = "build_type"
+        const val KEY_DOWNLOAD_NETWORK = "download_network"
+        const val KEY_START_FOLDER = "start_folder"
+        const val KEY_CODE_FONT = "code_font"
+        const val KEY_SYNTAX_COLORS = "syntax_colors"
         const val KEY_SHELL = "shell"
         const val KEY_GIT_NAME = "git_name"
         const val KEY_GIT_EMAIL = "git_email"
@@ -343,5 +443,18 @@ val LocalAnimationsEnabled = staticCompositionLocalOf { true }
 @Composable
 fun rememberSettingsStore(): SettingsStore {
     val context = LocalContext.current
-    return remember(context) { SettingsStore(SharedPreferencesKeyValueStore(context)) }
+    return remember(context) {
+        val prefs = context.applicationContext
+            .getSharedPreferences("closecode_settings", android.content.Context.MODE_PRIVATE)
+        if (!prefs.getBoolean("design_light_v3", false)) {
+            prefs.edit()
+                .putString("theme", "Light")
+                .putInt("font_size", 14)
+                .putInt("tab_size", 4)
+                .putBoolean("word_wrap", false)
+                .putBoolean("design_light_v3", true)
+                .apply()
+        }
+        SettingsStore(SharedPreferencesKeyValueStore(context))
+    }
 }

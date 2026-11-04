@@ -1,23 +1,31 @@
 package com.closecode.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,197 +35,325 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.closecode.ui.components.ConfigForm
 import com.closecode.ui.components.SegmentedTabs
-import com.closecode.ui.components.SheetFooter
-import com.closecode.ui.components.SheetHeader
-import com.closecode.ui.components.TemplateGrid
+import com.closecode.ui.components.TemplateCard
+import com.closecode.ui.ide.CcIcon
+import com.closecode.ui.ide.CcIcons
 import com.closecode.ui.model.ProjectConfig
 import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.model.TemplateTab
 import com.closecode.ui.model.Templates
-import com.closecode.ui.model.defaultPackageName
 import com.closecode.ui.theme.LocalPageColors
+import com.closecode.ui.theme.Sans
 
 private enum class Step { Pick, Config }
 
+private val PackageName = Regex("^[a-zA-Z][a-zA-Z0-9_]*(\\.[a-zA-Z][a-zA-Z0-9_]*)+$")
+
+private fun isValidPackageName(value: String): Boolean = PackageName.matches(value)
+
 @Composable
 fun StartProjectSheet(
-    recentCount: Int,
-    onOpenRecent: () -> Unit,
     onDismiss: () -> Unit,
+    existingPackages: Set<String> = emptySet(),
     onCreate: (name: String, selection: SelectedTemplate, config: ProjectConfig) -> String?,
 ) {
     val c = LocalPageColors.current
-    val screenWidth = LocalConfiguration.current.screenWidthDp
-    val screenHeight = LocalConfiguration.current.screenHeightDp
-    val wide = screenWidth >= 720
-    val maxSheetHeight = (screenHeight * if (wide) 0.86f else 0.92f).dp
-
     var step by rememberSaveable { mutableStateOf(Step.Pick.name) }
-    var tab by rememberSaveable { mutableStateOf(TemplateTab.Web) }
-    var selectedIndex by rememberSaveable { mutableStateOf(-1) }
-    var selectedTab by rememberSaveable { mutableStateOf("") }
+    var selectedIndex by rememberSaveable { mutableStateOf(0) }
+    var selectedTab by rememberSaveable { mutableStateOf(TemplateTab.Web.name) }
+    var pickTab by rememberSaveable { mutableStateOf(TemplateTab.Web.name) }
     var name by rememberSaveable { mutableStateOf("") }
-    var configEncoded by rememberSaveable { mutableStateOf(ProjectConfig().encode()) }
+    var configEncoded by rememberSaveable {
+        mutableStateOf(ProjectConfig(packageName = "").encode())
+    }
     var createError by rememberSaveable { mutableStateOf<String?>(null) }
-
 
     val currentStep = Step.valueOf(step)
     val config = ProjectConfig.decode(configEncoded)
+    val selected = if (selectedIndex >= 0 && selectedTab.isNotEmpty()) {
+        SelectedTemplate(TemplateTab.valueOf(selectedTab), selectedIndex)
+    } else {
+        null
+    }
+    val pickTabEnum = TemplateTab.valueOf(pickTab)
+    val templates = Templates[pickTabEnum].orEmpty().mapIndexed { index, template ->
+        Triple(pickTabEnum, index, template)
+    }
 
-    val selected = remember(selectedIndex, selectedTab) {
-        if (selectedIndex >= 0 && selectedTab.isNotEmpty()) {
-            SelectedTemplate(TemplateTab.valueOf(selectedTab), selectedIndex)
+    fun goBack() {
+        if (currentStep == Step.Config) {
+            step = Step.Pick.name
         } else {
-            null
+            onDismiss()
         }
     }
 
-    val current = selected?.let { Templates[it.tab].orEmpty().getOrNull(it.index) }
-    val canContinue = selected != null && selected.tab == tab && current != null
-    val webProject = selected?.tab == TemplateTab.Web
+    fun createNow() {
+        val selection = selected ?: return
+        val templateName = Templates[selection.tab].orEmpty().getOrNull(selection.index)?.name
+        val finalName = name.trim().ifEmpty { templateName ?: "Untitled" }
+        val packageName = config.packageName.trim()
+        val problem = when {
+            packageName.isEmpty() -> "Enter a package name in project settings."
+            !isValidPackageName(packageName) ->
+                "Use a package name like com.yourname.app — letters, numbers, dots and underscores."
+            packageName in existingPackages ->
+                "That package name is already used by another project. Pick a unique one."
+            else -> null
+        }
+        if (problem != null) {
+            createError = problem
+            step = Step.Config.name
+            return
+        }
+        createError = onCreate(finalName, selection, config.copy(packageName = packageName))
+    }
+
+    BackHandler(onBack = ::goBack)
 
     Box(Modifier.fillMaxSize()) {
-        // System Back dismisses the sheet, exactly like the scrim tap and the X: without this
-        // the press falls through to the hero's exit guard underneath.
-        BackHandler(onBack = {
-            com.closecode.ui.ide.BackLog.press("start-sheet", "branch=dismiss")
-            onDismiss()
-        })
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color(0x8C05080E))
+                .background(c.mock.scrim)
+                .clickable(onClick = onDismiss),
+        )
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .fillMaxHeight(0.82f)
+                .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+                .background(c.mock.panel)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
-                    onClick = onDismiss,
-                )
-        )
-
-        AnimatedVisibility(
-            visible = true,
-            enter = slideInVertically(tween(300)) { it / 5 } + fadeIn(tween(300)),
-            exit = slideOutVertically(tween(240)) { it / 5 } + fadeOut(tween(240)),
-            modifier = Modifier.align(if (wide) Alignment.Center else Alignment.BottomCenter),
+                ) {}
+                .navigationBarsPadding()
+                .imePadding(),
         ) {
+            Box(
+                Modifier
+                    .padding(top = 10.dp)
+                    .align(Alignment.CenterHorizontally)
+                    .size(width = 40.dp, height = 5.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(c.mock.border),
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 22.dp, end = 16.dp, top = 14.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = if (currentStep == Step.Pick) "Start a project" else "Project options",
+                        color = c.mock.text,
+                        fontSize = 22.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 27.sp,
+                    )
+                    Text(
+                        text = if (currentStep == Step.Pick) {
+                            "Pick a template. You can change anything later."
+                        } else {
+                            "Package name, SDK and app details."
+                        },
+                        color = c.mock.muted,
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                        lineHeight = 18.sp,
+                        maxLines = 2,
+                        modifier = Modifier.padding(top = 3.dp),
+                    )
+                }
+                Box(
+                    Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { step = Step.Config.name },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(
+                        CcIcons.Settings,
+                        if (currentStep == Step.Config) c.mock.accent else c.mock.textSoft,
+                        19.dp,
+                    )
+                }
+                Spacer(Modifier.width(2.dp))
+                Box(
+                    Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = onDismiss),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(CcIcons.Close, c.mock.text2, 22.dp)
+                }
+            }
+
+            if (currentStep == Step.Pick) {
+                SegmentedTabs(
+                    tab = pickTabEnum,
+                    onSelect = {
+                        pickTab = it.name
+                        selectedTab = it.name
+                        selectedIndex = 0
+                        createError = null
+                    },
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp),
+                )
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(
+                        items = templates,
+                        key = { "${it.first.name}:${it.second}" },
+                    ) { entry ->
+                        TemplateCard(
+                            template = entry.third,
+                            selected = selected?.tab == entry.first && selected.index == entry.second,
+                            tab = entry.first,
+                            onClick = {
+                                selectedTab = entry.first.name
+                                selectedIndex = entry.second
+                                createError = null
+                            },
+                        )
+                    }
+                }
+            } else {
+                ConfigForm(
+                    config = config,
+                    onConfigChange = {
+                        configEncoded = it.encode()
+                        createError = null
+                    },
+                    webProject = selected?.tab == TemplateTab.Web,
+                    packageError = createError?.takeIf {
+                        it.contains("package", ignoreCase = true)
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                )
+            }
+
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .widthIn(max = 900.dp)
-                    .heightIn(max = maxSheetHeight)
-                    .clip(
-                        if (wide) {
-                            RoundedCornerShape(28.dp)
-                        } else {
-                            RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
-                        }
-                    )
-                    .background(c.mock.panel)
+                    .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp),
             ) {
-                SheetHeader(
-                    onClose = onDismiss,
-                    title = if (currentStep == Step.Pick) "Start a project" else "Project configuration",
-                    subtitle = if (currentStep == Step.Pick) {
-                        "Pick a template to begin. You can change anything later."
+                createError?.let {
+                    Text(
+                        text = it,
+                        color = c.mock.danger,
+                        fontSize = 12.5.sp,
+                        fontFamily = Sans,
+                        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (currentStep == Step.Pick) {
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .height(50.dp)
+                                .clip(RoundedCornerShape(15.dp))
+                                .background(c.mock.input)
+                                .padding(horizontal = 18.dp),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            if (name.isEmpty()) {
+                                Text(
+                                    text = "Project name",
+                                    color = c.mock.faint,
+                                    fontSize = 14.5.sp,
+                                    fontFamily = Sans,
+                                )
+                            }
+                            BasicTextField(
+                                value = name,
+                                onValueChange = {
+                                    name = it
+                                    createError = null
+                                },
+                                singleLine = true,
+                                textStyle = LocalTextStyle.current.copy(
+                                    color = c.mock.text,
+                                    fontSize = 14.5.sp,
+                                    fontFamily = Sans,
+                                ),
+                                cursorBrush = SolidColor(c.mock.accent),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     } else {
-                        "Review the settings for this project."
-                    },
-                )
-
-                if (currentStep == Step.Pick) {
-                    SegmentedTabs(
-                        tab = tab,
-                        onSelect = { tab = it },
-                        modifier = Modifier.padding(start = 22.dp, top = 18.dp),
-                    )
-
-                    TemplateGrid(
-                        tab = tab,
-                        selected = selected,
-                        onSelect = { index ->
-                            selectedIndex = index
-                            selectedTab = tab.name
-                            name = Templates[tab].orEmpty()[index].name
-                            createError = null
-                            configEncoded = ProjectConfig(
-                                packageName = defaultPackageName(name)
-                            ).encode()
-                        },
-                        onOpenRecent = onOpenRecent,
-                        recentCount = recentCount,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f, fill = true)
-                            .heightIn(min = 0.dp),
-                    )
-
-                    SheetFooter(
-                        name = name,
-                        onNameChange = {
-                            name = it
-                            createError = null
-                        },
-                        canCreate = canContinue,
-                        error = createError,
-                        hint = if (canContinue) {
-                            "${tab.noun} · ${current?.name} · ${current?.tags}"
-                        } else {
-                            "Choose a template above."
-                        },
-                        actionLabel = "Continue",
-                        onCreate = {
-                            if (selected != null) {
-                                configEncoded = config.copy(
-                                    packageName = config.packageName.ifBlank {
-                                        defaultPackageName(name)
-                                    }
-                                ).encode()
-                                step = Step.Config.name
-                            }
-                        },
-                    )
-                } else {
-                    ConfigForm(
-                        config = config,
-                        onConfigChange = {
-                            configEncoded = it.encode()
-                            createError = null
-                        },
-                        webProject = webProject,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f, fill = true)
-                            .heightIn(min = 0.dp),
-                    )
-
-                    SheetFooter(
-                        name = name,
-                        onNameChange = {},
-                        canCreate = selected != null,
-                        showNameField = false,
-                        error = createError,
-                        hint = if (current != null) {
-                            "${current.name} · ${current.tags}"
-                        } else {
-                            "Choose a template above."
-                        },
-                        actionLabel = "Create project",
-                        secondaryLabel = "Back",
-                        onSecondary = { step = Step.Pick.name },
-                        onCreate = {
-                            if (selected != null) {
-                                createError = onCreate(name, selected, config)
-                            }
-                        },
-                    )
+                        Box(
+                            Modifier
+                                .weight(1f)
+                                .height(50.dp)
+                                .clip(RoundedCornerShape(15.dp))
+                                .background(c.mock.field)
+                                .clickable { step = Step.Pick.name },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "Back",
+                                color = c.mock.text,
+                                fontSize = 14.5.sp,
+                                fontFamily = Sans,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    }
+                    Row(
+                        Modifier
+                            .width(130.dp)
+                            .height(50.dp)
+                            .clip(RoundedCornerShape(15.dp))
+                            .background(if (selected != null) c.mock.accent else c.mock.field)
+                            .clickable(enabled = selected != null, onClick = ::createNow),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        Text(
+                            text = "Create",
+                            color = if (selected != null) c.mock.onAccent else c.mock.faint,
+                            fontSize = 15.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        CcIcon(
+                            CcIcons.ChevronRight,
+                            if (selected != null) c.mock.onAccent else c.mock.faint,
+                            15.dp,
+                        )
+                    }
                 }
             }
         }
     }
 }
-

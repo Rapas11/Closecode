@@ -1218,7 +1218,7 @@ private fun PreviewAction(
     Box(
         Modifier
             .size(34.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(17.dp))
             .clickable(onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
@@ -1812,41 +1812,27 @@ private fun DeviceRow(device: PreviewDevice, onDevice: (PreviewDevice) -> Unit) 
             val on = option == device
             Box(
                 Modifier
-                    .height(26.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (on) c.popupSelected else androidx.compose.ui.graphics.Color.Transparent)
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        when {
+                            on -> c.ac
+                            else -> c.mock.field
+                        },
+                    )
                     .clickable { onDevice(option) }
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CcIcon(
-                        when (option) {
-                            PreviewDevice.Phone -> CcIcons.Phone
-                            PreviewDevice.Tablet -> CcIcons.Tablet
-                            PreviewDevice.Desktop -> CcIcons.Monitor
-                        },
-                        if (on) c.text else c.textMuted,
-                        13.dp,
-                    )
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = option.label,
-                        color = if (on) c.text else c.textMuted,
-                        fontSize = 11.sp,
-                        fontFamily = Sans,
-                        fontWeight = if (on) FontWeight.Medium else FontWeight.Normal,
-                    )
-                }
+                Text(
+                    text = option.label,
+                    color = if (on) c.mock.onAccent else c.mock.text2,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                )
             }
         }
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = device.size,
-            color = c.textFaint,
-            fontSize = 11.sp,
-            fontFamily = Mono,
-        )
     }
 }
 
@@ -2061,23 +2047,22 @@ private fun ConsoleFilterChip(
 @Composable
 private fun ConsoleRow(line: ConsoleLine, onOpenFile: (String, Int) -> Unit) {
     val c = LocalPageColors.current
-    // Console-only colors, stated here because they belong to no shared surface: a dark red
-    // wash for errors, a dark amber one for warnings, plain text for logs.
+    // The washes use the theme's own tint tokens, so the row reads the same on light as on dark.
     val bg = when (line.level) {
-        ConsoleLevel.Error -> Color(0xFF1D1215)
-        ConsoleLevel.Warning -> Color(0xFF1D1A10)
+        ConsoleLevel.Error -> c.mock.dangerBg
+        ConsoleLevel.Warning -> c.mock.warningBg
         ConsoleLevel.Log -> androidx.compose.ui.graphics.Color.Transparent
     }
     val fg = when (line.level) {
-        ConsoleLevel.Error -> Color(0xFFF2A0A0)
-        ConsoleLevel.Warning -> c.warning
-        ConsoleLevel.Log -> c.popupText
+        ConsoleLevel.Error -> c.mock.danger
+        ConsoleLevel.Warning -> c.mock.warning
+        ConsoleLevel.Log -> c.mock.text2
     }
     Column(
         Modifier
             .fillMaxWidth()
             .background(bg)
-            .border(1.dp, Color(0xFF12161F), RoundedCornerShape(0.dp))
+            .border(1.dp, c.mock.border, RoundedCornerShape(0.dp))
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Text(

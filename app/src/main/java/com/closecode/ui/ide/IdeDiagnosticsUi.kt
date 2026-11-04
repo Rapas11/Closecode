@@ -60,8 +60,8 @@ import com.closecode.ui.theme.Sans
  * underlines, pills and lightbulb are all positioned against it, so it must not be "measured" into
  * a different value. Pinch zoom multiplies it rather than replacing it.
  */
-val CodeLineHeight = 20.sp
-val CodeFontSize = 12.sp
+val CodeLineHeight = 21.sp
+val CodeFontSize = 11.5.sp
 
 /**
  * Gutter width, exactly 56 dp with no border.

@@ -2,6 +2,7 @@ package com.closecode
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import com.closecode.ui.project.headBranch
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
@@ -46,7 +47,6 @@ import com.closecode.ui.onboarding.OnboardingScreen
 import com.closecode.ui.onboarding.rememberFirstRunStore
 import com.closecode.ui.ide.IdeScreen
 import com.closecode.ui.model.SelectedTemplate
-import com.closecode.ui.model.TemplateTab
 import com.closecode.ui.project.ProjectRecord
 import com.closecode.ui.settings.AccentOptions
 import com.closecode.ui.settings.LocalAnimationsEnabled
@@ -147,8 +147,11 @@ class MainActivity : ComponentActivity() {
                 // One .closecode.json per project, so this is a directory read — off the
                 // composition path and onto Dispatchers.IO.
                 var recentCount by remember { mutableIntStateOf(0) }
+                var recentProjects by remember { mutableStateOf<List<ProjectRecord>>(emptyList()) }
                 LaunchedEffect(encoded, repository) {
-                    recentCount = withContext(Dispatchers.IO) { repository.listProjects().size }
+                    val projects = withContext(Dispatchers.IO) { repository.listProjects() }
+                    recentCount = projects.size
+                    recentProjects = projects
                 }
 
                 // "Open last project" decides what a launch lands on. The system restores the last
@@ -229,8 +232,9 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             HeroScreen(
-                                recentCount = recentCount,
+                                recentProjects = recentProjects,
                                 tokenEpoch = githubTokenEpoch,
+                                branchOf = { record -> repository.headBranch(record.slug) },
                                 onProjectCreated = { name, selection, templateName, config ->
                                     // Scaffold and register first. If setup is interrupted, the
                                     // project is already in Recents and can be opened again.
@@ -246,11 +250,7 @@ class MainActivity : ComponentActivity() {
                                                 id = record.id,
                                             ),
                                         )
-                                        if (selection.tab == TemplateTab.Web) {
-                                            nav.navigate("ide")
-                                        } else {
-                                            nav.navigate("project-setup")
-                                        }
+                                        nav.navigate("ide")
                                         null
                                     }.getOrElse { failure ->
                                         failure.message ?: "Could not create the project."
@@ -259,7 +259,7 @@ class MainActivity : ComponentActivity() {
                                 // A clone already owns its directory and its record, so it carries
                                 // its own slug rather than deriving one from the name.
                                 onProjectCloned = { record -> openEncoded(encodeRecord(record)) },
-                                onOpenRecent = { nav.navigate("recent") },
+                                onOpenProject = { record -> openEncoded(encodeRecord(record)) },
                             )
                         }
 
@@ -342,6 +342,15 @@ class MainActivity : ComponentActivity() {
                                             settings = settingsStore.write(
                                                 settings.withOption(OptionSetting.THEME, next),
                                             )
+                                        },
+                                        projectRecords = recentProjects,
+                                        onOpenProject = { record ->
+                                            encoded = encodeRecord(record)
+                                        },
+                                        onNewProject = {
+                                            nav.navigate("hero") {
+                                                popUpTo("ide") { inclusive = true }
+                                            }
                                         },
                                     )
                                 }

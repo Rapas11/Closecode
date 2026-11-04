@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -25,6 +26,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -44,11 +46,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.closecode.ai.OpenCode
+import com.closecode.ai.OpenCodeDefaults
 import com.closecode.ai.OpenCodeLogLine
 import com.closecode.ai.OpenCodePhase
 import com.closecode.ai.OpenCodeService
 import com.closecode.ai.OpenCodeStatus
-import com.closecode.ai.retryCountdownText
 import com.closecode.ai.sameProjectPath
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
@@ -56,15 +58,17 @@ import com.closecode.ui.theme.Sans
 import java.io.File
 
 /**
- * The AI tab: OpenCode, running on this phone.
+ * The OpenCode tool: OpenCode, running on this phone.
  *
- * The tab is a launcher, not a second chat implementation. OpenCode ships its own complete web
- * interface and this app starts the server and hands the screen to it. The launcher exists only
- * for the states the web page cannot explain: before the first start, while the binary is being
- * fetched, when the server belongs to another project, and when it stopped.
+ * The panel is a launcher, not a second chat implementation. OpenCode ships its own complete web
+ * interface and this app starts the server and hands the screen to it. The panel exists only for
+ * the states the web page cannot explain: before the first start, while the server is coming up,
+ * when the server belongs to another project, when it stopped, and when it is running in the
+ * background.
  *
- * The page opens by itself once a server answers. After that, coming back to the tab shows the
- * running card with Chat, Authenticate, Open in browser and Stop.
+ * The layout follows screens 46 to 49 of the light handoff. The real runtime is unchanged: the
+ * Start button starts the same server, Cancel stops it, Hide leaves the panel with the server
+ * still running, and Chat opens OpenCode's own page.
  */
 @Composable
 fun OpenCodeTab(
@@ -74,8 +78,10 @@ fun OpenCodeTab(
     onChat: (String) -> Unit,
     onAuthenticate: () -> Unit,
     modifier: Modifier = Modifier,
+    onHide: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val c = LocalPageColors.current
     val running = OpenCode.state.value
     val ownStatus = when {
         running.projectDirectory.isBlank() -> running
@@ -91,13 +97,16 @@ fun OpenCodeTab(
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
+    val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
     var batteryDialog by remember { mutableStateOf(false) }
-    var details by remember { mutableStateOf(false) }
     var logOpen by remember { mutableStateOf(false) }
     var switchTo by remember { mutableStateOf<OpenCodeStatus?>(null) }
 
     if (logOpen) {
-        OpenCodeLogPage(onBack = { logOpen = false })
+        OpenCodeLogPage(
+            onBack = { logOpen = false },
+            liveLines = status.log.map { it.text },
+        )
         return
     }
 
@@ -153,8 +162,8 @@ fun OpenCodeTab(
         reallyStart()
     }
 
-    fun openInBrowser() {
-        openOpenCodeInBrowser(context, status.pageUrl.ifBlank { status.url })
+    fun hidePanel() {
+        if (onHide != null) onHide() else backDispatcher?.onBackPressed()
     }
 
     // Open the page once for every server that comes up for this project. The generation is
@@ -174,79 +183,57 @@ fun OpenCodeTab(
     Column(
         modifier
             .fillMaxSize()
-            .background(LocalPageColors.current.bg)
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
+            .background(c.mock.panel),
     ) {
-        when {
-            otherStatus != null -> OtherProjectCard(
-                other = otherStatus,
-                projectName = projectName,
-                onStop = ::stopServer,
-                onStopAndStart = ::stopOtherAndStart,
-            )
-
-            else -> when (status.phase) {
-                OpenCodePhase.Idle -> LauncherCard(
+        PanelHeader(projectName)
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+        ) {
+            when {
+                otherStatus != null -> OtherProjectCard(
+                    other = otherStatus,
                     projectName = projectName,
-                    onStart = ::startServer,
-                )
-
-                OpenCodePhase.Starting -> StartingCard(
-                    status = status,
-                    onCancel = ::stopServer,
-                )
-
-                OpenCodePhase.Running -> RunningCard(
-                    status = status,
-                    onChat = { onChat(status.pageUrl.ifBlank { status.url }) },
-                    onAuthenticate = onAuthenticate,
-                    onOpenInBrowser = ::openInBrowser,
                     onStop = ::stopServer,
-                    details = details,
-                    onDetails = { details = !details },
+                    onStopAndStart = ::stopOtherAndStart,
                 )
 
-                OpenCodePhase.ConnectionLost -> ReconnectingCard(
-                    status = status,
-                    onStop = ::stopServer,
-                )
-
-                OpenCodePhase.Failed -> FailedCard(
-                    status = status,
-                    onRetry = ::startServer,
-                    details = details,
-                    onDetails = { details = !details },
-                )
-            }
-        }
-
-        if (details && status.log.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            LogSection(status.log)
-        }
-
-        Spacer(Modifier.height(16.dp))
-        val c = LocalPageColors.current
-        Card {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "Server log",
-                        color = c.tx,
-                        fontSize = 15.sp,
-                        fontFamily = Sans,
-                        fontWeight = FontWeight.Medium,
+                else -> when (status.phase) {
+                    OpenCodePhase.Idle -> LauncherCard(
+                        projectName = projectName,
+                        onStart = ::startServer,
                     )
-                    Text(
-                        text = "What the OpenCode server printed, in a file.",
-                        color = c.mu,
-                        fontSize = 12.sp,
-                        fontFamily = Sans,
+
+                    OpenCodePhase.Starting -> StartingScreen(
+                        status = status,
+                        onCancel = ::stopServer,
+                        onFullscreen = { logOpen = true },
+                    )
+
+                    OpenCodePhase.Running -> RunningCard(
+                        status = status,
+                        projectName = projectName,
+                        onChat = { onChat(status.pageUrl.ifBlank { status.url }) },
+                        onStop = ::stopServer,
+                        onHide = ::hidePanel,
+                    )
+
+                    OpenCodePhase.ConnectionLost -> ReconnectingScreen(
+                        status = status,
+                        onFullscreen = { logOpen = true },
+                    )
+
+                    OpenCodePhase.Failed -> FailedCard(
+                        status = status,
+                        onRetry = ::startServer,
+                        onFullscreen = { logOpen = true },
                     )
                 }
-                SecondaryAction(label = "Open", onClick = { logOpen = true })
             }
+            Spacer(Modifier.height(20.dp))
         }
     }
 
@@ -279,24 +266,46 @@ fun OpenCodeTab(
     }
 }
 
-/** The tab before anything has been started. */
+/** Screen 46's panel title: OpenCode, and the project it will run for. */
+@Composable
+private fun PanelHeader(projectName: String) {
+    val c = LocalPageColors.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 14.dp),
+    ) {
+        Text(
+            text = "OpenCode",
+            color = c.mock.text,
+            fontSize = 21.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        Text(
+            text = projectName,
+            color = c.mock.muted,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            maxLines = 1,
+        )
+    }
+}
+
+/** Screen 46: the card before anything has been started. */
 @Composable
 private fun LauncherCard(
     projectName: String,
     onStart: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    Card {
+    OpenCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(c.panel2),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(text = "</>", color = c.mu, fontSize = 12.sp, fontFamily = Mono)
-            }
+            Tile(
+                background = c.mock.purpleBg,
+                tint = c.mock.purple,
+            )
             Column(
                 Modifier
                     .weight(1f)
@@ -304,39 +313,227 @@ private fun LauncherCard(
             ) {
                 Text(
                     text = "OpenCode",
-                    color = c.tx,
-                    fontSize = 14.sp,
+                    color = c.mock.text,
+                    fontSize = 14.5.sp,
                     fontFamily = Sans,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
                 )
                 Text(
                     text = projectName,
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
+                    maxLines = 1,
                 )
             }
-            StatusDot(c.mu)
         }
         Spacer(Modifier.height(12.dp))
         Text(
-            text = "OpenCode runs on this phone and opens its own chat and coding page. " +
-                "This project is its working folder.",
-            color = c.mu,
-            fontSize = 12.sp,
+            text = "Starts OpenCode on this phone for the open project.",
+            color = c.mock.muted,
+            fontSize = 12.5.sp,
             fontFamily = Sans,
             lineHeight = 18.sp,
         )
+        Spacer(Modifier.height(14.dp))
+        PrimaryAction(
+            label = "Start",
+            icon = CcIcons.Play,
+            onClick = onStart,
+        )
+    }
+}
+
+/** Screen 47: the four steps while the server comes up, then the build log. */
+@Composable
+private fun StartingScreen(
+    status: OpenCodeStatus,
+    onCancel: () -> Unit,
+    onFullscreen: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    val steps = startupSteps(status)
+    OpenCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Starting OpenCode",
+                color = c.mock.text,
+                fontSize = 14.5.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        steps.forEach { step ->
+            StartupStepRow(step)
+        }
+        if (status.downloading) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "Downloading ${status.downloadPercent}%",
+                color = c.mock.muted,
+                fontSize = 11.5.sp,
+                fontFamily = Sans,
+            )
+            Spacer(Modifier.height(6.dp))
+            DownloadBar(status.downloadPercent)
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+    BuildInfoBox(
+        lines = status.log,
+        onFullscreen = onFullscreen,
+    )
+    Spacer(Modifier.height(12.dp))
+    SecondaryAction(label = "Cancel", onClick = onCancel)
+}
+
+/** Screen 49: connection lost, with the automatic restart countdown and no button to press. */
+@Composable
+private fun ReconnectingScreen(
+    status: OpenCodeStatus,
+    onFullscreen: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    val steps = startupSteps(status)
+    OpenCard {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(c.mock.dangerBg)
+                .padding(12.dp),
+        ) {
+            Text(
+                text = if (status.retryInSeconds > 0) {
+                    "Connection lost. Starting again in ${status.retryInSeconds} s"
+                } else {
+                    "Connection lost. Starting again…"
+                },
+                color = c.mock.danger,
+                fontSize = 12.5.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 17.sp,
+            )
+        }
         Spacer(Modifier.height(12.dp))
-        PrimaryAction(label = "Open OpenCode", onClick = onStart)
+        steps.forEach { step ->
+            StartupStepRow(step)
+        }
+    }
+    Spacer(Modifier.height(12.dp))
+    BuildInfoBox(
+        lines = status.log,
+        onFullscreen = onFullscreen,
+    )
+}
+
+/** Screen 48: the server is up, with the address and the three things to do with it. */
+@Composable
+private fun RunningCard(
+    status: OpenCodeStatus,
+    projectName: String,
+    onChat: () -> Unit,
+    onStop: () -> Unit,
+    onHide: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    OpenCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(c.mock.green)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "Running",
+                color = c.mock.text,
+                fontSize = 14.5.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        StatusRow(
+            label = "Version",
+            value = status.version.ifBlank { OpenCodeDefaults.VERSION },
+        )
+        StatusRow(
+            label = "URL",
+            value = status.url.removePrefix("http://").removePrefix("https://"),
+            mono = true,
+        )
+        StatusRow(
+            label = "Project",
+            value = status.projectName.ifBlank { projectName },
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.weight(1.35f)) {
+                PrimaryAction(
+                    label = "Chat",
+                    icon = CcIcons.Sparkle,
+                    onClick = onChat,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(Modifier.weight(1f)) {
+                SecondaryAction(
+                    label = "Stop",
+                    onClick = onStop,
+                    danger = true,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(Modifier.weight(1f)) {
+                SecondaryAction(
+                    label = "Hide",
+                    onClick = onHide,
+                )
+            }
+        }
+    }
+}
+
+/** Failed: the exact reason and one button that tries again. */
+@Composable
+private fun FailedCard(
+    status: OpenCodeStatus,
+    onRetry: () -> Unit,
+    onFullscreen: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    OpenCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            StatusDot(c.mock.danger)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "OpenCode could not start",
+                color = c.mock.text,
+                fontSize = 14.5.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "The first start downloads OpenCode once. Later starts use the copy " +
-                "already on the phone.",
-            color = c.mu,
-            fontSize = 11.sp,
-            fontFamily = Sans,
-            lineHeight = 16.sp,
+            text = status.error ?: "The server did not start.",
+            color = c.mock.danger,
+            fontSize = 12.sp,
+            fontFamily = Mono,
+            lineHeight = 17.sp,
+        )
+        Spacer(Modifier.height(12.dp))
+        PrimaryAction(label = "Try again", onClick = onRetry)
+    }
+    if (status.log.isNotEmpty()) {
+        Spacer(Modifier.height(12.dp))
+        BuildInfoBox(
+            lines = status.log,
+            onFullscreen = onFullscreen,
         )
     }
 }
@@ -351,21 +548,21 @@ private fun OtherProjectCard(
     val c = LocalPageColors.current
     val runningName = other.projectName.ifBlank { other.projectDirectory }
     val verb = if (other.phase == OpenCodePhase.Starting) "starting" else "running"
-    Card {
+    OpenCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(if (other.phase == OpenCodePhase.Starting) c.amber else c.success)
-            Spacer(Modifier.width(10.dp))
+            StatusDot(if (other.phase == OpenCodePhase.Starting) c.mock.warning else c.mock.green)
+            Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = "OpenCode is $verb on $runningName",
-                    color = c.tx,
-                    fontSize = 14.sp,
+                    color = c.mock.text,
+                    fontSize = 14.5.sp,
                     fontFamily = Sans,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.SemiBold,
                 )
                 Text(
                     text = projectName,
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                 )
@@ -375,12 +572,12 @@ private fun OtherProjectCard(
         Text(
             text = "Only one OpenCode server runs at a time. Stop $runningName before " +
                 "starting $projectName.",
-            color = c.mu,
-            fontSize = 12.sp,
+            color = c.mock.muted,
+            fontSize = 12.5.sp,
             fontFamily = Sans,
             lineHeight = 18.sp,
         )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(14.dp))
         SecondaryAction(
             label = "Stop $runningName",
             onClick = onStop,
@@ -394,171 +591,175 @@ private fun OtherProjectCard(
     }
 }
 
-/** Starting: download progress if there is one, and a way to cancel. */
+/** One of the four start steps: green tick, blue spinner, or three waiting dots. */
 @Composable
-private fun StartingCard(
-    status: OpenCodeStatus,
-    onCancel: () -> Unit,
-) {
+private fun StartupStepRow(step: StartupStep) {
     val c = LocalPageColors.current
-    Card {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(c.amber)
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = "Starting OpenCode",
-                color = c.tx,
-                fontSize = 15.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Medium,
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(30.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(18.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            when (step.state) {
+                StartupState.Done -> CcIcon(CcIcons.Check, c.mock.green, 14.dp)
+                StartupState.Now -> CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    color = c.mock.blue,
+                    strokeWidth = 2.dp,
+                )
+                StartupState.Waiting -> WaitingDots()
+            }
+        }
+        Spacer(Modifier.width(9.dp))
+        Text(
+            text = step.label,
+            color = when (step.state) {
+                StartupState.Done -> c.mock.text2
+                StartupState.Now -> c.mock.blue
+                StartupState.Waiting -> c.mock.muted
+            },
+            fontSize = 13.sp,
+            fontFamily = Sans,
+            fontWeight = if (step.state == StartupState.Now) {
+                FontWeight.Medium
+            } else {
+                FontWeight.Normal
+            },
+        )
+    }
+}
+
+@Composable
+private fun WaitingDots() {
+    val c = LocalPageColors.current
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp),
+    ) {
+        repeat(3) {
+            Box(
+                Modifier
+                    .size(2.5.dp)
+                    .clip(CircleShape)
+                    .background(c.mock.faint),
             )
         }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = if (status.downloading) {
-                "Downloading · ${status.downloadPercent}%"
-            } else {
-                "Getting the server ready. Keep the app open."
-            },
-            color = c.mu,
-            fontSize = 12.sp,
-            fontFamily = Sans,
-        )
-        Spacer(Modifier.height(12.dp))
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(c.panel2),
-        ) {
-            val fraction = if (status.downloading) {
-                status.downloadPercent.coerceIn(0, 100) / 100f
-            } else {
-                0f
-            }
-            if (fraction > 0f) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(fraction)
-                        .fillMaxHeight()
-                        .background(c.primary),
+    }
+}
+
+/** The BUILD INFO box from screens 47 and 49. */
+@Composable
+private fun BuildInfoBox(
+    lines: List<OpenCodeLogLine>,
+    onFullscreen: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    val clipboard = LocalClipboardManager.current
+    val shown = lines.takeLast(6)
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(c.mock.card)
+            .border(1.dp, c.mock.border, RoundedCornerShape(14.dp))
+            .padding(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "BUILD INFO",
+                color = c.mock.muted,
+                fontSize = 10.5.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.6.sp,
+            )
+            Spacer(Modifier.weight(1f))
+            BoxLink(
+                label = "Copy log",
+                onClick = {
+                    clipboard.setText(AnnotatedString(lines.joinToString("\n") { it.text }))
+                },
+            )
+            Spacer(Modifier.width(10.dp))
+            BoxLink(label = "Fullscreen", onClick = onFullscreen)
+        }
+        Spacer(Modifier.height(8.dp))
+        if (shown.isEmpty()) {
+            Text(
+                text = "Waiting for the first line…",
+                color = c.mock.muted,
+                fontSize = 10.5.sp,
+                fontFamily = Mono,
+                lineHeight = 15.sp,
+            )
+        } else {
+            shown.forEach { line ->
+                Text(
+                    text = line.text,
+                    color = if (line.warning) c.mock.danger else c.mock.text2,
+                    fontSize = 10.5.sp,
+                    fontFamily = Mono,
+                    lineHeight = 15.sp,
                 )
             }
         }
-        Spacer(Modifier.height(14.dp))
-        SecondaryAction(label = "Cancel", onClick = onCancel, danger = true)
     }
 }
 
-/** Running, with the page closed: the address, the version, and the way back in. */
 @Composable
-private fun RunningCard(
-    status: OpenCodeStatus,
-    onChat: () -> Unit,
-    onAuthenticate: () -> Unit,
-    onOpenInBrowser: () -> Unit,
-    onStop: () -> Unit,
-    details: Boolean,
-    onDetails: () -> Unit,
-) {
+private fun BoxLink(label: String, onClick: () -> Unit) {
     val c = LocalPageColors.current
-    Card {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(c.success)
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = "OpenCode is running",
-                color = c.tx,
-                fontSize = 15.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Medium,
+    Text(
+        text = label,
+        color = c.mock.accent,
+        fontSize = 11.sp,
+        fontFamily = Sans,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 3.dp, vertical = 2.dp),
+    )
+}
+
+@Composable
+private fun DownloadBar(percent: Int) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(4.dp)
+            .clip(RoundedCornerShape(2.dp))
+            .background(c.mock.field),
+    ) {
+        val fraction = percent.coerceIn(0, 100) / 100f
+        if (fraction > 0f) {
+            Box(
+                Modifier
+                    .fillMaxWidth(fraction)
+                    .fillMaxHeight()
+                    .background(c.mock.accent),
             )
         }
-        Spacer(Modifier.height(10.dp))
-        StatusRow("Version", status.version.ifBlank { "unknown" })
-        StatusRow("Project", status.projectName)
-        StatusRow("Address", status.url)
-        Spacer(Modifier.height(12.dp))
-        PrimaryAction(label = "Chat", onClick = onChat)
-        Spacer(Modifier.height(8.dp))
-        SecondaryAction(label = "Authenticate", onClick = onAuthenticate)
-        Spacer(Modifier.height(8.dp))
-        SecondaryAction(label = "Open in browser", onClick = onOpenInBrowser)
-        Spacer(Modifier.height(8.dp))
-        SecondaryAction(label = "Stop server", onClick = onStop, danger = true)
-        Spacer(Modifier.height(8.dp))
-        SmallButton(label = if (details) "Hide details" else "Show details", onClick = onDetails)
-        Spacer(Modifier.height(10.dp))
-        Text(
-            text = "If Chat reports missing credentials, Authenticate opens a terminal with " +
-                "OpenCode's provider login. Finish there, come back, and tap Chat.",
-            color = c.mu,
-            fontSize = 11.sp,
-            fontFamily = Sans,
-            lineHeight = 16.sp,
-        )
     }
 }
 
-/** Reconnecting: the server went away and the app is bringing it back by itself. */
+/** A 38 dp tinted square holding the sparkle. */
 @Composable
-private fun ReconnectingCard(
-    status: OpenCodeStatus,
-    onStop: () -> Unit,
-) {
-    val c = LocalPageColors.current
-    Card {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(c.amber)
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = "Reconnecting",
-                color = c.tx,
-                fontSize = 15.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Medium,
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            text = "OpenCode stopped answering. ${retryCountdownText(status.retryInSeconds)}.",
-            color = c.mu,
-            fontSize = 12.sp,
-            fontFamily = Sans,
-        )
-        Spacer(Modifier.height(12.dp))
-        SecondaryAction(label = "Stop", onClick = onStop, danger = true)
-    }
-}
-
-/** Failed: the exact reason and one button that tries again. */
-@Composable
-private fun FailedCard(
-    status: OpenCodeStatus,
-    onRetry: () -> Unit,
-    details: Boolean,
-    onDetails: () -> Unit,
-) {
-    val c = LocalPageColors.current
-    Card {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            StatusDot(c.red)
-            Spacer(Modifier.width(10.dp))
-            Text(
-                text = "OpenCode could not start",
-                color = c.tx,
-                fontSize = 15.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.Medium,
-            )
-        }
-        Spacer(Modifier.height(8.dp))
-        ErrorText(status.error ?: "The server did not start.")
-        Spacer(Modifier.height(12.dp))
-        PrimaryAction(label = "Try again", onClick = onRetry)
-        Spacer(Modifier.height(8.dp))
-        SmallButton(label = if (details) "Hide details" else "Show details", onClick = onDetails)
+private fun Tile(background: Color, tint: Color) {
+    Box(
+        Modifier
+            .size(38.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(background),
+        contentAlignment = Alignment.Center,
+    ) {
+        CcIcon(CcIcons.Sparkle, tint, 20.dp)
     }
 }
 
@@ -573,38 +774,38 @@ private fun SwitchProjectDialog(
     Box(
         Modifier
             .fillMaxSize()
-            .background(c.scrim)
+            .background(c.mock.scrim)
             .clickable(onClick = onDismiss),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             Modifier
                 .padding(24.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(12.dp))
-                .padding(16.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(c.mock.panel)
+                .border(1.dp, c.mock.border, RoundedCornerShape(18.dp))
+                .padding(18.dp)
                 .clickable(enabled = false) {},
         ) {
             Column {
                 Text(
                     text = "Switch OpenCode project?",
-                    color = c.tx,
-                    fontSize = 15.sp,
+                    color = c.mock.text,
+                    fontSize = 17.sp,
                     fontFamily = Sans,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = "Currently bound to another project: " +
                         (other.projectName.ifBlank { other.projectDirectory }) +
                         ". Switching stops that server and starts this project.",
-                    color = c.mu,
-                    fontSize = 12.sp,
+                    color = c.mock.muted,
+                    fontSize = 12.5.sp,
                     fontFamily = Sans,
                     lineHeight = 18.sp,
                 )
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(16.dp))
                 PrimaryAction(label = "Switch project", onClick = onSwitch)
                 Spacer(Modifier.height(8.dp))
                 SecondaryAction(label = "Cancel", onClick = onDismiss)
@@ -626,37 +827,37 @@ private fun BatteryDialog(onDismiss: () -> Unit, onOpen: () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(c.scrim)
+            .background(c.mock.scrim)
             .clickable(onClick = onDismiss),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             Modifier
                 .padding(24.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(12.dp))
-                .padding(16.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(c.mock.panel)
+                .border(1.dp, c.mock.border, RoundedCornerShape(18.dp))
+                .padding(18.dp)
                 .clickable(enabled = false) {},
         ) {
             Column {
                 Text(
                     text = "Keep OpenCode running",
-                    color = c.tx,
-                    fontSize = 15.sp,
+                    color = c.mock.text,
+                    fontSize = 17.sp,
                     fontFamily = Sans,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = "Android stops background apps to save battery. Let CloseCode run " +
                         "without that, or the OpenCode server is stopped while you use another app.",
-                    color = c.mu,
-                    fontSize = 12.sp,
+                    color = c.mock.muted,
+                    fontSize = 12.5.sp,
                     fontFamily = Sans,
                     lineHeight = 18.sp,
                 )
-                Spacer(Modifier.height(14.dp))
+                Spacer(Modifier.height(16.dp))
                 PrimaryAction(label = "Open settings", onClick = onOpen)
                 Spacer(Modifier.height(8.dp))
                 SecondaryAction(label = "Not now", onClick = onDismiss)
@@ -665,90 +866,56 @@ private fun BatteryDialog(onDismiss: () -> Unit, onOpen: () -> Unit) {
     }
 }
 
-/** The compact log: the newest lines, and a button that copies the whole thing. */
+/** A card: content colour, 18 dp corners, 14 dp of padding. */
 @Composable
-private fun LogSection(lines: List<OpenCodeLogLine>) {
-    if (lines.isEmpty()) return
-    val c = LocalPageColors.current
-    val clipboard = LocalClipboardManager.current
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = "LOG",
-                color = c.mu,
-                fontSize = 11.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.weight(1f))
-            SmallButton(label = "Copy log") {
-                clipboard.setText(AnnotatedString(lines.joinToString("\n") { it.text }))
-            }
-        }
-        Spacer(Modifier.height(6.dp))
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(c.bg)
-                .border(1.dp, c.ln, RoundedCornerShape(8.dp))
-                .padding(10.dp),
-        ) {
-            Column {
-                lines.takeLast(12).forEach { line ->
-                    Text(
-                        text = line.text,
-                        color = if (line.warning) c.amber else c.mu,
-                        fontSize = 10.5.sp,
-                        fontFamily = Mono,
-                        lineHeight = 15.sp,
-                    )
-                }
-            }
-        }
-    }
-}
-
-/** A card: 8 dp corners, a 1 dp border, 12 dp of padding. */
-@Composable
-private fun Card(content: @Composable () -> Unit) {
+private fun OpenCard(content: @Composable () -> Unit) {
     val c = LocalPageColors.current
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(c.panel)
-            .border(1.dp, c.ln, RoundedCornerShape(8.dp))
-            .padding(12.dp),
+            .clip(RoundedCornerShape(18.dp))
+            .background(c.mock.content)
+            .padding(14.dp),
     ) {
         content()
     }
 }
 
-/** The primary button: 40 dp tall, 8 dp corners, white text. */
+/** The primary button: blurple, 42 dp tall, optional icon. */
 @Composable
-private fun PrimaryAction(label: String, onClick: () -> Unit) {
+private fun PrimaryAction(
+    label: String,
+    onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+) {
     val c = LocalPageColors.current
     Box(
         Modifier
             .fillMaxWidth()
-            .height(40.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(c.primary)
+            .height(42.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(c.mock.accent)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            color = Color.White,
-            fontSize = 13.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Medium,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (icon != null) {
+                CcIcon(icon, c.mock.onAccent, 14.dp)
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(
+                text = label,
+                color = c.mock.onAccent,
+                fontSize = 13.5.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+            )
+        }
     }
 }
 
-/** The other buttons: the panel colour, a border, and the text colour. */
+/** The other buttons: field colour, dark text, 40 dp tall. */
 @Composable
 private fun SecondaryAction(label: String, onClick: () -> Unit, danger: Boolean = false) {
     val c = LocalPageColors.current
@@ -756,41 +923,18 @@ private fun SecondaryAction(label: String, onClick: () -> Unit, danger: Boolean 
         Modifier
             .fillMaxWidth()
             .height(40.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(c.panel2)
-            .border(1.dp, c.ln, RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
+            .background(c.mock.field)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = if (danger) c.red else c.tx,
+            color = if (danger) c.mock.danger else c.mock.text,
             fontSize = 13.sp,
             fontFamily = Sans,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-/** The small button beside a section label. */
-@Composable
-private fun SmallButton(label: String, onClick: () -> Unit) {
-    val c = LocalPageColors.current
-    Box(
-        Modifier
-            .height(28.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(c.panel2)
-            .border(1.dp, c.ln, RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = c.tx,
-            fontSize = 11.sp,
-            fontFamily = Sans,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
         )
     }
 }
@@ -808,31 +952,72 @@ private fun StatusDot(color: Color) {
 
 /** One line of the status card: a label on the left, the value on the right. */
 @Composable
-private fun StatusRow(label: String, value: String) {
+private fun StatusRow(label: String, value: String, mono: Boolean = false) {
     val c = LocalPageColors.current
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(vertical = 5.dp),
+            .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(text = label, color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+        Text(
+            text = label,
+            color = c.mock.muted,
+            fontSize = 12.5.sp,
+            fontFamily = Sans,
+        )
         Spacer(Modifier.weight(1f))
-        Text(text = value, color = c.tx, fontSize = 13.sp, fontFamily = Mono)
+        Text(
+            text = value,
+            color = c.mock.text2,
+            fontSize = if (mono) 11.5.sp else 12.5.sp,
+            fontFamily = if (mono) Mono else Sans,
+            maxLines = 1,
+        )
     }
 }
 
-/** The exact failure text, in the colour that says it is one. */
-@Composable
-private fun ErrorText(text: String) {
-    val c = LocalPageColors.current
-    Text(
-        text = text,
-        color = c.red,
-        fontSize = 12.sp,
-        fontFamily = Mono,
-        lineHeight = 17.sp,
-    )
+private enum class StartupState { Done, Now, Waiting }
+
+private data class StartupStep(val label: String, val state: StartupState)
+
+/**
+ * Maps the real start log and phase onto the four drawn steps.
+ *
+ * The server writes the exact facts into its log ("Project:", "Launch:", "Waiting for"), so the
+ * steps follow the same truth the log shows instead of a separate timer that could disagree with
+ * it. A lost connection starts from step three again, as screen 49 shows.
+ */
+private fun startupSteps(status: OpenCodeStatus): List<StartupStep> {
+    val log = status.log.joinToString("\n") { it.text }.lowercase()
+    val lost = status.phase == OpenCodePhase.ConnectionLost
+    val running = status.phase == OpenCodePhase.Running
+    val checked = lost || running || log.contains("is ready") ||
+        log.contains("installed") || log.contains("project:")
+    val connected = lost || running || log.contains("project:")
+    val server = lost || running || log.contains("launch:") || log.contains("server:")
+    val answered = running
+
+    val done = mutableListOf<Boolean>()
+    done += checked
+    done += connected
+    done += if (lost) false else server
+    done += answered
+
+    val firstOpen = done.indexOfFirst { !it }
+    return listOf(
+        "Checking files",
+        "Connecting your project",
+        "Starting the server",
+        "Waiting for it to answer",
+    ).mapIndexed { index, label ->
+        val state = when {
+            done[index] -> StartupState.Done
+            index == firstOpen -> StartupState.Now
+            else -> StartupState.Waiting
+        }
+        StartupStep(label, state)
+    }
 }
 
 /** Where the AI tab keeps the one-time battery question. */

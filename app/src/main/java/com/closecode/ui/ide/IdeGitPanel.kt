@@ -122,7 +122,7 @@ internal fun displayFolder(path: String): String = path.substringBeforeLast('/',
  * rather than as a crash. Sign-in, remotes and pushing arrive with the GitHub client.
  */
 @Composable
-fun IdeGitPanel(
+private fun LegacyIdeGitPanel(
     projectName: String,
     projectRoot: File?,
     // Bumped by the editor whenever a file is written, created or deleted. CHANGES describes
@@ -1581,7 +1581,7 @@ private fun GitHubSection(
  * so a changed row is never shown as an addition with the old text silently missing.
  */
 @Composable
-internal fun DiffScreen(
+private fun LegacyDiffScreen(
     projectRoot: File?,
     path: String,
     onBack: () -> Unit,
@@ -1964,11 +1964,14 @@ private fun HistorySection(
 
 private fun relativeTime(whenMillis: Long): String {
     val minutes = ((System.currentTimeMillis() - whenMillis) / 60_000).coerceAtLeast(0)
+    val hours = minutes / 60
+    val days = minutes / (24 * 60)
     return when {
         minutes < 1 -> "just now"
         minutes < 60 -> "$minutes min ago"
-        minutes < 24 * 60 -> "${minutes / 60} hr ago"
-        else -> "${minutes / (24 * 60)} days ago"
+        hours < 24L -> if (hours == 1L) "1 hour ago" else "$hours hours ago"
+        days == 1L -> "1 day ago"
+        else -> "$days days ago"
     }
 }
 
@@ -2334,7 +2337,7 @@ private fun historyFilterLabel(filter: Int): String = when (filter) {
  * the funnel limits by time.
  */
 @Composable
-internal fun HistoryPage(
+private fun LegacyHistoryPage(
     projectName: String,
     branch: String,
     projectRoot: File?,
@@ -2739,7 +2742,7 @@ private sealed interface CommitDiffItem {
  * headers, not a hundred full diffs.
  */
 @Composable
-internal fun CommitPage(
+private fun LegacyCommitPage(
     commitId: String,
     projectRoot: File?,
     revision: Int,

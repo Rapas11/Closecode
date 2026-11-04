@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,7 +60,7 @@ enum class ToolAction {
 val ToolRowHeight = 46.dp
 
 /** Height of the keyboard key row: 34 dp keys with 4 dp breathing room top and bottom. */
-val EditorKeyRowHeight = 42.dp
+val EditorKeyRowHeight = 40.dp
 
 /**
  * The keyboard key row: Tab plus every bracket, quote and symbol a phone keyboard hides.
@@ -80,9 +81,9 @@ fun EditorKeyRow(
             .background(c.keyRowBg)
             .border(1.dp, c.divider, RoundedCornerShape(0.dp))
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 4.dp, vertical = 4.dp),
+            .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         EditorKey("Tab", wide = true, onClick = onTab)
         listOf("{", "}", "(", ")", ";", "\"", "=", "[", "]", "'", "<", ">", "/", ":", ",", ".", "|")
@@ -96,19 +97,20 @@ private fun EditorKey(label: String, wide: Boolean, onClick: () -> Unit) {
     val c = LocalPageColors.current
     Box(
         Modifier
-            .width(if (wide) 64.dp else 44.dp)
-            .height(34.dp)
-            .clip(RoundedCornerShape(7.dp))
-            .background(c.keyBg)
+            .width(if (wide) 64.dp else 40.dp)
+            .height(32.dp)
+            .clip(RoundedCornerShape(9.dp))
+            .background(c.mock.field)
             .clickable(onClick = onClick)
             .semantics { contentDescription = if (label == "Tab") "Tab" else label },
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = c.popupText,
+            color = c.mock.text2,
             fontSize = 12.sp,
             fontFamily = Mono,
+            fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
     }

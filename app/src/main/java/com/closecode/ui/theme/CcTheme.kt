@@ -80,6 +80,10 @@ data class LightCcColors(
     override val syntaxVariable: Color = Color(0xFF0A5EA8),
     override val syntaxPlain: Color = Color(0xFF2E3036),
 
+    // -- Search match highlight --
+    override val matchBg: Color = Color(0x33F0C232),
+    override val matchText: Color = Color(0xFF5C4500),
+
     // -- App screens accent colours (from spec inline hexes) --------------------
     override val projectColours: List<Color> = listOf(
         Color(0xFF2563EB),
@@ -145,6 +149,10 @@ data class DarkCcColors(
     override val syntaxVariable: Color = Color(0xFF9CDCFE),
     override val syntaxPlain: Color = Color(0xFFDBDEE1),
 
+    // -- Search match highlight --
+    override val matchBg: Color = Color(0x33F0C232),
+    override val matchText: Color = Color(0xFFFFD166),
+
     // -- App screens accent colours (same hues as light) ------------------------
     override val projectColours: List<Color> = listOf(
         Color(0xFF2563EB),
@@ -197,6 +205,8 @@ interface CcColors {
     val syntaxComment: Color
     val syntaxVariable: Color
     val syntaxPlain: Color
+    val matchBg: Color
+    val matchText: Color
     val projectColours: List<Color>
     val dim: Color
     val dimFirstDialog: Color

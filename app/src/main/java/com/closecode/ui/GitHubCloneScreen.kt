@@ -53,7 +53,7 @@ import com.closecode.ui.github.GitHubClone
 import com.closecode.ui.github.GitHubRepo
 import com.closecode.ui.github.needsAuthentication
 import com.closecode.ui.ide.CcIcon
-import com.closecode.ui.ide.GitHubSignInBody
+import com.closecode.ui.ide.GitHubSignIn
 import com.closecode.ui.ide.SignInAction
 import com.closecode.ui.ide.describeFailure
 import com.closecode.ui.project.ProjectRecord
@@ -328,21 +328,7 @@ fun GitHubCloneScreen(
 
                         OrDivider()
 
-                        if (signingIn) {
-                            GitHubSignInBody(
-                                onSignedIn = { fresh ->
-                                    onToken(fresh)
-                                    signingIn = false
-                                    val retry = retryAfterSignIn
-                                    retryAfterSignIn = null
-                                    failure = null
-                                    authFailure = false
-                                    retry?.invoke(fresh)
-                                },
-                                onCancel = { signingIn = false },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else if (token == null) {
+                        if (token == null) {
                             // Signed out: the card says what signing in unlocks. Public links
                             // above work without it, so the form stays usable either way.
                             com.closecode.ui.components.ScreenCard {
@@ -418,6 +404,27 @@ fun GitHubCloneScreen(
                 }
             }
         }
+
+        // The sign-in asked for from this screen is a full page on top of everything, never an
+        // inline card: its body owns a vertical scroll, and nesting that scroll inside the list
+        // column above measured one infinity against another and took the app down
+        // (IllegalStateException, CheckScrollableContainerConstraints).
+        if (signingIn) {
+            Box(Modifier.fillMaxSize().background(c.mock.page)) {
+                GitHubSignIn(
+                    onSignedIn = { fresh ->
+                        onToken(fresh)
+                        signingIn = false
+                        val retry = retryAfterSignIn
+                        retryAfterSignIn = null
+                        failure = null
+                        authFailure = false
+                        retry?.invoke(fresh)
+                    },
+                    onDismiss = { signingIn = false },
+                )
+            }
+        }
     }
 }
 
@@ -434,19 +441,18 @@ private fun CloneFailure(
     onAuthenticate: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(14.dp)
     Row(
         Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(c.red.copy(alpha = 0.10f))
-            .border(1.dp, c.red.copy(alpha = 0.45f), shape)
+            .background(c.mock.dangerBg)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = message,
-            color = c.red,
+            color = c.mock.danger,
             fontSize = 12.5.sp,
             fontFamily = Sans,
             lineHeight = 17.sp,

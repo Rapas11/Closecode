@@ -237,6 +237,16 @@ internal fun encodeCommands(commands: List<String>): String = commands.joinToStr
 internal fun decodeCommands(raw: String?): List<String> =
     raw.orEmpty().split('\u001F').map { it.trim() }.filter { it.isNotEmpty() }
 
+/**
+ * A saved entry may name itself: "Safe push\u0000git push --force" shows the name on the card
+ * and sends only the command to the prompt. Entries without a NUL are the command alone.
+ */
+internal fun splitAlias(entry: String): Pair<String?, String> {
+    val cut = entry.indexOf('\u0000')
+    if (cut <= 0) return null to entry
+    return entry.take(cut).trim() to entry.substring(cut + 1)
+}
+
 /** Preference key for the Commands sheet shelf. Global, not per project: tools are tools. */
 internal const val TERMINAL_COMMANDS_KEY = "terminal.commands"
 

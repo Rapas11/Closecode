@@ -19,10 +19,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -47,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -774,6 +777,7 @@ fun IdeNameDialog(
     onDismiss: () -> Unit,
     initial: String = "",
     confirmLabel: String = "Create",
+    horizontalBias: Float = 0f,
 ) {
     val c = LocalPageColors.current
     // Keyed on the value it starts with: a dialog that swaps one target for another without
@@ -791,11 +795,12 @@ fun IdeNameDialog(
                 indication = null,
                 onClick = onDismiss,
             ),
-        contentAlignment = Alignment.Center,
+        contentAlignment = BiasAlignment(horizontalBias, 0f),
     ) {
         Column(
             Modifier
                 .padding(horizontal = 28.dp)
+                .widthIn(max = 340.dp)
                 // Above the keyboard: a centered dialog on a small screen would otherwise sit
                 // half under it, with the buttons the first thing to go.
                 .imePadding()
@@ -1024,4 +1029,456 @@ private fun SearchOptionItem(
         },
         onClick = onToggle,
     )
+}
+
+/** What a run finished with: the APK it produced, its size and how long the build took. */
+internal data class RunResultInfo(
+    val ok: Boolean,
+    val apkName: String,
+    val sizeMb: Double,
+    val seconds: Long,
+    val message: String = "",
+)
+
+/**
+ * The run sheet (screen 25): what the bottom card's Run button opens before anything runs —
+ * build type, whether the finished app opens itself, and the live build card while it runs with
+ * Stop within reach. Nothing here starts a build silently; the sheet is the one place a run
+ * is chosen, and its buttons are the only doors in and out.
+ */
+@Composable
+internal fun IdeRunSheet(
+    appName: String,
+    buildType: String,
+    onBuildType: (String) -> Unit,
+    openAfterInstall: Boolean,
+    onOpenAfterInstall: (Boolean) -> Unit,
+    building: Boolean,
+    progress: Float,
+    steps: List<BuildStepUi>,
+    canRun: Boolean,
+    onStop: () -> Unit,
+    onRun: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    androidx.activity.compose.BackHandler { onDismiss() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(c.scrim)
+            .clickable(
+                interactionSource = MutableInteractionSource(),
+                indication = null,
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = MutableInteractionSource(),
+                    indication = null,
+                    onClick = {},
+                )
+                .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+                .background(c.mock.page)
+                .navigationBarsPadding()
+                .padding(horizontal = 18.dp, vertical = 12.dp),
+        ) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .width(44.dp)
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(c.mock.border),
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Run $appName",
+                    color = c.mock.text,
+                    fontSize = 20.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = onDismiss)
+                        .semantics { contentDescription = "Close" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(CcIcons.Close, c.mock.muted, 18.dp)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            // What a run costs here: this phone is both the builder and the device, so no
+            // cable, no other machine and no emulator enters the picture.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(c.mock.cardMuted)
+                    .clickable(
+                        interactionSource = MutableInteractionSource(),
+                        indication = null,
+                        onClick = {},
+                    )
+                    .padding(horizontal = 12.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CcIcon(CcIcons.Stack, c.mock.blue, 20.dp)
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = "The app is built and installed on this phone. " +
+                        "You do not need a cable or another device.",
+                    color = c.mock.textSoft,
+                    fontSize = 12.5.sp,
+                    fontFamily = Sans,
+                    lineHeight = 18.sp,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = "BUILD TYPE",
+                color = c.mock.muted,
+                fontSize = 11.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(c.mock.panel)
+                    .padding(4.dp),
+            ) {
+                listOf("Debug", "Release").forEach { option ->
+                    val on = option.equals(buildType, ignoreCase = true)
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(if (on) c.mock.selected else Color.Transparent)
+                            .clickable(enabled = !building) {
+                                if (!on) onBuildType(option)
+                            }
+                            .semantics { contentDescription = "$option build" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = option,
+                            color = if (on) c.mock.text else c.mock.muted,
+                            fontSize = 14.sp,
+                            fontFamily = Sans,
+                            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "Open app after install",
+                        color = c.mock.text,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "Starts it as soon as it is ready",
+                        color = c.mock.muted,
+                        fontSize = 12.5.sp,
+                        fontFamily = Sans,
+                    )
+                }
+                com.closecode.ui.components.DesignSwitch(
+                    checked = openAfterInstall,
+                    onChange = onOpenAfterInstall,
+                )
+            }
+            if (building || steps.any { it.state != StepState.PENDING }) {
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
+                        .background(c.mock.panel)
+                        .clickable(
+                            interactionSource = MutableInteractionSource(),
+                            indication = null,
+                            onClick = {},
+                        )
+                        .padding(horizontal = 14.dp, vertical = 14.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (building) "Building…" else "Build",
+                            color = c.mock.text,
+                            fontSize = 15.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = "${(progress * 100).toInt().coerceIn(0, 100)}%",
+                            color = c.mock.text,
+                            fontSize = 14.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(c.mock.field),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(c.mock.accent),
+                        )
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    steps.forEach { step ->
+                        Row(
+                            Modifier.padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            when (step.state) {
+                                StepState.DONE -> CcIcon(CcIcons.Check, c.mock.green, 15.dp)
+                                StepState.FAILED -> CcIcon(CcIcons.Close, c.mock.danger, 15.dp)
+                                StepState.RUNNING ->
+                                    androidx.compose.material3.CircularProgressIndicator(
+                                        strokeWidth = 2.dp,
+                                        color = c.mock.accent,
+                                        modifier = Modifier.size(13.dp),
+                                    )
+                                StepState.PENDING -> Text(
+                                    text = "⋮",
+                                    color = c.mock.faint,
+                                    fontSize = 11.sp,
+                                    fontFamily = Mono,
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = step.label,
+                                color = when (step.state) {
+                                    StepState.DONE -> c.mock.green
+                                    StepState.RUNNING -> c.mock.accent
+                                    StepState.FAILED -> c.mock.danger
+                                    StepState.PENDING -> c.mock.muted
+                                },
+                                fontSize = 12.5.sp,
+                                fontFamily = Sans,
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.mock.field)
+                        .clickable(enabled = building, onClick = onStop)
+                        .semantics { contentDescription = "Stop building" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Stop",
+                        color = c.mock.text.copy(alpha = if (building) 1f else 0.35f),
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Box(
+                    Modifier
+                        .weight(1.3f)
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.mock.green)
+                        .clickable(enabled = canRun && !building, onClick = onRun)
+                        .semantics { contentDescription = "Run" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CcIcon(CcIcons.Play, c.mock.onGreen, 17.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Run",
+                            color = c.mock.onGreen.copy(alpha = if (canRun && !building) 1f else 0.45f),
+                            fontSize = 15.5.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The run page (screen 26): what a run launched from the sheet lands on when it finished and
+ * did not open the app itself. The APK's name, size and seconds, then the two doors: open
+ * the installed app, or the build log's output.
+ */
+@Composable
+internal fun IdeRunFinishedPage(
+    result: RunResultInfo,
+    onBack: () -> Unit,
+    onOpenApp: () -> Unit,
+    onOpenLog: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    androidx.activity.compose.BackHandler { onBack() }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(c.mock.page)
+            .statusBarsPadding(),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            com.closecode.ui.components.PageBackButton(onBack = onBack)
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = "Run",
+                color = c.mock.text,
+                fontSize = 16.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = if (result.ok) "Build finished" else "Build failed",
+                color = c.mock.muted,
+                fontSize = 12.5.sp,
+                fontFamily = Sans,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.height(if (result.ok) 88.dp else 120.dp))
+            Box(
+                Modifier
+                    .size(84.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(
+                        if (result.ok) c.mock.green.copy(alpha = 0.16f) else c.mock.danger.copy(alpha = 0.14f),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(CcIcons.Check, c.mock.green, 34.dp)
+            }
+            Spacer(Modifier.height(18.dp))
+            Text(
+                text = if (result.ok) "Built and installed" else "Build failed",
+                color = c.mock.text,
+                fontSize = 21.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = if (result.ok) {
+                    "${result.apkName} · %.1f MB · ${result.seconds} s".format(result.sizeMb)
+                } else {
+                    result.message.ifBlank { "The build did not finish. See the output." }
+                },
+                color = c.mock.muted,
+                fontSize = 12.5.sp,
+                fontFamily = Sans,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Spacer(Modifier.height(26.dp))
+            if (result.ok) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.mock.green)
+                        .clickable(onClick = onOpenApp)
+                        .semantics { contentDescription = "Open app" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CcIcon(CcIcons.Play, c.mock.onGreen, 16.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Open app",
+                            color = c.mock.onGreen,
+                            fontSize = 15.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(c.mock.field)
+                    .clickable(onClick = onOpenLog)
+                    .semantics { contentDescription = "Build output" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CcIcon(CcIcons.Terminal, c.mock.text, 16.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Build output",
+                        color = c.mock.text,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+    }
 }

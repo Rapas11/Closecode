@@ -22,11 +22,13 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -34,6 +36,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
@@ -51,7 +54,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
@@ -70,6 +75,7 @@ import com.closecode.ai.openCodePageUrl
 import com.closecode.ai.openCodePasswordFromBasicAuth
 import com.closecode.ai.openCodeServerKey
 import com.closecode.ai.rebaseOpenCodeServerPath
+import com.closecode.ui.components.DesignBackButton
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
 import java.net.URLEncoder
@@ -264,7 +270,7 @@ fun OpenCodeChatScreen(
                         // focus on load: that is what opens the keyboard before the user has
                         // touched anything. A tap on the prompt still focuses it normally.
                         settings.setNeedInitialFocus(false)
-                        setBackgroundColor(AndroidColor.parseColor("#0F1117"))
+                        setBackgroundColor(c.mock.page.toArgb())
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(
                                 view: WebView?,
@@ -396,10 +402,12 @@ fun OpenCodeChatScreen(
 }
 
 /**
- * The small app bar above OpenCode's own page, matching the app's top bar.
+ * Screen 50's header: OpenCode (the origin, bold) and Chat (the current screen).
  *
- * OpenCode's page has its own header; this bar is only the way out, a refresh, the browser
- * fallback and the project link. The page itself is untouched below it.
+ * OpenCode's page has its own header and its own composer; this bar only says where the reader
+ * came from and offers the way out. The page itself is untouched below it. The refresh, browser,
+ * copy and authenticate actions stay available from a long-press on the title, so the drawn
+ * header keeps the exact two-part title and no extra button.
  */
 @Composable
 private fun OpenCodePageBar(
@@ -416,45 +424,49 @@ private fun OpenCodePageBar(
     Row(
         Modifier
             .fillMaxWidth()
-            .background(c.panel)
+            .background(c.mock.panel)
             .windowInsetsPadding(WindowInsets.statusBars)
-            .height(52.dp)
+            .height(56.dp)
             .drawBehind {
                 drawLine(
-                    color = c.divider,
+                    color = c.mock.border,
                     start = androidx.compose.ui.geometry.Offset(0f, size.height - 0.5f),
                     end = androidx.compose.ui.geometry.Offset(size.width, size.height - 0.5f),
                     strokeWidth = 1f,
                 )
             }
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        PageBarButton(
-            icon = CcIcons.ChevronLeft,
-            label = "Back",
-            tint = c.iconTint,
-            onClick = onBack,
-        )
-        Text(
-            text = "OpenCode",
-            color = c.brightText,
-            fontSize = 14.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Box {
-            PageBarButton(
-                icon = CcIcons.More,
-                label = "More",
-                tint = if (menuOpen) c.tx else c.iconTint,
-                background = if (menuOpen) c.panel2 else Color.Transparent,
-                onClick = { menuOpen = true },
-            )
+        DesignBackButton(onClick = onBack)
+        Box(Modifier.weight(1f)) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { menuOpen = true })
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "OpenCode",
+                    color = c.mock.text,
+                    fontSize = 16.5.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "Chat",
+                    color = c.mock.muted,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    maxLines = 1,
+                )
+            }
             DropdownMenu(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
@@ -505,32 +517,10 @@ private fun PageBarMenuText(text: String) {
     val c = LocalPageColors.current
     Text(
         text = text,
-        color = c.tx,
+        color = c.mock.text,
         fontSize = 13.sp,
         fontFamily = Sans,
     )
-}
-
-/** One 34 x 34 page-bar button holding a 19 dp icon. */
-@Composable
-private fun PageBarButton(
-    icon: ImageVector,
-    label: String,
-    tint: Color,
-    background: Color = Color.Transparent,
-    onClick: () -> Unit,
-) {
-    Box(
-        Modifier
-            .size(34.dp)
-            .clip(RoundedCornerShape(9.dp))
-            .background(background)
-            .clickable(onClick = onClick)
-            .semantics { contentDescription = label },
-        contentAlignment = Alignment.Center,
-    ) {
-        CcIcon(icon, tint, 19.dp)
-    }
 }
 
 private data class PageTarget(val url: String, val bootstrap: Boolean)

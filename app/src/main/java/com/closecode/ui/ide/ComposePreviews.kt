@@ -930,7 +930,7 @@ private fun ScreenCardView(
                             androidx.compose.ui.graphics.Color.White
                         },
                     )
-                    .border(3.dp, Color(0xFF232938), RoundedCornerShape(16.dp))
+                    .border(3.dp, c.ln, RoundedCornerShape(16.dp))
                     .combinedClickable(onClick = onTap, onLongClick = onLongPress)
                     .padding(12.dp),
                 contentAlignment = Alignment.TopCenter,

@@ -37,6 +37,8 @@ import com.closecode.ui.model.LanguageOptions
 import com.closecode.ui.model.MinSdkOptions
 import com.closecode.ui.model.ProjectConfig
 import com.closecode.ui.model.SdkOptions
+import com.closecode.ui.ide.CcIcon
+import com.closecode.ui.ide.CcIcons
 import com.closecode.ui.model.gradleCompatibilityProblem
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
@@ -47,6 +49,7 @@ fun ConfigForm(
     onConfigChange: (ProjectConfig) -> Unit,
     webProject: Boolean,
     modifier: Modifier = Modifier,
+    packageError: String? = null,
 ) {
     val c = LocalPageColors.current
     Column(
@@ -60,7 +63,9 @@ fun ConfigForm(
             ConfigTextField(
                 label = "Package name",
                 value = config.packageName,
-                onValueChange = { onConfigChange(config.copy(packageName = it)) },
+                onValueChange = { onConfigChange(config.copy(packageName = it.trimStart())) },
+                error = packageError,
+                hint = "com.yourname.app",
             )
             ConfigDropdown(
                 label = "Language",
@@ -124,40 +129,64 @@ private fun ConfigTextField(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
+    error: String? = null,
+    hint: String? = null,
 ) {
     val c = LocalPageColors.current
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(15.dp)
     Column {
         Text(
             text = label,
-            color = c.tx,
-            fontSize = 13.sp,
+            color = c.mock.textSoft,
+            fontSize = 12.5.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(bottom = 6.dp),
+            modifier = Modifier.padding(bottom = 7.dp),
         )
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(46.dp)
+                .height(50.dp)
                 .clip(shape)
-                .background(c.cd)
-                .border(1.dp, c.ln, shape)
-                .padding(horizontal = 14.dp),
+                .background(c.mock.input)
+                .border(
+                    1.dp,
+                    if (error != null) c.mock.danger else Color.Transparent,
+                    shape,
+                )
+                .padding(horizontal = 16.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
+            if (value.isEmpty() && hint != null) {
+                Text(
+                    text = hint,
+                    color = c.mock.faint,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                )
+            }
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
                 singleLine = true,
                 textStyle = LocalTextStyle.current.copy(
-                    color = c.tx,
-                    fontSize = 15.sp,
+                    color = c.mock.text,
+                    fontSize = 14.sp,
                     fontFamily = Sans,
                 ),
-                cursorBrush = SolidColor(c.ac),
+                cursorBrush = SolidColor(c.mock.accent),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        error?.let {
+            Text(
+                text = it,
+                color = c.mock.danger,
+                fontSize = 11.5.sp,
+                fontFamily = Sans,
+                lineHeight = 15.sp,
+                modifier = Modifier.padding(start = 4.dp, top = 5.dp),
             )
         }
     }
@@ -172,72 +201,66 @@ private fun ConfigDropdown(
 ) {
     val c = LocalPageColors.current
     var open by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(15.dp)
 
     Column {
         Text(
             text = label,
-            color = c.tx,
-            fontSize = 13.sp,
+            color = c.mock.textSoft,
+            fontSize = 12.5.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(bottom = 6.dp),
+            modifier = Modifier.padding(bottom = 7.dp),
         )
         Box {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .height(46.dp)
+                    .height(50.dp)
                     .clip(shape)
-                    .background(c.cd)
-                    .border(1.dp, c.ln, shape)
+                    .background(c.mock.input)
                     .clickable { open = !open }
-                    .padding(horizontal = 14.dp),
+                    .padding(horizontal = 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = value,
-                    color = c.tx,
-                    fontSize = 15.sp,
+                    color = c.mock.text,
+                    fontSize = 14.sp,
                     fontFamily = Sans,
                     modifier = Modifier.weight(1f),
                 )
-                Text(
-                    text = "⌄",
-                    color = c.mu,
-                    fontSize = 14.sp,
-                    fontFamily = Sans,
-                )
+                CcIcon(CcIcons.Chevron, c.mock.muted, 14.dp)
             }
 
             if (open) {
                 Column(
                     Modifier
                         .align(Alignment.TopStart)
-                        .padding(top = 50.dp)
+                        .padding(top = 54.dp)
                         .fillMaxWidth()
                         .clip(shape)
-                        .background(c.cd)
-                        .border(1.dp, c.ln, shape)
+                        .background(c.mock.panel)
+                        .border(1.dp, c.mock.border, shape)
                 ) {
                     options.forEach { option ->
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .height(40.dp)
+                                .height(44.dp)
                                 .clickable {
                                     onSelect(option)
                                     open = false
                                 }
                                 .background(
-                                    if (option == value) c.ac.copy(alpha = 0.12f) else Color.Transparent
+                                    if (option == value) c.mock.selected else Color.Transparent
                                 )
-                                .padding(horizontal = 14.dp),
+                                .padding(horizontal = 16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
                                 text = option,
-                                color = if (option == value) c.ac else c.tx,
+                                color = if (option == value) c.mock.accent else c.mock.text,
                                 fontSize = 14.sp,
                                 fontFamily = Sans,
                             )

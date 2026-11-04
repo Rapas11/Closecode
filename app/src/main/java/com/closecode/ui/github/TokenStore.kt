@@ -24,7 +24,9 @@ class TokenStore internal constructor(
 ) {
 
     constructor(context: Context) : this(
-        secure = runCatching { EncryptedTokenFile(context.applicationContext) }.getOrNull(),
+        secure = runCatching { EncryptedTokenFile(context.applicationContext) }
+            .onFailure { DebugLog.crumb("GITHUB", "secure storage unavailable · ${it.javaClass.simpleName}") }
+            .getOrNull(),
         legacy = LegacyTokenFile(context.applicationContext),
     )
 
@@ -40,14 +42,17 @@ class TokenStore internal constructor(
                 legacy.clear()
                 DebugLog.crumb("GITHUB", "plain token wiped · no secure storage")
             }
-            return null
+            return sessionToken
         }
-        secureStore.read()?.let { return it }
+        runCatching { secureStore.read() }.getOrNull()?.let { return it }
         // An older version's token, from back when the store fell back to plain text.
-        val leftover = legacy.read() ?: return null
-        secureStore.write(leftover)
-        legacy.clear()
-        return leftover
+        val leftover = legacy.read()
+        if (leftover != null) {
+            runCatching { secureStore.write(leftover) }
+            legacy.clear()
+            return leftover
+        }
+        return sessionToken
     }
 
     /**
@@ -55,24 +60,42 @@ class TokenStore internal constructor(
      * this session, nothing is written in the clear, and the next launch will ask again.
      */
     fun write(token: String): Boolean {
+        // The session copy is the source of truth for the running app. A phone whose Keystore
+        // is broken still keeps the sign-in until the process dies, instead of telling every
+        // other screen that GitHub is not connected while this one says it is.
+        sessionToken = token
         val secureStore = secure
         if (secureStore == null) {
             legacy.clear()
             DebugLog.crumb("GITHUB", "token not stored · no secure storage")
             return false
         }
-        secureStore.write(token)
+        val kept = runCatching { secureStore.write(token) }.isSuccess
         legacy.clear()
         // A fact for the debug log's GITHUB area — the token itself never gets near it.
-        DebugLog.crumb("GITHUB", "token saved (hidden)")
-        return true
+        DebugLog.crumb("GITHUB", if (kept) "token saved (hidden)" else "token kept for this session only")
+        return kept
     }
 
     fun clear() {
+        sessionToken = null
         secure?.clear()
         legacy.clear()
         DebugLog.crumb("GITHUB", "token cleared")
     }
+}
+
+/**
+ * The token for this process. Every TokenStore shares it, so signing in on one screen is visible
+ * on the next even when the Keystore cannot persist it. It dies with the process and is never
+ * written anywhere except the encrypted store.
+ */
+@Volatile
+private var sessionToken: String? = null
+
+/** Test hook: the session normally lives as long as the process. */
+internal fun resetTokenSessionForTest() {
+    sessionToken = null
 }
 
 /** One file a token can sit in. [TokenStore]'s secure side is null when the Keystore is broken. */

@@ -42,6 +42,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -377,7 +378,11 @@ fun IdeLogcatPanel(
                         color = c.mu,
                         fontSize = 13.sp,
                         fontFamily = Mono,
-                        modifier = Modifier.padding(40.dp),
+                        textAlign = TextAlign.Center,
+                        lineHeight = 20.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(40.dp),
                     )
                 } else {
                     Column(Modifier.fillMaxWidth()) {
@@ -429,7 +434,11 @@ fun IdeLogcatPanel(
                     color = c.mu,
                     fontSize = 13.sp,
                     fontFamily = Mono,
-                    modifier = Modifier.padding(40.dp),
+                    textAlign = TextAlign.Center,
+                    lineHeight = 20.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(40.dp),
                 )
                 return@Column
             }
@@ -569,16 +578,16 @@ internal fun IdeBuildPanel(
                     Modifier
                         .size(48.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFF1D2B57)),
+                        .background(c.mock.blueBg),
                     contentAlignment = Alignment.Center,
                 ) {
-                    CcIcon(CcIcons.Android, c.toolbarAccent, 24.dp)
+                    CcIcon(CcIcons.Android, c.mock.blue, 24.dp)
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
                         text = appName,
-                        color = c.text,
+                        color = c.accent,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
@@ -621,16 +630,16 @@ internal fun IdeBuildPanel(
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(Color(0xFF2A1519))
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(c.mock.dangerBg)
                         .padding(12.dp),
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        CcIcon(CcIcons.Warning, Color(0xFFF2A0A0), 16.dp)
+                        CcIcon(CcIcons.Warning, c.mock.danger, 16.dp)
                         Spacer(Modifier.width(10.dp))
                         Text(
                             text = blocked.title,
-                            color = Color(0xFFF2A0A0),
+                            color = c.mock.danger,
                             fontSize = 13.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.Medium,
@@ -649,7 +658,7 @@ internal fun IdeBuildPanel(
                     if (blocked.lines.size > 12) {
                         Text(
                             text = "… and ${blocked.lines.size - 12} more",
-                            color = c.textMuted,
+                            color = c.mock.muted,
                             fontSize = 12.sp,
                             fontFamily = Sans,
                             modifier = Modifier.padding(top = 6.dp),
@@ -673,20 +682,20 @@ internal fun IdeBuildPanel(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (buildResultOk) Color(0xFF12281F) else Color(0xFF2A1519))
+            .clip(RoundedCornerShape(14.dp))
+                        .background(if (buildResultOk) c.mock.successBg else c.mock.dangerBg)
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (buildResultOk) {
-                        CcIcon(CcIcons.Check, Color(0xFF5FD19A), 16.dp)
+                        CcIcon(CcIcons.Check, c.mock.green, 16.dp)
                     } else {
-                        CcIcon(CcIcons.Warning, Color(0xFFF2A0A0), 16.dp)
+                        CcIcon(CcIcons.Warning, c.mock.danger, 16.dp)
                     }
                     Spacer(Modifier.width(10.dp))
                     Text(
                         text = buildResult,
-                        color = if (buildResultOk) Color(0xFF5FD19A) else Color(0xFFF2A0A0),
+                        color = if (buildResultOk) c.mock.green else c.mock.danger,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
@@ -698,15 +707,15 @@ internal fun IdeBuildPanel(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(if (failed) Color(0xFF2A1519) else Color(0xFF12281F))
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (failed) c.mock.dangerBg else c.mock.successBg)
                         .padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (failed) {
-                        CcIcon(CcIcons.Warning, Color(0xFFF2A0A0), 16.dp)
+                        CcIcon(CcIcons.Warning, c.mock.danger, 16.dp)
                     } else {
-                        CcIcon(CcIcons.Check, Color(0xFF5FD19A), 16.dp)
+                        CcIcon(CcIcons.Check, c.mock.green, 16.dp)
                     }
                     Spacer(Modifier.width(10.dp))
                     Text(
@@ -715,7 +724,7 @@ internal fun IdeBuildPanel(
                         } else {
                             "Checks passed · ${formatBuildTime(elapsedMs)}"
                         },
-                        color = if (failed) Color(0xFFF2A0A0) else Color(0xFF5FD19A),
+                        color = if (failed) c.mock.danger else c.mock.green,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
@@ -747,7 +756,7 @@ internal fun IdeBuildPanel(
                 ) {
                     when (row.state) {
                         StepState.DONE -> CcIcon(CcIcons.Check, c.success, 15.dp)
-                        StepState.FAILED -> CcIcon(CcIcons.Warning, Color(0xFFF2A0A0), 15.dp)
+                        StepState.FAILED -> CcIcon(CcIcons.Warning, c.mock.danger, 15.dp)
                         StepState.RUNNING -> CircularProgressIndicator(
                             modifier = Modifier.size(14.dp),
                             color = c.text,
@@ -765,7 +774,7 @@ internal fun IdeBuildPanel(
                         text = row.label,
                         color = when (row.state) {
                             StepState.PENDING -> c.textFaint
-                            StepState.FAILED -> Color(0xFFF2A0A0)
+                            StepState.FAILED -> c.mock.danger
                             else -> c.text
                         },
                         fontSize = 13.sp,
@@ -987,7 +996,7 @@ internal fun BuildLogScreen(
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .background(if (isError) Color(0xFF1D1215) else Color(0xFF1D1A10))
+                        .background(if (isError) c.mock.dangerBg else c.mock.warningBg)
                         .clickable {
                             onOpenFile(entry.fileName, entry.diagnostic.line.coerceAtLeast(1))
                         }
@@ -995,7 +1004,7 @@ internal fun BuildLogScreen(
                 ) {
                     Text(
                         text = entry.diagnostic.message,
-                        color = if (isError) Color(0xFFF2A0A0) else c.warning,
+                        color = if (isError) c.mock.danger else c.mock.warning,
                         fontSize = 12.sp,
                         fontFamily = Mono,
                         lineHeight = 17.sp,

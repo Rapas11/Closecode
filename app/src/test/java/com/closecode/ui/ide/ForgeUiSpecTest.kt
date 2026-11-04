@@ -16,7 +16,7 @@ class ForgeUiSpecTest {
     // -- left rail ---------------------------------------------------------------------
 
     @Test
-    fun theRailListsSevenToolsInDesignOrder() {
+    fun theRailListsTheDesignToolsInOrder() {
         assertEquals(
             listOf("Files", "Search", "GitHub", "Terminal", "Logcat", "Problems", "OpenCode"),
             IdeRailTools.map { it.id },
@@ -30,9 +30,11 @@ class ForgeUiSpecTest {
     }
 
     @Test
-    fun openCodeIsTheLastRailToolSoItSitsAfterProblems() {
+    fun logcatSitsAfterTerminalAndBeforeProblems() {
         assertEquals("OpenCode", IdeRailTools.last().id)
-        assertTrue(IdeRailTools.indexOfFirst { it.id == "OpenCode" } >
+        assertTrue(IdeRailTools.indexOfFirst { it.id == "Logcat" } >
+            IdeRailTools.indexOfFirst { it.id == "Terminal" })
+        assertTrue(IdeRailTools.indexOfFirst { it.id == "Logcat" } <
             IdeRailTools.indexOfFirst { it.id == "Problems" })
     }
 
@@ -469,8 +471,8 @@ class ForgeUiSpecTest {
     // -- Spec 3 typography -------------------------------------------------------------
 
     @Test
-    fun theCodeLineHeightIsTheFixedTwentyTheSpecDemands() {
-        assertEquals(20, CodeLineHeight.value.toInt())
+    fun theCodeLineHeightIsTheFixedTwentyOneTheSpecDemands() {
+        assertEquals(21, CodeLineHeight.value.toInt())
     }
 
     @Test
@@ -582,8 +584,8 @@ class ForgeUiSpecTest {
         // A Row inside a Column hands its children the height that is still free, so without a
         // stated strip height an unbounded child would stretch this strip over the whole editor:
         // the code area collapsed and the tabs floated in the middle of the screen.
-        assertEquals(34, TAB_STRIP_HEIGHT.value.toInt())
-        assertEquals(34, TAB_HEIGHT.value.toInt())
+        assertEquals(40, TAB_STRIP_HEIGHT.value.toInt())
+        assertEquals(30, TAB_HEIGHT.value.toInt())
         assertEquals(36, TAB_EDGE_FADE_WIDTH.value.toInt())
     }
 

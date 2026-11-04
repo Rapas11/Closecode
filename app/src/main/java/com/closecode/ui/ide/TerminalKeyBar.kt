@@ -93,10 +93,10 @@ internal fun TerminalKeyBar(
             // The bolt opens Commands; it looks like the other dark keys, not the blue four.
             Box(
                 Modifier
-                    .height(34.dp)
-                    .clip(RoundedCornerShape(7.dp))
+                    .height(32.dp)
+                    .clip(RoundedCornerShape(9.dp))
                     .background(c.chipBg)
-                    .border(1.dp, Color.Transparent, RoundedCornerShape(7.dp))
+                    .border(1.dp, Color.Transparent, RoundedCornerShape(9.dp))
                     .clickable(onClick = onCommands)
                     .padding(horizontal = 13.dp)
                     .semantics { contentDescription = "Saved commands" },
@@ -165,13 +165,13 @@ private fun ModifierKey(label: String, latch: ModifierLatch, onTap: () -> Unit) 
     }
     Box(
         Modifier
-            .height(34.dp)
-            .clip(RoundedCornerShape(7.dp))
+            .height(32.dp)
+            .clip(RoundedCornerShape(9.dp))
             .background(fill)
             .border(
                 1.dp,
                 if (armed) c.accent else Color.Transparent,
-                RoundedCornerShape(7.dp),
+                RoundedCornerShape(9.dp),
             )
             .clickable(onClick = onTap)
             .padding(horizontal = 13.dp)
@@ -194,10 +194,10 @@ private fun PlainKey(label: String, tinted: Boolean, onTap: () -> Unit) {
     val c = LocalPageColors.current
     Box(
         Modifier
-            .height(34.dp)
-            .clip(RoundedCornerShape(7.dp))
+            .height(32.dp)
+            .clip(RoundedCornerShape(9.dp))
             .background(if (tinted) c.primaryTint else c.chipBg)
-            .border(1.dp, Color.Transparent, RoundedCornerShape(7.dp))
+            .border(1.dp, Color.Transparent, RoundedCornerShape(9.dp))
             .clickable(onClick = onTap)
             .padding(horizontal = 13.dp)
             .semantics { contentDescription = label },
