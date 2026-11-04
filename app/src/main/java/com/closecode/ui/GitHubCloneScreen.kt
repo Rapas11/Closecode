@@ -1,4 +1,4 @@
-package com.closecode.ui
+﻿package com.closecode.ui
 
 import androidx.activity.compose.BackHandler
 import com.closecode.ui.ide.BackLog
@@ -47,6 +47,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.rememberProjectRepository
+import com.closecode.ui.model.relativeTime
+import com.closecode.ui.screens.CloneScreen
+import com.closecode.ui.screens.RepoListState
+import com.closecode.ui.screens.RepoUi
 import com.closecode.ui.components.SheetHeader
 import com.closecode.ui.github.GitHubClient
 import com.closecode.ui.github.GitHubClone
@@ -101,6 +105,7 @@ fun GitHubCloneScreen(
     onCloned: (ProjectRecord) -> Unit,
 ) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.CcTheme.colors
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val clipboard = LocalClipboardManager.current
@@ -132,6 +137,8 @@ fun GitHubCloneScreen(
     // Which kind of failure it was, because only one of them has an answer that helps: a network
     // error wants a retry, an authentication error wants a token the user does not have here.
     var authFailure by remember { mutableStateOf(false) }
+    // Bumped by the list's Retry; the listing effect is keyed on it.
+    var reloadKey by remember { mutableStateOf(0) }
     var active by remember { mutableStateOf<ActiveClone?>(null) }
     var cloneJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var fraction by remember { mutableStateOf<Float?>(null) }
@@ -153,7 +160,7 @@ fun GitHubCloneScreen(
         onDismiss()
     })
 
-    LaunchedEffect(token) {
+    LaunchedEffect(token, reloadKey) {
         val active = token
         if (active == null) {
             repos = null
@@ -247,173 +254,106 @@ fun GitHubCloneScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(c.bg).systemBarsPadding()) {
-        AnimatedVisibility(
-            visible = true,
-            enter = fadeIn(tween(200)),
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            Column(Modifier.fillMaxSize()) {
-                SheetHeader(
-                    onClose = onDismiss,
-                    title = "Clone a repository",
-                    subtitle = "Paste any https link, or pick one of your repositories. It opens " +
-                        "as a project when the download finishes.",
+    Box(Modifier.fillMaxSize().systemBarsPadding()) {
+        val running = active
+        if (running != null) {
+            Column(Modifier.fillMaxSize().background(cc.content)) {
+                com.closecode.ui.components.ScreenHeader("GitHub", "Cloning", onDismiss)
+                CloneProgress(
+                    folder = running.folder,
+                    remoteUrl = running.remoteUrl,
+                    phase = phaseText,
+                    fraction = fraction,
+                    downloadedBytes = downloadedBytes,
+                    onCancel = ::cancelClone,
                 )
-
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 22.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    val running = active
-                    if (running != null) {
-                        CloneProgress(
-                            folder = running.folder,
-                            remoteUrl = running.remoteUrl,
-                            phase = phaseText,
-                            fraction = fraction,
-                            downloadedBytes = downloadedBytes,
-                            onCancel = ::cancelClone,
-                        )
+            }
+        } else {
+            val folderTaken = remember(folder) {
+                folder.isNotBlank() && repository.folderTaken(folder)
+            }
+            CloneScreen(
+                origin = "GitHub",
+                url = link,
+                onUrl = { link = it },
+                urlError = if (linkErrorVisible) cloneLinkError(link) else null,
+                folder = folder,
+                onFolder = {
+                    folder = it
+                    folderTouched = true
+                },
+                folderError = if (folderTaken) {
+                    "That project name or folder is already taken."
+                } else {
+                    null
+                },
+                repos = when {
+                    token == null -> RepoListState.NotConnected
+                    failure != null -> RepoListState.Error(failure.orEmpty())
+                    repos == null -> RepoListState.Loading
+                    else -> RepoListState.Loaded(
+                        repos.orEmpty().map {
+                            RepoUi(
+                                fullName = it.fullName,
+                                cloneUrl = it.cloneUrl,
+                                updatedText = "Updated " + relativeTime(it.pushedAtMillis),
+                            )
+                        },
+                    )
+                },
+                query = repoQuery,
+                onQuery = { repoQuery = it },
+                onPickRepo = { repo ->
+                    link = repo.cloneUrl
+                    folder = repo.fullName.substringAfter('/')
+                    folderTouched = true
+                },
+                onRetry = {
+                    val retry = lastAttempt
+                    if (failure != null && retry != null && !authFailure) {
+                        startClone(retry.folder, retry.remoteUrl, retry.token)
                     } else {
-                        failure?.let { message ->
-                            CloneFailure(
-                                message = message,
-                                authLabel = if (authFailure) "Sign in again" else null,
-                                onAuthenticate = { signingIn = true },
-                            )
-                            // A failure that is not about signing in wants a second try with
-                            // the same arguments, not a retyped form.
-                            val retry = lastAttempt
-                            if (!authFailure && retry != null) {
-                                com.closecode.ui.components.OutlineButton(
-                                    label = "Try again",
-                                    onClick = {
-                                        startClone(retry.folder, retry.remoteUrl, retry.token)
-                                    },
-                                )
-                            }
-                        }
+                        reloadKey++
+                    }
+                },
+                onSignIn = { signingIn = true },
+                onClone = {
+                    keyboard?.hide()
+                    startClone(folder, link, token)
+                },
+                onBack = onDismiss,
+            )
 
-                        val folderTaken = remember(folder) {
-                            folder.isNotBlank() && repository.folderTaken(folder)
-                        }
-                        CloneForm(
-                            link = link,
-                            onLink = { link = it },
-                            linkError = if (linkErrorVisible) cloneLinkError(link) else null,
-                            folder = folder,
-                            onFolder = {
-                                folder = it
-                                folderTouched = true
+            if (signingIn) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(cc.dim)
+                        .clickable { signingIn = false },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(cc.panel)
+                            .clickable { }
+                            .padding(16.dp),
+                    ) {
+                        GitHubSignInBody(
+                            onSignedIn = { fresh ->
+                                onToken(fresh)
+                                signingIn = false
+                                val retry = retryAfterSignIn
+                                retryAfterSignIn = null
+                                failure = null
+                                authFailure = false
+                                retry?.invoke(fresh)
                             },
-                            folderTaken = folderTaken,
-                            onPaste = {
-                                scope.launch {
-                                    clipboard.getText()?.text?.trim()?.takeIf { it.isNotEmpty() }
-                                        ?.let { link = it }
-                                }
-                            },
-                            canClone = cloneLinkError(link) == null && link.isNotBlank() &&
-                                folder.isNotBlank() && !folderTaken,
-                            onClone = {
-                                keyboard?.hide()
-                                startClone(folder, link, token)
-                            },
+                            onCancel = { signingIn = false },
+                            modifier = Modifier.fillMaxWidth(),
                         )
-
-                        OrDivider()
-
-                        if (signingIn) {
-                            GitHubSignInBody(
-                                onSignedIn = { fresh ->
-                                    onToken(fresh)
-                                    signingIn = false
-                                    val retry = retryAfterSignIn
-                                    retryAfterSignIn = null
-                                    failure = null
-                                    authFailure = false
-                                    retry?.invoke(fresh)
-                                },
-                                onCancel = { signingIn = false },
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        } else if (token == null) {
-                            // Signed out: the card says what signing in unlocks. Public links
-                            // above work without it, so the form stays usable either way.
-                            com.closecode.ui.components.ScreenCard {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    CcIcon(
-                                        com.closecode.ui.ide.CcIcons.Github,
-                                        c.text,
-                                        20.dp,
-                                    )
-                                    Spacer(Modifier.width(10.dp))
-                                    Text(
-                                        text = "See your repositories here",
-                                        color = c.text,
-                                        fontSize = 13.sp,
-                                        fontFamily = Sans,
-                                        fontWeight = FontWeight.Medium,
-                                    )
-                                }
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    text = "Sign in once to pick private and public repositories " +
-                                        "from a list. Public links above work without signing in.",
-                                    color = c.textMuted,
-                                    fontSize = 12.sp,
-                                    fontFamily = Sans,
-                                    lineHeight = 17.sp,
-                                )
-                                Spacer(Modifier.height(10.dp))
-                                com.closecode.ui.components.OutlineButton(
-                                    label = "Sign in with GitHub",
-                                    onClick = { signingIn = true },
-                                )
-                            }
-                        } else {
-                            RepositoryList(
-                                repos = repos,
-                                query = repoQuery,
-                                onQuery = { repoQuery = it },
-                                busy = active != null,
-                                disabled = active != null,
-                                loadingMore = loadingMore,
-                                canLoadMore = (repos?.size ?: 0) >= repoPage * 30,
-                                onLoadMore = {
-                                    val activeToken = token ?: return@RepositoryList
-                                    if (loadingMore) return@RepositoryList
-                                    loadingMore = true
-                                    scope.launch {
-                                        val next = withContext(Dispatchers.IO) {
-                                            client.repositories(activeToken, repoPage + 1)
-                                        }
-                                        next.onSuccess { more ->
-                                            repoPage++
-                                            repos = (repos.orEmpty() + more).distinctBy { it.fullName }
-                                        }.onFailure { error ->
-                                            failure = describeFailure(
-                                                error,
-                                                "GitHub could not list your repositories.",
-                                            )
-                                        }
-                                        loadingMore = false
-                                    }
-                                },
-                                onPick = { repo ->
-                                    startClone(
-                                        folderName = repo.fullName.substringAfter('/'),
-                                        remoteUrl = repo.cloneUrl,
-                                        tokenUsed = token,
-                                    )
-                                },
-                            )
-                        }
                     }
                 }
             }
