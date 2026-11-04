@@ -378,18 +378,18 @@ One commit per step; suite green (`:app:testDebugUnitTest`); bump `closecodeBuil
 
 ## 6. Screen status tracker (live — update with every commit)
 
-**Where we are: Screen 02 — Start a project (in progress).**
+**Where we are: Screen 09 — Swipe sidebar (done, build 47). Moving to Screen 10 — Files panel.**
 
 | # | Screen | Status | Commit |
 |---|--------|--------|--------|
 | 01 | Welcome | Done | `e06eeef` |
-| 02 | Start a project | In progress | — |
-| 03 | Switch project | Todo | — |
-| 04 | Clone a repository | Todo | — |
-| 05 | Cloning progress | Todo | — |
-| 06 | First-time setup | Todo | — |
-| 07–08 | Editor (+ keyboard) | Todo | — |
-| 09 | Swipe sidebar | Todo | — |
+| 02 | Start a project | Done | `49ec299` |
+| 03 | Switch project | Done | `bf66300` |
+| 04 | Clone a repository | Done | `ef22aeb` |
+| 05 | Cloning progress | Done | build 47 |
+| 06 | First-time setup | Done | build 47 |
+| 07–08 | Editor (+ keyboard) | Done | build 47 |
+| 09 | Swipe sidebar | Done | build 47 |
 | 10 | Files panel | Todo | — |
 | 11 | Files menu | Todo | — |
 | 12–13 | Search + options | Todo | — |
