@@ -38,7 +38,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.closecode.ui.HeroScreen
+import com.closecode.ui.screens.WelcomeScreen
+import com.closecode.ui.toUi
+import com.closecode.ui.StartProjectSheet
+import com.closecode.ui.GitHubCloneScreen
+import com.closecode.ui.model.Templates
+import com.closecode.ui.ide.GitHubSignIn
+import com.closecode.ui.github.TokenStore
 import com.closecode.ui.ProjectSetupScreen
 import com.closecode.ui.git.GitService
 import com.closecode.ui.onboarding.OnboardingScreen
@@ -143,12 +149,6 @@ class MainActivity : ComponentActivity() {
                     if (firstRunStore.isCompleted()) "hero" else "onboarding"
                 }
                 val project = ProjectCodec.decode(encoded)
-                // One .closecode.json per project, so this is a directory read — off the
-                // composition path and onto Dispatchers.IO.
-                var recentCount by remember { mutableIntStateOf(0) }
-                LaunchedEffect(encoded, repository) {
-                    recentCount = withContext(Dispatchers.IO) { repository.listProjects().size }
-                }
 
                 // "Open last project" decides what a launch lands on. The system restores the last
                 // one for us; this is the single place that is allowed to say no, checked once at
@@ -227,39 +227,69 @@ class MainActivity : ComponentActivity() {
                                     ).show()
                                 }
                             }
-                            HeroScreen(
-                                recentCount = recentCount,
-                                tokenEpoch = githubTokenEpoch,
-                                onProjectCreated = { name, selection, templateName, config ->
-                                    // Scaffold and register first. If setup is interrupted, the
-                                    // project is already in Recents and can be opened again.
-                                    runCatching {
-                                        val record = repository.create(name, selection, config)
-                                        encoded = ProjectCodec.encode(
-                                            Project(
-                                                record.name,
-                                                selection,
-                                                templateName,
-                                                config,
-                                                slug = record.slug,
-                                                id = record.id,
-                                            ),
-                                        )
-                                        if (selection.tab == TemplateTab.Web) {
-                                            nav.navigate("ide")
-                                        } else {
-                                            nav.navigate("project-setup")
-                                        }
-                                        null
-                                    }.getOrElse { failure ->
-                                        failure.message ?: "Could not create the project."
-                                    }
+                            // The welcome screen lists the real stores: last three opened first.
+                            var allProjects by remember { mutableStateOf<List<ProjectRecord>>(emptyList()) }
+                            LaunchedEffect(encoded, repository) {
+                                allProjects = withContext(Dispatchers.IO) { repository.listProjects() }
+                            }
+                            val recentUi = remember(allProjects) { allProjects.take(3).map { it.toUi() } }
+                            val totalProjects = allProjects.size
+                            var sheetOpen by remember { mutableStateOf(false) }
+                            var signInOpen by remember { mutableStateOf(false) }
+                            var cloneOpen by remember { mutableStateOf(false) }
+                            val tokenStore = remember(context) { com.closecode.ui.github.TokenStore(context) }
+                            var githubToken by remember { mutableStateOf(tokenStore.read()) }
+                            com.closecode.ui.screens.WelcomeScreen(
+                                recent = recentUi,
+                                totalProjects = totalProjects,
+                                onStartProject = { sheetOpen = true },
+                                onGitHub = { cloneOpen = true },
+                                onOpen = { ui ->
+                                    val record = allProjects.firstOrNull { it.id == ui.id }
+                                    if (record != null) openEncoded(encodeRecord(record))
                                 },
-                                // A clone already owns its directory and its record, so it carries
-                                // its own slug rather than deriving one from the name.
-                                onProjectCloned = { record -> openEncoded(encodeRecord(record)) },
-                                onOpenRecent = { nav.navigate("recent") },
                             )
+                            // Sheets for the two actions, in the welcome layer.
+                            if (sheetOpen) {
+                                StartProjectSheet(
+                                    onOpenRecent = { nav.navigate("recent") },
+                                    recentCount = recentUi.size,
+                                    onDismiss = { sheetOpen = false },
+                                    onCreate = { projectName, selection, config ->
+                                        val templateName = Templates[selection.tab]
+                                            .orEmpty()
+                                            .getOrNull(selection.index)
+                                            ?.name
+                                            .orEmpty()
+                                        runCatching {
+                                            val record = repository.create(projectName, selection, config)
+                                            encoded = encodeRecord(record)
+                                            if (selection.tab == TemplateTab.Web) {
+                                                nav.navigate("ide")
+                                            } else {
+                                                nav.navigate("project-setup")
+                                            }
+                                            null
+                                        }.getOrElse { failure ->
+                                            failure.message ?: "Could not create the project."
+                                        }.also { error -> if (error == null) sheetOpen = false }
+                                    },
+                                )
+                            }
+                            if (signInOpen) {
+                                GitHubSignIn(
+                                    onSignedIn = { token -> githubToken = token; signInOpen = false },
+                                    onDismiss = { signInOpen = false },
+                                )
+                            }
+                            if (cloneOpen) {
+                                GitHubCloneScreen(
+                                    token = githubToken,
+                                    onToken = { fresh -> tokenStore.write(fresh); githubToken = fresh },
+                                    onDismiss = { cloneOpen = false },
+                                    onCloned = { record -> cloneOpen = false; openEncoded(encodeRecord(record)) },
+                                )
+                            }
                         }
 
                         composable("project-setup") {
