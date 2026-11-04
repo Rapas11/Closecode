@@ -252,8 +252,6 @@ class MainActivity : ComponentActivity() {
                             // Sheets for the two actions, in the welcome layer.
                             if (sheetOpen) {
                                 StartProjectSheet(
-                                    onOpenRecent = { nav.navigate("recent") },
-                                    recentCount = recentUi.size,
                                     onDismiss = { sheetOpen = false },
                                     onCreate = { projectName, selection, config ->
                                         val templateName = Templates[selection.tab]

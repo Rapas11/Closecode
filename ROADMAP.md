@@ -375,3 +375,33 @@ Priority after restyle verification: **#11 export/import** (data safety) → **#
 
 One commit per step; suite green (`:app:testDebugUnitTest`); bump `closecodeBuild` in `app/build.gradle.kts` (currently **42**); build + install APK; no force-push; never commit `real opencode open pc/` or `test-output*.txt`. Gradle needs JDK 17 — set `$env:JAVA_HOME="$env:LOCALAPPDATA\Jdks\jdk-17"` (or the equivalent JDK 17 path on the other PC).
 
+
+## 6. Screen status tracker (live — update with every commit)
+
+**Where we are: Screen 02 — Start a project (in progress).**
+
+| # | Screen | Status | Commit |
+|---|--------|--------|--------|
+| 01 | Welcome | Done | `e06eeef` |
+| 02 | Start a project | In progress | — |
+| 03 | Switch project | Todo | — |
+| 04 | Clone a repository | Todo | — |
+| 05 | Cloning progress | Todo | — |
+| 06 | First-time setup | Todo | — |
+| 07–08 | Editor (+ keyboard) | Todo | — |
+| 09 | Swipe sidebar | Todo | — |
+| 10 | Files panel | Todo | — |
+| 11 | Files menu | Todo | — |
+| 12–13 | Search + options | Todo | — |
+| 14–16 | GitHub (account / not connected / sign in) | Todo | — |
+| 17–18 | Source control + more | Todo | — |
+| 19–21 | History / Commit detail / Diff | Todo | — |
+| 22–24 | Terminal / session / new command | Todo | — |
+| 25–26 | Run and build / Build finished | Todo | — |
+| 27–28 | Website preview / Console | Todo | — |
+| 29–31 | Compose previews / Logcat / Problems | Todo | — |
+| 32–44 | Settings list + all pages | Todo | — |
+| 45–51 | Project settings / App icon / Keys / Self-test | Todo | — |
+| 52–57 | Icon manager (new) | Todo | — |
+
+Rules: mockups are the law; real data only; OpenCode untouched; one commit per screen; suite green; bump `closecodeBuild`; never commit `real opencode open pc/` or `test-output*.txt`.
