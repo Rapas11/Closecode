@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import com.closecode.rememberProjectRepository
 import com.closecode.ui.model.relativeTime
 import com.closecode.ui.screens.CloneScreen
+import com.closecode.ui.screens.CloningScreen
 import com.closecode.ui.screens.RepoListState
 import com.closecode.ui.screens.RepoUi
 import com.closecode.ui.components.SheetHeader
@@ -139,6 +140,10 @@ fun GitHubCloneScreen(
     var authFailure by remember { mutableStateOf(false) }
     // Bumped by the list's Retry; the listing effect is keyed on it.
     var reloadKey by remember { mutableStateOf(0) }
+    // Screen 05 stays up from the first byte until success, cancel or Back.
+    var cloningVisible by remember { mutableStateOf(false) }
+    var showStopDialog by remember { mutableStateOf(false) }
+    val cloneLog = remember { androidx.compose.runtime.mutableStateListOf<String>() }
     var active by remember { mutableStateOf<ActiveClone?>(null) }
     var cloneJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var fraction by remember { mutableStateOf<Float?>(null) }
@@ -156,8 +161,15 @@ fun GitHubCloneScreen(
     // The screen underneath installs its own handler, and it always goes one level up — out of
     // the project entirely. So this route has to claim Back for itself while it is composed.
     BackHandler(onBack = {
-        BackLog.press("github-clone", "branch=dismiss")
-        onDismiss()
+        when {
+            showStopDialog -> showStopDialog = false
+            cloningVisible && active != null -> showStopDialog = true
+            cloningVisible -> cloningVisible = false
+            else -> {
+                BackLog.press("github-clone", "branch=dismiss")
+                onDismiss()
+            }
+        }
     })
 
     LaunchedEffect(token, reloadKey) {
@@ -193,6 +205,10 @@ fun GitHubCloneScreen(
         lastAttempt = CloneAttempt(name, remoteUrl, tokenUsed)
         val holder = ActiveClone(name, remoteUrl)
         active = holder
+        cloningVisible = true
+        showStopDialog = false
+        cloneLog.clear()
+        cloneLog.add("Cloning into ~/$name...")
         fraction = null
         phaseText = "Connecting to GitHub"
         downloadedBytes = 0
@@ -208,6 +224,9 @@ fun GitHubCloneScreen(
                                 if (active === holder) {
                                     fraction = progress.fraction
                                     phaseText = progress.phase
+                                    if (cloneLog.lastOrNull() != progress.phase) {
+                                        cloneLog.add(progress.phase)
+                                    }
                                 }
                             }
                         }.getOrThrow()
@@ -255,17 +274,39 @@ fun GitHubCloneScreen(
     }
 
     Box(Modifier.fillMaxSize().systemBarsPadding()) {
-        val running = active
-        if (running != null) {
-            Column(Modifier.fillMaxSize().background(cc.content)) {
-                com.closecode.ui.components.ScreenHeader("GitHub", "Cloning", onDismiss)
-                CloneProgress(
-                    folder = running.folder,
-                    remoteUrl = running.remoteUrl,
-                    phase = phaseText,
-                    fraction = fraction,
-                    downloadedBytes = downloadedBytes,
-                    onCancel = ::cancelClone,
+        if (cloningVisible) {
+            CloningScreen(
+                origin = "GitHub",
+                phase = phaseText,
+                percent = fraction,
+                sizeText = formatBytes(downloadedBytes),
+                log = cloneLog,
+                error = if (active == null) failure else null,
+                onRetry = {
+                    val retry = lastAttempt
+                    if (retry != null) {
+                        startClone(retry.folder, retry.remoteUrl, retry.token)
+                    } else {
+                        cloningVisible = false
+                    }
+                },
+                onCancel = { showStopDialog = true },
+                onBack = {
+                    if (active != null) showStopDialog = true else cloningVisible = false
+                },
+            )
+            if (showStopDialog) {
+                com.closecode.ui.components.CcConfirmDialog(
+                    title = "Stop cloning?",
+                    text = "The files downloaded so far will be deleted.",
+                    confirmText = "Stop",
+                    destructive = true,
+                    onConfirm = {
+                        showStopDialog = false
+                        cancelClone()
+                        cloningVisible = false
+                    },
+                    onDismiss = { showStopDialog = false },
                 )
             }
         } else {
@@ -527,154 +568,6 @@ private fun OrDivider() {
             modifier = Modifier.padding(horizontal = 12.dp),
         )
         Box(Modifier.weight(1f).height(1.dp).background(c.divider))
-    }
-}
-
-/**
- * The download as it happens: icon tile, name and link, bar with percent and size, three steps,
- * and a red Cancel that deletes the half-downloaded folder.
- */
-@Composable
-private fun CloneProgress(
-    folder: String,
-    remoteUrl: String,
-    phase: String,
-    fraction: Float?,
-    downloadedBytes: Long,
-    onCancel: () -> Unit,
-) {
-    val c = LocalPageColors.current
-    Column(
-        Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Spacer(Modifier.height(24.dp))
-        Box(
-            Modifier
-                .size(56.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(c.primaryTint),
-            contentAlignment = Alignment.Center,
-        ) {
-            CcIcon(
-                com.closecode.ui.ide.CcIcons.CloudDownload,
-                c.link,
-                26.dp,
-            )
-        }
-        Spacer(Modifier.height(14.dp))
-        Text(
-            text = "Cloning $folder",
-            color = c.text,
-            fontSize = 17.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Medium,
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = remoteUrl.removePrefix("https://"),
-            color = c.textMuted,
-            fontSize = 12.sp,
-            fontFamily = Mono,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Spacer(Modifier.height(16.dp))
-        // 8 dp bar: accent fill on a chip track. Unknown totals fill halfway and pulse by
-        // indeterminate mode rather than lying about a percentage.
-        if (fraction == null) {
-            androidx.compose.material3.LinearProgressIndicator(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp)),
-                color = c.accent,
-                trackColor = c.chipBg,
-            )
-        } else {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(8.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(c.chipBg),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                        .height(8.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(c.accent),
-                )
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = phase,
-                color = c.textMuted,
-                fontSize = 12.sp,
-                fontFamily = Sans,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = if (fraction == null) {
-                    formatBytes(downloadedBytes)
-                } else {
-                    "${(fraction * 100).toInt()}% · ${formatBytes(downloadedBytes)}"
-                },
-                color = c.textMuted,
-                fontSize = 12.sp,
-                fontFamily = Mono,
-            )
-        }
-        Spacer(Modifier.height(16.dp))
-        CloneStep(done = true, current = false, label = "Connected to GitHub")
-        Spacer(Modifier.height(8.dp))
-        CloneStep(done = false, current = true, label = "Downloading files")
-        Spacer(Modifier.height(8.dp))
-        CloneStep(done = false, current = false, label = "Open as a project")
-        Spacer(Modifier.height(16.dp))
-        com.closecode.ui.components.TextLink(
-            label = "Cancel",
-            color = c.error,
-            onClick = onCancel,
-        )
-    }
-}
-
-@Composable
-private fun CloneStep(done: Boolean, current: Boolean, label: String) {
-    val c = LocalPageColors.current
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        when {
-            done -> CcIcon(com.closecode.ui.ide.CcIcons.Check, c.success, 16.dp)
-            current -> androidx.compose.material3.CircularProgressIndicator(
-                modifier = Modifier.size(14.dp),
-                color = c.text,
-                strokeWidth = 2.dp,
-            )
-            else -> Box(
-                Modifier
-                    .size(14.dp)
-                    .clip(androidx.compose.foundation.shape.CircleShape)
-                    .border(1.5.dp, c.textFaint, androidx.compose.foundation.shape.CircleShape),
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = label,
-            color = when {
-                done -> c.success
-                current -> c.text
-                else -> c.textFaint
-            },
-            fontSize = 13.sp,
-            fontFamily = Sans,
-        )
     }
 }
 
