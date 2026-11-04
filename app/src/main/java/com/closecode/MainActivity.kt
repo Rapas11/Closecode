@@ -40,8 +40,10 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.closecode.ui.screens.WelcomeScreen
 import com.closecode.ui.toUi
+import com.closecode.ui.ProjectSwitcherSheet
 import com.closecode.ui.StartProjectSheet
 import com.closecode.ui.GitHubCloneScreen
+import com.closecode.ui.model.ProjectConfig
 import com.closecode.ui.model.Templates
 import com.closecode.ui.ide.GitHubSignIn
 import com.closecode.ui.github.TokenStore
@@ -181,12 +183,33 @@ class MainActivity : ComponentActivity() {
                     sessionHolders.getOrPut(project?.id ?: "") { TerminalSessions() }
                 // Set by the IDE as edits land; read when leaving it.
                 var ideDirty by rememberSaveable { mutableStateOf(false) }
+                // Screen 02 is reachable from Welcome (Start a project) and from the
+                // project switcher's two buttons, so it lives above the route stack.
+                var startSheetOpen by rememberSaveable { mutableStateOf(false) }
 
                 // Opening a project lands on the IDE route, unless already there (cloning from
                 // inside swaps the record under the same route, keyed by slug below).
                 fun openEncoded(value: String) {
                     encoded = value
                     if (backStack?.destination?.route != "ide") nav.navigate("ide")
+                }
+
+                // One create path for both entry points (Welcome and the switcher).
+                fun createProject(
+                    name: String,
+                    selection: SelectedTemplate,
+                    config: ProjectConfig,
+                ): String? = runCatching {
+                    val record = repository.create(name, selection, config)
+                    encoded = encodeRecord(record)
+                    if (selection.tab == TemplateTab.Web) {
+                        nav.navigate("ide")
+                    } else {
+                        nav.navigate("project-setup")
+                    }
+                    null
+                }.getOrElse { failure ->
+                    failure.message ?: "Could not create the project."
                 }
 
                 CompositionLocalProvider(
@@ -234,7 +257,6 @@ class MainActivity : ComponentActivity() {
                             }
                             val recentUi = remember(allProjects) { allProjects.take(3).map { it.toUi() } }
                             val totalProjects = allProjects.size
-                            var sheetOpen by remember { mutableStateOf(false) }
                             var signInOpen by remember { mutableStateOf(false) }
                             var cloneOpen by remember { mutableStateOf(false) }
                             val tokenStore = remember(context) { com.closecode.ui.github.TokenStore(context) }
@@ -242,38 +264,13 @@ class MainActivity : ComponentActivity() {
                             com.closecode.ui.screens.WelcomeScreen(
                                 recent = recentUi,
                                 totalProjects = totalProjects,
-                                onStartProject = { sheetOpen = true },
+                                onStartProject = { startSheetOpen = true },
                                 onGitHub = { cloneOpen = true },
                                 onOpen = { ui ->
                                     val record = allProjects.firstOrNull { it.id == ui.id }
                                     if (record != null) openEncoded(encodeRecord(record))
                                 },
                             )
-                            // Sheets for the two actions, in the welcome layer.
-                            if (sheetOpen) {
-                                StartProjectSheet(
-                                    onDismiss = { sheetOpen = false },
-                                    onCreate = { projectName, selection, config ->
-                                        val templateName = Templates[selection.tab]
-                                            .orEmpty()
-                                            .getOrNull(selection.index)
-                                            ?.name
-                                            .orEmpty()
-                                        runCatching {
-                                            val record = repository.create(projectName, selection, config)
-                                            encoded = encodeRecord(record)
-                                            if (selection.tab == TemplateTab.Web) {
-                                                nav.navigate("ide")
-                                            } else {
-                                                nav.navigate("project-setup")
-                                            }
-                                            null
-                                        }.getOrElse { failure ->
-                                            failure.message ?: "Could not create the project."
-                                        }.also { error -> if (error == null) sheetOpen = false }
-                                    },
-                                )
-                            }
                             if (signInOpen) {
                                 GitHubSignIn(
                                     onSignedIn = { token -> githubToken = token; signInOpen = false },
@@ -334,6 +331,17 @@ class MainActivity : ComponentActivity() {
                                 // death): back out rather than showing an empty IDE.
                                 LaunchedEffect(Unit) { nav.popBackStack("hero", false) }
                             } else {
+                                var switcherOpen by remember { mutableStateOf(false) }
+                                var switcherProjects by remember {
+                                    mutableStateOf<List<ProjectRecord>>(emptyList())
+                                }
+                                LaunchedEffect(switcherOpen, current.id) {
+                                    if (switcherOpen) {
+                                        switcherProjects = withContext(Dispatchers.IO) {
+                                            repository.listProjects()
+                                        }
+                                    }
+                                }
                                 // Keyed on the project, not on composable identity. Cloning from
                                 // inside the IDE swaps `project` while this route stays put, and
                                 // every per-project holder would otherwise carry the old
@@ -346,6 +354,7 @@ class MainActivity : ComponentActivity() {
                                         slug = current.slug,
                                         repository = repository,
                                         tokenEpoch = githubTokenEpoch,
+                                        onSwitchProject = { switcherOpen = true },
                                         onOpenSettings = {
                                             section = "general"
                                             nav.navigate("settings")
@@ -372,9 +381,45 @@ class MainActivity : ComponentActivity() {
                                         },
                                     )
                                 }
+                                if (switcherOpen) {
+                                    ProjectSwitcherSheet(
+                                        projects = remember(switcherProjects) {
+                                            switcherProjects.map { it.toUi() }
+                                        },
+                                        currentId = current.id,
+                                        onPick = { picked ->
+                                            switcherOpen = false
+                                            switcherProjects.firstOrNull { it.id == picked.id }?.let {
+                                                encoded = encodeRecord(it)
+                                            }
+                                        },
+                                        onNew = {
+                                            switcherOpen = false
+                                            startSheetOpen = true
+                                        },
+                                        onTemplates = {
+                                            switcherOpen = false
+                                            startSheetOpen = true
+                                        },
+                                        onDismiss = { switcherOpen = false },
+                                    )
+                                }
                             }
                         }
                     }
+                }
+
+                // Screen 02 sits above the routes: Welcome's button and both switcher
+                // buttons land here.
+                if (startSheetOpen) {
+                    StartProjectSheet(
+                        onDismiss = { startSheetOpen = false },
+                        onCreate = { projectName, selection, config ->
+                            createProject(projectName, selection, config).also { error ->
+                                if (error == null) startSheetOpen = false
+                            }
+                        },
+                    )
                 }
 
             }

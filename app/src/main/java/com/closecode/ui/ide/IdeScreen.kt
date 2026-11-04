@@ -205,6 +205,7 @@ internal fun IdeScreen(
     // A clone performed inside the IDE finishes with a record for a *different* project. The
     // caller decides where that lands; this screen never navigates itself.
     onProjectCloned: (ProjectRecord) -> Unit = {},
+    onSwitchProject: () -> Unit = {},
     onToggleTheme: () -> Unit = {},
     // Moves when the GitHub account changes elsewhere — a sign-in or a disconnect done on the
     // settings screen. The token is read again when it does, so the Source Control tab never
@@ -1929,6 +1930,7 @@ internal fun IdeScreen(
                 dirty = isDirtyTab(active),
                 canUndo = canUndo,
                 canRedo = canRedo,
+                onSwitchProject = onSwitchProject,
                 onDrawer = { dismissKeyboard(); explorerOpen = !explorerOpen },
                 onSave = { saveActiveFile() },
                 onUndo = { undoRequest++ },
@@ -3192,6 +3194,7 @@ private fun IdeTopBar(
     dirty: Boolean,
     canUndo: Boolean,
     canRedo: Boolean,
+    onSwitchProject: () -> Unit,
     onDrawer: () -> Unit,
     onSave: () -> Unit,
     onUndo: () -> Unit,
@@ -3236,6 +3239,8 @@ private fun IdeTopBar(
         )
 
         // The project name fills the free width so the actions sit against the right edge.
+        // Tapping it opens the project switcher (screen 03); the rail avatar takes over as
+        // the trigger once the sidebar shell lands.
         Text(
             text = projectName,
             color = c.brightText,
@@ -3244,7 +3249,9 @@ private fun IdeTopBar(
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = onSwitchProject),
         )
 
         HeaderIconButton(

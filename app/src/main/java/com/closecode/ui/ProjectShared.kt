@@ -137,6 +137,7 @@ fun ProjectAvatar(
 fun SheetLayer(
     topOffset: Dp,
     onDismiss: () -> Unit,
+    horizontalPadding: Dp = 16.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = CcTheme.colors
@@ -161,7 +162,7 @@ fun SheetLayer(
                     detectTapGestures { }
                 }
                 .navigationBarsPadding()
-                .padding(start = 16.dp, top = 10.dp, end = 16.dp, bottom = 24.dp),
+                .padding(start = horizontalPadding, top = 10.dp, end = horizontalPadding, bottom = 24.dp),
         ) {
             Box(
                 Modifier
