@@ -1,4 +1,4 @@
-package com.closecode.ui.theme
+﻿package com.closecode.ui.theme
 
 import android.app.Activity
 import android.content.Context
@@ -63,11 +63,13 @@ fun ClosecodeTheme(
         }
     }
 
+    // The design-spec tokens (light + dark) ride along with the existing palette so
+    // restyled screens read them without a second wrapper.
+    val ccColors = if (useDark) DarkCcColors() else LightCcColors()
+
     CompositionLocalProvider(
         LocalPageColors provides colors,
-        // Compose tints the text cursor's drag handle and the selection with these. Left at their
-        // defaults the handle came out in Material's own purple, a colour that appears nowhere in
-        // this palette, which is what put a stray lavender shape in the middle of the code.
+        LocalCcColors provides ccColors,
         LocalTextSelectionColors provides TextSelectionColors(
             backgroundColor = colors.textSelection,
             handleColor = colors.accent,

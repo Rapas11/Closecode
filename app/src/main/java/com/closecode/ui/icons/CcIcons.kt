@@ -1,4 +1,4 @@
-package com.closecode.ui
+package com.closecode.ui.icons
 
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
@@ -29,7 +29,9 @@ object CcIconPaths {
         "check" to "M20 6L9 17l-5-5",
         "cd" to "M6 9l6 6 6-6",
         "cl" to "M15 18l-6-6 6-6",
+        "back" to "M15 18l-6-6 6-6",
         "cr" to "M9 18l6-6-6-6",
+        "edit" to "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z",
         "search" to "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3",
         "filter" to "M3 6h18M7 12h10M10 18h4",
         "copy" to "M9 9h11v11H9zM5 15H4V4h11v1",

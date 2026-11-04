@@ -41,8 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.closecode.ui.CcIcon
-import com.closecode.ui.theme.CcColors
+import com.closecode.ui.icons.CcIcon
 import com.closecode.ui.theme.LocalCcColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
