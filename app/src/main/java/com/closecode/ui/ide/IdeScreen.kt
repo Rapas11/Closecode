@@ -16,6 +16,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -181,10 +182,13 @@ import com.closecode.ui.project.ProjectSafety
 import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.model.projectTree
 import com.closecode.ui.model.recentFiles
+import com.closecode.ui.theme.CcTheme
+import com.closecode.ui.theme.CcType
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.motion
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
+import com.closecode.ui.icons.CcIcon
 import java.io.File
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
@@ -331,6 +335,7 @@ internal fun IdeScreen(
         }
     }
     var explorerOpen by remember { mutableStateOf(false) }
+    var sidebarOpen by remember { mutableStateOf(false) }
     // How many times the drawer has been opened: the hint line under the tree shows for the
     // first three opens, then never again.
     var drawerOpens by remember { mutableStateOf(kvStore.getInt("drawer_hint_opens", 0)) }
@@ -1919,42 +1924,6 @@ internal fun IdeScreen(
         ) {
 
             val activePath = activeFile?.path ?: active
-            // Terminal owns its chrome: no app top bar there — drawer, undo, save and run are
-            // editor actions, and the drawer still opens from the left edge. AI is a full page
-            // with its own header, so the editor bar would only compete with it. Everywhere else
-            // the bar stays exactly as it is. The drawer is a full-height modal over all of
-            // this, so nothing here shifts when it opens.
-            if (activePanel != "Terminal" && activePanel != "AI") {
-            IdeTopBar(
-                projectName = projectName,
-                dirty = isDirtyTab(active),
-                canUndo = canUndo,
-                canRedo = canRedo,
-                onSwitchProject = onSwitchProject,
-                onDrawer = { dismissKeyboard(); explorerOpen = !explorerOpen },
-                onSave = { saveActiveFile() },
-                onUndo = { undoRequest++ },
-                onRedo = { redoRequest++ },
-                onTerminal = { dismissKeyboard(); activePanel = "Terminal" },
-                onRun = {
-                    // Spec 7: running is blocked while the project has compile errors, and jumps
-                    // to the problem sheet instead.
-                    if (projectErrors > 0) {
-                        toast = blockedByErrors(projectErrorList, "running")
-                        problemSheet.value = problemSheet.value ?: 1
-                        problemSheetScope = ProblemScope.PROJECT
-                        activePanel = "Code"
-                    } else {
-                        // Run means the whole way: build, install, open.
-                        autoOpenAfterBuild = true
-                        building = true
-                    }
-                },
-                onMore = { menuOpen = true },
-                menuActive = menuOpen,
-            )
-            }
-
             when (activePanel) {
                 "AI" -> Column(Modifier.weight(1f).fillMaxWidth()) {
                     IdeFullPageBar(title = "AI", onBack = ::handleBackPress)
@@ -2247,97 +2216,148 @@ internal fun IdeScreen(
                         // numbers, the code and the drawer with it: the editor area went black while
                         // the bars above and below it carried on drawing, because those sit outside
                         // this Box. Deleting this line puts that back exactly as it was.
-                        else -> Box(Modifier.weight(1f).fillMaxWidth()) {
-                            Row(Modifier.matchParentSize()) {
-                                IdeEditorArea(
-                                    modifier = Modifier.weight(1f),
-                                    tabs = tabs,
-                                    active = active,
-                                    language = language,
-                                    contentFor = { path -> liveBuffers[path] ?: diskContents[path] ?: "" },
-                                    onSelectTab = { path ->
-                                        dismissKeyboard()
-                                        active = path
-                                        selectedPath = path
-                                    },
-                                    onCloseTab = { path ->
-                                        tabs = tabs.filterNot { it.path == path }
-                                        if (active == path) {
-                                            active = tabs.lastOrNull()?.path.orEmpty()
-                                            selectedPath = tabs.lastOrNull()?.path
+                        else -> SidebarHost(
+                            open = sidebarOpen,
+                            onOpenChange = { sidebarOpen = it },
+                            keyboardVisible = WindowInsets.isImeVisible,
+                            canScrollLeft = { true },
+                            sidebar = {
+                                Column(Modifier.fillMaxWidth()) {
+                                    ToolRail(
+                                        projectName = projectName,
+                                        selectedTool = "files",
+                                        onTool = { tool ->
+                                            if (tool == "settings") onOpenSettings()
+                                        },
+                                    )
+                                    SidePanel(projectName = projectName) {
+                                        // Files panel content (screen 10)
+                                    }
+                                    RunCard(onRun = {
+                                        if (projectErrors > 0) {
+                                            toast = blockedByErrors(projectErrorList, "running")
+                                            problemSheet.value = problemSheet.value ?: 1
+                                            problemSheetScope = ProblemScope.PROJECT
+                                            activePanel = "Code"
+                                        } else {
+                                            autoOpenAfterBuild = true
+                                            building = true
                                         }
-                                    },
-                                    onCloseOthers = { path ->
-                                        tabs = tabs.filter { it.path == path }
-                                        if (active != path) {
-                                            active = path
-                                            selectedPath = tabs.firstOrNull()?.path
-                                        }
-                                    },
-                                    onCloseAll = {
-                                        tabs = emptyList()
-                                        active = ""
-                                        selectedPath = null
-                                    },
-                                    onBufferChange = { text ->
-                                        // The editor reports its opening seed too. An empty
-                                        // report is only the reader's edit when this buffer
-                                        // already held text and they deleted all of it. At any
-                                        // other time it is a seed, and keeping it would let auto
-                                        // save overwrite the file once the read lands.
-                                        val edited = liveBuffers[active]?.isNotEmpty() == true
-                                        if (text.isNotEmpty() || edited) {
-                                            liveBuffers[active] = text
-                                            noteContent(active)
-                                        }
-                                    },
-                                    onToast = { text -> toast = text },
-                                    dirtyOf = ::isDirtyTab,
-                                    problemSheetLine = problemSheet,
-                                    activeKind = activeFile?.kind,
-                                    formatRequest = formatRequest,
-                                    formatSelectionRequest = formatSelectionRequest,
-                                    problemSheetScope = problemSheetScope,
-                                    projectDiagnostics = projectErrorList,
-                                    onOpenProjectFile = { name ->
-                                        diskTree.firstOrNull { it.name == name }?.let { openFile(it) }
-                                    },
-                                    onSelectionFormat = { formatSelectionRequest++ },
-                                    undoRequest = undoRequest,
-                                    redoRequest = redoRequest,
-                                    sourceRevision = sourceRevision,
-                                    caretRequest = caretRequest,
-                                    onCaretChange = { editorCaret = it },
-                                    projectSymbols = projectNames,
-                                    onSaveRequest = { saveActiveFile() },
-                                    relativePath = activeFile?.path,
-                                    projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
-                                    initialCaret = restoredCaret,
-                                    initialScroll = restoredScroll,
-                                    onPlaceChange = { caret, scroll ->
-                                        kvStore.putString(
-                                            "restore_caret_$projectId",
-                                            caret.entries.joinToString("") { "${it.key}${it.value}" },
-                                        )
-                                        kvStore.putString(
-                                            "restore_scroll_$projectId",
-                                            scroll.entries.joinToString("") {
-                                                "${it.key}${it.value.first},${it.value.second}"
-                                            },
-                                        )
-                                    },
-                                    onHistoryState = { undo, redo ->
-                                        canUndo = undo
-                                        canRedo = redo
-                                    },
-                                    onSuggestionsOpen = { suggestionsOpen = it },
-                                    showToolRow = showToolRow(imeOpen, suggestionsOpen),
-                                    imeOpen = imeOpen,
-                                    editorScale = editorScale,
-                                )
-                            }
+                                    })
+                                }
+                            },
+                            card = {
+                                Column(Modifier.fillMaxSize()) {
+                                    IdeTopBar(
+                                        fileName = activeName,
+                                        canUndo = canUndo,
+                                        canRedo = canRedo,
+                                        onUndo = { undoRequest++ },
+                                        onRedo = { redoRequest++ },
+                                        onRun = {
+                                            // Spec 7: running is blocked while the project has compile errors, and jumps
+                                            // to the problem sheet instead.
+                                            if (projectErrors > 0) {
+                                                toast = blockedByErrors(projectErrorList, "running")
+                                                problemSheet.value = problemSheet.value ?: 1
+                                                problemSheetScope = ProblemScope.PROJECT
+                                                activePanel = "Code"
+                                            } else {
+                                                // Run means the whole way: build, install, open.
+                                                autoOpenAfterBuild = true
+                                                building = true
+                                            }
+                                        },
+                                    )
 
-                        }
+                                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                                        Row(Modifier.matchParentSize()) {
+                                            IdeEditorArea(
+                                                modifier = Modifier.weight(1f),
+                                                tabs = tabs,
+                                                active = active,
+                                                language = language,
+                                                contentFor = { path -> liveBuffers[path] ?: diskContents[path] ?: "" },
+                                                onSelectTab = { path ->
+                                                    dismissKeyboard()
+                                                    active = path
+                                                    selectedPath = path
+                                                },
+                                                onCloseTab = { path ->
+                                                    tabs = tabs.filterNot { it.path == path }
+                                                    if (active == path) {
+                                                        active = tabs.lastOrNull()?.path.orEmpty()
+                                                        selectedPath = tabs.lastOrNull()?.path
+                                                    }
+                                                },
+                                                onCloseOthers = { path ->
+                                                    tabs = tabs.filter { it.path == path }
+                                                    if (active != path) {
+                                                        active = path
+                                                        selectedPath = tabs.firstOrNull()?.path
+                                                    }
+                                                },
+                                                onCloseAll = {
+                                                    tabs = emptyList()
+                                                    active = ""
+                                                    selectedPath = null
+                                                },
+                                                onBufferChange = { text ->
+                                                    val edited = liveBuffers[active]?.isNotEmpty() == true
+                                                    if (text.isNotEmpty() || edited) {
+                                                        liveBuffers[active] = text
+                                                        noteContent(active)
+                                                    }
+                                                },
+                                                onToast = { text -> toast = text },
+                                                dirtyOf = ::isDirtyTab,
+                                                problemSheetLine = problemSheet,
+                                                activeKind = activeFile?.kind,
+                                                formatRequest = formatRequest,
+                                                formatSelectionRequest = formatSelectionRequest,
+                                                problemSheetScope = problemSheetScope,
+                                                projectDiagnostics = projectErrorList,
+                                                onOpenProjectFile = { name ->
+                                                    diskTree.firstOrNull { it.name == name }?.let { openFile(it) }
+                                                },
+                                                onSelectionFormat = { formatSelectionRequest++ },
+                                                undoRequest = undoRequest,
+                                                redoRequest = redoRequest,
+                                                sourceRevision = sourceRevision,
+                                                caretRequest = caretRequest,
+                                                onCaretChange = { editorCaret = it },
+                                                projectSymbols = projectNames,
+                                                onSaveRequest = { saveActiveFile() },
+                                                relativePath = activeFile?.path,
+                                                projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
+                                                initialCaret = restoredCaret,
+                                                initialScroll = restoredScroll,
+                                                onPlaceChange = { caret, scroll ->
+                                                    kvStore.putString(
+                                                        "restore_caret_$projectId",
+                                                        caret.entries.joinToString("") { "${it.key}${it.value}" },
+                                                    )
+                                                    kvStore.putString(
+                                                        "restore_scroll_$projectId",
+                                                        scroll.entries.joinToString("") {
+                                                            "${it.key}${it.value.first},${it.value.second}"
+                                                        },
+                                                    )
+                                                },
+                                                onHistoryState = { undo, redo ->
+                                                    canUndo = undo
+                                                    canRedo = redo
+                                                },
+                                                onSuggestionsOpen = { suggestionsOpen = it },
+                                                showToolRow = showToolRow(imeOpen, suggestionsOpen),
+                                                imeOpen = imeOpen,
+                                                editorScale = editorScale,
+                                            )
+                                        }
+                                    }
+                                }
+                            },
+                        )
                     }
                 }
             }
@@ -3190,32 +3210,21 @@ private fun IdeFullPageBar(title: String, onBack: () -> Unit) {
 
 @Composable
 private fun IdeTopBar(
-    projectName: String,
-    dirty: Boolean,
+    fileName: String?,
     canUndo: Boolean,
     canRedo: Boolean,
-    onSwitchProject: () -> Unit,
-    onDrawer: () -> Unit,
-    onSave: () -> Unit,
     onUndo: () -> Unit,
     onRedo: () -> Unit,
-    onTerminal: () -> Unit,
     onRun: () -> Unit,
-    onMore: () -> Unit,
-    menuActive: Boolean,
 ) {
-    val c = LocalPageColors.current
+    val c = CcTheme.colors
 
     Row(
         Modifier
             .fillMaxWidth()
-            // Android 15+ draws the window under the phone's status bar. Without this inset the
-            // row's buttons sat against it; now the panel colour extends behind the bar and the
-            // 52 dp of content starts below it. Where the system already insets the window, the
-            // value is zero and nothing moves.
-            .background(c.panel)
+            .background(CcTheme.colors.content)
             .windowInsetsPadding(WindowInsets.statusBars)
-            .height(52.dp)
+            .height(56.dp)
             .drawBehind {
                 drawLine(
                     color = c.divider,
@@ -3224,100 +3233,136 @@ private fun IdeTopBar(
                     strokeWidth = 1f,
                 )
             }
-            .padding(horizontal = 10.dp),
+            .padding(start = 18.dp, end = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // The drawer button opens the file list; the project name fills the free width so the
-        // actions sit against the right edge. Going back is the system Back button and gesture,
-        // which the screen's own handler owns — no arrow here.
-        HeaderIconButton(
-            icon = CcIcons.Drawer,
-            label = "Menu",
-            tint = c.iconTint,
-            onClick = onDrawer,
-        )
-
-        // The project name fills the free width so the actions sit against the right edge.
-        // Tapping it opens the project switcher (screen 03); the rail avatar takes over as
-        // the trigger once the sidebar shell lands.
+        // The open file name at the left, one line, CcType.screenTitle 16.5 sp Bold.
         Text(
-            text = projectName,
-            color = c.brightText,
-            fontSize = 14.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Medium,
+            text = fileName ?: "No file open",
+            style = CcType.screenTitle,
+            color = c.text,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f)
-                .clickable(onClick = onSwitchProject),
+            modifier = Modifier.weight(1f),
         )
-
-        HeaderIconButton(
-            icon = CcIcons.Undo,
-            label = "Undo",
-            tint = if (canUndo) c.iconTint else c.iconTint.copy(alpha = 0.35f),
-            enabled = canUndo,
-            onClick = onUndo,
-        )
-        HeaderIconButton(
-            icon = CcIcons.Redo,
-            label = "Redo",
-            tint = if (canRedo) c.iconTint else c.iconTint.copy(alpha = 0.35f),
-            enabled = canRedo,
-            onClick = onRedo,
-        )
-        // Save carries no tint change: a yellow dot at its top right says unsaved, and nothing
-        // else on the button moves.
-        Box(
-            Modifier.size(34.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            HeaderIconButton(
-                icon = CcIcons.Save,
-                label = "Save",
-                tint = c.iconTint,
-                onClick = onSave,
-            )
-            if (dirty) {
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = 4.dp, end = 4.dp)
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(c.warnText),
-                )
-            }
-        }
-        HeaderIconButton(
-            icon = CcIcons.Terminal,
-            label = "Terminal",
-            tint = c.iconTint,
-            onClick = onTerminal,
-        )
-        // Run is the one filled button in the header: a blue fill with a white play glyph.
+        // Undo and redo: 19 dp icons, stroke 1.9, c.faint when nothing to undo/redo, c.text2 when active.
         Box(
             Modifier
-                .size(34.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(c.runFill)
+                .clickable(enabled = canUndo, onClick = onUndo)
+                .androidxSemantics("Undo"),
+            contentAlignment = Alignment.Center,
+        ) {
+            CcIcon(
+                name = "undo",
+                tint = if (canUndo) c.text2 else c.faint,
+                size = 19.dp,
+                strokeWidth = 1.9f,
+            )
+        }
+        Box(
+            Modifier
+                .clickable(enabled = canRedo, onClick = onRedo)
+                .androidxSemantics("Redo"),
+            contentAlignment = Alignment.Center,
+        ) {
+            CcIcon(
+                name = "redo",
+                tint = if (canRedo) c.text2 else c.faint,
+                size = 19.dp,
+                strokeWidth = 1.9f,
+            )
+        }
+        // Run: 36 x 36, radius 12, bg c.green, icon play 17 dp white (filled).
+        Box(
+            Modifier
+                .size(36.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(c.green)
                 .clickable(onClick = onRun)
                 .androidxSemantics("Run"),
             contentAlignment = Alignment.Center,
         ) {
-            // White by spec, not a token: the run fill is the same blue on both themes, so the
-            // label that reads on it is the same white on both.
-            CcIcon(CcIcons.Play, Color.White, 19.dp)
+            CcIcon(name = "play", tint = Color.White, size = 17.dp)
         }
-        HeaderIconButton(
-            icon = CcIcons.More,
-            label = "More",
-            tint = if (menuActive) c.tx else c.iconTint,
-            background = if (menuActive) c.panel2 else Color.Transparent,
-            onClick = onMore,
+    }
+}
+
+/** Labels a button for accessibility without making it focusable, so the keyboard never moves. */
+private fun Modifier.androidxSemantics(label: String): Modifier =
+    this.then(
+        Modifier.semantics { contentDescription = label },
+    )
+
+/** One key on the screen 08 key row: what it inserts and how the caret moves afterwards. */
+private data class EditorKey(
+    val label: String,
+    val insert: String = "",
+    val caretBack: Int = 0,
+    val moveRight: Boolean = false,
+)
+
+/** The eight code keys from screen 08, in order: Tab, { }, ( ), [ ], " ", ;, =, →. */
+private val CodeKeys = listOf(
+    EditorKey("Tab", "\t"),
+    EditorKey("{ }", "{}", caretBack = 1),
+    EditorKey("( )", "()", caretBack = 1),
+    EditorKey("[ ]", "[]", caretBack = 1),
+    EditorKey("\" \"", "\"\"", caretBack = 1),
+    EditorKey(";", ";"),
+    EditorKey(" = ", " = "),
+    EditorKey("→", "", moveRight = true),
+)
+
+/** Screen 08: the keyboard key row. Shown only while the soft keyboard is visible. Eight keys,
+ * all the same width, between the code and the keyboard. Taps never steal focus so the keyboard
+ * stays up.
+ */
+@Composable
+private fun KeyRow(onKey: (EditorKey) -> Unit) {
+    val c = CcTheme.colors
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(c.panel),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(c.divider),
         )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            CodeKeys.forEach { k ->
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(c.field)
+                        .pointerInput(k) {
+                            detectTapGestures { onKey(k) }
+                        },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = k.label,
+                        style = CcType.code.copy(
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            lineHeight = 16.sp,
+                        ),
+                        color = c.text2,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -3350,14 +3395,7 @@ private fun HeaderIconButton(
     }
 }
 
-/** Labels a button for accessibility without making it focusable, so the keyboard never moves. */
-private fun Modifier.androidxSemantics(label: String): Modifier =
-    this.then(
-        Modifier.semantics { contentDescription = label },
-    )
-
-/**
- * Kinds the preview panel can actually render: the Kotlin phone mock, the local web server, the
+/** Kinds the preview panel can actually render: the Kotlin phone mock, the local web server, the
  * image decoder and the structured formatters. Gradle, properties and unrecognised text get no
  * button rather than a button that opens onto "no preview".
  *
@@ -5589,96 +5627,50 @@ val applySuggestion: (Int) -> Unit = { index ->
             }
         }
 
-        // The tab strip holds only tabs. The drawer opens from the top bar's Menu, so the
-        // chevron cell that used to sit here duplicated that door and ate 44 dp of file names.
-        Row(
-            Modifier
-                .fillMaxWidth()
-                // The strip needs a bounded height. A Row inside a Column hands its children the
-                // height that is still free, so an unbounded child would otherwise stretch this
-                // strip over the whole editor and squeeze the code area out of existence.
-                .height(TAB_STRIP_HEIGHT)
-                .background(c.editorBg)
-                // A single 1 dp bottom border. The strip is not a box, and the tabs are not boxes.
-                .drawBehind {
-                    val y = size.height - 0.5f
-                    drawLine(
-                        color = c.divider,
-                        start = androidx.compose.ui.geometry.Offset(0f, y),
-                        end = androidx.compose.ui.geometry.Offset(size.width, y),
-                        strokeWidth = 1f,
-                    )
-                },
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            LazyRow(
+        // The tab strip holds only tabs. Hidden when no file is open.
+        if (tabs.isNotEmpty()) {
+            Row(
                 Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    // The fade over the overflowing edge, drawn over the list's own right-hand
-                    // edge. It used to stop dead there, so a file name was cut in half mid-letter
-                    // with nothing to say there was more of it.
-                    .drawWithCache {
-                        val fadeWidth = minOf(TAB_EDGE_FADE_WIDTH.toPx(), size.width)
-                        val brush = androidx.compose.ui.graphics.Brush.horizontalGradient(
-                            0f to c.editorBg.copy(alpha = 0f),
-                            1f to c.editorBg,
-                            startX = size.width - fadeWidth,
-                            endX = size.width,
-                        )
-                        onDrawWithContent {
-                            drawContent()
-                            drawRect(
-                                brush = brush,
-                                topLeft = androidx.compose.ui.geometry.Offset(size.width - fadeWidth, 0f),
-                                size = androidx.compose.ui.geometry.Size(fadeWidth, size.height),
-                            )
-                        }
-                    },
-                state = tabListState,
-                // Tabs breathe: 12 dp on each side, nothing above or below, in a 34 dp strip.
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    start = 12.dp,
-                    end = 12.dp,
-                ),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .fillMaxWidth()
+                    // The strip needs a bounded height. A Row inside a Column hands its children
+                    // the height that is still free, so an unbounded child would otherwise stretch
+                    // this strip over the whole editor and squeeze the code area out of existence.
+                    .height(TAB_STRIP_HEIGHT)
+                    .background(CcTheme.colors.content),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                itemsIndexed(tabs, key = { _, t -> "tab-${t.path}" }) { _, tab ->
-                    val isActive = tab.path == active
-                    // The unsaved dot shows only while the buffer differs from last saved.
-                    val dirty = dirtyOf(tab.path)
-                    // Tabs sharing a name show their parent folder: two index.js rows that read
-                    // the same are a mis-tap away from editing the wrong file.
-                    val duplicates = tabs.count { it.name == tab.name } > 1
-                    val tabLabel = if (duplicates) {
-                        tab.path.substringBeforeLast('/').substringAfterLast('/')
-                            .takeIf { it.isNotEmpty() }?.let { "$it/${tab.name}" } ?: tab.name
-                    } else {
-                        tab.name
-                    }
-                    val tabDensity = androidx.compose.ui.platform.LocalDensity.current
-                    Box {
-                        Row(
+                LazyRow(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        // Scrolls sideways.
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    state = tabListState,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    itemsIndexed(tabs, key = { _, t -> "tab-${t.path}" }) { _, tab ->
+                        val isActive = tab.path == active
+                        // The unsaved dot shows only while the buffer differs from last saved.
+                        val dirty = dirtyOf(tab.path)
+                        // Tabs sharing a name show their parent folder: two index.js rows that read
+                        // the same are a mis-tap away from editing the wrong file.
+                        val duplicates = tabs.count { it.name == tab.name } > 1
+                        val tabLabel = if (duplicates) {
+                            tab.path.substringBeforeLast('/').substringAfterLast('/')
+                                .takeIf { it.isNotEmpty() }?.let { "$it/${tab.name}" } ?: tab.name
+                        } else {
+                            tab.name
+                        }
+                        Box(
                             Modifier
                                 .height(TAB_HEIGHT)
-                                .drawBehind {
-                                    if (!isActive) return@drawBehind
-                                    val y = size.height - 1f
-                                    drawLine(
-                                        color = c.accent,
-                                        start = androidx.compose.ui.geometry.Offset(0f, y),
-                                        end = androidx.compose.ui.geometry.Offset(size.width, y),
-                                        strokeWidth = with(tabDensity) { TAB_UNDERLINE_THICKNESS.toPx() },
-                                    )
-                                }
-                                .combinedClickable(
-                                    onClick = { selectTabKeepingPlace(tab.path) },
-                                    onLongClick = { tabMenuFor = tab.path },
-                                )
-                                .padding(horizontal = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                .clip(RoundedCornerShape(15.dp))
+                                .background(if (isActive) c.accent else CcTheme.colors.field)
+                                .clickable(onClick = { selectTabKeepingPlace(tab.path) })
+                                .padding(horizontal = 13.dp),
+                            contentAlignment = Alignment.Center,
                         ) {
                             // The dot comes first: it marks the tab, and a mark reads before a name.
                             if (dirty) {
@@ -5691,44 +5683,13 @@ val applySuggestion: (Int) -> Unit = { index ->
                             }
                             Text(
                                 text = ellipsizeMiddle(tabLabel),
-                                color = if (isActive) c.brightText else c.hintText,
-                                fontSize = 12.sp,
-                                fontFamily = Sans,
-                                fontWeight = FontWeight.Normal,
+                                color = if (isActive) Color.White else CcTheme.colors.textSoft,
+                                style = CcType.caption.copy(
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                ),
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 150.dp),
-                            )
-                        }
-                        // No close button on the tab itself. A long press is the deliberate gesture;
-                        // a visible × is a mis-tap away from closing the file being read.
-                        DropdownMenu(
-                            expanded = tabMenuFor == tab.path,
-                            onDismissRequest = { tabMenuFor = null },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("Close", fontFamily = Sans) },
-                                onClick = {
-                                    tabMenuFor = null
-                                    forgetPlace(tab.path)
-                                    onCloseTab(tab.path)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Close others", fontFamily = Sans) },
-                                onClick = {
-                                    tabMenuFor = null
-                                    tabs.forEach { forgetPlace(it.path) }
-                                    onCloseOthers(tab.path)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Close all", fontFamily = Sans) },
-                                onClick = {
-                                    tabMenuFor = null
-                                    tabs.forEach { forgetPlace(it.path) }
-                                    onCloseAll()
-                                },
                             )
                         }
                     }
@@ -6796,10 +6757,23 @@ val applySuggestion: (Int) -> Unit = { index ->
                 .imePadding()
                 .clipToBounds(),
         ) {
-            EditorKeyRow(
-                onTab = { onToolAction(ToolAction.TAB) },
-                onKey = { glyph -> typeAtCaret(glyph) },
-            )
+            // Screen 08 key row: eight keys, taps never steal focus.
+            if (imeOpen) {
+                KeyRow { key ->
+                    val live = fieldValue
+                    val liveText = live.text
+                    val at = live.selection.start.coerceIn(0, liveText.length)
+                    val insert = key.insert
+                    if (insert.isNotEmpty()) {
+                        val next = liveText.take(at) + insert + liveText.drop(at + key.caretBack.coerceAtMost(liveText.length - at - insert.length).coerceAtLeast(0))
+                        var newAt = at + insert.length - key.caretBack
+                        if (key.moveRight) newAt++
+                        commit(TextFieldValue(next, TextRange(newAt.coerceIn(0, next.length))))
+                    } else if (key.moveRight) {
+                        commit(TextFieldValue(liveText, TextRange((at + 1).coerceIn(0, liveText.length))))
+                    }
+                }
+            }
         }
     }
 }
