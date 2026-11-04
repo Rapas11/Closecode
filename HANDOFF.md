@@ -109,6 +109,45 @@ Read these sections from `ccbs_docx_text.txt` (search for the screen title):
 | 29 | Compose previews | Preview gallery |
 | 30 | Logcat / Problems | Log list, problem list |
 
+## Spec screens 31–44 (batch after 23–30)
+
+| Screen | Title | Key elements |
+|--------|-------|--------------|
+| 31 | Settings list | Sections, rows, toggles, chevrons, EmptyState/LoadingList/ErrorCard |
+| 32 | Settings: Storage | Storage info, clear cache |
+| 33 | Settings: Editor | Font size, tab size, line numbers, rainbow brackets |
+| 34 | Settings: Theme | Light/dark/system toggle |
+| 35 | Settings: AI | OpenCode settings |
+| 36 | Settings: Terminal | Shell tools, saved commands |
+| 37 | Settings: GitHub | Account connect/disconnect |
+| 38 | Settings: Build | Build tools download |
+| 39 | Settings: Notifications | Notification settings |
+| 40 | Settings: About | Version, app info |
+| 41–44 | Settings pages | Individual setting pages with real data |
+
+## Spec screens 45–51 (batch after 31–44)
+
+| Screen | Title | Key elements |
+|--------|-------|--------------|
+| 45 | Project settings | Project-specific config |
+| 46 | App icon | Icon selection/preview |
+| 47 | Keys / Release key ready | Signing keys |
+| 48 | Create key | Create new signing key |
+| 49 | Import key | Import existing key |
+| 50 | Import key | Import existing key |
+| 51 | Self-test | Self-test results |
+
+## Spec screens 52–57 (Icon manager — new feature)
+
+| Screen | Title | Key elements |
+|--------|-------|--------------|
+| 52 | Icons in this project | Icon list, browse |
+| 53 | Icon groups | Grouped icons |
+| 54 | Icons: Browse | Browse all icons |
+| 55 | Icons: getting a pack | Download icon packs |
+| 56 | Icon detail | Individual icon view |
+| 57 | Icon manager summary | Overview |
+
 Each screen has a `Code.` block in the spec with exact composable signatures and numbers. Follow them exactly.
 
 ---
