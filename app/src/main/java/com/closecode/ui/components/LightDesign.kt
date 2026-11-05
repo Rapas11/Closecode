@@ -199,9 +199,10 @@ fun DesignListRow(
 @Composable
 fun DesignSectionLabel(text: String, modifier: Modifier = Modifier) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Text(
         text = text.uppercase(),
-        color = c.mock.faint,
+        color = cc.muted,
         fontSize = 11.sp,
         fontFamily = Sans,
         fontWeight = FontWeight.Bold,

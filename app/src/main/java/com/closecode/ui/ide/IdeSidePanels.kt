@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,7 +41,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
@@ -110,6 +116,7 @@ internal fun IdeSidePanel(
     body: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Box(
         Modifier
             .width(234.dp)
@@ -119,20 +126,20 @@ internal fun IdeSidePanel(
             Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
-                .background(c.mock.panel)
+                .background(cc.panel)
                 .windowInsetsPadding(WindowInsets.statusBars)
                 .clipToBounds(),
         ) {
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 10.dp),
+                    .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(
                         text = title,
-                        color = c.mock.text,
+                        color = cc.text,
                         fontSize = 21.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.ExtraBold,
@@ -142,11 +149,12 @@ internal fun IdeSidePanel(
                     if (subtitle != null) {
                         Text(
                             text = subtitle,
-                            color = c.mock.muted,
+                            color = cc.muted,
                             fontSize = 12.sp,
                             fontFamily = Sans,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp),
                         )
                     }
                 }
@@ -169,7 +177,7 @@ internal fun IdeSidePanel(
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(start = 10.dp, end = 10.dp, bottom = 12.dp),
+                    .padding(start = 12.dp, end = 10.dp, bottom = 12.dp),
             ) {
                 runCard()
             }
@@ -432,6 +440,7 @@ internal fun IdeSearchSidePanel(
     runCard: @Composable () -> Unit,
 ) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     val searchSources by produceState(
         initialValue = emptyList(),
         key1 = projectId,
@@ -473,149 +482,225 @@ internal fun IdeSearchSidePanel(
     val groups = remember(hits) {
         hits.groupBy { it.path }.map { (path, groupHits) -> path to groupHits }
     }
-    val subtitle = when {
-        query.isBlank() -> "Search every file"
-        hits.isEmpty() -> "No matches"
-        hits.size >= MAX_SEARCH_HITS -> "200+ matches"
-        else -> "${hits.size} ${if (hits.size == 1) "match" else "matches"}"
-    }
+    var optionsOpen by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    var chipTop by remember { mutableStateOf(0.dp) }
+    val density = LocalDensity.current
+    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     IdeSidePanel(
         title = "Search",
-        subtitle = subtitle,
+        subtitle = null,
         runCard = runCard,
     ) {
-        SidePanelField(
-            value = query,
-            onValueChange = onQueryChange,
-            hint = "Search project",
-        )
-        Spacer(Modifier.height(8.dp))
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, end = 14.dp, top = 4.dp, bottom = 6.dp)
+                .height(42.dp)
+                .clip(RoundedCornerShape(21.dp))
+                .background(cc.field)
+                .border(
+                    width = if (focused) 1.5.dp else 0.dp,
+                    color = if (focused) cc.accent else Color.Transparent,
+                    shape = RoundedCornerShape(21.dp),
+                )
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            com.closecode.ui.CcIcon("search", cc.textSoft, 16.dp, 1.9f)
+            Spacer(Modifier.width(8.dp))
+            Box(Modifier.weight(1f)) {
+                if (query.isEmpty()) {
+                    Text(
+                        text = "Search",
+                        color = cc.muted,
+                        fontSize = 14.sp,
+                        fontFamily = Sans,
+                    )
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    singleLine = true,
+                    cursorBrush = SolidColor(cc.accent),
+                    textStyle = TextStyle(color = cc.text, fontSize = 14.sp, fontFamily = Sans),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { focused = it.isFocused },
+                )
+            }
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, end = 14.dp, top = 2.dp, bottom = 6.dp)
+                .onGloballyPositioned { coords ->
+                    chipTop = with(density) { coords.positionInWindow().y.toDp() } - statusTop
+                },
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
             listOf("Files", "Text", "Symbols").forEach { option ->
+                val on = scope == option
                 Box(
                     Modifier
+                        .height(30.dp)
                         .clip(RoundedCornerShape(15.dp))
-                        .background(if (scope == option) c.mock.accent else c.mock.field)
-                        .clickable { scope = option }
-                        .padding(horizontal = 11.dp, vertical = 6.dp),
+                        .background(if (on) cc.accent else cc.field)
+                        .clickable {
+                            // Tapping the selected Text chip again opens screen 13.
+                            if (on && option == "Text") optionsOpen = true else scope = option
+                        }
+                        .padding(horizontal = 13.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = option,
-                        color = if (scope == option) c.mock.onAccent else c.mock.text2,
-                        fontSize = 11.5.sp,
+                        color = if (on) Color.White else cc.textSoft,
+                        fontSize = 12.sp,
                         fontFamily = Sans,
-                        fontWeight = if (scope == option) FontWeight.SemiBold else FontWeight.Medium,
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            SidePanelChip("Aa", caseSensitive) { onCaseSensitiveChange(!caseSensitive) }
-            SidePanelChip("Word", wholeWord) { onWholeWordChange(!wholeWord) }
-            SidePanelChip(".*", regex) { onRegexChange(!regex) }
+        if (groups.isNotEmpty()) {
+            Text(
+                text = "${hits.size} ${if (hits.size == 1) "RESULT" else "RESULTS"} IN " +
+                    "${groups.size} ${if (groups.size == 1) "FILE" else "FILES"}",
+                color = cc.muted,
+                fontSize = 11.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.8.sp,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 4.dp),
+            )
         }
-        Spacer(Modifier.height(6.dp))
         if (query.isBlank() || groups.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = if (query.isBlank()) "Type to search." else "No matches in the project.",
-                    color = c.mock.muted,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    textAlign = TextAlign.Center,
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    com.closecode.ui.CcIcon("search", cc.faint, 28.dp, 1.6f)
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        text = if (query.isBlank()) "Search this project" else "No results",
+                        color = cc.text2,
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = if (query.isBlank()) "Type at least 2 characters."
+                        else "Try different words or options.",
+                        color = cc.muted,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         } else {
             Column(
                 Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp),
+                    .verticalScroll(rememberScrollState()),
             ) {
                 groups.forEach { (path, groupHits) ->
-                    Column(
+                    Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(c.mock.content)
-                            .border(1.dp, c.mock.border, RoundedCornerShape(12.dp)),
+                            .clickable { onOpen(groupHits.first()) }
+                            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
+                        com.closecode.ui.CcIcon("code", cc.purple, 16.dp, 1.8f)
+                        Text(
+                            text = groupHits.first().fileName,
+                            color = cc.text,
+                            fontSize = 13.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    groupHits.forEach { hit ->
                         Row(
                             Modifier
+                                .padding(horizontal = 14.dp)
+                                .padding(top = 2.dp)
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(cc.content)
+                                .clickable { onOpen(hit) }
+                                .padding(horizontal = 9.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(
-                                text = groupHits.first().fileName,
-                                color = c.mock.text2,
-                                fontSize = 12.sp,
-                                fontFamily = Sans,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
+                                text = hit.line.toString(),
+                                color = cc.faint,
+                                fontSize = 11.sp,
+                                fontFamily = Mono,
+                                textAlign = TextAlign.End,
+                                modifier = Modifier.width(24.dp),
                             )
                             Text(
-                                text = groupHits.size.toString(),
-                                color = c.mock.muted,
-                                fontSize = 10.5.sp,
-                                fontFamily = Sans,
+                                text = lineWithMatch(
+                                    line = hit.text,
+                                    query = query,
+                                    caseSensitive = caseSensitive,
+                                    regex = regex,
+                                    wholeWord = wholeWord,
+                                    matchBg = cc.matchBg,
+                                    matchText = cc.matchText,
+                                ),
+                                color = cc.textSoft,
+                                fontSize = 11.sp,
+                                fontFamily = Mono,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
                             )
-                        }
-                        Box(Modifier.fillMaxWidth().height(1.dp).background(c.mock.divider))
-                        groupHits.forEach { hit ->
-                            Row(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onOpen(hit) }
-                                    .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(
-                                    text = hit.line.toString(),
-                                    color = c.mock.muted,
-                                    fontSize = 10.5.sp,
-                                    fontFamily = Mono,
-                                    textAlign = TextAlign.End,
-                                    modifier = Modifier.width(26.dp),
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = lineWithMatch(
-                                        line = hit.text,
-                                        query = query,
-                                        caseSensitive = caseSensitive,
-                                        regex = regex,
-                                        wholeWord = wholeWord,
-                                        matchBg = c.spec.matchBg,
-                                        matchText = c.spec.matchText,
-                                    ),
-                                    color = c.mock.textSoft,
-                                    fontSize = 11.sp,
-                                    fontFamily = Mono,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
                         }
                     }
                 }
-                // The card's own 12 radius clears the last row's clip.
                 Spacer(Modifier.height(8.dp))
             }
+        }
+    }
+
+    if (optionsOpen) {
+        val screenH = LocalConfiguration.current.screenHeightDp.dp
+        com.closecode.ui.components.CcMenuOverlay(
+            top = (chipTop + 36.dp).coerceAtMost(screenH - 200.dp).coerceAtLeast(8.dp),
+            end = 18.dp,
+            width = 210.dp,
+            onDismiss = { optionsOpen = false },
+        ) {
+            com.closecode.ui.components.CcMenuItem(
+                icon = "check",
+                label = "Match case",
+                iconVisible = caseSensitive,
+                onClick = { onCaseSensitiveChange(!caseSensitive) },
+            )
+            com.closecode.ui.components.CcMenuDivider()
+            com.closecode.ui.components.CcMenuItem(
+                icon = "check",
+                label = "Whole word",
+                iconVisible = wholeWord,
+                onClick = { onWholeWordChange(!wholeWord) },
+            )
+            com.closecode.ui.components.CcMenuDivider()
+            com.closecode.ui.components.CcMenuItem(
+                icon = "check",
+                label = "Use regex (.*)",
+                iconVisible = regex,
+                onClick = { onRegexChange(!regex) },
+            )
         }
     }
 }

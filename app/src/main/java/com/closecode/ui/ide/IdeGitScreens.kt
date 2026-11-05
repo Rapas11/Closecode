@@ -99,6 +99,7 @@ fun IdeGitPanel(
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val tokenStore = remember(context) { TokenStore(context) }
@@ -227,7 +228,7 @@ fun IdeGitPanel(
     }
 
     if (token == null) {
-        Column(modifier.fillMaxSize().background(c.mock.panel)) {
+        Column(modifier.fillMaxSize().background(cc.panel)) {
             GitPanelHeader(
                 title = "GitHub",
                 subtitle = "Not connected",
@@ -237,48 +238,49 @@ fun IdeGitPanel(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(horizontal = 28.dp, vertical = 24.dp),
+                    .padding(horizontal = 24.dp, vertical = 34.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(
                         Modifier
-                            .size(64.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(c.mock.field),
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(cc.text2.copy(alpha = 0.13f)),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CcIcon(CcIcons.Github, c.mock.text2, 28.dp)
+                        com.closecode.ui.CcIcon("gh", cc.text2, 36.dp, 1.6f)
                     }
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(18.dp))
                     Text(
                         text = "Connect GitHub",
-                        color = c.mock.text,
-                        fontSize = 16.sp,
+                        color = cc.text,
+                        fontSize = 20.sp,
                         fontFamily = Sans,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.ExtraBold,
                         textAlign = TextAlign.Center,
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
                         text = "Sign in to clone your repositories, push your work and see changes.",
-                        color = c.mock.muted,
-                        fontSize = 13.sp,
+                        color = cc.muted,
+                        fontSize = 13.5.sp,
                         fontFamily = Sans,
-                        lineHeight = 18.sp,
+                        lineHeight = 20.sp,
                         textAlign = TextAlign.Center,
                     )
-                    Spacer(Modifier.height(20.dp))
-                    GitPrimaryButton(
-                        label = "Sign in",
+                    Spacer(Modifier.height(22.dp))
+                    com.closecode.ui.components.PrimaryButton(
+                        text = "Sign in with GitHub",
                         onClick = { signInOpen = true },
-                        icon = CcIcons.Github,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        icon = "gh",
                     )
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(16.dp))
                     Text(
                         text = "Clone a public link instead",
-                        color = c.mock.accent,
-                        fontSize = 13.sp,
+                        color = cc.accent,
+                        fontSize = 12.5.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier
@@ -296,7 +298,7 @@ fun IdeGitPanel(
         Column(
             modifier
                 .fillMaxSize()
-                .background(c.mock.panel)
+                .background(cc.panel)
                 .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp),
         ) {
@@ -309,30 +311,58 @@ fun IdeGitPanel(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 2.dp),
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                GitSmallButton(
-                    label = "Pull",
-                    icon = CcIcons.Download,
-                    enabled = remoteUrl != null && !busy && snapshot?.hasCommits == true,
-                    onClick = {
-                        remoteAction("Pull") { token -> GitHubRemote(projectRoot!!).pull(token) }
-                    },
-                )
-                GitSmallButton(
-                    label = "Push",
-                    icon = CcIcons.Upload,
-                    enabled = remoteUrl != null && !busy && snapshot?.hasCommits == true,
-                    onClick = {
-                        remoteAction("Push") { token -> GitHubRemote(projectRoot!!).push(token) }
-                    },
-                )
+                Row(
+                    Modifier
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(cc.field)
+                        .clickable(enabled = remoteUrl != null && !busy && snapshot?.hasCommits == true, onClick = {
+                            remoteAction("Pull") { token -> GitHubRemote(projectRoot!!).pull(token) }
+                        })
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    com.closecode.ui.CcIcon("down", cc.text2, 16.dp)
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        text = "Pull",
+                        color = cc.text2,
+                        fontSize = 13.5.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Row(
+                    Modifier
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(cc.field)
+                        .clickable(enabled = remoteUrl != null && !busy && snapshot?.hasCommits == true, onClick = {
+                            remoteAction("Push") { token -> GitHubRemote(projectRoot!!).push(token) }
+                        })
+                        .padding(horizontal = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    com.closecode.ui.CcIcon("up", cc.text2, 16.dp)
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        text = "Push",
+                        color = cc.text2,
+                        fontSize = 13.5.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
                 if (busy) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(15.dp),
-                        color = c.mock.accent,
+                        color = cc.accent,
                         strokeWidth = 2.dp,
                     )
                 }
@@ -380,12 +410,14 @@ fun IdeGitPanel(
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 3.dp)
+                            .padding(horizontal = 14.dp, vertical = 0.dp)
+                            .padding(bottom = 6.dp)
                             .clip(RoundedCornerShape(13.dp))
-                            .background(c.mock.page)
+                            .background(cc.field)
                             .clickable { onDiff(change.path) }
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .padding(horizontal = 11.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         GitCheckBox(
                             checked = change.path in selected,
@@ -398,11 +430,10 @@ fun IdeGitPanel(
                                 }
                             },
                         )
-                        Spacer(Modifier.width(12.dp))
                         Text(
                             text = change.path.substringAfterLast('/'),
-                            color = c.mock.text,
-                            fontSize = 14.sp,
+                            color = cc.text,
+                            fontSize = 13.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
@@ -420,18 +451,20 @@ fun IdeGitPanel(
                     onValueChange = { message = it },
                     hint = "Commit message...",
                     enabled = !busy,
-                    height = 58.dp,
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp),
+                    height = 68.dp,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    background = cc.rail,
                 )
-                Spacer(Modifier.height(10.dp))
-                GitPrimaryButton(
-                    label = "Commit ${selected.size} ${if (selected.size == 1) "file" else "files"}",
+                val staged = selected.size
+                val canCommit = message.isNotBlank() && staged > 0 && !busy
+                com.closecode.ui.components.PrimaryButton(
+                    text = if (staged > 1) "Commit $staged files" else if (staged == 1) "Commit 1 file" else "Commit",
                     onClick = ::commitChanges,
-                    enabled = selected.isNotEmpty() && message.isNotBlank() && !busy,
-                    icon = CcIcons.Check,
-                    background = c.mock.green,
-                    foreground = c.mock.onGreen,
-                    modifier = Modifier.padding(horizontal = 16.dp),
+                    modifier = Modifier.padding(horizontal = 14.dp).height(42.dp),
+                    enabled = canCommit,
+                    icon = "check",
+                    container = cc.green,
+                    radius = 13.dp,
                 )
             }
 
@@ -439,7 +472,7 @@ fun IdeGitPanel(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 22.dp, bottom = 4.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     DesignSectionLabel("HISTORY", Modifier.weight(1f))
@@ -465,13 +498,13 @@ fun IdeGitPanel(
                         ) {
                             Text(
                                 text = "See all",
-                                color = c.mock.accent,
+                                color = cc.accent,
                                 fontSize = 13.sp,
                                 fontFamily = Sans,
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.weight(1f),
                             )
-                            CcIcon(CcIcons.ChevronRight, c.mock.faint, 16.dp)
+                            com.closecode.ui.CcIcon("chevron-right", cc.faint, 16.dp)
                         }
                     }
                 }
@@ -524,80 +557,57 @@ private fun GitMiniHistoryRow(
     first: Boolean,
     onClick: () -> Unit,
 ) {
-    val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Row(
         Modifier
             .fillMaxWidth()
+            .height(IntrinsicSize.Min)
             .clickable(onClick = onClick)
-            .padding(start = 16.dp, end = 16.dp, top = 5.dp, bottom = 5.dp),
-        verticalAlignment = Alignment.Top,
+            .padding(horizontal = 16.dp, vertical = 6.dp),
     ) {
-        Box(
+        Column(
             Modifier
-                .width(18.dp)
-                .height(40.dp),
+                .width(10.dp)
+                .fillMaxHeight()
+                .padding(top = 5.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Box(
                 Modifier
-                    .align(Alignment.Center)
-                    .width(2.dp)
-                    .fillMaxHeight()
-                    .background(c.mock.border),
+                    .size(9.dp)
+                    .clip(CircleShape)
+                    .then(
+                        if (first) Modifier.background(cc.accent)
+                        else Modifier.border(2.dp, cc.accent, CircleShape),
+                    ),
             )
             Box(
                 Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 4.dp)
-                    .size(9.dp)
-                    .clip(CircleShape)
-                    .background(if (first) c.mock.accent else c.mock.faint),
+                    .padding(top = 3.dp)
+                    .width(2.dp)
+                    .weight(1f)
+                    .background(Color(0xFFD9DCE2)),
             )
         }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = commit.summary,
-                color = c.mock.text,
+                color = cc.text,
                 fontSize = 13.sp,
                 fontFamily = Sans,
-                fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = commit.shortId,
-                            color = c.spec.hashChipText,
-                    fontSize = 11.sp,
-                    fontFamily = com.closecode.ui.theme.Mono,
-                    maxLines = 1,
-                )
-                Text(
-                    text = " · ${gitRelativeTime(commit.whenMillis)}",
-                    color = c.mock.muted,
-                    fontSize = 11.sp,
-                    fontFamily = Sans,
-                    maxLines = 1,
-                )
-                if (first) {
-                    Spacer(Modifier.width(6.dp))
-                    Box(
-                        Modifier
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(c.spec.hashChipBg)
-                            .padding(horizontal = 6.dp, vertical = 1.dp),
-                    ) {
-                        Text(
-                            text = "HEAD",
-                    color = c.spec.hashChipText,
-                            fontSize = 9.sp,
-                            fontFamily = Sans,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                        )
-                    }
-                }
-            }
+            Text(
+                text = "${commit.shortId} · ${gitRelativeTime(commit.whenMillis)}",
+                color = cc.muted,
+                fontSize = 10.5.sp,
+                lineHeight = 14.sp,
+                fontFamily = com.closecode.ui.theme.Mono,
+                maxLines = 1,
+                modifier = Modifier.padding(top = 2.dp),
+            )
         }
     }
 }

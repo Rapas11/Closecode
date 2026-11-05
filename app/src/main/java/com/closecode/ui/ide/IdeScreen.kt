@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -88,6 +89,8 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -4019,6 +4022,9 @@ private fun IdeExplorer(
     onClose: () -> Unit = {},
 ) {
     val c = LocalPageColors.current
+    // Screen 10 speaks the spec palette (CcTheme.kt): every colour below comes from here,
+    // never from the old `c.mock` tokens.
+    val cc = com.closecode.ui.theme.LocalCcColors.current
 
     val listState = rememberLazyListState()
 
@@ -4072,7 +4078,7 @@ private fun IdeExplorer(
             .fillMaxHeight()
             // v7: the panel is a rounded card — BOTH top corners are 26, not only the left one.
             .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
-            .background(c.mock.panel)
+            .background(cc.panel)
             .windowInsetsPadding(WindowInsets.statusBars)
             .clipToBounds(),
     ) {
@@ -4081,37 +4087,41 @@ private fun IdeExplorer(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 10.dp),
+                .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
                     text = "Files",
-                    color = c.mock.text,
+                    color = cc.text,
                     fontSize = 21.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.ExtraBold,
                 )
                 Text(
                     text = projectName,
-                    color = c.mock.muted,
+                    color = cc.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
             HeaderIconButton(
                 icon = CcIcons.Plus,
                 label = "New file",
-                tint = c.mock.text2,
+                tint = cc.text2,
+                background = cc.field,
                 iconSize = 18.dp,
                 onClick = onCreateFile,
             )
             HeaderIconButton(
                 icon = CcIcons.FolderPlus,
                 label = "New folder",
-                tint = c.mock.text2,
+                tint = cc.text2,
+                background = cc.field,
                 iconSize = 18.dp,
                 onClick = onCreateFolder,
             )
@@ -4119,22 +4129,22 @@ private fun IdeExplorer(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp)
+                .padding(start = 14.dp, end = 14.dp, top = 8.dp, bottom = 8.dp)
                 .height(40.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(c.mock.field)
+                .background(cc.field)
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            CcIcon(CcIcons.Search, c.mock.muted, 15.dp)
+            CcIcon(CcIcons.Search, cc.muted, 16.dp)
             BasicTextField(
                 value = query,
                 onValueChange = onQueryChange,
                 singleLine = true,
                 textStyle = androidx.compose.ui.text.TextStyle(
-                    color = c.mock.text,
-                    fontSize = 13.sp,
+                    color = cc.text,
+                    fontSize = 13.5.sp,
                     fontFamily = Sans,
                 ),
                 modifier = Modifier.weight(1f),
@@ -4142,8 +4152,8 @@ private fun IdeExplorer(
                     if (query.isEmpty()) {
                         Text(
                             text = "Filter files",
-                            color = c.mock.muted,
-                            fontSize = 13.sp,
+                            color = cc.muted,
+                            fontSize = 13.5.sp,
                             fontFamily = Sans,
                         )
                     }
@@ -4155,29 +4165,28 @@ private fun IdeExplorer(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 14.dp, top = 14.dp, bottom = 4.dp),
+                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     text = "OPEN · ${openTabs.size}",
-                    color = c.mock.muted,
-                    fontSize = 10.5.sp,
+                    color = cc.muted,
+                    fontSize = 11.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.6.sp,
+                    letterSpacing = 0.8.sp,
                 )
             }
             LazyRow(
                 Modifier.fillMaxWidth(),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 items(openTabs, key = { it.path }) { file ->
-                    val selected = file.path == activePath
                     Text(
                         text = file.name,
-                        color = if (selected) c.mock.text else c.mock.textSoft,
-                        fontSize = 12.5.sp,
+                        color = cc.text2,
+                        fontSize = 12.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
@@ -4186,7 +4195,7 @@ private fun IdeExplorer(
                             .widthIn(max = 118.dp)
                             .height(30.dp)
                             .clip(RoundedCornerShape(15.dp))
-                            .background(c.mock.field)
+                            .background(cc.field)
                             .clickable { onOpenTab(file) }
                             .padding(horizontal = 12.dp, vertical = 7.dp),
                     )
@@ -4196,16 +4205,16 @@ private fun IdeExplorer(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 16.dp, top = 12.dp, bottom = 2.dp),
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = "FILES",
-                color = c.mock.muted,
-                fontSize = 10.5.sp,
+                color = cc.muted,
+                fontSize = 11.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = 0.6.sp,
+                letterSpacing = 0.8.sp,
                 modifier = Modifier.weight(1f),
             )
         }
@@ -4229,30 +4238,32 @@ private fun IdeExplorer(
                             horizontalAlignment = Alignment.CenterHorizontally,
                         ) {
                             Text(
-                                text = "This folder is empty",
-                                color = c.textMuted,
+                                text = if (q.isNotEmpty()) "No files match" else "This folder is empty",
+                                color = cc.muted,
                                 fontSize = 13.sp,
                                 fontFamily = Sans,
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                text = "Create a file or a folder.",
-                                color = c.textFaint,
+                                text = if (q.isNotEmpty()) "Try another name." else "Create a file or a folder.",
+                                color = cc.textSoft,
                                 fontSize = 12.sp,
                                 fontFamily = Sans,
                                 textAlign = TextAlign.Center,
                             )
-                            Spacer(Modifier.height(12.dp))
-                            com.closecode.ui.components.OutlineButton(
-                                label = "New file",
-                                onClick = onCreateFile,
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            com.closecode.ui.components.OutlineButton(
-                                label = "Clone a repository",
-                                onClick = onCloneRequest,
-                            )
+                            if (q.isEmpty()) {
+                                Spacer(Modifier.height(12.dp))
+                                com.closecode.ui.components.OutlineButton(
+                                    label = "New file",
+                                    onClick = onCreateFile,
+                                )
+                                Spacer(Modifier.height(8.dp))
+                                com.closecode.ui.components.OutlineButton(
+                                    label = "Clone a repository",
+                                    onClick = onCloneRequest,
+                                )
+                            }
                         }
                     }
                 }
@@ -4266,19 +4277,21 @@ private fun IdeExplorer(
                         bold = false,
                         icon = com.closecode.ui.model.fileIconName(file.kind),
                         iconTint = when {
-                            file.kind == FileKind.Folder -> c.mock.yellow
+                            file.kind == FileKind.Folder -> cc.yellow
+                            file.kind == FileKind.Markdown ||
+                                file.kind == FileKind.Properties -> cc.muted
                             file.kind == FileKind.Kotlin ||
                                 file.kind == FileKind.Xml ||
                                 file.kind == FileKind.Gradle ||
-                                file.kind == FileKind.Properties ||
                                 file.kind == FileKind.Json ||
                                 file.kind == FileKind.Css ||
-                                file.kind == FileKind.Js -> c.mock.purple
-                            else -> c.mock.blue
+                                file.kind == FileKind.Js ||
+                                file.kind == FileKind.Html -> cc.purple
+                            else -> cc.blue
                         },
                         chevron = if (open) "cr" else null,
                         chevronOpen = !closed,
-                        chevronTint = c.mock.muted,
+                        chevronTint = cc.faint,
                         active = file.path == activePath,
                         gitStatus = gitLetters[file.path],
                         dirty = file.path in dirtyPaths,
@@ -4293,7 +4306,7 @@ private fun IdeExplorer(
                             text = "Tap a file to open it. Long press for Rename, Duplicate, " +
                                 "Copy path and Delete. A yellow dot means unsaved changes. " +
                                 "The letter on the right is the Git status.",
-                            color = c.textFaint,
+                            color = cc.faint,
                             fontSize = 11.sp,
                             fontFamily = Sans,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
@@ -4336,7 +4349,7 @@ private fun IdeExplorer(
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(start = 10.dp, end = 10.dp, bottom = 12.dp),
+                    .padding(start = 12.dp, end = 10.dp, bottom = 12.dp),
             ) {
                 runCard()
             }
@@ -4382,8 +4395,7 @@ internal enum class TreeAction(val label: String) {
 }
 
 /** The menu a row offers. A folder is where new things go; a file is the thing itself. */
-internal fun actionsForTree(file: ProjectFile): List<TreeAction> =
-    if (file.kind == FileKind.Folder) {
+internal fun actionsForTree(file: ProjectFile): List<TreeAction> =    if (file.kind == FileKind.Folder) {
         listOf(
             TreeAction.NEW_FILE,
             TreeAction.NEW_FOLDER,
@@ -4398,6 +4410,18 @@ internal fun actionsForTree(file: ProjectFile): List<TreeAction> =
             TreeAction.DELETE,
         )
     }
+
+/** Screen 11 icon set: plus, folder, edit, copy, trash. */
+private fun TreeAction.menuIcon(): String = when (this) {
+    TreeAction.NEW_FILE -> "plus"
+    TreeAction.NEW_FOLDER -> "folder"
+    TreeAction.RENAME -> "edit"
+    TreeAction.DUPLICATE -> "copy"
+    TreeAction.DELETE -> "trash"
+    TreeAction.COPY_PATH, TreeAction.MOVE, TreeAction.COPY -> "copy"
+    TreeAction.IMPORT -> "file"
+    TreeAction.SHARE -> "share"
+}
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -4418,19 +4442,27 @@ private fun TreeRow(
     onAction: (TreeAction) -> Unit = {},
 ) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     var menuOpen by remember { mutableStateOf(false) }
-    // v9 screen 10: 10 dp per level (not 16), no guide lines, 38 dp rows, 11 dp radius.
-    val indentStep = 10.dp
+    // Screen 11: the menu is anchored under the row it belongs to. Measured against the area
+    // under the status bar, which is where CcMenuOverlay starts drawing its dim layer.
+    val density = LocalDensity.current
+    var anchorTop by remember { mutableStateOf(0.dp) }
+    // Status bar height is a composition read; the row's position is not, so measure it here.
+    val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars
+        .asPaddingValues().calculateTopPadding()
+    // Screen 10: 6 dp + 14 dp per level, no guide lines, 38 dp rows, 11 dp radius.
+    val indentStep = 14.dp
     val chevRotation by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (chevron != null && chevronOpen) 90f else 0f,
         animationSpec = tween(durationMillis = 120),
         label = "chevron",
     )
     val (gitColor, gitLetter) = when (gitStatus) {
-        com.closecode.ui.components.StatusKind.Added -> c.mock.green to "A"
-        com.closecode.ui.components.StatusKind.Modified -> c.mock.warning to "M"
-        com.closecode.ui.components.StatusKind.Deleted -> c.mock.danger to "D"
-        com.closecode.ui.components.StatusKind.Untracked -> c.mock.muted to "U"
+        com.closecode.ui.components.StatusKind.Added -> cc.green to "A"
+        com.closecode.ui.components.StatusKind.Modified -> cc.amber to "M"
+        com.closecode.ui.components.StatusKind.Deleted -> cc.red to "D"
+        com.closecode.ui.components.StatusKind.Untracked -> cc.muted to "U"
         null -> Color.Unspecified to null
     }
 
@@ -4441,26 +4473,29 @@ private fun TreeRow(
                 .fillMaxWidth()
                 .height(38.dp)
                 .clip(RoundedCornerShape(11.dp))
-                .background(if (active) c.mock.selectedFile else Color.Transparent)
+                .background(if (active) cc.selectedFile else Color.Transparent)
+                .onGloballyPositioned { coords ->
+                    anchorTop = with(density) { coords.positionInWindow().y.toDp() } - statusTop
+                }
                 .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
-                .padding(start = 8.dp + indentStep * depth, end = 8.dp),
+                .padding(start = 6.dp + indentStep * depth, end = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.width(13.dp).height(13.dp), contentAlignment = Alignment.Center) {
                 if (chevron != null) {
                     com.closecode.ui.CcIcon(
                         chevron,
-                        if (chevronTint == Color.Unspecified) c.mock.muted else chevronTint,
+                        if (chevronTint == Color.Unspecified) cc.faint else chevronTint,
                         13.dp,
                         2.2f,
                         Modifier.rotate(chevRotation),
                     )
                 }
             }
-            com.closecode.ui.CcIcon(icon, iconTint, 17.dp, 1.7f, Modifier.padding(start = 3.dp, end = 7.dp))
+            com.closecode.ui.CcIcon(icon, iconTint, 17.dp, 1.7f, Modifier.padding(start = 8.dp, end = 8.dp))
             Text(
                 text = label,
-                color = if (active) c.mock.text else c.mock.text2,
+                color = cc.text2,
                 fontSize = 13.5.sp,
                 fontFamily = Sans,
                 fontWeight = if (bold || active) FontWeight.SemiBold else FontWeight.Normal,
@@ -4474,7 +4509,7 @@ private fun TreeRow(
                         .padding(start = 6.dp)
                         .size(6.dp)
                         .clip(CircleShape)
-                        .background(c.warning),
+                        .background(cc.amber),
                 )
             }
             if (gitLetter != null) {
@@ -4487,43 +4522,32 @@ private fun TreeRow(
                 )
             }
         }
-        DropdownMenu(
-            expanded = menuOpen,
-            onDismissRequest = { menuOpen = false },
-            modifier = Modifier
-                .widthIn(min = 200.dp, max = 220.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(c.mock.panel)
-                .border(1.dp, c.mock.border, RoundedCornerShape(16.dp)),
-        ) {
-            actions.forEach { action ->
-                val destructive = action == TreeAction.DELETE
-                if (destructive) {
-                    Box(
-                        Modifier
-                            .padding(vertical = 4.dp)
-                            .fillMaxWidth()
-                            .height(1.dp)
-                            .background(c.mock.divider),
+        if (menuOpen) {
+            val screenH = LocalConfiguration.current.screenHeightDp.dp
+            val menuH = (actions.size * 42 + 12 + if (actions.contains(TreeAction.DELETE)) 9 else 0).dp
+            val top = if (anchorTop + 38.dp + menuH + 16.dp > screenH) {
+                (anchorTop - menuH).coerceAtLeast(8.dp)
+            } else {
+                anchorTop + 38.dp
+            }
+            com.closecode.ui.components.CcMenuOverlay(
+                top = top,
+                onDismiss = { menuOpen = false },
+            ) {
+                actions.forEach { action ->
+                    if (action == TreeAction.DELETE) {
+                        com.closecode.ui.components.CcMenuDivider()
+                    }
+                    com.closecode.ui.components.CcMenuItem(
+                        icon = action.menuIcon(),
+                        label = action.label,
+                        destructive = action == TreeAction.DELETE,
+                        onClick = {
+                            menuOpen = false
+                            onAction(action)
+                        },
                     )
                 }
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            text = action.label,
-                            color = if (destructive) c.mock.danger else c.mock.text2,
-                            fontFamily = Sans,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    onClick = {
-                        menuOpen = false
-                        onAction(action)
-                    },
-                )
             }
         }
     }

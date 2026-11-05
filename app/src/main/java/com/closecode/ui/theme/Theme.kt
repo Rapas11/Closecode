@@ -71,6 +71,9 @@ fun ClosecodeTheme(
         }
     }
 
+    // Spec palette from CcTheme.kt (screens 01-57). Restyled screens read LocalCcColors;
+    // LocalPageColors stays for the screens still on the old palette during the migration.
+    CcTheme(darkTheme = useDark) {
     CompositionLocalProvider(
         LocalPageColors provides colors,
         // Compose tints the text cursor's drag handle and the selection with these. Left at their
@@ -114,6 +117,7 @@ fun ClosecodeTheme(
             typography = AppTypography,
             content = content,
         )
+    }
     }
 }
 

@@ -2,6 +2,11 @@ package com.closecode.ui.ide
 
 import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,9 +32,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
+import androidx.compose.ui.Alignment as UiAlignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
@@ -41,6 +48,7 @@ import com.closecode.debug.DebugLog
 import com.closecode.ui.github.DeviceCode
 import com.closecode.ui.github.DevicePoll
 import com.closecode.ui.github.GitHubClient
+import com.closecode.ui.theme.LocalCcColors
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
@@ -114,7 +122,7 @@ fun GitHubSignIn(
     onSignedIn: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     BackHandler(onBack = {
         BackLog.press("github-signin", "branch=dismiss")
         onDismiss()
@@ -122,7 +130,7 @@ fun GitHubSignIn(
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.mock.page),
+            .background(cc.content),
     ) {
         GitPageHeader(
             origin = "GitHub",
@@ -150,6 +158,7 @@ internal fun GitHubSignInBody(
     modifier: Modifier = Modifier,
 ) {
     val c = LocalPageColors.current
+    val cc = LocalCcColors.current
     val client = remember { GitHubClient() }
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
@@ -302,129 +311,231 @@ internal fun GitHubSignInBody(
         else -> "Asking GitHub for a code…"
     }
     val statusColor = when {
-        username != null -> c.mock.green
-        expired || refused != null || offline || failure != null -> c.mock.danger
-        else -> c.mock.muted
+        username != null -> cc.green
+        expired || refused != null || offline || failure != null -> cc.red
+        else -> cc.muted
     }
 
     Column(
         modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(horizontal = 18.dp, vertical = 22.dp),
+        horizontalAlignment = UiAlignment.CenterHorizontally,
     ) {
         Text(
             text = "Open the link below and enter this code.",
-            color = c.mock.muted,
-            fontSize = 13.sp,
+            color = cc.textSoft,
+            fontSize = 13.5.sp,
             fontFamily = Sans,
+            lineHeight = 20.sp,
+            textAlign = TextAlign.Center,
         )
 
         Box(
             Modifier
+                .padding(top = 20.dp, bottom = 6.dp)
                 .fillMaxWidth()
-                .height(78.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(c.mock.field)
-                .border(1.dp, c.mock.border, RoundedCornerShape(18.dp)),
-            contentAlignment = Alignment.Center,
+                .clip(RoundedCornerShape(20.dp))
+                .background(cc.field)
+                .padding(vertical = 18.dp),
+            contentAlignment = UiAlignment.Center,
         ) {
             Text(
                 text = code?.userCode ?: "····-····",
-                color = c.mock.text,
+                color = cc.text,
                 fontSize = 34.sp,
                 fontFamily = Mono,
+                fontWeight = FontWeight.Bold,
                 letterSpacing = 6.sp,
+                lineHeight = 40.sp,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Clip,
             )
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            GitSmallButton(
-                label = if (copied) "Copied" else "Copy code",
-                icon = CcIcons.Copy,
-                enabled = code != null,
-                onClick = {
-                    code?.userCode?.let { clipboard.setText(AnnotatedString(it)) }
-                    copied = true
-                },
-            )
-            GitSmallButton(
-                label = "Open github.com",
-                icon = CcIcons.External,
-                enabled = code != null,
-                onClick = ::openGitHub,
-            )
-        }
-
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            when {
-                username != null -> CcIcon(CcIcons.Check, c.mock.green, 15.dp)
-                waiting || reconnecting || code == null && failure == null && !expired && !offline -> {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(15.dp),
-                        color = c.mock.accent,
-                        strokeWidth = 2.dp,
+        if (!expired) {
+            Row(
+                Modifier.padding(top = 12.dp, bottom = 18.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = UiAlignment.CenterVertically,
+            ) {
+                Row(
+                    Modifier
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(cc.field)
+                        .clickable(enabled = code != null, onClick = {
+                            code?.userCode?.let { clipboard.setText(AnnotatedString(it)) }
+                            copied = true
+                        }),
+                    verticalAlignment = UiAlignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    com.closecode.ui.CcIcon("copy", cc.text2, 16.dp)
+                    Text(
+                        text = if (copied) "Copied" else "Copy code",
+                        color = cc.text2,
+                        fontSize = 13.5.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
-                else -> Unit
+                Row(
+                    Modifier
+                        .height(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(cc.field)
+                        .clickable(enabled = code != null, onClick = ::openGitHub),
+                    verticalAlignment = UiAlignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    com.closecode.ui.CcIcon("globe", cc.text2, 16.dp)
+                    Text(
+                        text = "Open ${code?.verificationUri ?: "github.com"}",
+                        color = cc.text2,
+                        fontSize = 13.5.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
-            if (username != null || waiting || reconnecting || code == null && failure == null && !expired && !offline) {
-                Spacer(Modifier.width(8.dp))
+        } else {
+            Spacer(Modifier.height(12.dp + 18.dp + 40.dp))
+        }
+
+        when {
+            username != null -> {
+                com.closecode.ui.CcIcon("check", cc.green, 15.dp)
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    text = "Connected as @$username",
+                    color = cc.green,
+                    fontSize = 13.sp,
+                    fontFamily = Sans,
+                    textAlign = TextAlign.Center,
+                )
             }
-            Text(
-                text = statusText,
-                color = when {
-                    username != null -> c.mock.green
-                    else -> statusColor
-                },
+            waiting || reconnecting -> {
+                val turn = rememberInfiniteTransition(label = "wait")
+                val deg by turn.animateFloat(
+                    initialValue = 0f,
+                    targetValue = 360f,
+                    animationSpec = infiniteRepeatable(tween(1000, easing = LinearEasing)),
+                    label = "deg",
+                )
+                Row(
+                    Modifier.padding(top = 4.dp),
+                    verticalAlignment = UiAlignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    com.closecode.ui.CcIcon("refresh", cc.accent, 15.dp, 2.2f, Modifier.rotate(deg))
+                    Spacer(Modifier.width(9.dp))
+                    Text(
+                        text = "Waiting for you to approve…",
+                        color = cc.muted,
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+            expired -> Text(
+                text = "This code has expired",
+                color = cc.red,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                textAlign = TextAlign.Center,
+            )
+            refused != null -> Text(
+                text = refusedText(refused.orEmpty()),
+                color = cc.red,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                textAlign = TextAlign.Center,
+            )
+            offline -> Text(
+                text = "No internet connection",
+                color = cc.red,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                textAlign = TextAlign.Center,
+            )
+            failure != null -> Text(
+                text = failure.orEmpty(),
+                color = cc.red,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                textAlign = TextAlign.Center,
+            )
+            else -> Text(
+                text = "Asking GitHub for a code…",
+                color = cc.muted,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 textAlign = TextAlign.Center,
             )
         }
 
-        when {
-            expired || refused != null -> GitPrimaryButton(
-                label = "Get a new code",
+        if (expired || refused != null) {
+            Spacer(Modifier.height(22.dp))
+            com.closecode.ui.components.PrimaryButton(
+                text = "Get a new code",
                 onClick = ::reset,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                container = cc.accent,
+                radius = 15.dp,
             )
-            offline || failure != null -> GitSecondaryButton(
-                label = "Try again",
-                onClick = ::reset,
-            )
-            else -> {
-                if (onCancel != null) {
-                    GitSecondaryButton(label = "Cancel", onClick = onCancel)
-                    if (code != null && !expired) {
-                        Text(
-                            text = "Code expires in ${countdownText(remainingSec)}",
-                            color = c.mock.faint,
-                            fontSize = 11.sp,
-                            fontFamily = Sans,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                    }
+        } else if (offline || failure != null) {
+            Spacer(Modifier.height(22.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                com.closecode.ui.components.PrimaryButton(
+                    text = "Try again",
+                    onClick = ::reset,
+                    modifier = Modifier.height(48.dp),
+                    container = cc.field,
+                    radius = 15.dp,
+                )
+            }
+        } else if (onCancel != null) {
+            Spacer(Modifier.height(22.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .background(cc.field)
+                        .clickable(onClick = onCancel),
+                    verticalAlignment = UiAlignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        text = "Cancel",
+                        color = cc.text,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                    )
                 }
             }
+            if (code != null && !expired) {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    text = "Code expires in ${countdownText(remainingSec)}",
+                    color = cc.muted,
+                    fontSize = 11.5.sp,
+                    fontFamily = Sans,
+                    textAlign = TextAlign.Center,
+                )
+            }
         }
-
-        Text(
-            text = "Your password is never shared with this app. You can disconnect any time in settings.",
-            color = c.mock.faint,
-            fontSize = 11.sp,
-            fontFamily = Sans,
-            lineHeight = 16.sp,
-        )
     }
 }
 
@@ -443,7 +554,7 @@ internal fun SignInAction(
             .background(if (primary) c.ac.copy(alpha = 0.16f) else c.panel2)
             .border(1.dp, if (primary) c.ac else c.ln, RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
+        contentAlignment = UiAlignment.Center,
     ) {
         Text(
             text = label,

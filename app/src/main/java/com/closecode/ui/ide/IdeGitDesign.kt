@@ -107,35 +107,37 @@ internal fun GitPanelHeader(
     onRefresh: (() -> Unit)? = null,
 ) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 12.dp, top = 16.dp, bottom = 10.dp),
+            .padding(start = 16.dp, end = 12.dp, top = 16.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
             Text(
                 text = title,
-                color = c.mock.text,
-                fontSize = 18.sp,
+                color = cc.text,
+                fontSize = 21.sp,
                 fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.ExtraBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             if (subtitle != null) {
                 Text(
                     text = subtitle,
-                    color = c.mock.muted,
+                    color = cc.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
         if (onRefresh != null) {
-            GitHeaderIconButton(CcIcons.Refresh, "Refresh", onRefresh)
+            GitHeaderIconButton(CcIcons.Refresh, "Refresh", onRefresh, filled = true)
         }
     }
 }
@@ -187,18 +189,19 @@ internal fun GitHeaderIconButton(
     filled: Boolean = false,
 ) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Box(
         Modifier
-            .size(36.dp)
-            .clip(RoundedCornerShape(10.dp))
+            .size(38.dp)
+            .clip(RoundedCornerShape(12.dp))
             .then(
-                if (filled) Modifier.background(c.mock.field) else Modifier,
+                if (filled) Modifier.background(cc.field) else Modifier,
             )
             .clickable(onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        CcIcon(icon, tint ?: c.mock.muted, 18.dp)
+        CcIcon(icon, tint ?: cc.text2, 17.dp)
     }
 }
 
@@ -211,28 +214,31 @@ internal fun GitPrimaryButton(
     icon: ImageVector? = null,
     background: Color? = null,
     foreground: Color? = null,
+    height: Dp = 48.dp,
+    radius: Dp = 15.dp,
 ) {
     val c = LocalPageColors.current
-    val bg = background ?: c.mock.accent
-    val fg = foreground ?: c.mock.onAccent
+    val cc = com.closecode.ui.theme.LocalCcColors.current
+    val bg = background ?: cc.accent
+    val fg = foreground ?: Color.White
     Row(
         modifier
             .fillMaxWidth()
-            .height(48.dp)
-            .clip(RoundedCornerShape(15.dp))
-            .background(if (enabled) bg else c.mock.card)
+            .height(height)
+            .clip(RoundedCornerShape(radius))
+            .background(if (enabled) bg else cc.field)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center,
     ) {
         if (icon != null) {
-            CcIcon(icon, if (enabled) fg else c.mock.faint, 17.dp)
+            CcIcon(icon, if (enabled) fg else cc.muted, 17.dp)
             Spacer(Modifier.width(8.dp))
         }
         Text(
             text = label,
-            color = if (enabled) fg else c.mock.faint,
+            color = if (enabled) fg else cc.muted,
             fontSize = 15.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -293,13 +299,14 @@ internal fun GitSmallButton(
     danger: Boolean = false,
 ) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Row(
         Modifier
-            .height(34.dp)
-            .clip(RoundedCornerShape(11.dp))
-            .background(c.mock.field)
+            .height(40.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(cc.field)
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 12.dp),
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
@@ -307,21 +314,21 @@ internal fun GitSmallButton(
             CcIcon(
                 icon,
                 when {
-                    !enabled -> c.mock.faint
-                    danger -> c.mock.danger
-                    else -> c.mock.text2
+                    !enabled -> cc.faint
+                    danger -> cc.red
+                    else -> cc.text2
                 },
-                15.dp,
+                16.dp,
             )
         }
         Text(
             text = label,
             color = when {
-                !enabled -> c.mock.faint
-                danger -> c.mock.danger
-                else -> c.mock.text2
+                !enabled -> cc.faint
+                danger -> cc.red
+                else -> cc.text2
             },
-            fontSize = 13.sp,
+            fontSize = 13.5.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
@@ -332,14 +339,15 @@ internal fun GitSmallButton(
 @Composable
 internal fun GitCheckBox(checked: Boolean, onToggle: () -> Unit, enabled: Boolean = true) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Box(
         Modifier
-            .size(21.dp)
+            .size(20.dp)
             .clip(RoundedCornerShape(6.dp))
-            .background(if (checked) c.mock.green else c.mock.page)
+            .background(if (checked) cc.green else Color.Transparent)
             .border(
-                1.5.dp,
-                if (checked) c.mock.green else c.mock.border,
+                if (checked) 0.dp else 1.5.dp,
+                if (checked) cc.green else cc.toggleOff,
                 RoundedCornerShape(6.dp),
             )
             .clickable(enabled = enabled, onClick = onToggle)
@@ -347,7 +355,7 @@ internal fun GitCheckBox(checked: Boolean, onToggle: () -> Unit, enabled: Boolea
         contentAlignment = Alignment.Center,
     ) {
         if (checked) {
-            CcIcon(CcIcons.Check, c.mock.onGreen, 14.dp)
+            com.closecode.ui.CcIcon("check", Color.White, 12.dp, 3f)
         }
     }
 }
@@ -387,15 +395,16 @@ internal fun GitLetterTile(kind: GitChangeKind, size: Dp = 30.dp) {
 @Composable
 internal fun GitStatusLetter(kind: GitChangeKind) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Text(
         text = gitLetter(kind),
         color = when (kind) {
-            GitChangeKind.Added -> c.mock.green
-            GitChangeKind.Modified -> c.mock.warning
-            GitChangeKind.Deleted -> c.mock.danger
+            GitChangeKind.Added -> cc.green
+            GitChangeKind.Modified -> cc.amber
+            GitChangeKind.Deleted -> cc.red
         },
-        fontSize = 12.sp,
-        fontFamily = Sans,
+        fontSize = 16.sp,
+        fontFamily = com.closecode.ui.theme.Mono,
         fontWeight = FontWeight.Bold,
         maxLines = 1,
     )
@@ -409,33 +418,35 @@ internal fun GitField(
     modifier: Modifier = Modifier,
     height: Dp = 58.dp,
     enabled: Boolean = true,
+    background: Color? = null,
 ) {
     val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
         enabled = enabled,
         textStyle = TextStyle(
-            color = c.mock.text2,
-            fontSize = 14.sp,
+            color = cc.text,
+            fontSize = 13.sp,
             fontFamily = Sans,
-            lineHeight = 19.sp,
+            lineHeight = 18.sp,
         ),
-        cursorBrush = SolidColor(c.mock.accent),
+        cursorBrush = SolidColor(cc.accent),
         modifier = modifier
             .fillMaxWidth()
             .height(height)
             .clip(RoundedCornerShape(13.dp))
-            .background(c.mock.field)
-            .border(1.dp, c.mock.border, RoundedCornerShape(13.dp))
-            .padding(horizontal = 14.dp, vertical = 11.dp),
+            .background(background ?: cc.field)
+            .border(1.dp, cc.border, RoundedCornerShape(13.dp))
+            .padding(horizontal = 12.dp, vertical = 10.dp),
         decorationBox = { inner ->
             Box {
                 if (value.isEmpty()) {
                     Text(
                         text = hint,
-                        color = c.mock.faint,
-                        fontSize = 14.sp,
+                        color = cc.muted,
+                        fontSize = 13.sp,
                         fontFamily = Sans,
                     )
                 }
