@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
@@ -47,12 +48,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,7 +66,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.closecode.ui.components.DesignSectionLabel
+import com.closecode.ui.CcIcon
+import com.closecode.ui.components.CcConfirmDialog
+import com.closecode.ui.components.ChangedFileRow
+import com.closecode.ui.components.EmptyState
+import com.closecode.ui.components.ErrorCard
+import com.closecode.ui.components.HeaderAction
+import com.closecode.ui.components.LoadingList
+import com.closecode.ui.components.ScreenHeader
+import com.closecode.ui.components.SecLabel
+import com.closecode.ui.components.WideButton
 import com.closecode.ui.git.GitChangeKind
 import com.closecode.ui.git.GitCommit
 import com.closecode.ui.git.GitService
@@ -73,7 +85,9 @@ import com.closecode.ui.github.GitHubClient
 import com.closecode.ui.github.GitHubRemote
 import com.closecode.ui.github.GitHubUser
 import com.closecode.ui.github.TokenStore
+import com.closecode.ui.theme.LocalCcColors
 import com.closecode.ui.theme.LocalPageColors
+import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -377,7 +391,7 @@ fun IdeGitPanel(
                     .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                DesignSectionLabel("CHANGES · ${changes.size}", Modifier.weight(1f))
+                SecLabel("CHANGES · ${changes.size}", Modifier.weight(1f))
             }
 
             when {
@@ -475,7 +489,7 @@ fun IdeGitPanel(
                         .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    DesignSectionLabel("HISTORY", Modifier.weight(1f))
+                SecLabel("HISTORY", Modifier.weight(1f))
                 }
                 val commits = history
                 when {
@@ -766,145 +780,169 @@ internal fun GitSourceControlPage(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(c.mock.page)) {
-        Column(Modifier.fillMaxSize()) {
-            GitPageHeader(
-                origin = "GitHub",
-                current = "Source control",
-                onBack = onBack,
-                actions = {
-                    // Screen 17: the menu lives in the header again, as a filled rounded-square
-                    // ⋮ on the right — not as a branch pill inside the body.
-                    Box {
-                        GitHeaderIconButton(CcIcons.More, "More actions", { menuOpen = true }, filled = true)
-                    }
-                },
-            )
+    BackHandler(enabled = menuOpen || branchSheet || namingBranch || discardPath != null || discardAll) {
+        when {
+            discardPath != null -> discardPath = null
+            discardAll -> discardAll = false
+            namingBranch -> namingBranch = false
+            branchSheet -> branchSheet = false
+            menuOpen -> menuOpen = false
+        }
+    }
 
-            Column(
-                Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(bottom = 28.dp),
-            ) {
-                when {
-                    loading -> GitEmptyNote("Reading changes…")
-                    snapshot == null -> GitEmptyNote("This project is not under version control yet.")
-                     else -> {
-                        // Pull and Push are menu items now: the spec takes them off the body and
-                        // puts them in the header's ⋮, together with branch and history.
-                        DesignSectionLabel("CHANGES · ${changes.size}")
-                        if (changes.isEmpty()) {
-                            GitEmptyNote("Everything is saved")
-                        } else {
-                            changes.forEach { change ->
-                                GitSwipeDiscardRow(
-                                    change = change,
-                                    onClick = { onDiff(change.path) },
-                                    onDiscard = { discardPath = change.path },
-                                )
-                            }
+    val cc = com.closecode.ui.theme.LocalCcColors.current
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(cc.content),
+    ) {
+        ScreenHeader(
+            origin = "GitHub",
+            title = "Source control",
+            onBack = onBack,
+            actions = {
+                HeaderAction(
+                    icon = "more",
+                    label = "Git actions",
+                    onClick = { menuOpen = true },
+                )
+            },
+        )
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+        ) {
+            when {
+                loading -> LoadingList(3)
+                changes.isEmpty() -> EmptyState(
+                    icon = "check",
+                    title = "No changes",
+                    subtitle = "Your files match the last commit.",
+                )
+                else -> {
+                    SecLabel(
+                        text = "Changes · ${changes.size}",
+                        start = 18.dp,
+                        top = 16.dp,
+                        bottom = 6.dp,
+                    )
+                    changes.forEach { change ->
+                        GitSwipeDiscardRow(
+                            change = change,
+                            onClick = { onDiff(change.path) },
+                            onDiscard = { discardPath = change.path },
+                        )
+                    }
+                    Box(
+                        Modifier
+                            .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 10.dp)
+                            .fillMaxWidth()
+                            .height(84.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(cc.field)
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                    ) {
+                        if (message.isEmpty()) {
+                            Text(
+                                text = "Commit message",
+                                color = cc.muted,
+                                fontSize = 13.5.sp,
+                                fontFamily = Sans,
+                            )
                         }
-                        GitField(
+                        BasicTextField(
                             value = message,
                             onValueChange = { message = it },
-                            hint = "Commit message",
-                            enabled = !busy,
-                            height = 84.dp,
-                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp),
+                            cursorBrush = SolidColor(cc.accent),
+                            textStyle = TextStyle(
+                                color = cc.text,
+                                fontSize = 13.5.sp,
+                                fontFamily = Sans,
+                            ),
+                            modifier = Modifier.fillMaxSize(),
                         )
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(start = 16.dp, end = 16.dp, top = 12.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            GitPrimaryButton(
-                                label = "Commit",
-                                onClick = { commit(andPush = false) },
-                                enabled = canCommit,
-                                icon = CcIcons.Check,
-                                modifier = Modifier.weight(0.82f),
-                            )
-                            GitSecondaryButton(
-                                label = "Commit and push",
-                                onClick = { commit(andPush = true) },
-                                enabled = canCommit && token != null && remoteUrl != null,
-                                icon = CcIcons.Upload,
-                                modifier = Modifier.weight(1.18f),
-                            )
-                        }
-                        error?.let { GitMessageLine(it, error = true) }
-                        note?.let { GitMessageLine(it, error = false) }
                     }
+                    Row(
+                        Modifier
+                            .padding(horizontal = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        WideButton(
+                            text = "Commit",
+                            icon = "check",
+                            enabled = canCommit,
+                            primary = true,
+                            modifier = Modifier.weight(1f),
+                            onClick = { commit(andPush = false) },
+                        )
+                        WideButton(
+                            text = "Commit and push",
+                            icon = "up",
+                            enabled = canCommit && token != null && remoteUrl != null,
+                            primary = false,
+                            modifier = Modifier.weight(1f),
+                            onClick = { commit(andPush = true) },
+                        )
+                    }
+                    error?.let { GitMessageLine(it, error = true) }
+                    note?.let { GitMessageLine(it, error = false) }
                 }
             }
         }
 
         if (menuOpen) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(c.mock.scrim)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = { menuOpen = false },
-                    ),
-            )
-            // The popup hangs from the header's ⋮ on the trailing edge.
-            GitMenuCard(
-                Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 58.dp, end = 12.dp),
+            com.closecode.ui.components.CcMenuOverlay(
+                top = 26.dp,
+                end = 14.dp,
+                width = 220.dp,
+                onDismiss = { menuOpen = false },
             ) {
-                GitMenuItem(
+                com.closecode.ui.components.CcMenuItem(
+                    icon = "down",
                     label = "Pull",
-                    icon = CcIcons.Download,
-                    enabled = token != null && remoteUrl != null && !busy,
                     onClick = {
                         menuOpen = false
                         remoteAction("Pull") { current -> GitHubRemote(projectRoot!!).pull(current) }
                     },
                 )
-                GitMenuItem(
+                com.closecode.ui.components.CcMenuItem(
+                    icon = "up",
                     label = "Push",
-                    icon = CcIcons.Upload,
-                    enabled = token != null && remoteUrl != null && !busy,
                     onClick = {
                         menuOpen = false
                         remoteAction("Push") { current -> GitHubRemote(projectRoot!!).push(current) }
                     },
                 )
-                GitMenuItem(
+                com.closecode.ui.components.CcMenuItem(
+                    icon = "branch",
                     label = "Switch branch",
-                    icon = CcIcons.Branch,
-                    enabled = branches.local.isNotEmpty() || branches.remote.isNotEmpty(),
                     onClick = {
                         menuOpen = false
                         branchSheet = true
                     },
                 )
-                GitMenuItem(
+                com.closecode.ui.components.CcMenuItem(
+                    icon = "refresh",
                     label = "History",
-                    icon = CcIcons.History,
                     onClick = {
                         menuOpen = false
                         onHistory()
                     },
                 )
-                GitMenuDivider()
-                GitMenuItem(
-                    label = "Discard all changes",
-                    icon = CcIcons.Trash,
-                    danger = true,
-                    enabled = changes.isNotEmpty() && !busy,
-                    onClick = {
-                        menuOpen = false
-                        discardAll = true
-                    },
-                )
+                com.closecode.ui.components.CcMenuDivider()
+                if (changes.isNotEmpty()) {
+                    com.closecode.ui.components.CcMenuItem(
+                        icon = "trash",
+                        label = "Discard all changes",
+                        destructive = true,
+                        onClick = {
+                            menuOpen = false
+                            discardAll = true
+                        },
+                    )
+                }
             }
         }
 
@@ -912,7 +950,7 @@ internal fun GitSourceControlPage(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(c.mock.scrim)
+                    .background(cc.dimSmallMenu)
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -925,7 +963,7 @@ internal fun GitSourceControlPage(
                         .fillMaxWidth()
                         .fillMaxHeight(0.74f)
                         .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
-                        .background(c.mock.page)
+                        .background(cc.panel)
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -937,18 +975,26 @@ internal fun GitSourceControlPage(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = "Switch branch",
-                            color = c.mock.text,
+                            color = cc.text,
                             fontSize = 17.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f),
                         )
-                        GitHeaderIconButton(CcIcons.Close, "Close", { branchSheet = false })
+                        HeaderIconButton(
+                            icon = CcIcons.Close,
+                            label = "Close",
+                            tint = cc.text2,
+                            background = cc.field,
+                            boxSize = 38.dp,
+                            iconSize = 18.dp,
+                            onClick = { branchSheet = false },
+                        )
                     }
                     if (branches.local.isNotEmpty()) {
-                        DesignSectionLabel(
-                            "LOCAL",
-                            Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp),
+                        SecLabel(
+                            text = "LOCAL",
+                            modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 4.dp),
                         )
                         branches.local.forEach { name ->
                             GitBranchRow(
@@ -962,9 +1008,9 @@ internal fun GitSourceControlPage(
                         }
                     }
                     if (branches.remote.isNotEmpty()) {
-                        DesignSectionLabel(
-                            "REMOTE",
-                            Modifier.padding(start = 4.dp, top = 12.dp, bottom = 4.dp),
+                        SecLabel(
+                            text = "REMOTE",
+                            modifier = Modifier.padding(start = 4.dp, top = 12.dp, bottom = 4.dp),
                         )
                         branches.remote.forEach { name ->
                             GitBranchRow(
@@ -979,10 +1025,10 @@ internal fun GitSourceControlPage(
                             )
                         }
                     }
-                    GitMenuDivider()
-                    GitMenuItem(
+                    com.closecode.ui.components.CcMenuDivider()
+                    com.closecode.ui.components.CcMenuItem(
+                        icon = "plus",
                         label = "New branch",
-                        icon = CcIcons.Plus,
                         onClick = {
                             branchSheet = false
                             namingBranch = true
@@ -1014,7 +1060,7 @@ internal fun GitSourceControlPage(
 
     val pending = discardPath
     if (pending != null) {
-        GitConfirmDialog(
+        CcConfirmDialog(
             title = "Discard changes to ${pending.substringAfterLast('/')}?",
             message = "The file goes back to the last commit. This cannot be undone.",
             confirmLabel = "Discard",
@@ -1023,11 +1069,12 @@ internal fun GitSourceControlPage(
                 discard(listOf(pending))
             },
             onDismiss = { discardPath = null },
+            destructive = true,
         )
     }
 
     if (discardAll) {
-        GitConfirmDialog(
+        CcConfirmDialog(
             title = "Discard all ${changes.size} changes?",
             message = "Every edit goes back to the last commit, and new files are deleted. This cannot be undone.",
             confirmLabel = "Discard",
@@ -1036,8 +1083,15 @@ internal fun GitSourceControlPage(
                 discard(changes.map { it.path })
             },
             onDismiss = { discardAll = false },
+            destructive = true,
         )
     }
+}
+
+/** Shortens a path for display: keeps the first 3 segments and the last segment. */
+private fun shortPath(p: String): String {
+    val parts = p.split('/')
+    return if (parts.size <= 3) p else parts.take(3).joinToString("/") + "/…/" + parts.last()
 }
 
 @Composable
@@ -1046,26 +1100,32 @@ private fun GitSwipeDiscardRow(
     onClick: () -> Unit,
     onDiscard: () -> Unit,
 ) {
-    val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     val density = LocalDensity.current
     val limit = with(density) { (-86).dp.toPx() }
     var offset by remember(change.path) { mutableFloatStateOf(0f) }
+    val (badgeBg, letterColor, letter) = when (change.kind) {
+        com.closecode.ui.git.GitChangeKind.Added -> Triple(cc.green, Color.White, "A")
+        com.closecode.ui.git.GitChangeKind.Modified -> Triple(cc.amber, Color.White, "M")
+        com.closecode.ui.git.GitChangeKind.Deleted -> Triple(cc.red, Color.White, "D")
+    }
     Box(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 3.dp)
+            .padding(horizontal = 14.dp, vertical = 0.dp)
+            .padding(bottom = 6.dp)
             .clip(RoundedCornerShape(13.dp)),
     ) {
         Box(
             Modifier
                 .matchParentSize()
-                .background(c.mock.dangerBg)
+                .background(cc.red)
                 .padding(end = 18.dp),
             contentAlignment = Alignment.CenterEnd,
         ) {
             Text(
                 text = "Discard",
-                color = c.mock.danger,
+                color = Color.White,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
@@ -1087,30 +1147,45 @@ private fun GitSwipeDiscardRow(
                     )
                 }
                 .fillMaxWidth()
-                .background(c.mock.card)
+                .background(cc.field)
                 .clickable(onClick = onClick)
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(horizontal = 11.dp, vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            GitLetterTile(change.kind)
+            Box(
+                Modifier
+                    .size(22.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(badgeBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = letter,
+                    color = letterColor,
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.ExtraBold,
+                )
+            }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = change.path.substringAfterLast('/'),
-                    color = c.mock.text,
-                    fontSize = 14.sp,
+                    color = cc.text,
+                    fontSize = 13.5.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = change.path,
-                    color = c.mock.muted,
-                    fontSize = 11.sp,
-                    fontFamily = com.closecode.ui.theme.Mono,
+                    text = shortPath(change.path),
+                    color = cc.muted,
+                    fontSize = 10.5.sp,
+                    fontFamily = Mono,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 1.dp),
                 )
             }
         }
@@ -1119,7 +1194,7 @@ private fun GitSwipeDiscardRow(
 
 @Composable
 private fun GitBranchRow(name: String, current: Boolean, onClick: () -> Unit) {
-    val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -1131,7 +1206,7 @@ private fun GitBranchRow(name: String, current: Boolean, onClick: () -> Unit) {
     ) {
         Text(
             text = name,
-            color = c.mock.text,
+            color = cc.text,
             fontSize = 14.sp,
             fontFamily = Sans,
             fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
@@ -1140,7 +1215,7 @@ private fun GitBranchRow(name: String, current: Boolean, onClick: () -> Unit) {
             modifier = Modifier.weight(1f),
         )
         if (current) {
-            CcIcon(CcIcons.Check, c.mock.green, 16.dp)
+            com.closecode.ui.CcIcon("check", cc.green, 16.dp)
         }
     }
 }
@@ -1158,7 +1233,7 @@ internal fun HistoryPage(
     onBack: () -> Unit,
     onCommit: (commitId: String) -> Unit,
 ) {
-    val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     val listState = rememberLazyListState()
     var commits by remember(projectRoot) { mutableStateOf<List<GitCommit>?>(null) }
     var limit by remember(projectRoot) { mutableStateOf(30) }
@@ -1216,10 +1291,10 @@ internal fun HistoryPage(
         onBack()
     })
 
-    Column(Modifier.fillMaxSize().background(c.mock.page)) {
-        GitPageHeader(
+    Column(Modifier.fillMaxSize().background(cc.content)) {
+        ScreenHeader(
             origin = "Source control",
-            current = "History",
+            title = "History",
             onBack = onBack,
         )
 
@@ -1235,7 +1310,7 @@ internal fun HistoryPage(
                 if (pullDp > 72.dp) {
                     Text(
                         text = "Release to refresh",
-                        color = c.mock.accent,
+                        color = cc.accent,
                         fontSize = 12.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.SemiBold,
@@ -1243,13 +1318,13 @@ internal fun HistoryPage(
                 } else {
                     CircularProgressIndicator(
                         modifier = Modifier.size(15.dp),
-                        color = c.mock.accent,
+                        color = cc.accent,
                         strokeWidth = 2.dp,
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
                         text = "Pull to refresh",
-                        color = c.mock.muted,
+                        color = cc.muted,
                         fontSize = 12.sp,
                         fontFamily = Sans,
                     )
@@ -1259,11 +1334,15 @@ internal fun HistoryPage(
 
         val rows = commits
         if (rows == null) {
-            GitEmptyNote("Reading history…")
+            LoadingList(4)
             return@Column
         }
         if (rows.isEmpty()) {
-            GitEmptyNote("No commits yet. Commit something to start the history.")
+            EmptyState(
+                icon = "history",
+                title = "No commits yet",
+                subtitle = "Commit your changes to see them here.",
+            )
             return@Column
         }
         val head = headId ?: rows.firstOrNull()?.id
@@ -1276,13 +1355,87 @@ internal fun HistoryPage(
                 .padding(top = 2.dp, bottom = 20.dp),
         ) {
             items(rows, key = { it.id }) { commit ->
-                GitHistoryRow(
-                    commit = commit,
-                    isHead = commit.id == head,
-                    first = commit.id == rows.firstOrNull()?.id,
-                    last = commit.id == rows.lastOrNull()?.id,
-                    onClick = { onCommit(commit.id) },
-                )
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(IntrinsicSize.Min)
+                        .clickable(onClick = { onCommit(commit.id) })
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Column(
+                        Modifier
+                            .width(10.dp)
+                            .fillMaxHeight()
+                            .padding(top = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Box(
+                            Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(if (commit.id == head) cc.accent else cc.faint),
+                        )
+                        Box(
+                            Modifier
+                                .padding(top = 4.dp)
+                                .width(2.dp)
+                                .weight(1f)
+                                .background(cc.border),
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = commit.summary,
+                            color = cc.text,
+                            fontSize = 14.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Row(
+                            Modifier.padding(top = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = commit.shortId.take(7),
+                                color = cc.accent,
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                fontFamily = Mono,
+                                maxLines = 1,
+                            )
+                            Text(
+                                text = "${commit.author} · ${gitRelativeTime(commit.whenMillis)}",
+                                color = cc.muted,
+                                fontSize = 12.sp,
+                                fontFamily = Sans,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                            if (commit.id == head) {
+                                Box(
+                                    Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(cc.accent)
+                                        .padding(horizontal = 7.dp, vertical = 1.dp),
+                                ) {
+                                    Text(
+                                        text = "HEAD",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontFamily = Sans,
+                                        fontWeight = FontWeight.Bold,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
             if (rows.size >= limit) {
                 item(key = "older") {
@@ -1295,13 +1448,13 @@ internal fun HistoryPage(
                     ) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(15.dp),
-                            color = c.mock.accent,
+                            color = cc.accent,
                             strokeWidth = 2.dp,
                         )
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = "Loading older commits…",
-                            color = c.mock.muted,
+                            color = cc.muted,
                             fontSize = 12.sp,
                             fontFamily = Sans,
                         )
@@ -1320,91 +1473,79 @@ private fun GitHistoryRow(
     last: Boolean,
     onClick: () -> Unit,
 ) {
-    val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Row(
         Modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .clickable(onClick = onClick)
-            .padding(start = 14.dp, end = 16.dp),
+            .padding(start = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        Box(
-            Modifier
-                .width(20.dp)
-                .height(62.dp),
-        ) {
-            if (!first) {
-                Box(
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .width(2.dp)
-                        .height(10.dp)
-                        .background(c.mock.border),
-                )
-            }
-            if (!last) {
-                Box(
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .width(2.dp)
-                        .height(52.dp)
-                        .background(c.mock.border),
-                )
-            }
-            Box(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 4.dp)
-                    .size(if (isHead) 11.dp else 9.dp)
-                    .clip(CircleShape)
-                    .background(if (isHead) c.mock.accent else c.mock.faint),
-            )
-        }
-        Spacer(Modifier.width(10.dp))
         Column(
             Modifier
-                .weight(1f)
-                .padding(top = 2.dp),
+                .width(10.dp)
+                .fillMaxHeight()
+                .padding(top = 6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(if (isHead) cc.accent else cc.faint),
+            )
+            Box(
+                Modifier
+                    .padding(top = 4.dp)
+                    .width(2.dp)
+                    .weight(1f)
+                    .background(cc.border),
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
             Text(
                 text = commit.summary,
-                color = c.mock.text,
+                color = cc.text,
                 fontSize = 14.sp,
                 fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(5.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.padding(top = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 Text(
-                    text = commit.shortId,
-                    color = c.mock.accent,
-                    fontSize = 11.sp,
-                    fontFamily = com.closecode.ui.theme.Mono,
+                    text = commit.shortId.take(7),
+                    color = cc.accent,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    fontFamily = Mono,
                     maxLines = 1,
                 )
                 Text(
-                    text = "  ${commit.author} · ${gitRelativeTime(commit.whenMillis)}",
-                    color = c.mock.muted,
-                    fontSize = 11.sp,
+                    text = "${commit.author} · ${gitRelativeTime(commit.whenMillis)}",
+                    color = cc.muted,
+                    fontSize = 12.sp,
                     fontFamily = Sans,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 if (isHead) {
-                    Spacer(Modifier.width(7.dp))
                     Box(
                         Modifier
-                            .clip(RoundedCornerShape(7.dp))
-                            .background(c.mock.accent.copy(alpha = 0.12f))
-                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(cc.accent)
+                            .padding(horizontal = 7.dp, vertical = 1.dp),
                     ) {
                         Text(
                             text = "HEAD",
-                            color = c.mock.accent,
+                            color = Color.White,
                             fontSize = 10.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.Bold,
@@ -1420,6 +1561,10 @@ private fun GitHistoryRow(
  * Screen 20: one commit, read straight from the repository. The first changed file's diff is
  * previewed under the file rows; tapping any row opens the full diff without stage actions.
  */
+/**
+ * Screen 20: one commit, read straight from the repository. The first changed file's diff is
+ * previewed under the file rows; tapping any row opens the full diff without stage actions.
+ */
 @Composable
 internal fun CommitPage(
     commitId: String,
@@ -1429,7 +1574,7 @@ internal fun CommitPage(
     onDiff: (commitId: String, path: String) -> Unit,
     onChanged: () -> Unit,
 ) {
-    val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     var info by remember(commitId) { mutableStateOf<GitCommitInfo?>(null) }
     var failure by remember(commitId) { mutableStateOf<String?>(null) }
     var previewPath by remember(commitId) { mutableStateOf<String?>(null) }
@@ -1459,110 +1604,221 @@ internal fun CommitPage(
         onBack()
     })
 
-    Column(Modifier.fillMaxSize().background(c.mock.page)) {
-        GitPageHeader(
+    Column(Modifier.fillMaxSize().background(cc.content)) {
+        ScreenHeader(
             origin = "History",
-            current = "Commit ${commitId.take(7)}",
+            title = "Commit ${commitId.take(7)}",
             onBack = onBack,
         )
 
         val current = info
         if (current == null) {
             if (failure != null) {
-                GitEmptyNote(failure.orEmpty())
+                ErrorCard(failure.orEmpty(), { failure = null })
             } else {
-                GitEmptyNote("Reading commit…")
+                LoadingList(3)
             }
             return@Column
         }
 
-        LazyColumn(
+        val add = current.files.sumOf { it.added }
+        val del = current.files.sumOf { it.removed }
+        val n = current.files.size
+
+        Column(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(bottom = 24.dp),
         ) {
-            item(key = "summary") {
-                Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 10.dp)) {
-                    Text(
-                        text = current.message.ifBlank { "(no message)" },
-                        color = c.mock.text,
-                        fontSize = 17.sp,
-                        fontFamily = Sans,
-                        fontWeight = FontWeight.ExtraBold,
-                        lineHeight = 23.sp,
-                        maxLines = 6,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "${current.author} · ${gitRelativeTime(current.whenMillis)} · " +
-                                "${current.files.size} ${if (current.files.size == 1) "file" else "files"}, ",
-                            color = c.mock.muted,
-                            fontSize = 12.sp,
-                            fontFamily = Sans,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                        Text(
-                            text = "+${current.added}",
-                            color = c.mock.green,
-                            fontSize = 12.sp,
-                            fontFamily = com.closecode.ui.theme.Mono,
-                        )
-                        Text(
-                            text = " −${current.removed}",
-                            color = c.mock.danger,
-                            fontSize = 12.sp,
-                            fontFamily = com.closecode.ui.theme.Mono,
-                        )
-                    }
-                }
-            }
-
-            items(current.files, key = { it.path }) { file ->
-                GitCommitFileRow(
-                    file = file,
-                    selected = file.path == previewPath,
-                    onClick = { onDiff(commitId, file.path) },
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                Text(
+                    text = current.message.ifBlank { "(no message)" },
+                    color = cc.text,
+                    fontSize = 17.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.ExtraBold,
+                    lineHeight = 23.sp,
+                    maxLines = 6,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    text = "${current.author} · ${gitRelativeTime(current.whenMillis)} · $n ${if (n == 1) "file" else "files"}, +$add −$del",
+                    color = cc.muted,
+                    fontSize = 12.5.sp,
+                    fontFamily = Sans,
+                    modifier = Modifier.padding(bottom = 12.dp),
                 )
             }
 
-            item(key = "preview") {
-                Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 16.dp)) {
-                    if (previewLoading) {
-                        Text(
-                            text = "Reading diff…",
-                            color = c.mock.muted,
-                            fontSize = 12.sp,
-                            fontFamily = Sans,
-                            modifier = Modifier.padding(vertical = 12.dp),
+            current.files.forEach { file ->
+                CommitFileRow(
+                    kind = file.kind,
+                    name = file.path.substringAfterLast('/'),
+                    counts = if (file.added > 0 && file.removed > 0) "+${file.added} −${file.removed}"
+                    else if (file.added > 0) "+${file.added}"
+                    else if (file.removed > 0) "−${file.removed}"
+                    else "",
+                    onClick = { onDiff(commitId, file.path) },
+                    selected = file.path == previewPath,
+                )
+            }
+
+            val diffLines = previewRows
+            if (diffLines != null && diffLines.isNotEmpty()) {
+                Column(
+                    Modifier
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(cc.panel)
+                        .padding(vertical = 8.dp),
+                ) {
+                    diffLines.forEach { line ->
+                        CommitDiffLine(
+                            kind = line.sign,
+                            text = line.text,
+                            numberText = when {
+                                line.sign == ' ' && line.oldNo != null -> "${line.oldNo}  "
+                                line.sign == '+' && line.newNo != null -> "  ${line.newNo}"
+                                line.sign == '-' && line.oldNo != null -> "${line.oldNo}  "
+                                else -> null
+                            },
                         )
-                    } else {
-                        val rows = previewRows
-                        if (rows == null) {
-                            Text(
-                                text = "This file is not text, so there is no preview.",
-                                color = c.mock.muted,
-                                fontSize = 12.sp,
-                                fontFamily = Sans,
-                                modifier = Modifier.padding(vertical = 12.dp),
-                            )
-                        } else {
-                            GitReadOnlyDiff(
-                                rows = rows,
-                                onOpen = {
-                                    val path = previewPath
-                                    if (path != null) onDiff(commitId, path)
-                                },
-                            )
-                        }
                     }
                 }
             }
         }
+    }
+}
+
+/** One changed file in a commit detail: badge, name, +/- counts. */
+@Composable
+private fun CommitFileRow(
+    kind: com.closecode.ui.git.GitChangeKind,
+    name: String,
+    counts: String,
+    onClick: () -> Unit,
+    selected: Boolean,
+) {
+    val cc = com.closecode.ui.theme.LocalCcColors.current
+    val badgeBg = when (kind) {
+        com.closecode.ui.git.GitChangeKind.Added -> cc.green
+        com.closecode.ui.git.GitChangeKind.Modified -> cc.amber
+        com.closecode.ui.git.GitChangeKind.Deleted -> cc.red
+    }
+    val letter = when (kind) {
+        com.closecode.ui.git.GitChangeKind.Added -> "A"
+        com.closecode.ui.git.GitChangeKind.Modified -> "M"
+        com.closecode.ui.git.GitChangeKind.Deleted -> "D"
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 0.dp)
+            .padding(bottom = 6.dp)
+            .clip(RoundedCornerShape(13.dp))
+            .background(if (selected) cc.selectedFile else cc.field)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 11.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            Modifier
+                .size(22.dp)
+                .clip(RoundedCornerShape(7.dp))
+                .background(badgeBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = letter,
+                color = Color.White,
+                fontSize = 11.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.ExtraBold,
+            )
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = name,
+                color = cc.text,
+                fontSize = 13.5.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (counts.isNotEmpty()) {
+                Text(
+                    text = counts,
+                    color = cc.muted,
+                    fontSize = 10.5.sp,
+                    fontFamily = Mono,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 1.dp),
+                )
+            }
+        }
+    }
+}
+
+/** One diff line in the commit preview: mono 11 sp, line height 17 sp, marker column 14 dp. */
+@Composable
+private fun CommitDiffLine(
+    kind: Char,
+    text: String,
+    numberText: String? = null,
+) {
+    val cc = com.closecode.ui.theme.LocalCcColors.current
+    val bg = when (kind) {
+        '+' -> cc.matchBg.copy(alpha = 0.5f) // light green-ish band for added
+        '-' -> cc.matchBg.copy(alpha = 0.3f) // light red-ish band for removed
+        else -> Color.Transparent
+    }
+    val fg = when (kind) {
+        '+' -> Color(0xFF1A7F37)
+        '-' -> Color(0xFFDA373C)
+        else -> cc.textSoft
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(bg)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (numberText != null) {
+            Text(
+                text = numberText,
+                color = cc.faint,
+                fontSize = 11.sp,
+                lineHeight = 17.sp,
+                fontFamily = Mono,
+                textAlign = TextAlign.End,
+                modifier = Modifier.width(34.dp).padding(end = 8.dp),
+            )
+        }
+        Text(
+            text = if (kind == ' ') "" else kind.toString(),
+            color = fg,
+            fontSize = 11.sp,
+            lineHeight = 17.sp,
+            fontFamily = Mono,
+            modifier = Modifier.width(14.dp),
+        )
+        Text(
+            text = text,
+            color = fg,
+            fontSize = 11.sp,
+            lineHeight = 17.sp,
+            fontFamily = Mono,
+            softWrap = false,
+            modifier = Modifier.weight(1f),
+        )
     }
 }
 
@@ -1574,91 +1830,6 @@ private fun readCommitDiff(root: java.io.File, commitId: String, path: String): 
         return null
     }
     return unify(splitDiff(before, after))
-}
-
-@Composable
-private fun GitCommitFileRow(
-    file: GitCommitFileInfo,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val c = LocalPageColors.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 3.dp)
-            .clip(RoundedCornerShape(13.dp))
-            .background(if (selected) c.mock.field else c.mock.card)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        GitLetterTile(file.kind)
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = file.path.substringAfterLast('/'),
-            color = c.mock.text,
-            fontSize = 14.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Text(
-            text = "+${file.added}",
-            color = c.mock.green,
-            fontSize = 11.sp,
-            fontFamily = com.closecode.ui.theme.Mono,
-        )
-        Text(
-            text = " −${file.removed}",
-            color = c.mock.danger,
-            fontSize = 11.sp,
-            fontFamily = com.closecode.ui.theme.Mono,
-        )
-    }
-}
-
-@Composable
-private fun GitReadOnlyDiff(rows: List<UnifiedRow>, onOpen: () -> Unit) {
-    val c = LocalPageColors.current
-    var revealed by remember(rows) { mutableStateOf(emptyMap<Int, Int>()) }
-    val hScroll = rememberScrollState()
-    val isNew = rows.all { it.oldNo == null } && rows.any { it.added }
-    BoxWithConstraints(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
-            .background(c.mock.field)
-            .clickable(onClick = onOpen)
-            .padding(vertical = 6.dp),
-    ) {
-        val minWidth = maxWidth
-        Column {
-            collapseUnified(rows, isNew, revealed).forEach { block ->
-                when (block) {
-                    is DiffBlock.Lines -> block.rows.forEach { indexed ->
-                        GitDiffLine(
-                            row = indexed.value,
-                            wrap = false,
-                            hScroll = hScroll,
-                            minWidth = minWidth,
-                        )
-                    }
-                    is DiffBlock.Gap -> GitDiffGap(
-                        hidden = block.hidden,
-                        onClick = {
-                            revealed = revealed + (block.id to ((revealed[block.id] ?: 0) + 100))
-                        },
-                        wrap = false,
-                        hScroll = hScroll,
-                        minWidth = minWidth,
-                    )
-                }
-            }
-        }
-    }
 }
 
 /**
@@ -1740,7 +1911,7 @@ internal fun DiffScreen(
         onBack()
     })
 
-    Column(Modifier.fillMaxSize().background(c.mock.page)) {
+    Column(Modifier.fillMaxSize().background(cc.content)) {
         val current = rows
         val unified = remember(current) { current?.let { unify(it) } ?: emptyList() }
         val isNew = remember(unified) {
@@ -1767,38 +1938,42 @@ internal fun DiffScreen(
             }
         }
 
-        GitPageHeader(
+        ScreenHeader(
             origin = "GitHub",
-            current = path.substringAfterLast('/'),
+            title = path.substringAfterLast('/'),
             onBack = onBack,
             actions = {
-                GitHeaderIconButton(
-                    icon = CcIcons.Up,
-                    label = "Previous change",
-                    tint = if (changedIndices.isEmpty()) c.mock.faint else c.mock.muted,
-                    onClick = { jump(-1) },
-                )
-                GitHeaderIconButton(
-                    icon = CcIcons.Down,
-                    label = "Next change",
-                    tint = if (changedIndices.isEmpty()) c.mock.faint else c.mock.muted,
-                    onClick = { jump(1) },
-                )
+                Row(
+                    Modifier.wrapContentWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    HeaderAction(
+                        icon = "up",
+                        label = "Previous change",
+                        onClick = { jump(-1) },
+                    )
+                    HeaderAction(
+                        icon = "down",
+                        label = "Next change",
+                        onClick = { jump(1) },
+                    )
+                }
             },
         )
 
         error?.let { GitMessageLine(it, error = true) }
 
         when {
-            failed -> GitEmptyNote("Could not read the diff.")
-            binary -> GitEmptyNote("This file is not text, so there is nothing to show.")
-            current == null -> GitEmptyNote("Reading the diff…")
-            current.isEmpty() -> GitEmptyNote("No differences.")
+            failed -> EmptyState("cross", "Could not read the diff.", "Try again later.")
+            binary -> EmptyState("cross", "This file is not text.", "There is nothing to show.")
+            current == null -> LoadingList(3)
+            current.isEmpty() -> EmptyState("check", "No differences.", "The file matches the last commit.")
             current.size > 5000 -> {
-                GitEmptyNote("Too large to show here (${current.size} rows).")
+                EmptyState("cross", "Too large to show.", "${current.size} rows exceed the diff viewer.")
                 if (onOpenFile != null) {
-                    GitSecondaryButton(
-                        label = "Open the file",
+                    com.closecode.ui.components.PrimaryButton(
+                        text = "Open the file",
                         onClick = onOpenFile,
                         modifier = Modifier.padding(horizontal = 24.dp),
                     )
@@ -1851,23 +2026,25 @@ internal fun DiffScreen(
                                     .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 24.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                GitSecondaryButton(
-                                    label = "Discard",
+                                com.closecode.ui.components.PrimaryButton(
+                                    text = "Discard",
                                     onClick = { confirmDiscard = true },
-                                    enabled = !busy,
-                                    danger = true,
                                     modifier = Modifier.weight(1f),
+                                    container = cc.red,
+                                    radius = 15.dp,
                                 )
-                                GitPrimaryButton(
-                                    label = "Stage",
+                                com.closecode.ui.components.PrimaryButton(
+                                    text = "Stage",
                                     onClick = {
                                         finishWithRoot { root ->
                                             GitService(root).stage(listOf(path))
                                         }
                                     },
                                     enabled = !busy,
-                                    icon = CcIcons.Check,
+                                    icon = "check",
                                     modifier = Modifier.weight(1f),
+                                    container = cc.accent,
+                                    radius = 15.dp,
                                 )
                             }
                         }
@@ -1880,7 +2057,7 @@ internal fun DiffScreen(
     }
 
     if (confirmDiscard) {
-        GitConfirmDialog(
+        CcConfirmDialog(
             title = "Discard changes to ${path.substringAfterLast('/')}?",
             message = "The file goes back to the last commit. This cannot be undone.",
             confirmLabel = "Discard",
@@ -1889,6 +2066,7 @@ internal fun DiffScreen(
                 finishWithRoot { root -> GitService(root).discard(listOf(path)) }
             },
             onDismiss = { confirmDiscard = false },
+            destructive = true,
         )
     }
 }
