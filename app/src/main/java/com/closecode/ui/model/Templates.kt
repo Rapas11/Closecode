@@ -36,7 +36,7 @@ enum class FileKind { Folder, Kotlin, Xml, Gradle, Properties, Markdown, Json, H
  */
 fun fileIconName(kind: FileKind): String = when (kind) {
     FileKind.Folder -> "folder"
-    FileKind.Kotlin, FileKind.Xml, FileKind.Gradle, FileKind.Properties,
+    FileKind.Kotlin, FileKind.Xml, FileKind.Gradle,
     FileKind.Json, FileKind.Css, FileKind.Js, FileKind.Html,
     -> "code"
     else -> "file"

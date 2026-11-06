@@ -106,7 +106,7 @@ fun RecentProjectsScreen(
             title = {
                 Text(
                     text = actions.name,
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 17.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.SemiBold,
@@ -115,7 +115,7 @@ fun RecentProjectsScreen(
             text = {
                 Text(
                     text = "Rename this project, or delete it and everything in its folder.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 14.sp,
                     fontFamily = Sans,
                 )
@@ -127,7 +127,7 @@ fun RecentProjectsScreen(
                 }) {
                     Text(
                         text = "Rename",
-                        color = c.ac,
+                        color = c.mock.accent,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.SemiBold,
@@ -142,7 +142,7 @@ fun RecentProjectsScreen(
                     }) {
                         Text(
                             text = "Delete",
-                            color = c.red,
+                            color = c.mock.danger,
                             fontSize = 15.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.SemiBold,
@@ -151,20 +151,20 @@ fun RecentProjectsScreen(
                     TextButton(onClick = { actionTarget = null }) {
                         Text(
                             text = "Cancel",
-                            color = c.mu,
+                            color = c.mock.muted,
                             fontSize = 15.sp,
                             fontFamily = Sans,
                         )
                     }
                 }
             },
-            containerColor = c.cd,
+            containerColor = c.mock.panel,
         )
     }
 
     val renameTarget = pendingRename
     var renameText by remember(renameTarget) {
-        mutableStateOf(renameTarget?.name.orEmpty())
+        mutableStateOf<String>(renameTarget?.name.orEmpty())
     }
     var renameError by remember(renameTarget) { mutableStateOf<String?>(null) }
     if (renameTarget != null) {
@@ -173,7 +173,7 @@ fun RecentProjectsScreen(
             title = {
                 Text(
                     text = "Rename project",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 17.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.SemiBold,
@@ -193,7 +193,7 @@ fun RecentProjectsScreen(
                     renameError?.let { message ->
                         Text(
                             text = message,
-                            color = c.red,
+                            color = c.mock.danger,
                             fontSize = 12.sp,
                             fontFamily = Sans,
                             modifier = Modifier.padding(top = 8.dp),
@@ -212,7 +212,7 @@ fun RecentProjectsScreen(
                 }) {
                     Text(
                         text = "Rename",
-                        color = c.ac,
+                        color = c.mock.accent,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.SemiBold,
@@ -223,13 +223,13 @@ fun RecentProjectsScreen(
                 TextButton(onClick = { pendingRename = null }) {
                     Text(
                         text = "Cancel",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                     )
                 }
             },
-            containerColor = c.cd,
+            containerColor = c.mock.panel,
         )
     }
 
@@ -240,7 +240,7 @@ fun RecentProjectsScreen(
             title = {
                 Text(
                     text = "Delete ${target.name}?",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 17.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.SemiBold,
@@ -249,7 +249,7 @@ fun RecentProjectsScreen(
             text = {
                 Text(
                     text = "This removes the project folder and everything in it. It cannot be undone.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 14.sp,
                     fontFamily = Sans,
                 )
@@ -261,7 +261,7 @@ fun RecentProjectsScreen(
                 }) {
                     Text(
                         text = "Delete",
-                        color = c.red,
+                        color = c.mock.danger,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.SemiBold,
@@ -272,13 +272,13 @@ fun RecentProjectsScreen(
                 TextButton(onClick = { pendingDelete = null }) {
                     Text(
                         text = "Cancel",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                     )
                 }
             },
-            containerColor = c.cd,
+            containerColor = c.mock.panel,
         )
     }
 }

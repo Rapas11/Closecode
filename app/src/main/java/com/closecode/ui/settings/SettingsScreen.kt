@@ -8,6 +8,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -21,6 +23,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.closecode.ai.OpenCode
 import com.closecode.ai.OpenCodeBinary
 import com.closecode.ai.OpenCodeDefaults
@@ -37,7 +41,9 @@ import com.closecode.ui.ide.GitHubSignIn
 import com.closecode.ui.ide.TERMINAL_COMMANDS_KEY
 import com.closecode.ui.ide.decodeCommands
 import com.closecode.ui.project.ProjectRepository
-import com.closecode.ui.theme.LocalPageColors
+import com.closecode.ui.theme.LocalCcColors
+import com.closecode.ui.theme.Sans
+import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -384,28 +390,81 @@ fun SettingsScreen(
     }
 
     BackHandler(enabled = detailOpen) { detailOpen = false }
-    val c = LocalPageColors.current
-    Box(Modifier.fillMaxSize().background(c.mock.page)) {
+    val selectedTitle = when (activeId) {
+        "general" -> "General"
+        "editor" -> "Editor"
+        "intelligence" -> "Code Intelligence"
+        "build" -> "Build & Toolchain"
+        "terminal" -> "Terminal"
+        "git" -> "Git & GitHub"
+        "appearance" -> "Appearance"
+        "storage" -> "Storage"
+        "security" -> "Security"
+        "about" -> "About"
+        else -> null
+    }
+    val section = allSections.firstOrNull { it.id == activeId }
+    val c = LocalCcColors.current
+    Box(Modifier.fillMaxSize().background(c.panel)) {
         if (!detailOpen) {
-            SettingsCategoryList(
-                sections = allSections,
-                activeId = current.id,
-                onSelect = {
-                    onActiveChange(it)
+            SettingsPanel(
+                appName = "CloseCode",
+                versionLine = BuildInfo.label,
+                selected = selectedTitle,
+                onOpen = { cat ->
+                    val id = when (cat.title) {
+                        "General" -> "general"
+                        "Editor" -> "editor"
+                        "Code Intelligence" -> "intelligence"
+                        "Build & Toolchain" -> "build"
+                        "Terminal" -> "terminal"
+                        "Git & GitHub" -> "git"
+                        "Appearance" -> "appearance"
+                        "Storage" -> "storage"
+                        "Security" -> "security"
+                        "About" -> "about"
+                        else -> activeId
+                    }
+                    onActiveChange(id)
                     detailOpen = true
                 },
-                onBack = onBack,
-                footer = BuildInfo.label,
-                onDeveloper = { developerOpen = true },
             )
-        } else {
-            SettingsDetailPage(
-                section = current,
-                settings = settings,
-                onBack = { detailOpen = false },
-                onSettingsChange = onSettingsChange,
-                onAction = ::handleAction,
-            )
+        } else if (section != null) {
+            SettingsPage(title = section.title, onBack = { detailOpen = false }) {
+                section.groups.forEachIndexed { gIdx, group ->
+                    if (group.title.isNotBlank()) {
+                        Text(
+                            text = group.title.uppercase(),
+                            color = c.muted,
+                            fontSize = 11.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp,
+                            modifier = Modifier.padding(start = 18.dp, top = 16.dp, bottom = 6.dp),
+                        )
+                    }
+                    SetGroup(group.title) {
+                        group.rows.forEachIndexed { rIdx, row ->
+                            SettingsRow(
+                                row = row,
+                                settings = settings,
+                                onSettingsChange = onSettingsChange,
+                                onAction = ::handleAction,
+                                modifier = Modifier.padding(vertical = 4.dp),
+                            )
+                            if (rIdx != group.rows.lastIndex) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .height(1.dp)
+                                        .background(c.divider)
+                                        .padding(start = 62.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

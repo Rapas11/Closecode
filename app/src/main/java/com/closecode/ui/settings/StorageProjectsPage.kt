@@ -139,7 +139,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
         PageCard {
             Text(
                 text = "Export a project",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 15.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,
@@ -148,7 +148,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
                 text = "One zip per project — sources, manifest and settings, without build " +
                     "output. Keep it anywhere: Google Drive, mail, another phone. If this app " +
                     "or the phone is ever lost, the project is not.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
                 fontFamily = Sans,
@@ -156,7 +156,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
             if (projects.isEmpty()) {
                 Text(
                     text = "No projects to export yet.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                 )
@@ -170,7 +170,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
                 ) {
                     Text(
                         text = project.name,
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                         modifier = Modifier.weight(1f),
@@ -178,7 +178,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
                     if (project.imported) {
                         Text(
                             text = "imported",
-                            color = c.mu,
+                            color = c.mock.muted,
                             fontSize = 11.sp,
                             fontFamily = Sans,
                         )
@@ -200,7 +200,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
         PageCard {
             Text(
                 text = "Import a project",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 15.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,
@@ -208,7 +208,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
             Text(
                 text = "Pick a zip this app exported before — the project comes back with its " +
                     "own name on the start screen.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
                 fontFamily = Sans,
@@ -224,7 +224,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
         PageCard {
             Text(
                 text = "Housekeeping",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 15.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,
@@ -236,7 +236,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
                 } else {
                     "Old experiment directories are still there: ${leftovers.joinToString(", ")}"
                 },
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
                 fontFamily = Sans,
@@ -265,7 +265,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
         if (note.isNotBlank()) {
             Text(
                 text = note,
-                color = if (busy) c.mu else c.tx,
+                color = if (busy) c.mock.muted else c.mock.text,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
                 fontFamily = Sans,
@@ -274,7 +274,7 @@ internal fun StorageProjectsPage(onBack: () -> Unit) {
         if (busy) {
             Text(
                 text = "Working…",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Sans,
             )

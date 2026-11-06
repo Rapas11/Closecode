@@ -159,7 +159,7 @@ private fun highlightProgramCode(
 ): AnnotatedString {
     val commentStyle = SpanStyle(color = c.codeComment, fontStyle = FontStyle.Italic)
     val stringStyle = SpanStyle(color = c.codeString)
-    val annotationStyle = SpanStyle(color = c.text)
+    val annotationStyle = SpanStyle(color = c.codeFunction)
     val keywordStyle = SpanStyle(color = c.codeKeyword, fontWeight = FontWeight.Medium)
     val functionStyle = SpanStyle(color = c.codeFunction)
     val typeStyle = SpanStyle(color = c.codeType)
@@ -423,7 +423,7 @@ internal fun highlightMarkup(text: String, c: PageColors): AnnotatedString {
     val stringStyle = SpanStyle(color = c.codeString)
     val tagStyle = SpanStyle(color = c.codeKeyword, fontWeight = FontWeight.Medium)
     val attrStyle = SpanStyle(color = c.codeVariable)
-    val punctuationStyle = SpanStyle(color = c.mu)
+    val punctuationStyle = SpanStyle(color = c.mock.muted)
 
     return buildAnnotatedString {
         text.lines().forEachIndexed { index, raw ->

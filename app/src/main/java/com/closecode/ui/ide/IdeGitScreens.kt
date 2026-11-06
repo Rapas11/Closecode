@@ -132,6 +132,7 @@ fun IdeGitPanel(
     var selected by remember(projectRoot) { mutableStateOf<Set<String>>(emptySet()) }
     var selectedKey by remember(projectRoot) { mutableStateOf("") }
     var signInOpen by remember { mutableStateOf(false) }
+    var busyAction by remember { mutableStateOf<String?>(null) }
 
     suspend fun reload() {
         val root = projectRoot
@@ -188,6 +189,7 @@ fun IdeGitPanel(
         val current = token
         if (root == null || current == null || busy) return
         busy = true
+        busyAction = label
         error = null
         note = null
         scope.launch {
@@ -196,6 +198,7 @@ fun IdeGitPanel(
             note = outcome.getOrNull()
             reload()
             busy = false
+            busyAction = null
         }
     }
 
@@ -246,7 +249,6 @@ fun IdeGitPanel(
             GitPanelHeader(
                 title = "GitHub",
                 subtitle = "Not connected",
-                onRefresh = { scope.launch { reload() } },
             )
             Box(
                 Modifier
@@ -318,7 +320,7 @@ fun IdeGitPanel(
         ) {
             GitPanelHeader(
                 title = "GitHub",
-                subtitle = "$repoLabel - $branch",
+                subtitle = "$repoLabel · $branch",
                 onRefresh = { scope.launch { reload() } },
             )
 
@@ -341,8 +343,15 @@ fun IdeGitPanel(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
-                    com.closecode.ui.CcIcon("down", cc.text2, 16.dp)
-                    Spacer(Modifier.width(7.dp))
+                    if (busyAction == "Pull") {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(15.dp),
+                            color = cc.accent,
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        com.closecode.ui.CcIcon("down", cc.text2, 16.dp)
+                    }
                     Text(
                         text = "Pull",
                         color = cc.text2,
@@ -363,8 +372,15 @@ fun IdeGitPanel(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
-                    com.closecode.ui.CcIcon("up", cc.text2, 16.dp)
-                    Spacer(Modifier.width(7.dp))
+                    if (busyAction == "Push") {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(15.dp),
+                            color = cc.accent,
+                            strokeWidth = 2.dp,
+                        )
+                    } else {
+                        com.closecode.ui.CcIcon("up", cc.text2, 16.dp)
+                    }
                     Text(
                         text = "Push",
                         color = cc.text2,
@@ -373,26 +389,18 @@ fun IdeGitPanel(
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
-                if (busy) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(15.dp),
-                        color = cc.accent,
-                        strokeWidth = 2.dp,
-                    )
-                }
             }
 
             error?.let { GitMessageLine(it, error = true) }
             note?.let { GitMessageLine(it, error = false) }
 
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                SecLabel("CHANGES · ${changes.size}", Modifier.weight(1f))
-            }
+            SecLabel(
+                text = "Changes · ${changes.size}",
+                start = 16.dp,
+                top = 12.dp,
+                end = 16.dp,
+                bottom = 4.dp,
+            )
 
             when {
                 loading -> GitEmptyNote("Reading changes…")
@@ -405,21 +413,13 @@ fun IdeGitPanel(
                         modifier = Modifier.padding(horizontal = 16.dp),
                     )
                 }
-                changes.isEmpty() -> Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    CcIcon(CcIcons.Check, c.mock.green, 16.dp)
-                    Text(
-                        text = "Everything is saved",
-                        color = c.mock.text,
-                        fontSize = 13.sp,
-                        fontFamily = Sans,
-                    )
-                }
+                changes.isEmpty() -> Text(
+                    text = "No changes",
+                    color = cc.muted,
+                    fontSize = 12.5.sp,
+                    fontFamily = Sans,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
                 else -> changes.forEach { change ->
                     Row(
                         Modifier
@@ -474,7 +474,7 @@ fun IdeGitPanel(
                 com.closecode.ui.components.PrimaryButton(
                     text = if (staged > 1) "Commit $staged files" else if (staged == 1) "Commit 1 file" else "Commit",
                     onClick = ::commitChanges,
-                    modifier = Modifier.padding(horizontal = 14.dp).height(42.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp).height(42.dp),
                     enabled = canCommit,
                     icon = "check",
                     container = cc.green,
@@ -483,18 +483,17 @@ fun IdeGitPanel(
             }
 
             if (!loading && snapshot != null) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                SecLabel("HISTORY", Modifier.weight(1f))
-                }
+                SecLabel(
+                    text = "History",
+                    start = 16.dp,
+                    top = 12.dp,
+                    end = 16.dp,
+                    bottom = 4.dp,
+                )
                 val commits = history
                 when {
                     commits == null -> GitEmptyNote("Reading history…")
-                    commits.isEmpty() -> GitEmptyNote("No commits yet.")
+                    commits.isEmpty() -> GitEmptyNote("No commits yet")
                     else -> {
                         commits.take(3).forEachIndexed { index, commit ->
                             GitMiniHistoryRow(
@@ -1075,8 +1074,8 @@ internal fun GitSourceControlPage(
 
     if (discardAll) {
         CcConfirmDialog(
-            title = "Discard all ${changes.size} changes?",
-            message = "Every edit goes back to the last commit, and new files are deleted. This cannot be undone.",
+            title = "Discard all changes?",
+            message = "${changes.size} files will go back to the last commit. This cannot be undone.",
             confirmLabel = "Discard",
             onConfirm = {
                 discardAll = false
@@ -1236,7 +1235,7 @@ internal fun HistoryPage(
     val cc = com.closecode.ui.theme.LocalCcColors.current
     val listState = rememberLazyListState()
     var commits by remember(projectRoot) { mutableStateOf<List<GitCommit>?>(null) }
-    var limit by remember(projectRoot) { mutableStateOf(30) }
+    var limit by remember(projectRoot) { mutableStateOf(50) }
     var refreshKey by remember { mutableStateOf(0) }
     var pullOffset by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
@@ -1257,7 +1256,7 @@ internal fun HistoryPage(
             .collect { last ->
                 val loaded = commits
                 if (loaded != null && loaded.size >= limit && last >= loaded.lastIndex - 2) {
-                    limit += 30
+                    limit += 50
                 }
             }
     }
@@ -1277,7 +1276,7 @@ internal fun HistoryPage(
 
             override suspend fun onPreFling(available: Velocity): Velocity {
                 if (pullOffset > with(density) { 72.dp.toPx() }) {
-                    limit = 30
+                    limit = 50
                     refreshKey++
                 }
                 pullOffset = 0f
@@ -1479,7 +1478,7 @@ private fun GitHistoryRow(
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .clickable(onClick = onClick)
-            .padding(start = 16.dp, vertical = 10.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.Top,
     ) {
         Column(
@@ -1645,7 +1644,7 @@ internal fun CommitPage(
                 )
                 Spacer(Modifier.height(5.dp))
                 Text(
-                    text = "${current.author} · ${gitRelativeTime(current.whenMillis)} · $n ${if (n == 1) "file" else "files"}, +$add −$del",
+                    text = "${current.author} · ${gitLongRelativeTime(current.whenMillis)} · $n ${if (n == 1) "file" else "files"}, +$add −$del",
                     color = cc.muted,
                     fontSize = 12.5.sp,
                     fontFamily = Sans,
@@ -1676,7 +1675,7 @@ internal fun CommitPage(
                         .background(cc.panel)
                         .padding(vertical = 8.dp),
                 ) {
-                    diffLines.forEach { line ->
+                    diffLines.take(12).forEach { line ->
                         CommitDiffLine(
                             kind = line.sign,
                             text = line.text,
@@ -1775,8 +1774,8 @@ private fun CommitDiffLine(
 ) {
     val cc = com.closecode.ui.theme.LocalCcColors.current
     val bg = when (kind) {
-        '+' -> cc.matchBg.copy(alpha = 0.5f) // light green-ish band for added
-        '-' -> cc.matchBg.copy(alpha = 0.3f) // light red-ish band for removed
+        '+' -> cc.diffAddBg
+        '-' -> cc.diffDelBg
         else -> Color.Transparent
     }
     val fg = when (kind) {
@@ -1854,12 +1853,16 @@ internal fun DiffScreen(
     var busy by remember(path, commitId) { mutableStateOf(false) }
     var error by remember(path, commitId) { mutableStateOf<String?>(null) }
     var confirmDiscard by remember(path, commitId) { mutableStateOf(false) }
+    var staged by remember(path, commitId) { mutableStateOf(false) }
 
     LaunchedEffect(path, commitId) {
         val root = projectRoot
         if (root == null) {
             failed = true
             return@LaunchedEffect
+        }
+        staged = withContext(Dispatchers.IO) {
+            GitService(root).snapshot().getOrNull()?.staged?.any { it.path == path } == true
         }
         val loaded = withContext(Dispatchers.IO) {
             runCatching {
@@ -1911,7 +1914,7 @@ internal fun DiffScreen(
         onBack()
     })
 
-    Column(Modifier.fillMaxSize().background(cc.content)) {
+    Column(Modifier.fillMaxSize().background(c.mock.panel)) {
         val current = rows
         val unified = remember(current) { current?.let { unify(it) } ?: emptyList() }
         val isNew = remember(unified) {
@@ -1944,20 +1947,22 @@ internal fun DiffScreen(
             onBack = onBack,
             actions = {
                 Row(
-                    Modifier.wrapContentWidth(),
+                    Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    HeaderAction(
-                        icon = "up",
-                        label = "Previous change",
-                        onClick = { jump(-1) },
-                    )
-                    HeaderAction(
-                        icon = "down",
-                        label = "Next change",
-                        onClick = { jump(1) },
-                    )
+                    Box(
+                        Modifier.size(38.dp).clickable(onClick = { jump(-1) }),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CcIcon("up", c.mock.textSoft, 19.dp, 1.8f)
+                    }
+                    Box(
+                        Modifier.size(38.dp).clickable(onClick = { jump(1) }),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CcIcon("down", c.mock.textSoft, 19.dp, 1.8f)
+                    }
                 }
             },
         )
@@ -1966,9 +1971,21 @@ internal fun DiffScreen(
 
         when {
             failed -> EmptyState("cross", "Could not read the diff.", "Try again later.")
-            binary -> EmptyState("cross", "This file is not text.", "There is nothing to show.")
-            current == null -> LoadingList(3)
-            current.isEmpty() -> EmptyState("check", "No differences.", "The file matches the last commit.")
+            binary -> Text(
+                text = "Binary file, no preview",
+                color = c.mock.muted,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(24.dp),
+            )
+            current == null -> LoadingList(4)
+            current.isEmpty() -> Text(
+                text = "No changes in this file",
+                color = c.mock.muted,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(24.dp),
+            )
             current.size > 5000 -> {
                 EmptyState("cross", "Too large to show.", "${current.size} rows exceed the diff viewer.")
                 if (onOpenFile != null) {
@@ -2023,27 +2040,29 @@ internal fun DiffScreen(
                             Row(
                                 Modifier
                                     .fillMaxWidth()
-                                    .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 24.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 24.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
                                 com.closecode.ui.components.PrimaryButton(
                                     text = "Discard",
                                     onClick = { confirmDiscard = true },
                                     modifier = Modifier.weight(1f),
-                                    container = cc.red,
+                                    container = c.mock.field,
+                                    contentColor = c.mock.danger,
                                     radius = 15.dp,
                                 )
                                 com.closecode.ui.components.PrimaryButton(
-                                    text = "Stage",
+                                    text = if (staged) "Unstage" else "Stage",
                                     onClick = {
                                         finishWithRoot { root ->
-                                            GitService(root).stage(listOf(path))
+                                            if (staged) GitService(root).unstage(listOf(path))
+                                            else GitService(root).stage(listOf(path))
                                         }
                                     },
                                     enabled = !busy,
                                     icon = "check",
                                     modifier = Modifier.weight(1f),
-                                    container = cc.accent,
+                                    container = c.accent,
                                     radius = 15.dp,
                                 )
                             }

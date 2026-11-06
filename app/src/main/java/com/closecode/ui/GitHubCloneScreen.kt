@@ -47,7 +47,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.rememberProjectRepository
-import com.closecode.ui.components.SheetHeader
+import com.closecode.ui.components.ScreenHeader
 import com.closecode.ui.github.GitHubClient
 import com.closecode.ui.github.GitHubClone
 import com.closecode.ui.github.GitHubRepo
@@ -247,18 +247,17 @@ fun GitHubCloneScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize().background(c.bg).systemBarsPadding()) {
+    Box(Modifier.fillMaxSize().background(c.mock.page).systemBarsPadding()) {
         AnimatedVisibility(
             visible = true,
             enter = fadeIn(tween(200)),
             modifier = Modifier.fillMaxSize(),
         ) {
             Column(Modifier.fillMaxSize()) {
-                SheetHeader(
-                    onClose = onDismiss,
+                ScreenHeader(
+                    origin = "GitHub",
                     title = "Clone a repository",
-                    subtitle = "Paste any https link, or pick one of your repositories. It opens " +
-                        "as a project when the download finishes.",
+                    onBack = onDismiss,
                 )
 
                 Column(
@@ -266,7 +265,7 @@ fun GitHubCloneScreen(
                         .fillMaxWidth()
                         .weight(1f)
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 22.dp, vertical = 16.dp),
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
                     val running = active
@@ -335,13 +334,13 @@ fun GitHubCloneScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     CcIcon(
                                         com.closecode.ui.ide.CcIcons.Github,
-                                        c.text,
+                                        c.mock.text,
                                         20.dp,
                                     )
                                     Spacer(Modifier.width(10.dp))
                                     Text(
                                         text = "See your repositories here",
-                                        color = c.text,
+                                        color = c.mock.text,
                                         fontSize = 13.sp,
                                         fontFamily = Sans,
                                         fontWeight = FontWeight.Medium,
@@ -351,7 +350,7 @@ fun GitHubCloneScreen(
                                 Text(
                                     text = "Sign in once to pick private and public repositories " +
                                         "from a list. Public links above work without signing in.",
-                                    color = c.textMuted,
+                                    color = c.mock.muted,
                                     fontSize = 12.sp,
                                     fontFamily = Sans,
                                     lineHeight = 17.sp,
@@ -482,24 +481,26 @@ private fun CloneForm(
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Text(
             text = "Repository link",
-            color = c.iconTint,
+            color = c.mock.textSoft,
             fontSize = 12.sp,
             fontFamily = Sans,
+            fontWeight = FontWeight.SemiBold,
         )
         Row(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .background(c.fieldBg)
-                .border(1.dp, c.fieldBorder, RoundedCornerShape(10.dp))
-                .padding(start = 13.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                .height(44.dp)
+                .clip(RoundedCornerShape(13.dp))
+                .background(c.mock.field)
+                .border(1.dp, c.mock.border, RoundedCornerShape(13.dp))
+                .padding(start = 14.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.weight(1f)) {
                 if (link.isEmpty()) {
                     Text(
                         text = "https://github.com/owner/repository",
-                        color = c.textFaint,
+                        color = c.mock.faint,
                         fontSize = 12.sp,
                         fontFamily = Mono,
                         maxLines = 1,
@@ -511,11 +512,11 @@ private fun CloneForm(
                     onValueChange = onLink,
                     singleLine = true,
                     textStyle = TextStyle(
-                        color = c.text,
-                        fontSize = 12.sp,
+                        color = c.mock.text,
+                        fontSize = 12.5.sp,
                         fontFamily = Mono,
                     ),
-                    cursorBrush = SolidColor(c.accent),
+                    cursorBrush = SolidColor(c.mock.accent),
                     keyboardOptions = KeyboardOptions.Default,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -526,14 +527,14 @@ private fun CloneForm(
                 Modifier
                     .height(30.dp)
                     .clip(RoundedCornerShape(7.dp))
-                    .background(c.chipBg)
+                    .background(c.mock.rail)
                     .clickable(onClick = onPaste)
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = "Paste",
-                    color = c.text,
+                    color = c.mock.text,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Medium,
@@ -543,16 +544,17 @@ private fun CloneForm(
         if (linkError != null) {
             Text(
                 text = linkError,
-                color = c.error,
+                color = c.mock.danger,
                 fontSize = 12.sp,
                 fontFamily = Sans,
             )
         }
         Text(
             text = "Save in folder",
-            color = c.iconTint,
+            color = c.mock.textSoft,
             fontSize = 12.sp,
             fontFamily = Sans,
+            fontWeight = FontWeight.SemiBold,
         )
         com.closecode.ui.components.ScreenField(
             value = folder,
@@ -562,7 +564,7 @@ private fun CloneForm(
         if (folderTaken) {
             Text(
                 text = "That project name or folder is already taken.",
-                color = c.error,
+                color = c.mock.danger,
                 fontSize = 12.sp,
                 fontFamily = Sans,
             )
@@ -586,7 +588,7 @@ private fun OrDivider() {
         Box(Modifier.weight(1f).height(1.dp).background(c.divider))
         Text(
             text = "OR CHOOSE FROM GITHUB",
-            color = c.textFaint,
+            color = c.mock.faint,
             fontSize = 11.sp,
             fontFamily = Sans,
             letterSpacing = 0.72.sp,
@@ -631,7 +633,7 @@ private fun CloneProgress(
         Spacer(Modifier.height(14.dp))
         Text(
             text = "Cloning $folder",
-            color = c.text,
+            color = c.mock.text,
             fontSize = 17.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
@@ -639,7 +641,7 @@ private fun CloneProgress(
         Spacer(Modifier.height(4.dp))
         Text(
             text = remoteUrl.removePrefix("https://"),
-            color = c.textMuted,
+            color = c.mock.muted,
             fontSize = 12.sp,
             fontFamily = Mono,
             maxLines = 1,
@@ -654,8 +656,8 @@ private fun CloneProgress(
                     .fillMaxWidth()
                     .height(8.dp)
                     .clip(RoundedCornerShape(4.dp)),
-                color = c.accent,
-                trackColor = c.chipBg,
+                color = c.mock.accent,
+                trackColor = c.mock.rail,
             )
         } else {
             Box(
@@ -663,14 +665,14 @@ private fun CloneProgress(
                     .fillMaxWidth()
                     .height(8.dp)
                     .clip(RoundedCornerShape(4.dp))
-                    .background(c.chipBg),
+                    .background(c.mock.rail),
             ) {
                 Box(
                     Modifier
                         .fillMaxWidth(fraction.coerceIn(0f, 1f))
                         .height(8.dp)
                         .clip(RoundedCornerShape(4.dp))
-                        .background(c.accent),
+                        .background(c.mock.accent),
                 )
             }
         }
@@ -678,7 +680,7 @@ private fun CloneProgress(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = phase,
-                color = c.textMuted,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Sans,
                 modifier = Modifier.weight(1f),
@@ -689,7 +691,7 @@ private fun CloneProgress(
                 } else {
                     "${(fraction * 100).toInt()}% · ${formatBytes(downloadedBytes)}"
                 },
-                color = c.textMuted,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Mono,
             )
@@ -703,7 +705,7 @@ private fun CloneProgress(
         Spacer(Modifier.height(16.dp))
         com.closecode.ui.components.TextLink(
             label = "Cancel",
-            color = c.error,
+            color = c.mock.danger,
             onClick = onCancel,
         )
     }
@@ -717,26 +719,26 @@ private fun CloneStep(done: Boolean, current: Boolean, label: String) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         when {
-            done -> CcIcon(com.closecode.ui.ide.CcIcons.Check, c.success, 16.dp)
+            done -> CcIcon(com.closecode.ui.ide.CcIcons.Check, c.mock.green, 16.dp)
             current -> androidx.compose.material3.CircularProgressIndicator(
                 modifier = Modifier.size(14.dp),
-                color = c.text,
+                color = c.mock.text,
                 strokeWidth = 2.dp,
             )
             else -> Box(
                 Modifier
                     .size(14.dp)
                     .clip(androidx.compose.foundation.shape.CircleShape)
-                    .border(1.5.dp, c.textFaint, androidx.compose.foundation.shape.CircleShape),
+                    .border(1.5.dp, c.mock.faint, androidx.compose.foundation.shape.CircleShape),
             )
         }
         Spacer(Modifier.width(10.dp))
         Text(
             text = label,
             color = when {
-                done -> c.success
-                current -> c.text
-                else -> c.textFaint
+                done -> c.mock.green
+                current -> c.mock.text
+                else -> c.mock.faint
             },
             fontSize = 13.sp,
             fontFamily = Sans,
@@ -840,7 +842,7 @@ private fun RepositoryList(
     when {
         listed == null -> Text(
             text = "Asking GitHub for your repositories…",
-            color = c.textMuted,
+            color = c.mock.muted,
             fontSize = 13.sp,
             fontFamily = Sans,
             modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
@@ -849,7 +851,7 @@ private fun RepositoryList(
         listed.isEmpty() -> Text(
             text = "You have no repositories yet. Publish a project first and it will show up " +
                 "here.",
-            color = c.textMuted,
+            color = c.mock.muted,
             fontSize = 13.sp,
             fontFamily = Sans,
             lineHeight = 19.sp,
@@ -880,7 +882,7 @@ private fun RepositoryList(
             if (query.isNotBlank() && shown.isEmpty()) {
                 Text(
                     text = "Nothing matches “$query”.",
-                    color = c.textMuted,
+                    color = c.mock.muted,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                 )
@@ -909,21 +911,21 @@ private fun RepoRow(
             .fillMaxWidth()
             .height(54.dp)
             .clip(shape)
-            .background(c.surface)
-            .border(1.dp, c.surfaceBorder, shape)
+            .background(c.mock.panel)
+            .border(1.dp, c.mock.border, shape)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CcIcon(
             if (repo.isPrivate) com.closecode.ui.ide.CcIcons.Lock else com.closecode.ui.ide.CcIcons.Book,
-            c.textMuted,
+            c.mock.muted,
             16.dp,
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = repo.fullName.substringAfter('/'),
-                color = c.text,
+                color = c.mock.text,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,
@@ -932,7 +934,7 @@ private fun RepoRow(
             )
             Text(
                 text = updatedLine(repo),
-                color = c.textMuted,
+                color = c.mock.muted,
                 fontSize = 11.sp,
                 fontFamily = Sans,
                 maxLines = 1,
@@ -946,14 +948,14 @@ private fun RepoRow(
             Modifier
                 .height(28.dp)
                 .clip(RoundedCornerShape(7.dp))
-                .background(if (disabled) c.chipBg else c.popupSelected)
+                .background(if (disabled) c.mock.rail else c.mock.accent)
                 .clickable(enabled = !disabled, onClick = onClone)
                 .padding(horizontal = 14.dp),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = "Clone",
-                color = if (disabled) c.textFaint else androidx.compose.ui.graphics.Color.White,
+                color = if (disabled) c.mock.faint else androidx.compose.ui.graphics.Color.White,
                 fontSize = 12.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,

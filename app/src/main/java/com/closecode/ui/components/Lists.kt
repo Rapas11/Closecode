@@ -204,7 +204,7 @@ fun SettingsGroup(
             style = TextStyle(
                 fontFamily = Sans,
                 fontSize = 11.sp,
-                fontWeight = FontWeight.ExtraBold,
+                fontWeight = FontWeight.Bold,
                 letterSpacing = 0.8.sp,
             ),
             modifier = Modifier.padding(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 6.dp),
@@ -267,8 +267,8 @@ fun SettingRow(
                         color = c.muted,
                         style = TextStyle(
                             fontFamily = Sans,
-                            fontSize = 12.sp,
-                            lineHeight = 16.8.sp,
+                            fontSize = 12.25.sp,
+                            lineHeight = 17.sp,
                         ),
                     )
                 }
@@ -278,7 +278,7 @@ fun SettingRow(
                     value,
                     TextStyle(
                         fontFamily = Sans,
-                        fontSize = 13.sp,
+                        fontSize = 13.25.sp,
                     ),
                     c.muted,
                 )

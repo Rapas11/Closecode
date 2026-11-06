@@ -310,7 +310,7 @@ internal fun TerminalTabStrip(
     Row(
         modifier
             .fillMaxWidth()
-            .background(c.panel)
+            .background(c.mock.panel)
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,

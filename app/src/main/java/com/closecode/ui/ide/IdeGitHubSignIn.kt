@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.debug.DebugLog
+import com.closecode.ui.components.ScreenHeader
 import com.closecode.ui.github.DeviceCode
 import com.closecode.ui.github.DevicePoll
 import com.closecode.ui.github.GitHubClient
@@ -132,15 +133,14 @@ fun GitHubSignIn(
             .fillMaxSize()
             .background(cc.content),
     ) {
-        GitPageHeader(
+        ScreenHeader(
             origin = "GitHub",
-            current = "Sign in",
+            title = "Sign in",
             onBack = onDismiss,
         )
         GitHubSignInBody(
             onSignedIn = onSignedIn,
             onCancel = onDismiss,
-            modifier = Modifier.padding(horizontal = 18.dp),
         )
     }
 }
@@ -338,6 +338,7 @@ internal fun GitHubSignInBody(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(20.dp))
                 .background(cc.field)
+                .alpha(if (expired) 0.4f else 1f)
                 .padding(vertical = 18.dp),
             contentAlignment = UiAlignment.Center,
         ) {
@@ -368,7 +369,8 @@ internal fun GitHubSignInBody(
                         .clickable(enabled = code != null, onClick = {
                             code?.userCode?.let { clipboard.setText(AnnotatedString(it)) }
                             copied = true
-                        }),
+                        })
+                        .padding(horizontal = 10.dp),
                     verticalAlignment = UiAlignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
@@ -386,13 +388,14 @@ internal fun GitHubSignInBody(
                         .height(40.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(cc.field)
-                        .clickable(enabled = code != null, onClick = ::openGitHub),
+                        .clickable(enabled = code != null, onClick = ::openGitHub)
+                        .padding(horizontal = 10.dp),
                     verticalAlignment = UiAlignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     com.closecode.ui.CcIcon("globe", cc.text2, 16.dp)
                     Text(
-                        text = "Open ${code?.verificationUri ?: "github.com"}",
+                        text = "Open ${runCatching { java.net.URI(code?.verificationUri).host }.getOrNull() ?: "github.com"}",
                         color = cc.text2,
                         fontSize = 13.5.sp,
                         fontFamily = Sans,
@@ -551,14 +554,14 @@ internal fun SignInAction(
         modifier
             .height(40.dp)
             .clip(RoundedCornerShape(10.dp))
-            .background(if (primary) c.ac.copy(alpha = 0.16f) else c.panel2)
-            .border(1.dp, if (primary) c.ac else c.ln, RoundedCornerShape(10.dp))
+            .background(if (primary) c.mock.accent.copy(alpha = 0.16f) else c.panel2)
+            .border(1.dp, if (primary) c.mock.accent else c.mock.divider, RoundedCornerShape(10.dp))
             .clickable(onClick = onClick),
         contentAlignment = UiAlignment.Center,
     ) {
         Text(
             text = label,
-            color = if (primary) c.ac else c.mu,
+            color = if (primary) c.mock.accent else c.mock.muted,
             fontSize = 13.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,

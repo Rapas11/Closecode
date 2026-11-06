@@ -193,7 +193,7 @@ fun OpenCodeChatScreen(
     Column(
         modifier
             .fillMaxSize()
-            .background(c.bg),
+            .background(c.mock.page),
     ) {
         OpenCodePageBar(
             url = currentUrl,

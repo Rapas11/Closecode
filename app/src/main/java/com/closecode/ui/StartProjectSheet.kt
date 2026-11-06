@@ -2,6 +2,7 @@ package com.closecode.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -129,7 +130,8 @@ fun StartProjectSheet(
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .fillMaxHeight(0.82f)
+                .fillMaxHeight()
+                .padding(top = 90.dp)
                 .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
                 .background(c.mock.panel)
                 .clickable(
@@ -145,7 +147,7 @@ fun StartProjectSheet(
                     .align(Alignment.CenterHorizontally)
                     .size(width = 40.dp, height = 5.dp)
                     .clip(RoundedCornerShape(3.dp))
-                    .background(c.mock.border),
+                    .background(c.mock.toggleOff),
             )
             Row(
                 Modifier
@@ -159,7 +161,7 @@ fun StartProjectSheet(
                         color = c.mock.text,
                         fontSize = 22.sp,
                         fontFamily = Sans,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.ExtraBold,
                         lineHeight = 27.sp,
                     )
                     Text(
@@ -176,20 +178,6 @@ fun StartProjectSheet(
                         modifier = Modifier.padding(top = 3.dp),
                     )
                 }
-                Box(
-                    Modifier
-                        .size(34.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { step = Step.Config.name },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CcIcon(
-                        CcIcons.Settings,
-                        if (currentStep == Step.Config) c.mock.accent else c.mock.textSoft,
-                        19.dp,
-                    )
-                }
-                Spacer(Modifier.width(2.dp))
                 Box(
                     Modifier
                         .size(34.dp)
@@ -270,7 +258,7 @@ fun StartProjectSheet(
                 }
                 Row(
                     Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (currentStep == Step.Pick) {
@@ -279,14 +267,15 @@ fun StartProjectSheet(
                                 .weight(1f)
                                 .height(50.dp)
                                 .clip(RoundedCornerShape(15.dp))
-                                .background(c.mock.input)
-                                .padding(horizontal = 18.dp),
+                                .background(c.mock.rail)
+                                .border(1.dp, c.mock.border, RoundedCornerShape(15.dp))
+                                .padding(horizontal = 14.dp),
                             contentAlignment = Alignment.CenterStart,
                         ) {
                             if (name.isEmpty()) {
                                 Text(
                                     text = "Project name",
-                                    color = c.mock.faint,
+                                    color = c.mock.muted,
                                     fontSize = 14.5.sp,
                                     fontFamily = Sans,
                                 )
@@ -338,8 +327,8 @@ fun StartProjectSheet(
                     ) {
                         Text(
                             text = "Create",
-                            color = if (selected != null) c.mock.onAccent else c.mock.faint,
-                            fontSize = 15.sp,
+                            color = if (selected != null) c.mock.onAccent else c.mock.muted,
+                            fontSize = 14.5.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,

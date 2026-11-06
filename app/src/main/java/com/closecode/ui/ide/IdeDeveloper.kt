@@ -76,7 +76,7 @@ fun IdeDeveloperSheet(
     IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
         Text(
             text = "DEVELOPER",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -176,7 +176,7 @@ fun IdeSelfTestSheet(
     IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
         Text(
             text = "SELF-TEST",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -190,12 +190,12 @@ fun IdeSelfTestSheet(
                     .padding(horizontal = 16.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(c.panel2)
-                    .border(1.dp, c.ln, RoundedCornerShape(10.dp))
+                    .border(1.dp, c.mock.divider, RoundedCornerShape(10.dp))
                     .padding(12.dp),
             ) {
                 Text(
                     text = facts.ifEmpty { "…" },
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 11.sp,
                     fontFamily = Mono,
                     lineHeight = 16.sp,
@@ -215,13 +215,13 @@ fun IdeSelfTestSheet(
                         .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 12.dp)
                         .height(38.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .border(1.dp, c.ln, RoundedCornerShape(10.dp))
+                        .border(1.dp, c.mock.divider, RoundedCornerShape(10.dp))
                         .clickable(onClick = onCopyReport),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = "Copy report",
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
@@ -245,7 +245,7 @@ fun IdeCrashSheet(
     IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
         Text(
             text = "LAST CRASH",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -259,12 +259,12 @@ fun IdeCrashSheet(
                     .padding(horizontal = 16.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(c.panel2)
-                    .border(1.dp, c.ln, RoundedCornerShape(10.dp))
+                    .border(1.dp, c.mock.divider, RoundedCornerShape(10.dp))
                     .padding(12.dp),
             ) {
                 Text(
                     text = text.take(6000),
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 10.5.sp,
                     fontFamily = Mono,
                     lineHeight = 15.sp,
@@ -301,14 +301,14 @@ private fun DeveloperActionRow(
     ) {
         Text(
             text = label,
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 14.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
         )
         Text(
             text = note,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             fontFamily = Sans,
             modifier = Modifier.padding(top = 2.dp),
@@ -334,14 +334,14 @@ private fun DeveloperSwitchRow(
         Column(Modifier.weight(1f)) {
             Text(
                 text = label,
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 14.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,
             )
             Text(
                 text = note,
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Sans,
                 modifier = Modifier.padding(top = 2.dp),
@@ -360,7 +360,7 @@ private fun DeveloperSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit
             .padding(start = 12.dp)
             .size(width = 38.dp, height = 22.dp)
             .clip(RoundedCornerShape(11.dp))
-            .background(if (checked) c.ac else c.ln)
+            .background(if (checked) c.mock.accent else c.mock.divider)
             .clickable { onCheckedChange(!checked) },
         contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
@@ -369,7 +369,7 @@ private fun DeveloperSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit
                 .padding(horizontal = 3.dp)
                 .size(16.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(if (checked) Color.White else c.mu),
+                .background(if (checked) Color.White else c.mock.muted),
         )
     }
 }
@@ -380,13 +380,13 @@ private fun DeveloperSmallButton(label: String, onClick: () -> Unit) {
     Box(
         Modifier
             .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, c.ln, RoundedCornerShape(8.dp))
+            .border(1.dp, c.mock.divider, RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
     ) {
         Text(
             text = label,
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 12.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
@@ -398,9 +398,9 @@ private fun DeveloperSmallButton(label: String, onClick: () -> Unit) {
 private fun SelfTestCheckRow(check: SelfTest.Check) {
     val c = LocalPageColors.current
     val statusColor = when (check.status) {
-        SelfTest.Status.Pass -> c.success
-        SelfTest.Status.Fail -> c.red
-        SelfTest.Status.Skipped -> c.mu
+        SelfTest.Status.Pass -> c.mock.green
+        SelfTest.Status.Fail -> c.mock.danger
+        SelfTest.Status.Skipped -> c.mock.muted
     }
     Column(
         Modifier
@@ -410,7 +410,7 @@ private fun SelfTestCheckRow(check: SelfTest.Check) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "${check.number}. ${check.name}",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,
@@ -426,7 +426,7 @@ private fun SelfTestCheckRow(check: SelfTest.Check) {
         }
         Text(
             text = check.detail,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             fontFamily = Sans,
             modifier = Modifier.padding(top = 2.dp),

@@ -366,7 +366,7 @@ internal fun ansiAnnotated(line: String): AnnotatedString {
                 if (run.style == AnsiStyle.Plain) {
                     append(run.text)
                 } else {
-                    pushStyle(spanStyleFor(run.style, ansi, c.tx, c.bg))
+                    pushStyle(spanStyleFor(run.style, ansi, c.mock.text, c.mock.page))
                     append(run.text)
                     pop()
                 }
@@ -395,7 +395,7 @@ internal fun TerminalLine(
     val size = fontSize ?: 11.5.sp
     Text(
         text = if (hasEscapes) ansiAnnotated(line) else AnnotatedString(line),
-        color = color ?: c.tx,
+        color = color ?: c.mock.text,
         fontSize = size,
         fontFamily = fontFamily,
         lineHeight = 19.sp,

@@ -241,7 +241,7 @@ fun RecentHeader(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier)
     ) {
         Text(
             text = "RECENT",
-            color = c.mu.copy(alpha = 0.7f),
+            color = c.mock.muted.copy(alpha = 0.7f),
             fontSize = 10.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -250,11 +250,11 @@ fun RecentHeader(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier)
         )
         Text(
             text = "$count projects",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             fontFamily = Sans,
         )
-        ArrowGlyph(color = c.mu, size = 14.dp, modifier = Modifier.padding(start = 6.dp))
+        ArrowGlyph(color = c.mock.muted, size = 14.dp, modifier = Modifier.padding(start = 6.dp))
     }
 }
 
@@ -363,7 +363,7 @@ fun SheetFooter(
                         fontSize = 16.sp,
                         fontFamily = Sans,
                     ),
-                    cursorBrush = SolidColor(c.ac),
+                    cursorBrush = SolidColor(c.mock.accent),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth(),
                     )
@@ -450,26 +450,24 @@ fun SheetHeader(
             Text(
                 text = title,
                 color = c.mock.text,
-                fontSize = 24.sp,
+                fontSize = 22.sp,
                 fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
-                lineHeight = 29.sp,
+                fontWeight = FontWeight.ExtraBold,
+                lineHeight = 27.sp,
             )
             Text(
                 text = subtitle,
                 color = c.mock.muted,
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 fontFamily = Sans,
-                lineHeight = 20.sp,
-                modifier = Modifier.padding(top = 4.dp),
+                lineHeight = 18.sp,
+                modifier = Modifier.padding(top = 3.dp),
             )
         }
         Box(
             Modifier
                 .padding(start = 12.dp)
-                .size(38.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(c.mock.card)
+                .size(34.dp)
                 .clickable(onClick = onClose),
             contentAlignment = Alignment.Center,
         ) {

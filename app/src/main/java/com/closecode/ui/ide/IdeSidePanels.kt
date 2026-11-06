@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -74,7 +75,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * v7 side panels: Search, Terminal, Logcat and Problems are panels pinned to the rail's right
- * edge — the same surface as Files. 234 dp wide, both top corners 26, title 21/800, and the run
+ * edge — the same surface as Files. 234 dp wide, top-left corner 26, title 21/800, and the run
  * card floating at the bottom over a reserved strip of the panel.
  */
 
@@ -115,7 +116,6 @@ internal fun IdeSidePanel(
     actions: @Composable RowScope.() -> Unit = {},
     body: @Composable ColumnScope.() -> Unit,
 ) {
-    val c = LocalPageColors.current
     val cc = com.closecode.ui.theme.LocalCcColors.current
     Box(
         Modifier
@@ -125,7 +125,7 @@ internal fun IdeSidePanel(
         Column(
             Modifier
                 .fillMaxSize()
-                .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+                .clip(RoundedCornerShape(topStart = 26.dp))
                 .background(cc.panel)
                 .windowInsetsPadding(WindowInsets.statusBars)
                 .clipToBounds(),
@@ -168,7 +168,7 @@ internal fun IdeSidePanel(
                 Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .then(if (runCard != null) Modifier.padding(bottom = 84.dp) else Modifier),
+                    .then(if (runCard != null) Modifier.padding(bottom = 76.dp) else Modifier),
             ) {
                 body()
             }
@@ -197,11 +197,11 @@ internal fun IdeRunCard(
     state: IdeRunCardUi,
     onRun: () -> Unit,
 ) {
-    val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     val stateColor = when (state.tone) {
-        IdeRunTone.OK -> c.mock.green
-        IdeRunTone.FAILED -> c.mock.danger
-        IdeRunTone.MUTED -> c.mock.muted
+        IdeRunTone.OK -> cc.green
+        IdeRunTone.FAILED -> cc.red
+        IdeRunTone.MUTED -> cc.muted
     }
     val secondLine = branch?.takeIf { it.isNotBlank() }
         ?.let { "$it · ${state.label}" }
@@ -211,8 +211,8 @@ internal fun IdeRunCard(
             .fillMaxWidth()
             .height(64.dp)
             .clip(RoundedCornerShape(22.dp))
-            .background(c.mock.content)
-            .border(1.dp, c.mock.border, RoundedCornerShape(22.dp))
+            .background(cc.content)
+            .border(1.dp, cc.border, RoundedCornerShape(22.dp))
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -235,7 +235,7 @@ internal fun IdeRunCard(
         Column(Modifier.weight(1f)) {
             Text(
                 text = projectName,
-                color = c.mock.text,
+                color = cc.text,
                 fontSize = 14.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
@@ -243,7 +243,7 @@ internal fun IdeRunCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                CcIcon(CcIcons.Branch, c.mock.muted, 11.dp)
+                com.closecode.ui.CcIcon("branch", cc.muted, 11.dp)
                 Spacer(Modifier.width(4.dp))
                 Text(
                     text = secondLine,
@@ -260,49 +260,50 @@ internal fun IdeRunCard(
             Modifier
                 .size(40.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(c.mock.green)
+                .background(cc.green)
                 .clickable(onClick = onRun)
                 .semantics { contentDescription = "Run" },
             contentAlignment = Alignment.Center,
         ) {
-            CcIcon(CcIcons.Play, c.mock.onGreen, 17.dp)
+            com.closecode.ui.CcIcon("play", Color.White, 17.dp)
         }
     }
 }
 
 /** The header button the panels share: 38, radius 12, field fill. Same as the Files panel's. */
 @Composable
-internal fun SidePanelIconButton(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit = {}) {
-    val c = LocalPageColors.current
+internal fun SidePanelIconButton(icon: String, label: String, onClick: () -> Unit = {}) {
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Box(
         Modifier
-            .size(38.dp)
+            .width(38.dp)
+            .height(40.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(c.mock.field)
+            .background(cc.field)
             .clickable(onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        CcIcon(icon, c.mock.text2, 18.dp)
+        com.closecode.ui.CcIcon(icon, cc.text2, 18.dp, 1.9f)
     }
 }
 
 /** The v7 chips: 30 tall, radius 15, the selected one on selectedRow in white. */
 @Composable
 internal fun SidePanelChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Box(
         Modifier
             .height(30.dp)
             .clip(RoundedCornerShape(15.dp))
-            .background(if (selected) c.mock.selected else Color.Transparent)
+            .background(if (selected) cc.selectedRow else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 11.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = if (selected) c.mock.text else c.mock.muted,
+            color = if (selected) cc.text else cc.muted,
             fontSize = 11.5.sp,
             fontFamily = Sans,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
@@ -318,24 +319,24 @@ internal fun SidePanelField(
     onValueChange: (String) -> Unit,
     hint: String,
 ) {
-    val c = LocalPageColors.current
+    val cc = com.closecode.ui.theme.LocalCcColors.current
     Box(
         Modifier
             .fillMaxWidth()
             .height(40.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(c.mock.field)
+            .background(cc.field)
             .padding(start = 12.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CcIcon(CcIcons.Search, c.mock.muted, 15.dp)
+            com.closecode.ui.CcIcon("search", cc.muted, 15.dp, 1.9f)
             Spacer(Modifier.width(7.dp))
             Box(Modifier.weight(1f)) {
                 if (value.isEmpty()) {
                     Text(
                         text = hint,
-                        color = c.mock.muted,
+                        color = cc.muted,
                         fontSize = 13.5.sp,
                         fontFamily = Sans,
                         maxLines = 1,
@@ -346,8 +347,8 @@ internal fun SidePanelField(
                     value = value,
                     onValueChange = onValueChange,
                     singleLine = true,
-                    textStyle = TextStyle(color = c.mock.text, fontSize = 13.sp, fontFamily = Sans),
-                    cursorBrush = SolidColor(c.mock.accent),
+                    textStyle = TextStyle(color = cc.text, fontSize = 13.sp, fontFamily = Sans),
+                    cursorBrush = SolidColor(cc.accent),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -358,7 +359,7 @@ internal fun SidePanelField(
                         .clickable { onValueChange("") },
                     contentAlignment = Alignment.Center,
                 ) {
-                    CcIcon(CcIcons.Cross, c.mock.muted, 13.dp)
+                    com.closecode.ui.CcIcon("cross", cc.muted, 13.dp)
                 }
             }
         }
@@ -718,58 +719,83 @@ internal fun IdeTerminalSidePanel(
     runCard: @Composable () -> Unit,
 ) {
     val c = LocalPageColors.current
+    val activeCwd = sessions.sessions
+        .firstOrNull { it.number == sessions.activeId }
+        ?.cwd
+        ?.ifBlank { "Project root" }
+        ?: "Project root"
     IdeSidePanel(
         title = "Terminal",
-        subtitle = "${sessions.sessions.size} ${if (sessions.sessions.size == 1) "session" else "sessions"}",
+        subtitle = activeCwd,
         runCard = runCard,
-        actions = { SidePanelIconButton(CcIcons.Plus, "New session", onClick = onNew) },
+        actions = { SidePanelIconButton("plus", "New session", onClick = onNew) },
     ) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            com.closecode.ui.components.SecLabel(
+                text = "Shells",
+                start = 16.dp,
+                top = 12.dp,
+                bottom = 4.dp,
+            )
             sessions.sessions.forEach { session ->
                 val running = session.isRunning || session.commandRunning
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .padding(horizontal = 8.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(if (session.number == sessions.activeId) c.mock.selected else Color.Transparent)
+                        .background(if (session.number == sessions.activeId) c.mock.field else Color.Transparent)
                         .clickable { onOpen(session.number) }
-                        .padding(start = 10.dp, end = 8.dp, top = 9.dp, bottom = 9.dp),
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Box(
-                        Modifier
-                            .size(9.dp)
-                            .clip(CircleShape)
-                            .background(
-                                when {
-                                    running -> c.mock.green
-                                    session.hasNewOutput -> c.mock.warning
-                                    else -> c.mock.faint
-                                },
-                            ),
-                    )
-                    Spacer(Modifier.width(8.dp))
+                    Box {
+                        Box(
+                            Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(c.mock.blue.copy(alpha = 0.13f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            com.closecode.ui.CcIcon("term", c.mock.blue, 19.dp, 1.8f)
+                        }
+                        Box(
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .offset(x = 3.dp, y = 3.dp)
+                                .size(14.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    when {
+                                        running -> c.mock.green
+                                        session.hasNewOutput -> c.mock.warning
+                                        else -> c.mock.muted
+                                    },
+                                )
+                                .border(3.dp, c.mock.panel, CircleShape),
+                        )
+                    }
                     Column(Modifier.weight(1f)) {
                         Text(
                             text = tabLabel(session.number, session.cwd, session.customName),
                             color = c.mock.text,
-                            fontSize = 13.sp,
+                            fontSize = 14.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = session.cwd.ifBlank { "Project root" },
+                            text = "${session.cwd.ifBlank { "Project root" }}${if (running) " · running" else ""}",
                             color = c.mock.muted,
-                            fontSize = 10.5.sp,
+                            fontSize = 11.sp,
                             fontFamily = Mono,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(top = 2.dp),
                         )
                     }
-                    CcIcon(CcIcons.Chevron, c.mock.faint, 14.dp)
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -820,13 +846,13 @@ internal fun IdeLogcatSidePanel(
         subtitle = "${visible.size} ${if (visible.size == 1) "line" else "lines"}",
         runCard = runCard,
         actions = {
-            SidePanelIconButton(CcIcons.Download, "Export log") {
+            SidePanelIconButton("down", "Export log") {
                 runCatching {
                     java.io.File(context.filesDir, "logcat-export.txt")
                         .writeText(lines.joinToString("\n") { it.formatted })
                 }
             }
-            SidePanelIconButton(CcIcons.Trash, "Clear log") { onClear() }
+            SidePanelIconButton("trash", "Clear log") { onClear() }
         },
     ) {
         Row(
@@ -988,8 +1014,7 @@ private fun SideLogRow(line: LogLine) {
 }
 
 /**
- * The Problems side panel: counts by level first, then the problems grouped one card per file;
- * a tap opens the file with the caret on the problem's line.
+ * Screen 31: Problems grouped by file, with the guide's filter chips and row metrics.
  */
 @Composable
 internal fun IdeProblemsSidePanel(
@@ -998,119 +1023,111 @@ internal fun IdeProblemsSidePanel(
     onOpen: (ProjectDiagnostic) -> Unit,
     runCard: @Composable () -> Unit,
 ) {
-    val c = LocalPageColors.current
+    val c = com.closecode.ui.theme.LocalCcColors.current
     var filter by remember { mutableStateOf(0) }
     fun Severity.matches() = when (filter) {
         1 -> this == Severity.ERROR
         2 -> this == Severity.WARNING
         else -> true
     }
-    val groups = remember(errors, warnings) {
-        (errors + warnings).groupBy { it.fileName }
+    val all = remember(errors, warnings) { errors + warnings }
+    val groups = remember(all) { all.groupBy { it.fileName } }
+    val shown = remember(groups, filter) {
+        groups.mapValues { entry -> entry.value.filter { it.diagnostic.severity.matches() } }
     }
-    val shown = remember(groups, filter) { groups.mapValues { it.value.filter { r -> r.diagnostic.severity.matches() } } }
+    val total = all.size
+    val files = groups.size
     IdeSidePanel(
         title = "Problems",
-        subtitle = if (errors.size + warnings.size == 0) null else "${errors.size + warnings.size} in ${groups.size} files",
+        subtitle = when {
+            total == 0 -> "All clear"
+            files == 1 -> "$total in 1 file"
+            else -> "$total in $files files"
+        },
         runCard = runCard,
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 14.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            ProblemChip("All ${errors.size + warnings.size}", filter == 0) { filter = 0 }
-            ProblemChip("Errors ${errors.size}", filter == 1) { filter = 1 }
-            ProblemChip("Warn ${warnings.size}", filter == 2) { filter = 2 }
+            com.closecode.ui.components.CcChip("All $total", filter == 0, onClick = { filter = 0 })
+            com.closecode.ui.components.CcChip("Errors ${errors.size}", filter == 1, onClick = { filter = 1 })
+            com.closecode.ui.components.CcChip("Warn ${warnings.size}", filter == 2, onClick = { filter = 2 })
         }
-        Spacer(Modifier.height(6.dp))
-        if (errors.size + warnings.size == 0) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "No problems found",
-                    color = c.mock.muted,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    textAlign = TextAlign.Center,
-                )
-            }
+        if (total == 0) {
+            com.closecode.ui.components.EmptyState(
+                icon = "check",
+                title = "No problems",
+                subtitle = "Your code has no errors or warnings.",
+                modifier = Modifier.padding(top = 24.dp),
+            )
         } else {
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp),
-            ) {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                 shown.forEach { (fileName, rows) ->
                     if (rows.isEmpty()) return@forEach
-                    Column(
+                    Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(c.mock.content)
-                            .border(1.dp, c.mock.border, RoundedCornerShape(12.dp)),
+                            .padding(start = 16.dp, end = 16.dp, top = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        com.closecode.ui.CcIcon("code", c.purple, 14.dp, 1.7f)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = fileName,
+                            color = c.muted,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    rows.forEach { row ->
+                        val error = row.diagnostic.severity == Severity.ERROR
+                        val tone = if (error) c.red else c.amber
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                                .clickable { onOpen(row) }
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.Top,
                         ) {
-                            CcIcon(CcIcons.Logo, c.mock.accent, 15.dp)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = fileName,
-                                color = c.mock.text,
-                                fontSize = 12.5.sp,
-                                fontFamily = Sans,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        Box(Modifier.fillMaxWidth().height(1.dp).background(c.mock.divider))
-                        rows.forEach { row ->
-                            Row(
+                            Box(
                                 Modifier
-                                    .fillMaxWidth()
-                                    .clickable { onOpen(row) }
-                                    .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
-                                verticalAlignment = Alignment.Top,
+                                    .size(34.dp)
+                                    .clip(RoundedCornerShape(11.dp))
+                                    .background(tone.copy(alpha = 0.13f)),
+                                contentAlignment = Alignment.Center,
                             ) {
-                                val error = row.diagnostic.severity == Severity.ERROR
-                                Box(
-                                    Modifier
-                                        .size(30.dp)
-                                        .clip(RoundedCornerShape(9.dp))
-                                        .background(if (error) c.mock.dangerBg else c.mock.warningBg),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    CcIcon(
-                                        if (error) CcIcons.Cross else CcIcons.Warning,
-                                        if (error) c.mock.danger else c.mock.warning,
-                                        15.dp,
-                                    )
-                                }
-                                Spacer(Modifier.width(10.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        text = row.diagnostic.message,
-                                        color = c.mock.text,
-                                        fontSize = 12.sp,
-                                        fontFamily = Sans,
-                                        lineHeight = 16.sp,
-                                        minLines = 1,
-                                    )
-                                    Text(
-                                        text = "${row.fileName}:${row.diagnostic.line}:${row.diagnostic.column}",
-                                        color = c.mock.accent,
-                                        fontSize = 10.5.sp,
-                                        fontFamily = Mono,
-                                        lineHeight = 14.sp,
-                                    )
-                                }
+                                com.closecode.ui.CcIcon(
+                                    if (error) "x" else "alert",
+                                    tone,
+                                    17.dp,
+                                    1.9f,
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = row.diagnostic.message,
+                                    color = c.text,
+                                    fontSize = 13.sp,
+                                    fontFamily = Sans,
+                                    lineHeight = 17.5.sp,
+                                )
+                                Text(
+                                    text = "${row.fileName}:${row.diagnostic.line}" +
+                                        (row.diagnostic.column.takeIf { it > 0 }?.let { ":$it" } ?: ""),
+                                    color = c.muted,
+                                    fontSize = 10.5.sp,
+                                    fontFamily = Mono,
+                                    lineHeight = 14.sp,
+                                    modifier = Modifier.padding(top = 3.dp),
+                                )
                             }
                         }
                     }

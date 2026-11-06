@@ -73,16 +73,20 @@ data class LightCcColors(
     // -- Syntax colours (light) ------------------------------------------------
     override val syntaxKeyword: Color = Color(0xFF8250DF),
     override val syntaxType: Color = Color(0xFF1B7C83),
-    override val syntaxString: Color = Color(0xFF0A7D4F),
+    override val syntaxString: Color = Color(0xFFA5461D),
     override val syntaxFunction: Color = Color(0xFF6F5A00),
     override val syntaxNumber: Color = Color(0xFF0A7D4F),
     override val syntaxComment: Color = Color(0xFF5E7F46),
     override val syntaxVariable: Color = Color(0xFF0A5EA8),
     override val syntaxPlain: Color = Color(0xFF2E3036),
 
-    // -- Search match highlight --
-    override val matchBg: Color = Color(0x33F0C232),
-    override val matchText: Color = Color(0xFF5C4500),
+    // -- Diff and search highlights --------------------------------------------
+    override val diffAddBg: Color = Color(0xFFDDF3E4),
+    override val diffAddText: Color = Color(0xFF1A7F37),
+    override val diffDelBg: Color = Color(0xFFFBE4E5),
+    override val diffDelText: Color = Color(0xFFDA373C),
+    override val matchBg: Color = Color(0xFFFBE7A1),
+    override val matchText: Color = Color(0xFF6B4E00),
 
     // -- App screens accent colours (from spec inline hexes) --------------------
     override val projectColours: List<Color> = listOf(
@@ -149,9 +153,13 @@ data class DarkCcColors(
     override val syntaxVariable: Color = Color(0xFF9CDCFE),
     override val syntaxPlain: Color = Color(0xFFDBDEE1),
 
-    // -- Search match highlight --
-    override val matchBg: Color = Color(0x33F0C232),
-    override val matchText: Color = Color(0xFFFFD166),
+    // -- Diff and search highlights --------------------------------------------
+    override val diffAddBg: Color = Color(0xFF1E3B2C),
+    override val diffAddText: Color = Color(0xFF3FB950),
+    override val diffDelBg: Color = Color(0xFF482226),
+    override val diffDelText: Color = Color(0xFFFF7B72),
+    override val matchBg: Color = Color(0xFFC9822F),
+    override val matchText: Color = Color(0xFF1B1D1F),
 
     // -- App screens accent colours (same hues as light) ------------------------
     override val projectColours: List<Color> = listOf(
@@ -205,6 +213,10 @@ interface CcColors {
     val syntaxComment: Color
     val syntaxVariable: Color
     val syntaxPlain: Color
+    val diffAddBg: Color
+    val diffAddText: Color
+    val diffDelBg: Color
+    val diffDelText: Color
     val matchBg: Color
     val matchText: Color
     val projectColours: List<Color>
@@ -237,13 +249,13 @@ data class CcType(
     val screenTitle: Float = 16.5f,
     val screenTitleWeight: FontWeight = FontWeight.Bold,
     val itemTitle: Float = 14.5f,
-    val itemTitleWeight: FontWeight = FontWeight.Medium,
+    val itemTitleWeight: FontWeight = FontWeight.SemiBold,
     val body: Float = 14f,
     val bodyWeight: FontWeight = FontWeight.Normal,
     val small: Float = 13.25f,
     val caption: Float = 12.25f,
     val sectionLabel: Float = 11f,
-    val sectionLabelWeight: FontWeight = FontWeight.ExtraBold,
+    val sectionLabelWeight: FontWeight = FontWeight.Bold,
     val sectionLabelTracking: Float = 0.8f,
     val code: Float = 11.5f,
     val terminal: Float = 11f,
@@ -292,7 +304,7 @@ data class CcSpace(
     val tile42: Float = 42f,
     val tile36: Float = 36f,
     val treeRowHeight: Float = 38f,
-    val treeIndent: Float = 16f,
+    val treeIndent: Float = 14f,
     val primaryButtonHeight: Float = 48f,
     val primaryButtonWelcomeHeight: Float = 52f,
     val smallActionButtonHeight: Float = 40f,

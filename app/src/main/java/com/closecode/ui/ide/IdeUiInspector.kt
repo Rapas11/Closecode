@@ -89,7 +89,7 @@ fun IdeUiInspectorSheet(
             Column(Modifier.weight(1f)) {
                 Text(
                     text = "UI INSPECTOR",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 11.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Bold,
@@ -98,7 +98,7 @@ fun IdeUiInspectorSheet(
                 Text(
                     text = snapshot?.let { "${it.packageName.ifBlank { "unknown" }} · ${it.width}×${it.height}" }
                         ?: if (service == null) "Accessibility service is off" else "Reading the screen…",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     fontFamily = Mono,
                     maxLines = 1,
@@ -121,7 +121,7 @@ fun IdeUiInspectorSheet(
                 Text(
                     text = "CloseCode needs its accessibility service to read the screen and " +
                         "tap nodes. Enable it, then come back here.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                 )
@@ -145,7 +145,7 @@ fun IdeUiInspectorSheet(
         if (nodes.isEmpty()) {
             Text(
                 text = "No visible window. Open the app you want to inspect, then refresh.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
@@ -155,7 +155,7 @@ fun IdeUiInspectorSheet(
 
         Text(
             text = "${nodes.size} nodes${if (snapshot?.truncated == true) " (truncated)" else ""}",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 11.sp,
             fontFamily = Mono,
             modifier = Modifier.padding(start = 18.dp, bottom = 4.dp),
@@ -229,7 +229,7 @@ private fun UiNodeRow(
         Column(Modifier.weight(1f)) {
             Text(
                 text = label,
-                color = if (node.enabled) c.tx else c.mu,
+                color = if (node.enabled) c.mock.text else c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Mono,
                 maxLines = 1,
@@ -243,7 +243,7 @@ private fun UiNodeRow(
                         append("${node.bounds[0]},${node.bounds[1]} ${node.bounds[2] - node.bounds[0]}×${node.bounds[3] - node.bounds[1]}")
                     }
                 }.ifBlank { node.className.orEmpty() },
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 10.sp,
                 fontFamily = Mono,
                 maxLines = 1,
@@ -279,7 +279,7 @@ private fun UiBadge(label: String) {
     val c = LocalPageColors.current
     Text(
         text = label,
-        color = c.mu,
+        color = c.mock.muted,
         fontSize = 9.sp,
         fontFamily = Mono,
         modifier = Modifier

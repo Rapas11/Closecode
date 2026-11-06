@@ -66,13 +66,13 @@ fun OverflowMenu(
                 // Spec 4.1: min width 210, radius 12, a 1 dp border and a panel fill.
                 .width(210.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(12.dp))
+                .background(c.mock.panel)
+                .border(1.dp, c.mock.divider, RoundedCornerShape(12.dp))
         ) {
             actions.forEach { action ->
                 Text(
                     text = action.label,
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                     modifier = Modifier

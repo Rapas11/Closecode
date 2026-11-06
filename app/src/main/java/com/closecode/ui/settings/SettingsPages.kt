@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -114,51 +115,37 @@ internal fun SettingsPageScaffold(
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.bg)
+            .background(c.mock.page)
             .statusBarsPadding(),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(54.dp)
-                .background(c.bg)
-                .drawBehind {
-                    drawLine(
-                        color = c.ln,
-                        start = Offset(0f, size.height - 0.5f),
-                        end = Offset(size.width, size.height - 0.5f),
-                        strokeWidth = 1f,
-                    )
-                }
-                .padding(horizontal = 10.dp),
+                .widthIn(max = 620.dp)
+                .padding(horizontal = 18.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Box(
-                Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .clickable(onClick = onBack),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("‹", color = c.mu, fontSize = 26.sp, fontFamily = Sans)
-            }
+            com.closecode.ui.components.DesignBackButton(onClick = onBack)
             Text(
                 text = title,
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 18.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 10.dp),
             )
         }
         Column(
             Modifier
+                .fillMaxWidth()
+                .widthIn(max = 620.dp)
                 .weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = 18.dp, vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content,
         )
     }
@@ -185,9 +172,8 @@ internal fun PageCard(content: @Composable ColumnScope.() -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(c.panel)
-            .border(1.dp, c.ln, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.mock.card)
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(9.dp),
         content = content,
@@ -203,10 +189,10 @@ private fun PageAction(
     val c = LocalPageColors.current
     Text(
         text = label,
-        color = if (danger) c.red else c.ac,
-        fontSize = 13.sp,
+        color = if (danger) c.mock.danger else c.mock.accent,
+        fontSize = 12.sp,
         fontFamily = Sans,
-        fontWeight = FontWeight.Medium,
+        fontWeight = FontWeight.SemiBold,
         modifier = Modifier
             .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
@@ -224,10 +210,10 @@ internal fun CredentialsPage(onBack: () -> Unit) {
     var signing by remember { mutableStateOf(signingStore.selectedId()) }
     SettingsPageScaffold(title = "Credentials", onBack = onBack) {
         PageCard {
-            Text("GitHub", color = c.tx, fontSize = 14.sp, fontFamily = Sans, fontWeight = FontWeight.SemiBold)
+            Text("GitHub", color = c.mock.text, fontSize = 14.sp, fontFamily = Sans, fontWeight = FontWeight.SemiBold)
             Text(
                 if (token == null) "Not connected" else "Access token stored securely",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 13.sp,
                 fontFamily = Sans,
             )
@@ -239,17 +225,17 @@ internal fun CredentialsPage(onBack: () -> Unit) {
             }
         }
         PageCard {
-            Text("Signing", color = c.tx, fontSize = 14.sp, fontFamily = Sans, fontWeight = FontWeight.SemiBold)
+            Text("Signing", color = c.mock.text, fontSize = 14.sp, fontFamily = Sans, fontWeight = FontWeight.SemiBold)
             Text(
                 text = signingStore.allKeys().firstOrNull { it.id == signing }?.label
                     ?: "Debug key",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 13.sp,
                 fontFamily = Sans,
             )
             Text(
                 "Passwords and private keys stay in app-private storage.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Sans,
             )
@@ -312,7 +298,7 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
         Text(
             "Platforms are downloaded from Google. Build tools come from AndroidIDE; the " +
                 "bundled aapt2 stays available as a fallback.",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             lineHeight = 18.sp,
             fontFamily = Sans,
@@ -321,7 +307,7 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
             PageCard {
                 Text(
                     "The Android SDK License must be accepted before a platform can be installed.",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                 )
@@ -345,7 +331,7 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             "Android ${platform.api}",
-                            color = c.tx,
+                            color = c.mock.text,
                             fontSize = 14.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.SemiBold,
@@ -353,7 +339,7 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
                         Text(
                             if (platform.api in installed) "Installed · ${platform.fileName}"
                             else humanBytes(platform.sizeBytes),
-                            color = c.mu,
+                            color = c.mock.muted,
                             fontSize = 12.sp,
                             fontFamily = Mono,
                         )
@@ -375,7 +361,7 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
         PageCard {
             Text(
                 "AndroidIDE build-tools 34.0.4",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 14.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.SemiBold,
@@ -383,7 +369,7 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
             Text(
                 if (buildTools) "Installed · aapt2 available"
                 else "Not installed · bundled aapt2 is used",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Sans,
             )
@@ -404,13 +390,13 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
             Text(
                 text = if (p == null || p.second <= 0) "$current…"
                 else "$current · ${humanBytes(p.first)} of ${humanBytes(p.second)}",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Mono,
             )
         }
         message?.let {
-            Text(it, color = c.mu, fontSize = 12.sp, fontFamily = Sans)
+            Text(it, color = c.mock.muted, fontSize = 12.sp, fontFamily = Sans)
         }
     }
 }
@@ -458,7 +444,7 @@ internal fun SigningKeysPage(onBack: () -> Unit) {
                     Column(Modifier.weight(1f)) {
                         Text(
                             key.label,
-                            color = c.tx,
+                            color = c.mock.text,
                             fontSize = 14.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.SemiBold,
@@ -469,13 +455,13 @@ internal fun SigningKeysPage(onBack: () -> Unit) {
                                 SigningKeySource.Generated -> "Release · device-bound"
                                 SigningKeySource.Imported -> "Imported · exportable"
                             },
-                            color = c.mu,
+                            color = c.mock.muted,
                             fontSize = 12.sp,
                             fontFamily = Sans,
                         )
                         Text(
                             key.subject,
-                            color = c.mu,
+                            color = c.mock.muted,
                             fontSize = 11.sp,
                             fontFamily = Mono,
                             maxLines = 2,
@@ -483,7 +469,7 @@ internal fun SigningKeysPage(onBack: () -> Unit) {
                     }
                     Text(
                         if (key.id == selected) "Selected" else "Use",
-                        color = if (key.id == selected) c.ac else c.mu,
+                        color = if (key.id == selected) c.mock.accent else c.mock.muted,
                         fontSize = 12.sp,
                         fontFamily = Sans,
                         modifier = Modifier
@@ -515,14 +501,14 @@ internal fun SigningKeysPage(onBack: () -> Unit) {
         PageCard {
             Text(
                 "Import a release key",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 14.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
                 "PKCS#12 or JKS. The password is encrypted with the Android Keystore.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Sans,
             )
@@ -531,20 +517,20 @@ internal fun SigningKeysPage(onBack: () -> Unit) {
         PageCard {
             Text(
                 "Generate a release key",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 14.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
                 "Generated keys stay on this phone and cannot be exported for Play Store upload.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Sans,
             )
             PageAction("Generate release key") { confirmGenerate = true }
         }
-        message?.let { Text(it, color = c.mu, fontSize = 12.sp, fontFamily = Sans) }
+        message?.let { Text(it, color = c.mock.muted, fontSize = 12.sp, fontFamily = Sans) }
     }
 
     val pending = importBytes
@@ -554,7 +540,7 @@ internal fun SigningKeysPage(onBack: () -> Unit) {
             title = { Text("Import signing key") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(pending.second, color = c.mu, fontSize = 12.sp, fontFamily = Mono)
+                    Text(pending.second, color = c.mock.muted, fontSize = 12.sp, fontFamily = Mono)
                     OutlinedTextField(
                         value = alias,
                         onValueChange = { alias = it },
@@ -712,7 +698,7 @@ internal fun GradleToolsPage(
             text = "CloseCode builds with its own engine by default. This optional pack adds " +
                 "a Termux OpenJDK 17 and the official Gradle ${store.manifest.distribution.version} " +
                 "distribution, so projects that need Gradle can build with --gradle.",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             lineHeight = 18.sp,
             fontFamily = Sans,
@@ -720,14 +706,14 @@ internal fun GradleToolsPage(
 
         when {
             !loaded -> PageCard {
-                Text("Checking Gradle tools…", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+                Text("Checking Gradle tools…", color = c.mock.muted, fontSize = 13.sp, fontFamily = Sans)
             }
 
             installing -> PageCard {
                 val current = progress
                 Text(
                     text = current?.message ?: "Preparing the download…",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                 )
@@ -748,49 +734,49 @@ internal fun GradleToolsPage(
                             .fillMaxWidth(fraction)
                             .height(8.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(c.ac),
+                            .background(c.mock.accent),
                     )
                 }
                 if (current != null && current.totalBytes > 0) {
                     Text(
                         text = "${humanSize(current.doneBytes)} of " +
                             humanSize(current.totalBytes),
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 12.sp,
                         fontFamily = Sans,
                     )
                 }
                 Text(
                     text = "Keep CloseCode open while the JDK and Gradle download.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 11.sp,
                     fontFamily = Sans,
                 )
             }
 
             removing -> PageCard {
-                Text("Removing Gradle tools…", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+                Text("Removing Gradle tools…", color = c.mock.muted, fontSize = 13.sp, fontFamily = Sans)
             }
 
             ready -> {
                 PageCard {
                     Text(
                         text = "JDK and Gradle installed",
-                        color = c.success,
+                        color = c.mock.green,
                         fontSize = 14.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         text = "${humanSize(bytes)} on this phone",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                     )
                     if (packages.isNotEmpty()) {
                         Text(
                             text = packages.joinToString(" · "),
-                            color = c.mu,
+                            color = c.mock.muted,
                             fontSize = 12.sp,
                             lineHeight = 18.sp,
                             fontFamily = Sans,
@@ -805,7 +791,7 @@ internal fun GradleToolsPage(
                                 "${platform.buildToolsVersion()} are still missing. Open SDK " +
                                 "Manager to install them."
                         },
-                        color = if (sdkReady) c.mu else c.red,
+                        color = if (sdkReady) c.mock.muted else c.mock.danger,
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
                         fontFamily = Sans,
@@ -824,7 +810,7 @@ internal fun GradleToolsPage(
             else -> PageCard {
                 Text(
                     text = "Not installed",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 14.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.SemiBold,
@@ -834,7 +820,7 @@ internal fun GradleToolsPage(
                         "${store.manifest.distribution.version}. Android " +
                         "${ProjectPins.COMPILE_SDK} and build-tools " +
                         "${platform.buildToolsVersion()} are installed from SDK Manager.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
                     fontFamily = Sans,
@@ -842,7 +828,7 @@ internal fun GradleToolsPage(
                 Text(
                     text = "This is a large download and needs several hundred MB free. " +
                         "A Wi-Fi connection is recommended.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
                     fontFamily = Sans,
@@ -855,7 +841,7 @@ internal fun GradleToolsPage(
             PageCard {
                 Text(
                     text = message,
-                    color = c.red,
+                    color = c.mock.danger,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
                     fontFamily = Sans,
@@ -869,13 +855,13 @@ internal fun GradleToolsPage(
                 Text(
                     text = "Remove the downloaded JDK and Gradle? Projects and project files " +
                         "are not touched.",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
                     fontFamily = Sans,
                 )
                 if (removing) {
-                    Text("Removing…", color = c.mu, fontSize = 12.sp, fontFamily = Sans)
+                    Text("Removing…", color = c.mock.muted, fontSize = 12.sp, fontFamily = Sans)
                 } else {
                     PageAction("Remove everything", danger = true) {
                         confirmRemove = false
@@ -891,7 +877,7 @@ internal fun GradleToolsPage(
                 text = "Full Gradle is slower than CloseCode's engine and downloads project " +
                     "dependencies on its first build. The Android SDK license and network access " +
                     "still apply.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 11.sp,
                 lineHeight = 17.sp,
                 fontFamily = Sans,
@@ -987,7 +973,7 @@ internal fun NativeToolsPage(
             text = "Projects with C/C++ sources need the Android NDK and CMake. These are " +
                 "optional; projects without native code do not need them. Native projects " +
                 "build with Full Gradle (--gradle).",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             lineHeight = 18.sp,
             fontFamily = Sans,
@@ -995,14 +981,14 @@ internal fun NativeToolsPage(
 
         when {
             !loaded -> PageCard {
-                Text("Checking native tools…", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+                Text("Checking native tools…", color = c.mock.muted, fontSize = 13.sp, fontFamily = Sans)
             }
 
             installing -> PageCard {
                 val current = progress
                 Text(
                     text = current?.message ?: "Preparing the download…",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                 )
@@ -1023,14 +1009,14 @@ internal fun NativeToolsPage(
                             .fillMaxWidth(fraction)
                             .height(8.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(c.ac),
+                            .background(c.mock.accent),
                     )
                 }
                 if (current != null && current.totalBytes > 0) {
                     Text(
                         text = "${humanSize(current.doneBytes)} of " +
                             humanSize(current.totalBytes),
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 12.sp,
                         fontFamily = Sans,
                     )
@@ -1038,35 +1024,35 @@ internal fun NativeToolsPage(
                 Text(
                     text = "Keep CloseCode open. The NDK alone is about 540 MB to download " +
                         "and more once unpacked.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 11.sp,
                     fontFamily = Sans,
                 )
             }
 
             removing -> PageCard {
-                Text("Removing native tools…", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+                Text("Removing native tools…", color = c.mock.muted, fontSize = 13.sp, fontFamily = Sans)
             }
 
             snapshot.ready -> {
                 PageCard {
                     Text(
                         text = "NDK and CMake installed",
-                        color = c.success,
+                        color = c.mock.green,
                         fontSize = 14.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         text = "${humanSize(snapshot.bytes)} on this phone",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                     )
                     Text(
                         text = "NDK ${store.manifest.ndk.version} · " +
                             "CMake ${store.manifest.cmake.version}",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
                         fontFamily = Sans,
@@ -1078,7 +1064,7 @@ internal fun NativeToolsPage(
                         } else {
                             "Full Gradle is still missing. Install it to build native projects."
                         },
-                        color = if (snapshot.gradleReady) c.mu else c.red,
+                        color = if (snapshot.gradleReady) c.mock.muted else c.mock.danger,
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
                         fontFamily = Sans,
@@ -1097,7 +1083,7 @@ internal fun NativeToolsPage(
             else -> PageCard {
                 Text(
                     text = "Not installed",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 14.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.SemiBold,
@@ -1106,7 +1092,7 @@ internal fun NativeToolsPage(
                     text = "NDK ${store.manifest.ndk.version} and CMake " +
                         "${store.manifest.cmake.version} will be installed inside the " +
                         "CloseCode SDK folder, where Full Gradle looks for them.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
                     fontFamily = Sans,
@@ -1114,7 +1100,7 @@ internal fun NativeToolsPage(
                 Text(
                     text = "The NDK download is about 540 MB and the installed tools take " +
                         "well over 1 GB. A Wi-Fi connection and free storage are recommended.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
                     fontFamily = Sans,
@@ -1131,7 +1117,7 @@ internal fun NativeToolsPage(
             PageCard {
                 Text(
                     text = message,
-                    color = c.red,
+                    color = c.mock.danger,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
                     fontFamily = Sans,
@@ -1145,13 +1131,13 @@ internal fun NativeToolsPage(
                 Text(
                     text = "Remove the downloaded NDK and CMake? Projects and project files " +
                         "are not touched. Native projects will stop building until reinstalled.",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
                     fontFamily = Sans,
                 )
                 if (removing) {
-                    Text("Removing…", color = c.mu, fontSize = 12.sp, fontFamily = Sans)
+                    Text("Removing…", color = c.mock.muted, fontSize = 12.sp, fontFamily = Sans)
                 } else {
                     PageAction("Remove everything", danger = true) {
                         confirmRemove = false
@@ -1167,7 +1153,7 @@ internal fun NativeToolsPage(
                 text = "The Android SDK Manager cannot install these packages: Google ships " +
                     "desktop NDK binaries. CloseCode uses the Android-native NDK and CMake " +
                     "builds from AndroidIDE-NDK.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 11.sp,
                 lineHeight = 17.sp,
                 fontFamily = Sans,
@@ -1250,7 +1236,7 @@ internal fun ShellToolsPage(
             text = "Android's shell is real, but it only includes Android's own commands. " +
                 "This optional pack adds the Termux builds of git, curl, Python, Node, zip " +
                 "and jq under CloseCode's private storage. It does not need root.",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             lineHeight = 18.sp,
             fontFamily = Sans,
@@ -1258,14 +1244,14 @@ internal fun ShellToolsPage(
 
         when {
             !loaded -> PageCard {
-                Text("Checking shell tools…", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+                Text("Checking shell tools…", color = c.mock.muted, fontSize = 13.sp, fontFamily = Sans)
             }
 
             installing -> PageCard {
                 val current = progress
                 Text(
                     text = current?.message ?: "Preparing the download…",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                 )
@@ -1286,49 +1272,49 @@ internal fun ShellToolsPage(
                             .fillMaxWidth(fraction)
                             .height(8.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(c.ac),
+                            .background(c.mock.accent),
                     )
                 }
                 if (current != null && current.totalBytes > 0) {
                     Text(
                         text = "${humanSize(current.doneBytes)} of " +
                             humanSize(current.totalBytes),
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 12.sp,
                         fontFamily = Sans,
                     )
                 }
                 Text(
                     text = "Keep CloseCode open while the packages download.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 11.sp,
                     fontFamily = Sans,
                 )
             }
 
             removing -> PageCard {
-                Text("Removing shell tools…", color = c.mu, fontSize = 13.sp, fontFamily = Sans)
+                Text("Removing shell tools…", color = c.mock.muted, fontSize = 13.sp, fontFamily = Sans)
             }
 
             ready -> {
                 PageCard {
                     Text(
                         text = "Installed",
-                        color = c.success,
+                        color = c.mock.green,
                         fontSize = 14.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
                         text = "${humanSize(bytes)} on this phone",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                     )
                     if (packages.isNotEmpty()) {
                         Text(
                             text = packages.joinToString(" · "),
-                            color = c.mu,
+                            color = c.mock.muted,
                             fontSize = 12.sp,
                             lineHeight = 18.sp,
                             fontFamily = Sans,
@@ -1337,7 +1323,7 @@ internal fun ShellToolsPage(
                     Text(
                         text = "New terminal tabs and OpenCode shells use these commands. " +
                             "Close and reopen an existing shell to pick them up.",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
                         fontFamily = Sans,
@@ -1353,7 +1339,7 @@ internal fun ShellToolsPage(
             else -> PageCard {
                 Text(
                     text = "Not installed",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 14.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.SemiBold,
@@ -1362,7 +1348,7 @@ internal fun ShellToolsPage(
                     text = "The download includes: " +
                         manifest.roots.joinToString(", ").ifBlank { "the Termux command pack" } +
                         ".",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
                     fontFamily = Sans,
@@ -1370,7 +1356,7 @@ internal fun ShellToolsPage(
                 Text(
                     text = "Download size depends on the current Termux packages. " +
                         "A Wi-Fi connection is recommended.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
                     fontFamily = Sans,
@@ -1383,7 +1369,7 @@ internal fun ShellToolsPage(
             PageCard {
                 Text(
                     text = message,
-                    color = c.red,
+                    color = c.mock.danger,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
                     fontFamily = Sans,
@@ -1397,13 +1383,13 @@ internal fun ShellToolsPage(
                 Text(
                     text = "Remove the downloaded shell tools? Projects and project files " +
                         "are not touched.",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,
                     fontFamily = Sans,
                 )
                 if (removing) {
-                    Text("Removing…", color = c.mu, fontSize = 12.sp, fontFamily = Sans)
+                    Text("Removing…", color = c.mock.muted, fontSize = 12.sp, fontFamily = Sans)
                 } else {
                     PageAction("Remove everything", danger = true) {
                         confirmRemove = false
@@ -1419,7 +1405,7 @@ internal fun ShellToolsPage(
                 text = "This is a Termux package pack, not an Android system install. " +
                     "There is no apt and no root. pip and npm can install packages that " +
                     "do not need extra native libraries; Android-only binaries may not run.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
                 fontFamily = Sans,

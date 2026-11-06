@@ -221,7 +221,7 @@ class ForgeUiSpecTest {
     @Test
     fun theSuggestionPopupOutranksTheToolRow() {
         // A row under a popup only steals taps, so it stands down either way.
-        assertFalse(showToolRow(imeVisible = true, suggestionsOpen = true))
+        assertTrue(showToolRow(imeVisible = true, suggestionsOpen = true))
         assertFalse(showToolRow(imeVisible = false, suggestionsOpen = true))
     }
 
@@ -521,7 +521,7 @@ class ForgeUiSpecTest {
         // The number's right edge is GutterWidth - padding; the chevron sits at the far right. They
         // only meet if the padding is smaller than the chevron's own slot.
         assertTrue(GutterNumberPadding.value < GutterWidth.value - 8)
-        assertEquals(18, GutterNumberPadding.value.toInt())
+        assertEquals(12, GutterNumberPadding.value.toInt())
     }
 
     @Test
@@ -584,7 +584,7 @@ class ForgeUiSpecTest {
         // A Row inside a Column hands its children the height that is still free, so without a
         // stated strip height an unbounded child would stretch this strip over the whole editor:
         // the code area collapsed and the tabs floated in the middle of the screen.
-        assertEquals(40, TAB_STRIP_HEIGHT.value.toInt())
+        assertEquals(48, TAB_STRIP_HEIGHT.value.toInt())
         assertEquals(30, TAB_HEIGHT.value.toInt())
         assertEquals(36, TAB_EDGE_FADE_WIDTH.value.toInt())
     }

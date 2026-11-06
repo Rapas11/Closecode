@@ -282,7 +282,7 @@ fun IdeLogcatPanel(
         LogcatReader.visible(snapshot.lines, appLevel, query)
     }
 
-    Column(modifier.fillMaxSize().background(c.bg)) {
+    Column(modifier.fillMaxSize().background(c.mock.page)) {
         PanelBackBar("Logcat", onBack)
         if (appPackage != null) {
             Row(
@@ -324,18 +324,18 @@ fun IdeLogcatPanel(
                         .weight(1f)
                         .clip(RoundedCornerShape(9.dp))
                         .background(c.panel2)
-                        .border(1.dp, c.ln, RoundedCornerShape(9.dp))
+                        .border(1.dp, c.mock.divider, RoundedCornerShape(9.dp))
                         .padding(horizontal = 10.dp, vertical = 7.dp),
                 ) {
                     if (query.isEmpty()) {
-                        Text("Search", color = c.mu, fontSize = 12.sp, fontFamily = Sans)
+                        Text("Search", color = c.mock.muted, fontSize = 12.sp, fontFamily = Sans)
                     }
                     BasicTextField(
                         value = query,
                         onValueChange = { query = it },
                         singleLine = true,
-                        textStyle = TextStyle(color = c.tx, fontSize = 12.sp, fontFamily = Mono),
-                        cursorBrush = SolidColor(c.ac),
+                        textStyle = TextStyle(color = c.mock.text, fontSize = 12.sp, fontFamily = Mono),
+                        cursorBrush = SolidColor(c.mock.accent),
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -355,11 +355,11 @@ fun IdeLogcatPanel(
                 ) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(14.dp),
-                        color = c.ac,
+                        color = c.mock.accent,
                         strokeWidth = 2.dp,
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text("Reading the system log…", color = c.mu, fontSize = 12.sp, fontFamily = Sans)
+                    Text("Reading the system log…", color = c.mock.muted, fontSize = 12.sp, fontFamily = Sans)
                 }
             }
             snapshot.note?.let { note ->
@@ -375,7 +375,7 @@ fun IdeLogcatPanel(
                 if (appVisible.isEmpty() && snapshot.note == null) {
                     Text(
                         text = "No lines from this app yet. Open it, use it, then tap Refresh.",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 13.sp,
                         fontFamily = Mono,
                         textAlign = TextAlign.Center,
@@ -390,10 +390,10 @@ fun IdeLogcatPanel(
                             Text(
                                 text = entry.text,
                                 color = when (entry.level) {
-                                    LogcatReader.Level.Error -> c.red
+                                    LogcatReader.Level.Error -> c.mock.danger
                                     LogcatReader.Level.Warning -> c.amber
-                                    LogcatReader.Level.Info -> c.success
-                                    LogcatReader.Level.Other -> c.mu
+                                    LogcatReader.Level.Info -> c.mock.green
+                                    LogcatReader.Level.Other -> c.mock.muted
                                 },
                                 fontSize = 12.sp,
                                 fontFamily = Mono,
@@ -405,7 +405,7 @@ fun IdeLogcatPanel(
                                 Modifier
                                     .fillMaxWidth()
                                     .height(1.dp)
-                                    .background(c.ln.copy(alpha = 0.45f)),
+                                    .background(c.mock.divider.copy(alpha = 0.45f)),
                             )
                         }
                     }
@@ -431,7 +431,7 @@ fun IdeLogcatPanel(
             if (visible.isEmpty()) {
                 Text(
                     text = "Run the app to see logs.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 13.sp,
                     fontFamily = Mono,
                     textAlign = TextAlign.Center,
@@ -452,18 +452,18 @@ fun IdeLogcatPanel(
                         Text(
                             text = line.formatted,
                             color = when (line.level) {
-                                LogLevel.INFO -> c.success
+                                LogLevel.INFO -> c.mock.green
                                 LogLevel.WARN -> c.amber
-                                LogLevel.ERROR -> c.red
-                                LogLevel.DEBUG -> c.ac
-                                LogLevel.VERBOSE -> c.mu
+                                LogLevel.ERROR -> c.mock.danger
+                                LogLevel.DEBUG -> c.mock.accent
+                                LogLevel.VERBOSE -> c.mock.muted
                             },
                             fontSize = 13.sp,
                             fontFamily = Mono,
                             modifier = Modifier.weight(1f),
                         )
                     }
-                    Box(Modifier.fillMaxWidth().height(1.dp).background(c.ln.copy(alpha = 0.45f)))
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(c.mock.divider.copy(alpha = 0.45f)))
                 }
             }
         }
@@ -563,7 +563,7 @@ internal fun IdeBuildPanel(
         onDispose { view.keepScreenOn = false }
     }
 
-    Column(modifier.fillMaxSize().background(c.bg)) {
+    Column(modifier.fillMaxSize().background(c.mock.page)) {
         PanelBackBar("Build", onBack)
         Column(
             Modifier
@@ -587,7 +587,7 @@ internal fun IdeBuildPanel(
                 Column(Modifier.weight(1f)) {
                     Text(
                         text = appName,
-                        color = c.accent,
+                        color = c.mock.accent,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
@@ -618,7 +618,7 @@ internal fun IdeBuildPanel(
                             .fillMaxWidth(fraction)
                             .height(6.dp)
                             .clip(RoundedCornerShape(4.dp))
-                            .background(c.accent),
+                            .background(c.mock.accent),
                     )
                 }
             }
@@ -648,7 +648,7 @@ internal fun IdeBuildPanel(
                     blocked.lines.take(12).forEach { line ->
                         Text(
                             text = "· $line",
-                            color = c.text,
+                            color = c.mock.text,
                             fontSize = 12.sp,
                             fontFamily = Sans,
                             lineHeight = 17.sp,
@@ -755,11 +755,11 @@ internal fun IdeBuildPanel(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     when (row.state) {
-                        StepState.DONE -> CcIcon(CcIcons.Check, c.success, 15.dp)
+                        StepState.DONE -> CcIcon(CcIcons.Check, c.mock.green, 15.dp)
                         StepState.FAILED -> CcIcon(CcIcons.Warning, c.mock.danger, 15.dp)
                         StepState.RUNNING -> CircularProgressIndicator(
                             modifier = Modifier.size(14.dp),
-                            color = c.text,
+                            color = c.mock.text,
                             strokeWidth = 2.dp,
                         )
                         StepState.PENDING -> Box(
@@ -775,7 +775,7 @@ internal fun IdeBuildPanel(
                         color = when (row.state) {
                             StepState.PENDING -> c.textFaint
                             StepState.FAILED -> c.mock.danger
-                            else -> c.text
+                            else -> c.mock.text
                         },
                         fontSize = 13.sp,
                         fontFamily = Sans,
@@ -881,14 +881,14 @@ private fun BlockedButton(label: String, onClick: () -> Unit) {
     Box(
         Modifier
             .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, c.ln, RoundedCornerShape(8.dp))
+            .border(1.dp, c.mock.divider, RoundedCornerShape(8.dp))
             .background(c.panel2)
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Text(
             text = label,
-            color = c.text,
+            color = c.mock.text,
             fontSize = 12.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
@@ -908,7 +908,7 @@ private fun BuildErrorCard(
     ScreenCard {
         Text(
             text = row.diagnostic.message,
-            color = c.text,
+            color = c.mock.text,
             fontSize = 13.sp,
             fontFamily = Sans,
             lineHeight = 18.sp,
@@ -941,14 +941,14 @@ private fun FilterChip(label: String, active: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
             .clip(RoundedCornerShape(99.dp))
-            .background(if (active) c.ac else Color.Transparent)
-            .border(1.dp, if (active) c.ac else c.ln, RoundedCornerShape(99.dp))
+            .background(if (active) c.mock.accent else Color.Transparent)
+            .border(1.dp, if (active) c.mock.accent else c.mock.divider, RoundedCornerShape(99.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 11.dp, vertical = 3.dp),
     ) {
         Text(
             text = label,
-            color = if (active) Color.White else c.tx,
+            color = if (active) Color.White else c.mock.text,
             fontSize = 12.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -972,7 +972,7 @@ internal fun BuildLogScreen(
     val c = LocalPageColors.current
     // No BackHandler here: the IDE's single ordered chain owns Back (buildLogOpen branch),
     // so a competing handler can never steal it out of order.
-    Column(Modifier.fillMaxSize().background(c.bg)) {
+    Column(Modifier.fillMaxSize().background(c.mock.page)) {
         PanelBackBar("Build log", onBack)
         if (errors.isEmpty() && warnings.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1021,7 +1021,7 @@ internal fun BuildLogScreen(
                         onClick = { onAskAi(entry) },
                     )
                 }
-                Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(c.mock.divider))
             }
         }
     }

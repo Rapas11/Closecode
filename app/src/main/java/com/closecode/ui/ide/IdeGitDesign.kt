@@ -74,10 +74,27 @@ internal fun gitLetterColor(kind: GitChangeKind): Color = when (kind) {
 internal fun gitRelativeTime(whenMillis: Long): String {
     val minutes = ((System.currentTimeMillis() - whenMillis) / 60_000).coerceAtLeast(0)
     return when {
+        minutes < 1 -> "now"
+        minutes < 60 -> "${minutes}m ago"
+        minutes < 24 * 60 -> "${minutes / 60}h ago"
+        minutes < 48 * 60 -> "Yesterday"
+        else -> {
+            val format = java.text.SimpleDateFormat("MMM d", java.util.Locale.US)
+            format.format(java.util.Date(whenMillis))
+        }
+    }
+}
+
+internal fun gitLongRelativeTime(whenMillis: Long): String {
+    val minutes = ((System.currentTimeMillis() - whenMillis) / 60_000).coerceAtLeast(0)
+    return when {
         minutes < 1 -> "just now"
-        minutes < 60 -> "$minutes min ago"
-        minutes < 24 * 60 -> "${minutes / 60} hr ago"
-        minutes < 7 * 24 * 60 -> "${minutes / (24 * 60)} days ago"
+        minutes < 60 -> "$minutes minutes ago"
+        minutes < 24 * 60 -> {
+            val hours = minutes / 60
+            if (hours == 1L) "1 hour ago" else "$hours hours ago"
+        }
+        minutes < 48 * 60 -> "yesterday"
         else -> {
             val format = java.text.SimpleDateFormat("MMM d", java.util.Locale.US)
             format.format(java.util.Date(whenMillis))

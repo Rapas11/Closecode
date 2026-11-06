@@ -1,8 +1,8 @@
 package com.closecode.ui.ide
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,51 +12,57 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import android.graphics.BitmapFactory
 import com.closecode.build.ProjectCheck
 import com.closecode.build.ProjectPins
 import com.closecode.build.SigningKeySource
 import com.closecode.build.SigningStore
 import com.closecode.build.TemplateContract
-import com.closecode.ui.components.DesignBackButton
-import com.closecode.ui.components.PrimaryButton
+import com.closecode.ui.components.CcTextField
+import com.closecode.ui.components.ScreenHeader
+import com.closecode.ui.components.SettingRow
+import com.closecode.ui.components.SettingsGroup
 import com.closecode.ui.model.MinSdkOptions
 import com.closecode.ui.model.SdkOptions
-import com.closecode.ui.theme.LocalPageColors
+import com.closecode.ui.theme.LocalCcColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
+import java.io.File
+
+private enum class ProjectField { AppName, PackageName, VersionName, VersionCode, MinSdk, TargetSdk, CompileSdk }
 
 /**
- * Project settings: APP, VERSION, ANDROID and SIGNING for the open project.
+ * Screen 45: APP, VERSION, ANDROID and SIGNING for the open project.
  *
- * A CloseCode project's package and SDK levels are editable; an imported or cloned project keeps
- * its own package and shows them here read-only. The design makes back save the changes, so the
- * back button saves when the draft is valid and there is something to save.
- *
- * [appName], [versionName] and [versionCode] are optional because the current caller does not read
- * them yet. When they are absent the APP rows say so instead of inventing values.
+ * Back saves any valid draft, matching the design. SDK and version rows open a small editor;
+ * package and signing rows are read-only summaries that lead to their own screens.
  */
 @Composable
 fun IdeProjectSettingsSheet(
@@ -75,8 +81,11 @@ fun IdeProjectSettingsSheet(
     versionCode: String = "",
     onSaveApp: ((appName: String, versionName: String, versionCode: String) -> Unit)? = null,
     onPickIcon: (() -> Unit)? = null,
+    projectRoot: File? = null,
+    onSigning: (() -> Unit)? = null,
+    onIcons: (() -> Unit)? = null,
 ) {
-    val c = LocalPageColors.current
+    val c = LocalCcColors.current
     val context = LocalContext.current
     var draftPackage by remember(packageName) { mutableStateOf(packageName) }
     var draftMin by remember(minSdk) { mutableStateOf(minSdk) }
@@ -85,32 +94,28 @@ fun IdeProjectSettingsSheet(
     var draftName by remember(appName) { mutableStateOf(appName) }
     var draftVersion by remember(versionName) { mutableStateOf(versionName) }
     var draftVersionCode by remember(versionCode) { mutableStateOf(versionCode) }
+    var editing by remember { mutableStateOf<ProjectField?>(null) }
 
     val problem = ProjectCheck.packageProblem(draftPackage)
     val foreign = problem == null && !draftPackage.startsWith(TemplateContract.PACKAGE_PREFIX)
-    val changed = draftPackage != packageName || draftMin != minSdk ||
-        draftTarget != targetSdk || draftCompile != compileSdk
+    val sdkChanged = draftMin != minSdk || draftTarget != targetSdk || draftCompile != compileSdk
+    val packageChanged = draftPackage != packageName
     val appChanged = draftName != appName || draftVersion != versionName ||
         draftVersionCode != versionCode
     val appEditable = onSaveApp != null
-    val canSave = !imported && !busy && (changed || (appEditable && appChanged)) &&
+    val canSave = !imported && !busy && (sdkChanged || packageChanged || (appEditable && appChanged)) &&
         draftPackage.isNotBlank() && problem == null
 
     val signing = remember(context) { runCatching { SigningStore(context) }.getOrNull() }
-    val debugReady = remember(signing) {
-        signing?.let { store ->
-            runCatching { store.debugInfo().subject != "Not generated" }.getOrDefault(false)
-        } ?: false
-    }
-    val releaseReady = remember(signing) {
-        runCatching {
-            signing?.allKeys()?.any { it.source != SigningKeySource.Debug } == true
-        }.getOrDefault(false)
-    }
+    val debug = remember(signing) { runCatching { signing?.debugInfo() }.getOrNull() }
+    val debugReady = !debug?.sha256.isNullOrBlank()
+    val release = remember(signing) { runCatching { releaseFor(signing) }.getOrNull() }
+    val releaseReady = release != null
+    val icon = remember(projectRoot, report) { projectIcon(projectRoot) }
 
     fun save() {
         if (!canSave) return
-        if (changed) {
+        if (sdkChanged || packageChanged) {
             onSave(
                 draftPackage,
                 draftMin.toIntOrNull() ?: ProjectPins.MIN_SDK_FLOOR,
@@ -124,433 +129,379 @@ fun IdeProjectSettingsSheet(
     }
 
     BackHandler {
-        if (canSave) save()
+        save()
         onDismiss()
     }
+
     Column(
-        Modifier
-            .fillMaxSize()
-            .background(c.mock.page)
-            .statusBarsPadding(),
-        horizontalAlignment = Alignment.CenterHorizontally,
+        Modifier.fillMaxSize().background(c.content),
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .widthIn(max = 620.dp)
-                .padding(horizontal = 18.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            DesignBackButton(
-                onClick = {
-                    if (canSave) save()
-                    onDismiss()
-                },
-            )
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = "Project settings",
-                    color = c.mock.text,
-                    fontSize = 18.sp,
-                    fontFamily = Sans,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = draftName.ifBlank { draftPackage },
-                    color = c.mock.muted,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
+        ScreenHeader(
+            origin = draftName.ifBlank { draftPackage.ifBlank { "Project" } },
+            title = "Project settings",
+            onBack = {
+                save()
+                onDismiss()
+            },
+        )
         Column(
             Modifier
+                .weight(1f)
                 .fillMaxWidth()
                 .widthIn(max = 620.dp)
-                .weight(1f)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 18.dp, vertical = 4.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+                .padding(bottom = 24.dp),
         ) {
-            ProjectSectionLabel("App")
-            if (!appEditable) {
-                Text(
-                    text = "App name and version are read from the project files. This build does " +
-                        "not pass them to this screen yet.",
-                    color = c.mock.faint,
-                    fontSize = 11.sp,
-                    fontFamily = Sans,
-                    lineHeight = 15.sp,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
+            SettingsGroup("App") {
+                SettingRow(
+                    icon = "file",
+                    tint = c.blue,
+                    title = "App name",
+                    value = draftName.ifBlank { "—" },
+                    onClick = if (appEditable) {
+                        { editing = ProjectField.AppName }
+                    } else {
+                        null
+                    },
+                )
+                SettingRow(
+                    icon = "layers",
+                    tint = c.purple,
+                    title = "Package name",
+                    sub = when {
+                        imported -> "Imported projects keep their package"
+                        problem != null -> problem.message
+                        foreign -> "Installs as $draftPackage"
+                        else -> null
+                    },
+                    value = draftPackage.ifBlank { "—" },
+                    onClick = if (!imported && !busy) {
+                        { editing = ProjectField.PackageName }
+                    } else {
+                        null
+                    },
+                    trailing = {},
+                )
+                SettingRow(
+                    icon = "image",
+                    tint = Color(0xFFDB4C9B),
+                    title = "App icon",
+                    sub = if (icon != null) "Custom launcher icon" else "Default Android icon",
+                    value = if (icon != null) "Change" else "Choose",
+                    onClick = onPickIcon,
+                    trailing = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            AppIconTile(icon)
+                            Spacer(Modifier.width(6.dp))
+                            com.closecode.ui.CcIcon("cr", c.faint, 15.dp, 2.2f)
+                        }
+                    },
+                    showDivider = false,
+                )
+                SettingRow(
+                    icon = "layers",
+                    tint = c.purple,
+                    title = "Icons",
+                    sub = "Logo, project icons and icon packs",
+                    onClick = onIcons,
+                    trailing = {},
+                    showDivider = false,
                 )
             }
-            SettingsField(
-                label = "App name",
-                value = if (appEditable) draftName else draftName.ifBlank { "—" },
-                enabled = appEditable,
-                onValueChange = { draftName = it },
-            )
-            SettingsField(
-                label = "Package name",
-                value = draftPackage,
-                enabled = !imported,
-                onValueChange = { draftPackage = it.trim() },
-            )
-            when {
-                imported -> Text(
-                    text = "Imported and cloned projects keep their own package name.",
-                    color = c.mock.muted,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp),
+
+            SettingsGroup("Version") {
+                SettingRow(
+                    icon = "flag",
+                    tint = c.green,
+                    title = "Version name",
+                    value = draftVersion.ifBlank { "—" },
+                    onClick = if (appEditable) {
+                        { editing = ProjectField.VersionName }
+                    } else {
+                        null
+                    },
                 )
-                problem != null -> Text(
-                    text = problem.message,
-                    color = c.mock.danger,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    lineHeight = 16.sp,
-                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp),
-                )
-                foreign -> Text(
-                    text = "This app will be installed as $draftPackage.",
-                    color = c.mock.warning,
-                    fontSize = 12.sp,
-                    fontFamily = Sans,
-                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp),
+                SettingRow(
+                    icon = "plus",
+                    tint = c.blue,
+                    title = "Version code",
+                    value = draftVersionCode.ifBlank { "—" },
+                    onClick = if (appEditable) {
+                        { editing = ProjectField.VersionCode }
+                    } else {
+                        null
+                    },
+                    showDivider = false,
                 )
             }
-            ProjectActionRow(
-                label = "App icon",
-                value = "Default",
-                action = if (onPickIcon == null) "" else "Change",
-                enabled = onPickIcon != null,
-                onClick = { onPickIcon?.invoke() },
-            )
 
-            ProjectSectionLabel("Version")
-            SettingsField(
-                label = "Version name",
-                value = if (appEditable) draftVersion else draftVersion.ifBlank { "—" },
-                enabled = appEditable,
-                onValueChange = { draftVersion = it },
-            )
-            SettingsField(
-                label = "Version code",
-                value = draftVersionCode.ifBlank { "—" },
-                enabled = appEditable,
-                onValueChange = { draftVersionCode = it },
-            )
-
-            ProjectSectionLabel("Android")
-            SettingsDropdown(
-                label = "Minimum SDK",
-                value = draftMin,
-                options = MinSdkOptions.filter { it.toIntOrNull()?.let { sdk -> sdk >= 24 } == true },
-                enabled = !imported,
-                onSelect = { draftMin = it },
-            )
-            SettingsDropdown(
-                label = "Target SDK",
-                value = draftTarget,
-                options = SdkOptions,
-                enabled = !imported,
-                onSelect = { draftTarget = it },
-            )
-            SettingsDropdown(
-                label = "Compile SDK",
-                value = draftCompile,
-                options = SdkOptions,
-                enabled = !imported,
-                onSelect = { draftCompile = it },
-            )
-
-            ProjectSectionLabel("Signing")
-            ProjectActionRow(
-                label = "Debug key",
-                value = if (debugReady) "Created automatically · Ready" else "Not generated",
-                action = "",
-                enabled = false,
-                onClick = {},
-                ok = debugReady,
-            )
-            ProjectActionRow(
-                label = "Release key",
-                value = if (releaseReady) "Ready" else "Not set until you create or import one",
-                action = "",
-                enabled = false,
-                onClick = {},
-                ok = releaseReady,
-            )
-
-            ProjectSectionLabel("Check results")
-            val findings = report?.findings.orEmpty().sortedBy { it.severity.ordinal }
-            when {
-                report == null -> Text(
-                    text = "Checking…",
-                    color = c.mock.muted,
-                    fontSize = 13.sp,
-                    fontFamily = Sans,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+            SettingsGroup("Android") {
+                SettingRow(
+                    icon = "play",
+                    tint = c.green,
+                    title = "Minimum SDK",
+                    value = draftMin.ifBlank { "—" },
+                    onClick = if (!imported) {
+                        { editing = ProjectField.MinSdk }
+                    } else {
+                        null
+                    },
                 )
-                findings.isEmpty() -> Row(
-                    Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    CcIcon(CcIcons.Check, c.mock.green, 14.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "No problems found.",
-                        color = c.mock.text,
-                        fontSize = 13.sp,
-                        fontFamily = Sans,
+                SettingRow(
+                    icon = "play",
+                    tint = c.yellow,
+                    title = "Target SDK",
+                    value = draftTarget.ifBlank { "—" },
+                    onClick = if (!imported) {
+                        { editing = ProjectField.TargetSdk }
+                    } else {
+                        null
+                    },
+                    showDivider = false,
+                )
+            }
+
+            SettingsGroup("Signing") {
+                SettingRow(
+                    icon = "lock",
+                    tint = c.teal,
+                    title = "Debug key",
+                    sub = "Created automatically",
+                    trailing = {
+                        Text(
+                            text = if (debugReady) "Ready" else "Not created",
+                            color = if (debugReady) c.green else c.amber,
+                            fontSize = 12.5.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    },
+                )
+                SettingRow(
+                    icon = "lock",
+                    tint = if (releaseReady) c.green else c.amber,
+                    title = "Release key",
+                    sub = "Needed to publish",
+                    value = if (releaseReady) null else "Not set",
+                    onClick = onSigning,
+                    trailing = if (releaseReady) {
+                        {
+                            Text(
+                                text = "Ready",
+                                color = c.green,
+                                fontSize = 12.5.sp,
+                                fontFamily = Sans,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                    showDivider = false,
+                )
+            }
+
+            if (report != null) {
+                val findings = report.findings.sortedBy { it.severity.ordinal }
+                if (findings.isNotEmpty()) {
+                    SettingsGroup("Check") {
+                        findings.forEachIndexed { index, finding ->
+                            SettingRow(
+                                icon = if (finding.severity == ProjectCheck.Severity.Warning) "alert" else "close",
+                                tint = when (finding.severity) {
+                                    ProjectCheck.Severity.Error -> c.red
+                                    ProjectCheck.Severity.Warning -> c.amber
+                                    ProjectCheck.Severity.Note -> c.muted
+                                },
+                                title = finding.message,
+                                sub = finding.where.ifBlank { null },
+                                showDivider = index != findings.lastIndex,
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (canSave) {
+                Spacer(Modifier.height(18.dp))
+                Box(Modifier.padding(horizontal = 16.dp)) {
+                    BigButton(
+                        text = if (busy) "Saving…" else "Save changes",
+                        onClick = { save() },
+                        modifier = Modifier.fillMaxWidth(),
+                        icon = "check",
+                        enabled = !busy,
                     )
                 }
-                else -> findings.forEach { finding -> FindingRow(finding) }
+            } else if (imported) {
+                IconNote(
+                    "Imported and cloned projects keep their own package and version values.",
+                    Modifier.padding(horizontal = 18.dp),
+                )
             }
-            Spacer(Modifier.height(12.dp))
-            PrimaryButton(
-                label = if (busy) "Saving…" else "Save changes",
-                onClick = { save() },
-                enabled = canSave,
-            )
-            Spacer(Modifier.height(24.dp))
+                if (appChanged && !appEditable) {
+                IconNote(
+                    "This screen cannot write app name and version yet.",
+                    Modifier.padding(horizontal = 18.dp),
+                )
+            }
         }
     }
-}
 
-@Composable
-private fun ProjectSectionLabel(text: String) {
-    Text(
-        text = text.uppercase(),
-        color = LocalPageColors.current.mock.faint,
-        fontSize = 10.5.sp,
-        fontFamily = Sans,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 0.7.sp,
-        modifier = Modifier.padding(start = 4.dp, top = 14.dp, bottom = 4.dp),
-    )
-}
-
-@Composable
-private fun ProjectActionRow(
-    label: String,
-    value: String,
-    action: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    ok: Boolean? = null,
-) {
-    val c = LocalPageColors.current
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 4.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = label,
-                color = c.mock.text,
-                fontSize = 13.5.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = value,
-                color = when (ok) {
-                    true -> c.mock.green
-                    false -> c.mock.muted
-                    null -> c.mock.muted
-                },
-                fontSize = 11.5.sp,
-                fontFamily = Sans,
-                lineHeight = 15.sp,
-            )
-        }
-        if (action.isNotEmpty()) {
-            Text(
-                text = action,
-                color = if (enabled) c.mock.accent else c.mock.faint,
-                fontSize = 12.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-    }
-}
-
-@Composable
-private fun FindingRow(finding: ProjectCheck.Finding) {
-    val c = LocalPageColors.current
-    val color = when (finding.severity) {
-        ProjectCheck.Severity.Error -> c.mock.danger
-        ProjectCheck.Severity.Warning -> c.mock.warning
-        ProjectCheck.Severity.Note -> c.mock.muted
-    }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        CcIcon(
-            if (finding.severity == ProjectCheck.Severity.Warning) {
-                CcIcons.Warning
-            } else {
-                CcIcons.AlertCircle
+    val active = editing
+    if (active != null) {
+        ProjectEditDialog(
+            field = active,
+            current = when (active) {
+                ProjectField.AppName -> draftName
+                ProjectField.PackageName -> draftPackage
+                ProjectField.VersionName -> draftVersion
+                ProjectField.VersionCode -> draftVersionCode
+                ProjectField.MinSdk -> draftMin
+                ProjectField.TargetSdk -> draftTarget
+                ProjectField.CompileSdk -> draftCompile
             },
-            color,
-            13.dp,
+            options = when (active) {
+                ProjectField.MinSdk -> MinSdkOptions.filter { it.toIntOrNull()?.let { sdk -> sdk >= 24 } == true }
+                ProjectField.TargetSdk, ProjectField.CompileSdk -> SdkOptions
+                else -> null
+            },
+            onDismiss = { editing = null },
+            onValue = { value ->
+                when (active) {
+                    ProjectField.AppName -> draftName = value
+                    ProjectField.PackageName -> draftPackage = value.trim()
+                    ProjectField.VersionName -> draftVersion = value
+                    ProjectField.VersionCode -> draftVersionCode = value.filter(Char::isDigit)
+                    ProjectField.MinSdk -> draftMin = value
+                    ProjectField.TargetSdk -> draftTarget = value
+                    ProjectField.CompileSdk -> draftCompile = value
+                }
+                editing = null
+            },
         )
-        Spacer(Modifier.width(8.dp))
-        Column {
-            Text(
-                text = finding.message,
-                color = c.mock.text,
-                fontSize = 13.sp,
-                fontFamily = Sans,
-                lineHeight = 17.sp,
-            )
-            if (finding.where.isNotEmpty()) {
-                Text(
-                    text = finding.where,
-                    color = c.mock.muted,
-                    fontSize = 11.sp,
-                    fontFamily = Mono,
-                )
-            }
-        }
     }
 }
 
+private fun releaseFor(signing: SigningStore?) =
+    signing?.generatedInfo() ?: signing?.importedKeys()?.firstOrNull()
+
+private fun projectIcon(root: File?): ImageBitmap? {
+    val file = root?.let { File(it, ProjectIconFiles.LAUNCHER) } ?: return null
+    if (!file.isFile) return null
+    return runCatching { BitmapFactory.decodeFile(file.path)?.asImageBitmap() }.getOrNull()
+}
+
 @Composable
-private fun SettingsField(
-    label: String,
-    value: String,
-    enabled: Boolean,
-    onValueChange: (String) -> Unit,
-) {
-    val c = LocalPageColors.current
-    val shape = RoundedCornerShape(12.dp)
-    Column(Modifier.padding(horizontal = 4.dp, vertical = 5.dp)) {
-        Text(
-            text = label,
-            color = c.mock.muted,
-            fontSize = 12.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Medium,
+private fun AppIconTile(icon: ImageBitmap?) {
+    val c = LocalCcColors.current
+    if (icon != null) {
+        Image(
+            bitmap = icon,
+            contentDescription = null,
+            modifier = Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)),
+            contentScale = ContentScale.Crop,
         )
+    } else {
         Box(
-            Modifier
-                .fillMaxWidth()
-                .height(46.dp)
-                .padding(top = 6.dp)
-                .clip(shape)
-                .background(c.mock.field)
-                .padding(horizontal = 12.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            BasicTextField(
-                value = value,
-                onValueChange = onValueChange,
-                enabled = enabled,
-                singleLine = true,
-                textStyle = androidx.compose.material3.LocalTextStyle.current.copy(
-                    color = if (enabled) c.mock.text else c.mock.faint,
-                    fontSize = 14.sp,
-                    fontFamily = Mono,
-                ),
-                cursorBrush = SolidColor(c.mock.accent),
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+            Modifier.size(30.dp).clip(RoundedCornerShape(9.dp))
+                .background(c.faint.copy(alpha = 0.28f)),
+        )
     }
 }
 
 @Composable
-private fun SettingsDropdown(
-    label: String,
-    value: String,
-    options: List<String>,
-    enabled: Boolean,
-    onSelect: (String) -> Unit,
+private fun ProjectEditDialog(
+    field: ProjectField,
+    current: String,
+    options: List<String>?,
+    onDismiss: () -> Unit,
+    onValue: (String) -> Unit,
 ) {
-    val c = LocalPageColors.current
-    var open by remember { mutableStateOf(false) }
-    val shape = RoundedCornerShape(12.dp)
-    Column(Modifier.padding(horizontal = 4.dp, vertical = 5.dp)) {
-        Text(
-            text = label,
-            color = c.mock.muted,
-            fontSize = 12.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Medium,
-        )
-        Box {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp)
-                    .height(46.dp)
-                    .clip(shape)
-                    .background(c.mock.field)
-                    .clickable(enabled = enabled) { open = !open }
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = value,
-                    color = if (enabled) c.mock.text else c.mock.faint,
-                    fontSize = 14.sp,
-                    fontFamily = Mono,
-                    modifier = Modifier.weight(1f),
+    val c = LocalCcColors.current
+    var draft by remember(field) { mutableStateOf(current) }
+    val title = when (field) {
+        ProjectField.AppName -> "App name"
+        ProjectField.PackageName -> "Package name"
+        ProjectField.VersionName -> "Version name"
+        ProjectField.VersionCode -> "Version code"
+        ProjectField.MinSdk -> "Minimum SDK"
+        ProjectField.TargetSdk -> "Target SDK"
+        ProjectField.CompileSdk -> "Compile SDK"
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .widthIn(max = 320.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(c.panel)
+                .padding(20.dp),
+        ) {
+            Text(
+                title,
+                color = c.text,
+                fontSize = 17.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.ExtraBold,
+            )
+            Spacer(Modifier.height(12.dp))
+            if (options == null) {
+                CcTextField(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    label = title,
+                    mono = field != ProjectField.AppName,
+                    hint = when (field) {
+                        ProjectField.AppName -> "My app"
+                        ProjectField.PackageName -> "com.example.app"
+                        ProjectField.VersionName -> "1.0"
+                        else -> "1"
+                    },
                 )
-                Text(text = "⌄", color = c.mock.muted, fontSize = 13.sp, fontFamily = Sans)
-            }
-            if (open && enabled) {
+            } else {
                 Column(
-                    Modifier
-                        .align(Alignment.TopStart)
-                        .padding(top = 56.dp)
-                        .fillMaxWidth()
-                        .clip(shape)
-                        .background(c.mock.panel)
-                        .border(1.dp, c.mock.border, shape),
+                    Modifier.heightIn(max = 280.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     options.forEach { option ->
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .height(38.dp)
-                                .clickable {
-                                    onSelect(option)
-                                    open = false
-                                }
-                                .background(
-                                    if (option == value) {
-                                        c.mock.accent.copy(alpha = 0.12f)
-                                    } else {
-                                        androidx.compose.ui.graphics.Color.Transparent
-                                    },
-                                )
-                                .padding(horizontal = 12.dp),
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (option == draft) c.accent.copy(alpha = 0.12f) else Color.Transparent)
+                                .clickable { draft = option }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                text = option,
-                                color = if (option == value) c.mock.accent else c.mock.text,
-                                fontSize = 13.sp,
+                                option,
+                                color = if (option == draft) c.accent else c.text,
+                                fontSize = 13.5.sp,
                                 fontFamily = Mono,
+                                modifier = Modifier.weight(1f),
                             )
+                            if (option == draft) {
+                                Box(Modifier.size(6.dp).clip(RoundedCornerShape(3.dp)).background(c.accent))
+                            }
                         }
                     }
                 }
+            }
+            Spacer(Modifier.height(18.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                BigButton(
+                    text = "Cancel",
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f),
+                    bg = c.field,
+                    fg = c.text2,
+                )
+                BigButton(
+                    text = "Save",
+                    onClick = { onValue(draft.trim()) },
+                    modifier = Modifier.weight(1f),
+                    enabled = draft.isNotBlank(),
+                )
             }
         }
     }

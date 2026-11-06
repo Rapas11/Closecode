@@ -131,8 +131,8 @@ private fun Pill(
         Modifier
             .height(52.dp)
             .clip(shape)
-            .background(if (primary) c.ab else c.cd)
-            .border(1.dp, if (primary) c.ab else c.ln, shape)
+            .background(if (primary) c.mock.accent else c.mock.panel)
+            .border(1.dp, if (primary) c.mock.accent else c.mock.divider, shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 26.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -141,7 +141,7 @@ private fun Pill(
         if (leading != null) leading()
         Text(
             text = label,
-            color = if (primary) c.af else c.tx,
+            color = if (primary) c.mock.onAccent else c.mock.text,
             fontSize = 16.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -217,11 +217,11 @@ private fun AccountRow(account: GitHubUser?) {
             Modifier
                 .size(7.dp)
                 .clip(CircleShape)
-                .background(c.success),
+                .background(c.mock.green),
         )
         Text(
             text = accountLabel(account),
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.5.sp,
             fontFamily = Sans,
             maxLines = 1,
@@ -272,20 +272,20 @@ private fun Branch(
             val stubEnd = BranchConnectorHeight.toPx()
             val reach = BranchGap.toPx() / 2f
             drawLine(
-                color = c.ln,
+                color = c.mock.divider,
                 start = Offset(cx, trunkY),
                 end = Offset(if (trunkRunsLeft) -reach else size.width + reach, trunkY),
                 strokeWidth = line,
             )
             drawLine(
-                color = c.ln,
+                color = c.mock.divider,
                 start = Offset(cx, trunkY),
                 end = Offset(cx, stubEnd),
                 strokeWidth = line,
             )
             if (stem) {
                 drawLine(
-                    color = c.ln,
+                    color = c.mock.divider,
                     start = Offset(cx, 0f),
                     end = Offset(cx, trunkY),
                     strokeWidth = line,
@@ -303,8 +303,8 @@ private fun BranchLabel(label: String, note: String?, onClick: () -> Unit) {
         Modifier
             .height(BranchLabelHeight)
             .clip(shape)
-            .background(c.cd)
-            .border(1.dp, c.ln, shape)
+            .background(c.mock.panel)
+            .border(1.dp, c.mock.divider, shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -312,7 +312,7 @@ private fun BranchLabel(label: String, note: String?, onClick: () -> Unit) {
     ) {
         Text(
             text = label,
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 14.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -320,7 +320,7 @@ private fun BranchLabel(label: String, note: String?, onClick: () -> Unit) {
         if (note != null) {
             Text(
                 text = note,
-                color = c.success,
+                color = c.mock.green,
                 fontSize = 11.sp,
                 fontFamily = Sans,
             )
@@ -335,12 +335,12 @@ private fun Wordmark() {
         Box(
             Modifier
                 .size(26.dp)
-                .background(c.tx, RoundedCornerShape(8.dp)),
+                .background(c.mock.text, RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = "C",
-                color = c.bg,
+                color = c.mock.page,
                 fontSize = 14.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
@@ -348,7 +348,7 @@ private fun Wordmark() {
         }
         Text(
             text = "Closecode",
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 18.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -362,9 +362,9 @@ private fun Headline(size: TextUnit) {
     Text(
         text = buildAnnotatedString {
             append("Build Android apps,\n")
-            withStyle(SpanStyle(color = c.ac)) { append("anywhere.") }
+            withStyle(SpanStyle(color = c.mock.accent)) { append("anywhere.") }
         },
-        color = c.tx,
+        color = c.mock.text,
         fontSize = size,
         lineHeight = size * 1.02f,
         fontFamily = Sans,
@@ -422,7 +422,7 @@ fun HeroScreen(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val headlineSize = 33.sp
+        val headlineSize = 35.6.sp
 
         com.closecode.ui.components.DesignPage(modifier = Modifier.fillMaxSize(), background = c.mock.page) {
             Column(
@@ -438,21 +438,25 @@ fun HeroScreen(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    // Welcome logo: 64 dp accent tile, radius 20, with the 30 dp code mark inside
-                    // (guild Part 2.5 WelcomeScreen).
                     Box(
                         Modifier
-                            .size(64.dp)
-                            .clip(RoundedCornerShape(20.dp))
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(11.dp))
                             .background(c.mock.accent),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CcIcon(CcIcons.Code, Color.White, 30.dp)
+                        Text(
+                            text = "C",
+                            color = Color.White,
+                            fontSize = 17.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
                     }
                     Text(
                         text = "Closecode",
                         color = c.mock.text,
-                        fontSize = 21.sp,
+                        fontSize = 20.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.ExtraBold,
                     )
@@ -464,8 +468,8 @@ fun HeroScreen(
                         text = "THE ANDROID IDE FOR YOUR PHONE",
                         color = c.mock.accent,
                         fontSize = 11.sp,
-                        fontFamily = Sans,
-                        fontWeight = FontWeight.Bold,
+                        fontFamily = Mono,
+                        fontWeight = FontWeight.SemiBold,
                         letterSpacing = 1.6.sp,
                     )
                 }
@@ -478,13 +482,13 @@ fun HeroScreen(
                         },
                         color = c.mock.text,
                         fontSize = headlineSize,
-                        lineHeight = 33.sp,
+                        lineHeight = 35.6.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = (-0.045f).em,
                     )
                 }
-                Spacer(Modifier.height(17.dp))
+                Spacer(Modifier.height(12.dp))
                 Reveal(3) {
                     Text(
                         text = "Write, build and ship real apps straight from your phone. " +
@@ -507,7 +511,9 @@ fun HeroScreen(
                             label = "Start a project",
                             onClick = { sheetOpen = true },
                             leading = com.closecode.ui.ide.CcIcons.Plus,
-                            modifier = Modifier.weight(1.466f),
+                            height = 52.dp,
+                            radius = 16.dp,
+                            modifier = Modifier.weight(1.5f),
                         )
                         Row(
                             Modifier
@@ -528,9 +534,9 @@ fun HeroScreen(
                             Text(
                                 text = "GitHub",
                                 color = c.mock.text,
-                                fontSize = 14.sp,
+                                fontSize = 15.sp,
                                 fontFamily = Sans,
-                                fontWeight = FontWeight.SemiBold,
+                                fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(start = 6.dp),
                             )
                         }
@@ -571,40 +577,42 @@ fun HeroScreen(
                                     .fillMaxWidth()
                                     .height(62.dp)
                                     .clickable { onOpenProject(project) }
-                                    .padding(horizontal = 0.dp),
+                                    .padding(horizontal = 16.dp, vertical = 9.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 Box {
                                     Box(
                                         Modifier
-                                            .size(42.dp)
-                                            .clip(RoundedCornerShape(13.dp))
+                                            .size(44.dp)
+                                            .clip(RoundedCornerShape(14.dp))
                                             .background(com.closecode.ui.ide.projectTileColor(project.name)),
                                         contentAlignment = Alignment.Center,
                                     ) {
                                         Text(
                                             text = project.name.take(1).uppercase().ifEmpty { "C" },
                                             color = Color.White,
-                                            fontSize = 16.sp,
+                                            fontSize = 18.sp,
                                             fontFamily = Sans,
-                                            fontWeight = FontWeight.Bold,
+                                            fontWeight = FontWeight.ExtraBold,
                                         )
                                     }
                                     project.problemBadge()?.let { count ->
                                         Box(
                                             Modifier
                                                 .align(Alignment.BottomEnd)
-                                                .offset(x = 3.dp, y = 3.dp)
+                                                .offset(x = 5.dp, y = 5.dp)
+                                                .size(19.dp)
                                                 .clip(androidx.compose.foundation.shape.CircleShape)
                                                 .background(c.mock.badge)
-                                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                .border(3.dp, c.mock.rail, androidx.compose.foundation.shape.CircleShape)
                                                 .semantics {
                                                     contentDescription = "$count problems"
                                                 },
+                                            contentAlignment = Alignment.Center,
                                         ) {
                                             Text(
-                                                text = if (count > 9) "9+" else count.toString(),
+                                                text = if (count > 99) "99+" else count.toString(),
                                                 color = Color.White,
                                                 fontSize = 10.sp,
                                                 fontFamily = Sans,
@@ -645,7 +653,7 @@ fun HeroScreen(
                                             ) { append(word) }
                                         },
                                         color = c.mock.muted,
-                                        fontSize = 12.sp,
+                                        fontSize = 11.5.sp,
                                         fontFamily = Sans,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
@@ -661,23 +669,20 @@ fun HeroScreen(
                 Reveal(5) {
                     Row(
                         Modifier.widthIn(max = 430.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(
-                            14.dp,
-                            Alignment.CenterHorizontally,
-                        ),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Facts.forEach { fact ->
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(
                                     Modifier
-                                        .size(5.dp)
+                                        .size(6.dp)
                                         .background(c.mock.accent, RoundedCornerShape(3.dp)),
                                 )
                                 Text(
                                     text = fact,
                                     color = c.mock.muted,
-                                    fontSize = 11.sp,
+                                    fontSize = 11.5.sp,
                                     fontFamily = Sans,
                                     modifier = Modifier.padding(start = 6.dp),
                                 )
@@ -698,13 +703,13 @@ fun HeroScreen(
         ) {
             Text(
                 text = toast.orEmpty(),
-                color = c.af,
+                color = c.mock.onAccent,
                 fontSize = 14.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
-                    .background(c.ab)
+                    .background(c.mock.accent)
                     .padding(horizontal = 18.dp, vertical = 11.dp),
             )
         }

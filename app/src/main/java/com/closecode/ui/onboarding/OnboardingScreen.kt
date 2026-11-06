@@ -203,7 +203,7 @@ fun OnboardingScreen(onDone: () -> Unit) {
                     ) {
                         Text(
                             text = "C",
-                            color = c.bg,
+                            color = c.mock.page,
                             fontSize = 15.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.Bold,
@@ -344,7 +344,7 @@ fun OnboardingScreen(onDone: () -> Unit) {
                         if (buildReady) {
                             Text(
                                 text = "Build tools are ready.",
-                                color = c.success,
+                                color = c.mock.green,
                                 fontSize = 12.sp,
                                 fontFamily = Sans,
                             )
@@ -397,7 +397,7 @@ fun OnboardingScreen(onDone: () -> Unit) {
                 } else if (shellReady) {
                     Text(
                         text = "Shell tools are ready.",
-                        color = c.success,
+                        color = c.mock.green,
                         fontSize = 12.sp,
                         fontFamily = Sans,
                     )
@@ -446,7 +446,7 @@ fun OnboardingScreen(onDone: () -> Unit) {
                 } else if (aiReady) {
                     Text(
                         text = "The AI runtime is ready.",
-                        color = c.success,
+                        color = c.mock.green,
                         fontSize = 12.sp,
                         fontFamily = Sans,
                     )
@@ -527,7 +527,7 @@ private fun WelcomePanel(onStart: () -> Unit, onSkip: () -> Unit) {
             ) {
                 Text(
                     text = "C",
-                    color = c.bg,
+                    color = c.mock.page,
                     fontSize = 15.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Bold,
@@ -719,12 +719,12 @@ private fun SetupStep(
                 Modifier
                     .size(26.dp)
                     .clip(CircleShape)
-                    .background(if (ready) c.success else c.chipBg),
+                    .background(if (ready) c.mock.green else c.chipBg),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = if (ready) "✓" else number.toString(),
-                    color = if (ready) c.af else c.textMuted,
+                    color = if (ready) c.mock.onAccent else c.textMuted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Medium,
@@ -742,7 +742,7 @@ private fun SetupStep(
                 Text(
                     text = status,
                     color = when {
-                        ready -> c.success
+                        ready -> c.mock.green
                         skipped -> c.textFaint
                         else -> c.textMuted
                     },

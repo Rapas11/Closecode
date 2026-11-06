@@ -82,6 +82,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.debug.DebugLog
 import com.closecode.ui.components.PageBackButton
+import com.closecode.ui.components.ScreenHeader
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.theme.LocalPageColors
@@ -871,7 +872,7 @@ internal fun IdeTerminal(
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.bg)
+            .background(c.mock.page)
             // No imePadding here. The activity already declares adjustResize, so the window is
             // shrunk for the keyboard and this panel is laid out above it; adding padding as well
             // counted the same keyboard twice and pushed the output and the key bar off the top of
@@ -884,7 +885,7 @@ internal fun IdeTerminal(
         Row(
             Modifier
                 .fillMaxWidth()
-                .background(c.bg)
+                .background(c.mock.page)
                 // The terminal owns the whole screen here, so its header is what the phone's
                 // status bar would otherwise sit on top of. Same inset as the app top bar, and
                 // zero on phones where the system already insets the window.
@@ -1365,13 +1366,13 @@ private fun TerminalCompletionPopup(
             Box(
                 Modifier
                     .clip(RoundedCornerShape(6.dp))
-                    .background(c.panel)
+                    .background(c.mock.panel)
                     .clickable { onPick(candidate) }
                     .padding(horizontal = 9.dp, vertical = 5.dp)
                     .semantics { contentDescription = label },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(text = label, color = c.tx, fontSize = 12.sp, fontFamily = Mono)
+                Text(text = label, color = c.mock.text, fontSize = 12.sp, fontFamily = Mono)
             }
         }
     }
@@ -1383,7 +1384,7 @@ private fun promptEcho(dir: String, command: String): AnnotatedString {
     val c = LocalPageColors.current
     return remember(dir, command, c) {
         androidx.compose.ui.text.buildAnnotatedString {
-            pushStyle(androidx.compose.ui.text.SpanStyle(color = c.success))
+            pushStyle(androidx.compose.ui.text.SpanStyle(color = c.mock.green))
             append(dir)
             pop()
             pushStyle(androidx.compose.ui.text.SpanStyle(color = c.textMuted))
@@ -1619,7 +1620,7 @@ private fun PromptRow(
                 text: AnnotatedString,
             ): androidx.compose.ui.text.input.TransformedText {
                 val combined = androidx.compose.ui.text.buildAnnotatedString {
-                    pushStyle(androidx.compose.ui.text.SpanStyle(color = c.success))
+                    pushStyle(androidx.compose.ui.text.SpanStyle(color = c.mock.green))
                     append(dir)
                     pop()
                     pushStyle(androidx.compose.ui.text.SpanStyle(color = c.textMuted))
@@ -1833,55 +1834,44 @@ private fun NewCommandPage(
     }
     var name by remember { mutableStateOf("") }
     var command by remember { mutableStateOf("") }
+    val duplicate = name.trim().isNotEmpty() &&
+        existing.any { it.substringBefore('\u0000').equals(name.trim(), ignoreCase = true) }
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.ab)
+            .background(c.mock.content)
             .semantics { contentDescription = "New command" },
     ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Box(
-                Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(c.fieldBg)
-                    .clickable(onClick = onClose)
-                    .semantics { contentDescription = "Close" },
-                contentAlignment = Alignment.Center,
-            ) {
-                CcIcon(CcIcons.ChevronLeft, c.mock.text, 18.dp)
-            }
-            Text(
-                text = "New command",
-                color = c.mock.text,
-                fontSize = 15.sp,
-                fontFamily = Sans,
-                fontWeight = FontWeight.ExtraBold,
-            )
-        }
+        ScreenHeader(
+            origin = "Terminal",
+            title = "New command",
+            onBack = onClose,
+        )
         Column(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp),
+                .padding(horizontal = 14.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            NewCommandField(label = "Name", value = name, onValue = { name = it }, hint = "Safe push")
-            NewCommandField(label = "Command", value = command, onValue = { command = it }, hint = "git log --oneline", mono = true)
+            NewCommandField(label = "Name", value = name, onValue = { name = it }, hint = "Name")
+            if (duplicate) {
+                Text(
+                    text = "A command with this name already exists.",
+                    color = c.mock.danger,
+                    fontSize = 11.5.sp,
+                    fontFamily = Sans,
+                )
+            }
+            NewCommandField(label = "Command", value = command, onValue = { command = it }, hint = "Command to run", mono = true)
             NewCommandField(label = "Folder", value = folder, onValue = {}, hint = "", mono = true, readOnly = true)
             Spacer(Modifier.weight(1f))
-            val ready = command.isNotBlank()
+            val ready = name.isNotBlank() && command.isNotBlank() && !duplicate
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(46.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(if (ready) c.mock.accent else c.fieldBg)
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(if (ready) c.mock.accent else c.mock.field)
                     .clickable(
                         enabled = ready,
                         onClick = {
@@ -1896,9 +1886,9 @@ private fun NewCommandPage(
                 Text(
                     text = "Save command",
                     color = if (ready) c.mock.onAccent else c.mock.faint,
-                    fontSize = 13.5.sp,
+                    fontSize = 15.sp,
                     fontFamily = Sans,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = FontWeight.Bold,
                 )
             }
         }
@@ -1919,26 +1909,26 @@ private fun NewCommandField(
     Column {
         Text(
             text = label,
-            color = c.mock.text2,
-            fontSize = 11.sp,
-            fontFamily = Mono,
+            color = c.mock.textSoft,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.SemiBold,
         )
         Spacer(Modifier.height(5.dp))
         Box(
             Modifier
                 .fillMaxWidth()
                 .height(44.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(13.dp))
                 .background(c.mock.field)
-                .border(1.dp, c.mock.faint, RoundedCornerShape(10.dp))
-                .padding(horizontal = 12.dp),
+                .padding(horizontal = 14.dp),
             contentAlignment = Alignment.CenterStart,
         ) {
             if (readOnly || value.isEmpty() && hint.isNotEmpty()) {
                 Text(
                     text = if (readOnly) value else hint,
                     color = if (readOnly) c.mock.text else c.mock.faint,
-                    fontSize = 12.sp,
+                    fontSize = 12.5.sp,
                     fontFamily = if (mono) Mono else Sans,
                     maxLines = 1,
                     overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
@@ -1950,7 +1940,7 @@ private fun NewCommandField(
                     singleLine = true,
                     textStyle = TextStyle(
                         color = c.mock.text,
-                        fontSize = 12.sp,
+                        fontSize = 12.5.sp,
                         fontFamily = if (mono) Mono else Sans,
                     ),
                     cursorBrush = SolidColor(c.mock.accent),

@@ -1,7 +1,6 @@
 package com.closecode.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,56 +44,67 @@ fun ScreenHeader(
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     val cc = LocalCcColors.current
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
+    Column(Modifier.fillMaxWidth().background(cc.content)) {
         Row(
-            Modifier.fillMaxWidth(),
+            Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(start = 12.dp, end = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Box(
                 Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .background(cc.field)
-                    .clickable(onClick = onBack),
+                    .clickable(onClick = onBack)
+                    .semantics { contentDescription = "Back" },
                 contentAlignment = Alignment.Center,
             ) {
-                CcIcon("chevron-left", cc.text2, 18.dp)
+                CcIcon("back", cc.text2, 20.dp, 2.2f)
             }
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = origin ?: "",
-                    color = cc.text,
-                    fontSize = 16.sp,
-                    fontFamily = Sans,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (title.isNotBlank()) {
+            Spacer(Modifier.width(10.dp))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                if (origin != null) {
+                    Text(
+                        text = origin,
+                        color = cc.text,
+                        fontSize = 16.5.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    Spacer(Modifier.width(7.dp))
                     Text(
                         text = title,
                         color = cc.muted,
-                        fontSize = 12.sp,
+                        fontSize = 12.25.sp,
                         fontFamily = Sans,
+                        fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 2.dp),
+                    )
+                } else {
+                    Text(
+                        text = title,
+                        color = cc.text,
+                        fontSize = 16.5.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
             Row(
-                Modifier.widthIn(max = 120.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 content = actions,
             )
         }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(cc.divider))
     }
 }
 
@@ -103,6 +113,7 @@ fun ScreenHeader(
 fun HeaderAction(
     icon: String,
     label: String,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val cc = LocalCcColors.current
@@ -111,11 +122,11 @@ fun HeaderAction(
             .size(38.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(cc.field)
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        CcIcon(icon, cc.text2, 18.dp)
+        CcIcon(icon, if (enabled) cc.text2 else cc.faint, 18.dp, 1.9f)
     }
 }
 
@@ -135,44 +146,58 @@ fun SecLabel(
         color = cc.muted,
         fontSize = 11.sp,
         fontFamily = Sans,
-        fontWeight = FontWeight.ExtraBold,
+        fontWeight = FontWeight.Bold,
         letterSpacing = 0.8.sp,
         maxLines = 1,
         modifier = modifier.padding(start = start, top = top, end = end, bottom = bottom),
     )
 }
 
-/** Centered empty state: icon, title, subtitle. */
+/** Centered empty state: icon tile, title, message and an optional action. */
 @Composable
 fun EmptyState(
     icon: String,
     title: String,
     subtitle: String,
+    actionText: String? = null,
+    onAction: (() -> Unit)? = null,
+    modifier: Modifier = Modifier,
 ) {
     val cc = LocalCcColors.current
     Column(
-        Modifier.fillMaxSize(),
+        modifier.fillMaxWidth().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
-        CcIcon(icon, cc.faint, 28.dp, 1.6f)
-        Spacer(Modifier.height(10.dp))
+        Box(
+            Modifier
+                .size(64.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(cc.field),
+            contentAlignment = Alignment.Center,
+        ) {
+            CcIcon(icon, cc.muted, 28.dp, 1.6f)
+        }
+        Spacer(Modifier.height(14.dp))
         Text(
             text = title,
-            color = cc.text2,
-            fontSize = 13.sp,
+            color = cc.text,
+            fontSize = 16.sp,
             fontFamily = Sans,
-            fontWeight = FontWeight.SemiBold,
+            fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(4.dp))
         Text(
             text = subtitle,
             color = cc.muted,
-            fontSize = 12.sp,
+            fontSize = 13.25.sp,
             fontFamily = Sans,
             textAlign = TextAlign.Center,
         )
+        if (actionText != null && onAction != null) {
+            Spacer(Modifier.height(16.dp))
+            PrimaryButton(actionText, onAction)
+        }
     }
 }
 
@@ -181,63 +206,51 @@ fun EmptyState(
 fun LoadingList(count: Int) {
     val cc = LocalCcColors.current
     Column(
-        Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        Modifier.padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         repeat(count) {
-            Row(
+            Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(16.dp)
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Box(
-                    Modifier
-                        .width(32.dp)
-                        .height(16.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(cc.field),
-                )
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .height(16.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(cc.field),
-                )
-            }
+                    .height(42.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(cc.field),
+            )
         }
     }
 }
 
-/** Error card: message + retry button, centered. */
+/** Inline error card: the real message in red and an optional retry button. */
 @Composable
 fun ErrorCard(
     message: String,
-    onRetry: () -> Unit,
+    onRetry: (() -> Unit)? = null,
 ) {
     val cc = LocalCcColors.current
     Column(
-        Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        Modifier
+            .padding(14.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(cc.diffDelBg)
+            .padding(12.dp),
     ) {
         Text(
             text = message,
-            color = cc.muted,
-            fontSize = 13.sp,
+            color = cc.red,
+            fontSize = 13.25.sp,
             fontFamily = Sans,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 24.dp),
         )
-        Spacer(Modifier.height(14.dp))
-        PrimaryButton(
-            text = "Retry",
-            onClick = onRetry,
-            modifier = Modifier.fillMaxWidth().widthIn(max = 240.dp),
-        )
+        if (onRetry != null) {
+            Spacer(Modifier.height(10.dp))
+            SecondaryButton(
+                text = "Retry",
+                onClick = onRetry,
+                icon = "refresh",
+                height = 40.dp,
+            )
+        }
     }
 }
 
@@ -255,7 +268,7 @@ fun CcConfirmDialog(
     Box(
         Modifier
             .fillMaxSize()
-            .background(cc.dimSmallMenu)
+            .background(cc.dim)
             .clickable(
                 interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource(),
                 indication = null,
@@ -266,10 +279,9 @@ fun CcConfirmDialog(
         Column(
             Modifier
                 .padding(horizontal = 28.dp)
-                .widthIn(max = 340.dp)
-                .clip(RoundedCornerShape(18.dp))
+                .widthIn(max = 300.dp)
+                .clip(RoundedCornerShape(24.dp))
                 .background(cc.panel)
-                .border(1.dp, cc.border, RoundedCornerShape(18.dp))
                 .clickable(
                     interactionSource = androidx.compose.foundation.interaction.MutableInteractionSource(),
                     indication = null,
@@ -282,37 +294,45 @@ fun CcConfirmDialog(
                 color = cc.text,
                 fontSize = 17.sp,
                 fontFamily = Sans,
-                fontWeight = FontWeight.Bold,
+                fontWeight = FontWeight.ExtraBold,
             )
             Spacer(Modifier.height(8.dp))
             if (message != null) {
                 Text(
                     text = message,
-                    color = cc.muted,
-                    fontSize = 13.sp,
+                    color = cc.textSoft,
+                    fontSize = 13.5.sp,
                     fontFamily = Sans,
                     lineHeight = 19.sp,
                 )
                 Spacer(Modifier.height(18.dp))
             }
             Row(
-                Modifier.padding(top = 18.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                PrimaryButton(
+                SecondaryButton(
                     text = "Cancel",
                     onClick = onDismiss,
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    container = cc.field,
-                    radius = 15.dp,
+                    modifier = Modifier.weight(1f),
+                    height = 44.dp,
                 )
-                PrimaryButton(
-                    text = confirmLabel,
-                    onClick = onConfirm,
-                    modifier = Modifier.weight(1f).height(48.dp),
-                    container = if (destructive) cc.red else cc.accent,
-                    radius = 15.dp,
-                )
+                if (destructive) {
+                    SecondaryButton(
+                        text = confirmLabel,
+                        onClick = onConfirm,
+                        modifier = Modifier.weight(1f),
+                        destructive = true,
+                        height = 44.dp,
+                    )
+                } else {
+                    PrimaryButton(
+                        text = confirmLabel,
+                        onClick = onConfirm,
+                        modifier = Modifier.weight(1f),
+                        height = 44.dp,
+                    )
+                }
             }
         }
     }

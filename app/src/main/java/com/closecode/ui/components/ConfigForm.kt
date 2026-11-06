@@ -82,14 +82,14 @@ fun ConfigForm(
             Text(
                 text = "Used for desktop builds and export. On-device builds use the " +
                     "bundled toolchain.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 11.sp,
                 fontFamily = Sans,
             )
             gradleCompatibilityProblem(config)?.let { problem ->
                 Text(
                     text = problem,
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 11.sp,
                     fontFamily = Sans,
                 )
@@ -291,14 +291,14 @@ fun ConfigSummary(config: ProjectConfig, webProject: Boolean, modifier: Modifier
             Row(Modifier.fillMaxWidth()) {
                 Text(
                     text = label,
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
                     text = value,
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                 )

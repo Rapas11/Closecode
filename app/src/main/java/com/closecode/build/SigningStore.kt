@@ -11,6 +11,7 @@ import java.io.File
 import java.math.BigInteger
 import java.security.KeyPairGenerator
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.PrivateKey
 import java.security.cert.X509Certificate
 import java.util.Calendar
@@ -25,7 +26,13 @@ data class SigningKeyInfo(
     val subject: String,
     val expiresAt: Long?,
     val exportable: Boolean,
+    val alias: String = "",
+    val sha256: String = "",
+    val createdAt: Long? = null,
 )
+
+/** One key inside an imported keystore, for the alias picker on screen 50. */
+data class KeyFileEntry(val alias: String, val sha256: String)
 
 /**
  * The signing keys a build can use.
@@ -75,6 +82,9 @@ class SigningStore(private val context: Context) {
             subject = cert?.subjectX500Principal?.name ?: "Not generated",
             expiresAt = cert?.notAfter?.time,
             exportable = false,
+            alias = "androiddebugkey",
+            sha256 = cert?.let(::sha256Of).orEmpty(),
+            createdAt = cert?.notBefore?.time,
         )
     }
 
@@ -91,11 +101,16 @@ class SigningStore(private val context: Context) {
         val cert = entry.certificate as? X509Certificate
         SigningKeyInfo(
             id = GENERATED_ID,
-            label = "Generated release key",
+            label = prefs.getString(KEY_GENERATED_ALIAS, null).orEmpty()
+                .ifBlank { "Generated release key" },
             source = SigningKeySource.Generated,
             subject = cert?.subjectX500Principal?.name ?: "Closecode Release",
             expiresAt = cert?.notAfter?.time,
             exportable = false,
+            alias = prefs.getString(KEY_GENERATED_ALIAS, null).orEmpty()
+                .ifBlank { GENERATED_ALIAS },
+            sha256 = cert?.let(::sha256Of).orEmpty(),
+            createdAt = cert?.notBefore?.time,
         )
     }.getOrNull()
 
@@ -121,6 +136,8 @@ class SigningStore(private val context: Context) {
         originalName: String,
         alias: String,
         password: CharArray,
+        keyAlias: String? = null,
+        keyPassword: CharArray = password,
     ): Result<SigningKeyInfo> = runCatching {
         val securePrefs = secure
             ?: throw IllegalStateException("This phone cannot store signing passwords securely.")
@@ -133,7 +150,7 @@ class SigningStore(private val context: Context) {
         val id = "imported-$safe"
         val file = File(dir, "$id$KEYSTORE_SUFFIX")
         dir.mkdirs()
-        val loaded = load(bytes, password)
+        val loaded = load(bytes, password, keyAlias, keyPassword)
         val entryAlias = loaded.first
         val entry = loaded.second
         file.writeBytes(bytes)
@@ -150,7 +167,27 @@ class SigningStore(private val context: Context) {
             subject = cert.subjectX500Principal.name,
             expiresAt = cert.notAfter.time,
             exportable = true,
+            alias = entryAlias,
+            sha256 = sha256Of(cert),
+            createdAt = cert.notBefore.time,
         )
+    }
+
+    /** Lists the keys inside a keystore without importing it. */
+    fun inspect(bytes: ByteArray, password: CharArray): Result<List<KeyFileEntry>> = runCatching {
+        val entries = mutableListOf<KeyFileEntry>()
+        for (type in listOf("PKCS12", "JKS")) {
+            val store = runCatching { KeyStore.getInstance(type) }.getOrNull() ?: continue
+            val ok = runCatching { store.load(ByteArrayInputStream(bytes), password) }.isSuccess
+            if (!ok) continue
+            store.aliases().asSequence().filter { store.isKeyEntry(it) }.forEach { alias ->
+                val cert = store.getCertificate(alias) as? X509Certificate
+                if (cert != null) entries += KeyFileEntry(alias, sha256Of(cert))
+            }
+            break
+        }
+        if (entries.isEmpty()) error("Wrong password or not a key file")
+        entries
     }
 
     fun deleteImported(id: String): Boolean {
@@ -171,29 +208,39 @@ class SigningStore(private val context: Context) {
         select(DEBUG_ID)
     }
 
-    fun generateRelease(): Result<SigningKeyInfo> = runCatching {
+    fun generateRelease(
+        displayName: String = "Closecode Release",
+        country: String = "",
+        years: Int = 30,
+        alias: String = "release",
+    ): Result<SigningKeyInfo> = runCatching {
         val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-        if (!store.containsAlias(GENERATED_ALIAS)) {
-            val start = Calendar.getInstance()
-            val end = Calendar.getInstance().apply { add(Calendar.YEAR, 30) }
-            val spec = KeyGenParameterSpec.Builder(
-                GENERATED_ALIAS,
-                KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+        if (store.containsAlias(GENERATED_ALIAS)) store.deleteEntry(GENERATED_ALIAS)
+        val start = Calendar.getInstance()
+        val end = Calendar.getInstance().apply { add(Calendar.YEAR, years.coerceIn(1, 100)) }
+        val spec = KeyGenParameterSpec.Builder(
+            GENERATED_ALIAS,
+            KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY,
+        )
+            .setDigests(KeyProperties.DIGEST_SHA256)
+            .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1)
+            .setCertificateSubject(
+                javax.security.auth.x500.X500Principal(
+                    buildString {
+                        append("CN=").append(displayName.ifBlank { "Closecode Release" })
+                        if (country.length == 2) append(", C=").append(country.uppercase())
+                    },
+                ),
             )
-                .setDigests(KeyProperties.DIGEST_SHA256)
-                .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1)
-                .setCertificateSubject(
-                    javax.security.auth.x500.X500Principal("CN=Closecode Release"),
-                )
-                .setCertificateSerialNumber(BigInteger.valueOf(2))
-                .setKeyValidityStart(start.time)
-                .setKeyValidityEnd(end.time)
-                .build()
-            KeyPairGenerator
-                .getInstance(KeyProperties.KEY_ALGORITHM_RSA, ANDROID_KEYSTORE)
-                .apply { initialize(spec) }
-                .generateKeyPair()
-        }
+            .setCertificateSerialNumber(BigInteger.valueOf(2))
+            .setKeyValidityStart(start.time)
+            .setKeyValidityEnd(end.time)
+            .build()
+        KeyPairGenerator
+            .getInstance(KeyProperties.KEY_ALGORITHM_RSA, ANDROID_KEYSTORE)
+            .apply { initialize(spec) }
+            .generateKeyPair()
+        prefs.edit().putString(KEY_GENERATED_ALIAS, alias.trim().ifBlank { "release" }).apply()
         select(GENERATED_ID)
         generatedInfo() ?: error("The release key was not created.")
     }
@@ -201,6 +248,7 @@ class SigningStore(private val context: Context) {
     fun deleteGenerated(): Boolean = runCatching {
         val store = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         if (store.containsAlias(GENERATED_ALIAS)) store.deleteEntry(GENERATED_ALIAS)
+        prefs.edit().remove(KEY_GENERATED_ALIAS).apply()
         if (selectedId() == GENERATED_ID) select(DEBUG_ID)
         true
     }.getOrDefault(false)
@@ -221,6 +269,9 @@ class SigningStore(private val context: Context) {
             subject = cert.subjectX500Principal.name,
             expiresAt = cert.notAfter.time,
             exportable = true,
+            alias = prefs.getString(aliasKey(id), id).orEmpty().ifBlank { id },
+            sha256 = sha256Of(cert),
+            createdAt = cert.notBefore.time,
         )
     }
 
@@ -242,7 +293,12 @@ class SigningStore(private val context: Context) {
         )
     }
 
-    private fun load(bytes: ByteArray, password: CharArray): Pair<String, KeyStore.PrivateKeyEntry> {
+    private fun load(
+        bytes: ByteArray,
+        password: CharArray,
+        wantedAlias: String? = null,
+        keyPassword: CharArray = password,
+    ): Pair<String, KeyStore.PrivateKeyEntry> {
         val errors = mutableListOf<String>()
         for (type in listOf("PKCS12", "JKS")) {
             val store = runCatching { KeyStore.getInstance(type) }.getOrNull() ?: continue
@@ -251,16 +307,21 @@ class SigningStore(private val context: Context) {
                 errors += type
                 continue
             }
-            val alias = store.aliases().asSequence()
-                .firstOrNull { store.isKeyEntry(it) }
+            val aliases = store.aliases().asSequence().filter { store.isKeyEntry(it) }.toList()
+            val alias = aliases.firstOrNull { it == wantedAlias } ?: aliases.firstOrNull()
                 ?: continue
-            val entry = store.getEntry(alias, null) as? KeyStore.PrivateKeyEntry ?: continue
+            val entry = store.getEntry(alias, KeyStore.PasswordProtection(keyPassword))
+                as? KeyStore.PrivateKeyEntry ?: continue
             return alias to entry
         }
         throw IllegalArgumentException(
             "The keystore could not be opened with that password (tried ${errors.joinToString()}).",
         )
     }
+
+    private fun sha256Of(cert: X509Certificate): String =
+        MessageDigest.getInstance("SHA-256").digest(cert.encoded)
+            .joinToString(":") { "%02X".format(it) }
 
     private fun passwordKey(id: String) = "password_$id"
     private fun labelKey(id: String) = "label_$id"
@@ -274,6 +335,7 @@ class SigningStore(private val context: Context) {
         private const val PREFS = "closecode_signing"
         private const val SECURE_PREFS = "closecode_signing_secure"
         private const val KEY_SELECTED = "selected"
+        private const val KEY_GENERATED_ALIAS = "generated_alias"
         private const val KEYSTORE_SUFFIX = ".keystore"
     }
 }

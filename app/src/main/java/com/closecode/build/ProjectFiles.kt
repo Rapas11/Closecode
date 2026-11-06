@@ -115,6 +115,88 @@ object ProjectFiles {
         return Result(changed, problems)
     }
 
+    /** Rewrites the app label and version fields; the package stays where it is. */
+    fun applyVersion(
+        projectDir: File,
+        appName: String,
+        versionName: String,
+        versionCode: Int?,
+    ): Result {
+        val changed = mutableListOf<String>()
+        val problems = mutableListOf<String>()
+        val appGradle = File(projectDir, "app/build.gradle.kts")
+        if (appGradle.isFile) {
+            val text = runCatching { appGradle.readText() }.getOrNull()
+            if (text == null) {
+                problems += "Could not read app/build.gradle.kts."
+            } else {
+                var next = text
+                if (versionName.isNotBlank()) {
+                    val regex = Regex("(?m)^(\\s*versionName\\s*=\\s*)\"[^\"]*\"")
+                    if (regex.containsMatchIn(next)) {
+                        next = regex.replace(next) {
+                            it.groupValues[1] + "\"" + versionName.replace("\"", "\\\"") + "\""
+                        }
+                    } else {
+                        problems += "app/build.gradle.kts does not declare versionName."
+                    }
+                }
+                if (versionCode != null) {
+                    next = setIntValue(next, "versionCode", versionCode) ?: next.also {
+                        problems += "app/build.gradle.kts does not declare versionCode."
+                    }
+                }
+                if (next != text) {
+                    write(appGradle, next, problems)
+                    changed += "app/build.gradle.kts"
+                }
+            }
+        }
+        if (appName.isNotBlank()) {
+            val manifest = File(projectDir, "app/src/main/AndroidManifest.xml")
+            if (manifest.isFile) {
+                val text = runCatching { manifest.readText() }.getOrNull()
+                if (text != null) {
+                    val label = Regex("(android:label\\s*=\\s*\")([^\"]*)(\")")
+                    val match = label.find(text)
+                    val current = match?.groupValues?.get(2).orEmpty()
+                    if (match != null && !current.startsWith("@string/")) {
+                        val replacement = match.groupValues[1] + appName
+                            .replace("&", "&amp;")
+                            .replace("<", "&lt;")
+                            .replace(">", "&gt;")
+                            .replace("\"", "&quot;") + match.groupValues[3]
+                        val next = text.replaceRange(match.range, replacement)
+                        if (next != text) {
+                            write(manifest, next, problems)
+                            changed += "app/src/main/AndroidManifest.xml"
+                        }
+                    }
+                }
+            }
+            val strings = File(projectDir, "app/src/main/res/values/strings.xml")
+            if (strings.isFile) {
+                val text = runCatching { strings.readText() }.getOrNull()
+                if (text != null) {
+                    val regex = Regex("(<string\\s+name=\"app_name\"\\s*>)(.*?)(</string>)")
+                    if (regex.containsMatchIn(text)) {
+                        val next = regex.replace(text) {
+                            it.groupValues[1] + appName
+                                .replace("&", "&amp;")
+                                .replace("<", "&lt;")
+                                .replace(">", "&gt;") + it.groupValues[3]
+                        }
+                        if (next != text) {
+                            write(strings, next, problems)
+                            changed += "app/src/main/res/values/strings.xml"
+                        }
+                    }
+                }
+            }
+        }
+        return Result(changed, problems)
+    }
+
     /** `key = 35`, `keyVersion = 35`, `keyVersion(35)` or `key(35)`; null when absent. */
     private fun setIntValue(text: String, key: String, value: Int): String? {
         val assign = Regex("(?m)^(\\s*$key(?:Version)?\\s*=\\s*)\\d+")

@@ -66,6 +66,11 @@ object SelfTest {
         val detail: String,
     )
 
+    val totalChecks: Int get() = names.size
+
+    fun displayName(number: Int): String =
+        names.getOrElse(number - 1) { "Check $number" }
+
     /** The text of the last run, as it appeared on screen — for the debug report. */
     @Volatile
     var lastReport: String? = null

@@ -475,7 +475,7 @@ val LightColors = PageColors(
 
     // Code editor design spec tokens: light mockup values, with the editor kept crisp white.
     editorBg = Color(0xFFFAFAFB),
-    activeLineBg = Color(0xFFF1F2F5),
+    activeLineBg = Color(0xFFE9EBEF),
     divider = Color(0xFFD5D8DE),
     text = Color(0xFF2E3036),
     lineNumber = Color(0xFF626772),

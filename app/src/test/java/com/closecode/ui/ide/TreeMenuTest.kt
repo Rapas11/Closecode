@@ -48,6 +48,8 @@ class TreeMenuTest {
         )
         assertEquals(
             listOf(
+                TreeAction.NEW_FILE,
+                TreeAction.NEW_FOLDER,
                 TreeAction.RENAME,
                 TreeAction.DUPLICATE,
                 TreeAction.DELETE,
@@ -58,7 +60,7 @@ class TreeMenuTest {
 
     @Test
     fun theMenuKeepsThePdfActionsInOrder() {
-        assertFalse(TreeAction.NEW_FILE in actionsForTree(file("app/README.md")))
+        assertTrue(TreeAction.NEW_FILE in actionsForTree(file("app/README.md")))
         assertTrue(TreeAction.DUPLICATE in actionsForTree(file("app/README.md")))
         assertEquals(TreeAction.DELETE, actionsForTree(file("app/README.md")).last())
     }

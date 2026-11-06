@@ -598,6 +598,8 @@ internal fun IdeScreen(
     var selfTestFacts by remember { mutableStateOf("") }
     var selfTestChecks by remember { mutableStateOf<List<SelfTest.Check>>(emptyList()) }
     var selfTestRunning by remember { mutableStateOf(false) }
+    var selfTestStartedAt by remember { mutableStateOf(0L) }
+    var selfTestElapsedMs by remember { mutableStateOf(0L) }
     var crashView by remember { mutableStateOf<String?>(null) }
     var confirmClearCache by remember { mutableStateOf(false) }
     var confirmDeleteTools by remember { mutableStateOf(false) }
@@ -606,6 +608,13 @@ internal fun IdeScreen(
     // save), and the report is what the settings sheet and the build panel's blocked state
     // both show — the same check, not two guesses that could disagree.
     var projectSettingsOpen by remember { mutableStateOf(false) }
+    var appIconOpen by remember { mutableStateOf(false) }
+    var signingOpen by remember { mutableStateOf(false) }
+    var releaseKeyOpen by remember { mutableStateOf(false) }
+    var createKeyOpen by remember { mutableStateOf(false) }
+    var importKeyOpen by remember { mutableStateOf(false) }
+    var iconsOpen by remember { mutableStateOf(false) }
+    var iconsTab by remember { mutableIntStateOf(0) }
     var projectCheckBusy by remember { mutableStateOf(false) }
     var projectRecord by remember(slug) { mutableStateOf(repository.find(slug)) }
     val projectRoot = remember(slug) { runCatching { repository.projectDir(slug) }.getOrNull() }
@@ -1257,6 +1266,50 @@ internal fun IdeScreen(
         }
     }
 
+    /** Saves the APP rows: the project label, app_name and the Gradle version fields. */
+    fun saveProjectVersion(appName: String, versionName: String, versionCode: String) {
+        val record = projectRecord ?: return
+        if (record.imported) {
+            toast = "Imported projects keep their own app name and version"
+            return
+        }
+        projectCheckBusy = true
+        fileScope.launch {
+            saveAllDirty()
+            val dir = runCatching { repository.projectDir(slug) }.getOrNull()
+            val problems = if (dir == null) {
+                listOf("The project folder could not be opened.")
+            } else {
+                withContext(Dispatchers.IO) {
+                    com.closecode.build.ProjectFiles.applyVersion(
+                        dir,
+                        appName = appName.trim(),
+                        versionName = versionName.trim(),
+                        versionCode = versionCode.toIntOrNull(),
+                    ).problems
+                }
+            }
+            val renamed = if (appName.trim().isNotBlank() && appName.trim() != record.name) {
+                repository.renameById(projectId, appName.trim())
+            } else {
+                record
+            }
+            if (renamed != null) projectRecord = renamed
+            refreshTree()
+            DebugLog.crumb(
+                "BUILD",
+                "project version saved · name=${appName.trim()} version=$versionName code=$versionCode" +
+                    if (problems.isEmpty()) "" else " · ${problems.size} file problems",
+            )
+            toast = when {
+                problems.isNotEmpty() -> problems.first()
+                else -> "Project settings saved"
+            }
+            projectCheckBusy = false
+            runProjectCheck()
+        }
+    }
+
     // Set when a search result opens a file: the next Back returns to the results sheet with
     // its query and hits intact, instead of leaving the project.
     var findReturn by remember { mutableStateOf(false) }
@@ -1503,12 +1556,12 @@ internal fun IdeScreen(
     fun onTreeAction(action: TreeAction, file: ProjectFile) {
         when (action) {
             TreeAction.NEW_FILE -> {
-                selectedPath = file.path
+                selectedPath = if (file.kind == FileKind.Folder) file.path else file.path.substringBeforeLast('/', "")
                 prompt = TreePrompt.New(isFolder = false)
             }
 
             TreeAction.NEW_FOLDER -> {
-                selectedPath = file.path
+                selectedPath = if (file.kind == FileKind.Folder) file.path else file.path.substringBeforeLast('/', "")
                 prompt = TreePrompt.New(isFolder = true)
             }
 
@@ -1882,6 +1935,12 @@ internal fun IdeScreen(
             "selfTest".takeIf { selfTestOpen },
             "crash".takeIf { crashView != null },
             "projectSettings".takeIf { projectSettingsOpen },
+            "appIcon".takeIf { appIconOpen },
+            "signing".takeIf { signingOpen },
+            "releaseKey".takeIf { releaseKeyOpen },
+            "createKey".takeIf { createKeyOpen },
+            "importKey".takeIf { importKeyOpen },
+            "icons".takeIf { iconsOpen },
             "search".takeIf { searchOpen },
             "sidebarTool".takeIf { explorerOpen && sidebarTool != null },
             "menu".takeIf { menuOpen },
@@ -1948,6 +2007,30 @@ internal fun IdeScreen(
             crashView != null -> {
                 BackLog.press("main", "${backState()} branch=crash")
                 crashView = null
+            }
+            importKeyOpen -> {
+                BackLog.press("main", "${backState()} branch=importKey")
+                importKeyOpen = false
+            }
+            createKeyOpen -> {
+                BackLog.press("main", "${backState()} branch=createKey")
+                createKeyOpen = false
+            }
+            releaseKeyOpen -> {
+                BackLog.press("main", "${backState()} branch=releaseKey")
+                releaseKeyOpen = false
+            }
+            signingOpen -> {
+                BackLog.press("main", "${backState()} branch=signing")
+                signingOpen = false
+            }
+            appIconOpen -> {
+                BackLog.press("main", "${backState()} branch=appIcon")
+                appIconOpen = false
+            }
+            iconsOpen -> {
+                BackLog.press("main", "${backState()} branch=icons")
+                iconsOpen = false
             }
             projectSettingsOpen -> {
                 BackLog.press("main", "${backState()} branch=projectSettings")
@@ -2933,6 +3016,11 @@ internal fun IdeScreen(
         }
         if (projectSettingsOpen) {
             val record = projectRecord
+            val facts = remember(projectRoot, projectReport, projectCheckBusy) {
+                projectRoot?.let {
+                    runCatching { com.closecode.build.GradleReader.read(it) }.getOrNull()
+                }
+            }
             IdeProjectSettingsSheet(
                 imported = record?.imported == true,
                 packageName = if (record?.imported == true) {
@@ -2950,6 +3038,71 @@ internal fun IdeScreen(
                 },
                 onDismiss = { projectSettingsOpen = false },
                 barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
+                appName = record?.name.orEmpty(),
+                versionName = facts?.versionName.orEmpty(),
+                versionCode = facts?.versionCode?.toString().orEmpty(),
+                onSaveApp = { name, version, code -> saveProjectVersion(name, version, code) },
+                onPickIcon = { appIconOpen = true },
+                projectRoot = projectRoot,
+                onSigning = {
+                    val signing = runCatching { com.closecode.build.SigningStore(context) }.getOrNull()
+                    val hasRelease = signing?.let {
+                        it.generatedInfo() != null || it.importedKeys().isNotEmpty()
+                    } == true
+                    if (hasRelease) releaseKeyOpen = true else signingOpen = true
+                },
+                onIcons = { iconsOpen = true },
+            )
+        }
+        if (appIconOpen) {
+            IdeAppIconScreen(
+                projectRoot = projectRoot,
+                projectColors = listOf(
+                    androidx.compose.ui.graphics.Color(0xFF2563EB),
+                    androidx.compose.ui.graphics.Color(0xFF16A34A),
+                    androidx.compose.ui.graphics.Color(0xFFEA580C),
+                    androidx.compose.ui.graphics.Color(0xFF0E7490),
+                    androidx.compose.ui.graphics.Color(0xFF7C3AED),
+                    androidx.compose.ui.graphics.Color(0xFFBE185D),
+                ),
+                onBack = { appIconOpen = false },
+                onApplied = { projectCheckBusy = false; runProjectCheck() },
+            )
+        }
+        if (signingOpen) {
+            IdeSigningKeysScreen(
+                onBack = { signingOpen = false },
+                onCreateKey = { createKeyOpen = true },
+                onImportKey = { importKeyOpen = true },
+            )
+        }
+        if (releaseKeyOpen) {
+            IdeReleaseKeyScreen(
+                onBack = { releaseKeyOpen = false },
+                onReplace = { releaseKeyOpen = false; createKeyOpen = true },
+                onRemoved = { releaseKeyOpen = false; signingOpen = true },
+            )
+        }
+        if (createKeyOpen) {
+            IdeCreateKeyScreen(
+                onBack = { createKeyOpen = false },
+                onCreated = { createKeyOpen = false; releaseKeyOpen = true; signingOpen = false },
+            )
+        }
+        if (importKeyOpen) {
+            IdeImportKeyScreen(
+                onBack = { importKeyOpen = false },
+                onImported = { importKeyOpen = false; releaseKeyOpen = true; signingOpen = false },
+            )
+        }
+
+        if (iconsOpen) {
+            IdeIconsScreen(
+                projectRoot = projectRoot,
+                tab = iconsTab,
+                onTab = { iconsTab = it },
+                onBack = { iconsOpen = false },
+                onChangeLogo = { iconsOpen = false; appIconOpen = true },
             )
         }
 
@@ -2984,7 +3137,17 @@ internal fun IdeScreen(
                 onSelfTest = {
                     selfTestFacts = SelfTest.facts(context)
                     selfTestChecks = emptyList()
+                    selfTestElapsedMs = 0L
+                    selfTestStartedAt = System.currentTimeMillis()
+                    selfTestRunning = true
                     selfTestOpen = true
+                    fileScope.launch {
+                        SelfTest.run(context) { check ->
+                            selfTestChecks = selfTestChecks + check
+                        }
+                        selfTestElapsedMs = System.currentTimeMillis() - selfTestStartedAt
+                        selfTestRunning = false
+                    }
                 },
                 onViewCrash = {
                     val report = CrashReport.readLast(context.filesDir)
@@ -3014,34 +3177,40 @@ internal fun IdeScreen(
         }
 
         if (selfTestOpen) {
-            IdeSelfTestSheet(
-                facts = selfTestFacts,
+            LaunchedEffect(selfTestRunning, selfTestStartedAt) {
+                while (selfTestRunning) {
+                    selfTestElapsedMs = System.currentTimeMillis() - selfTestStartedAt
+                    delay(250)
+                }
+            }
+            IdeSelfTestScreen(
                 checks = selfTestChecks,
                 running = selfTestRunning,
+                elapsedMs = selfTestElapsedMs,
                 onRun = {
                     if (!selfTestRunning) {
                         selfTestFacts = SelfTest.facts(context)
                         selfTestChecks = emptyList()
+                        selfTestElapsedMs = 0L
+                        selfTestStartedAt = System.currentTimeMillis()
                         selfTestRunning = true
                         fileScope.launch {
                             SelfTest.run(context) { check ->
                                 selfTestChecks = selfTestChecks + check
                             }
+                            selfTestElapsedMs = System.currentTimeMillis() - selfTestStartedAt
                             selfTestRunning = false
                         }
                     }
                 },
-                onCopyReport = {
+                onShare = {
                     val report = SelfTest.lastReport
-                    if (report == null) {
-                        toast = "Run the self-test first"
-                    } else {
-                        treeClipboard.setText(androidx.compose.ui.text.AnnotatedString(report))
-                        toast = "Self-test report copied"
+                        ?: SelfTest.reportText(selfTestFacts, selfTestChecks)
+                    if (!sharePlainText(context, "CloseCode self-test", report)) {
+                        toast = "No app accepted the share"
                     }
                 },
-                onDismiss = { selfTestOpen = false },
-                barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
+                onBack = { selfTestOpen = false },
             )
         }
 
@@ -3347,8 +3516,8 @@ internal fun IdeScreen(
                     Modifier
                         .padding(horizontal = 28.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(c.panel)
-                        .border(1.dp, c.ln, RoundedCornerShape(14.dp))
+                        .background(c.mock.panel)
+                        .border(1.dp, c.mock.divider, RoundedCornerShape(14.dp))
                         .clickable(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
@@ -3358,7 +3527,7 @@ internal fun IdeScreen(
                 ) {
                     Text(
                         text = "Unsaved changes",
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Bold,
@@ -3366,7 +3535,7 @@ internal fun IdeScreen(
                     )
                     Text(
                         text = "Some files have edits that are not saved yet.",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 13.sp,
                         lineHeight = 19.sp,
                         fontFamily = Sans,
@@ -3405,7 +3574,7 @@ private fun RowScope.ExitDialogButton(label: String, primary: Boolean, onClick: 
             .clip(RoundedCornerShape(10.dp))
             .then(
                 if (primary) Modifier.background(c.accent)
-                else Modifier.border(1.dp, c.ln, RoundedCornerShape(10.dp)),
+                else Modifier.border(1.dp, c.mock.divider, RoundedCornerShape(10.dp)),
             )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -3432,7 +3601,7 @@ private fun IdeFullPageBar(title: String, onBack: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .background(c.panel)
+            .background(c.mock.panel)
             .windowInsetsPadding(WindowInsets.statusBars)
             .height(52.dp)
             .drawBehind {
@@ -3490,7 +3659,7 @@ private fun IdeTopBar(
             // row's buttons sat against it; now the panel colour extends behind the bar and the
             // 52 dp of content starts below it. Where the system already insets the window, the
             // value is zero and nothing moves.
-            .background(c.panel)
+            .background(c.mock.panel)
             .windowInsetsPadding(WindowInsets.statusBars)
             .height(52.dp)
             .drawBehind {
@@ -3587,7 +3756,7 @@ private fun IdeTopBar(
         HeaderIconButton(
             icon = CcIcons.More,
             label = "More",
-            tint = if (menuActive) c.tx else c.iconTint,
+            tint = if (menuActive) c.mock.text else c.iconTint,
             background = if (menuActive) c.panel2 else Color.Transparent,
             onClick = onMore,
         )
@@ -3886,58 +4055,70 @@ private fun IdePathBar(
     onRedo: () -> Unit,
     onRun: () -> Unit,
 ) {
-    val c = LocalPageColors.current
-    val fileName = filePath.substringAfterLast('/').ifBlank { "No file" }
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .background(c.mock.content)
-            .padding(start = 18.dp, end = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = fileName,
-            color = c.mock.text,
-            fontSize = 16.5.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        HeaderIconButton(
-            icon = CcIcons.Undo,
-            label = "Undo",
-            tint = if (canUndo) c.mock.text2 else c.mock.faint.copy(alpha = 0.4f),
-            background = Color.Transparent,
-            enabled = canUndo,
-            boxSize = 34.dp,
-            iconSize = 19.dp,
-            onClick = onUndo,
-        )
-        Spacer(Modifier.width(4.dp))
-        HeaderIconButton(
-            icon = CcIcons.Redo,
-            label = "Redo",
-            tint = if (canRedo) c.mock.text2 else c.mock.faint.copy(alpha = 0.4f),
-            background = Color.Transparent,
-            enabled = canRedo,
-            boxSize = 34.dp,
-            iconSize = 19.dp,
-            onClick = onRedo,
-        )
-        Box(
+    val cc = com.closecode.ui.theme.LocalCcColors.current
+    val fileName = filePath.substringAfterLast('/').ifBlank { "No file open" }
+    Column(Modifier.fillMaxWidth().background(cc.content)) {
+        Row(
             Modifier
-                .padding(start = 6.dp)
-                .size(36.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(c.mock.green)
-                .clickable(onClick = onRun),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(start = 18.dp, end = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            CcIcon(CcIcons.Play, c.mock.onGreen, 17.dp)
+            Text(
+                text = fileName,
+                color = cc.text,
+                fontSize = 16.5.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.width(10.dp))
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clickable(enabled = canUndo, onClick = onUndo)
+                    .semantics { contentDescription = "Undo" },
+                contentAlignment = Alignment.Center,
+            ) {
+                com.closecode.ui.CcIcon(
+                    "undo",
+                    if (canUndo) cc.text2 else cc.faint,
+                    19.dp,
+                    1.9f,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clickable(enabled = canRedo, onClick = onRedo)
+                    .semantics { contentDescription = "Redo" },
+                contentAlignment = Alignment.Center,
+            ) {
+                com.closecode.ui.CcIcon(
+                    "redo",
+                    if (canRedo) cc.text2 else cc.faint,
+                    19.dp,
+                    1.9f,
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(cc.green)
+                    .clickable(onClick = onRun)
+                    .semantics { contentDescription = "Run" },
+                contentAlignment = Alignment.Center,
+            ) {
+                com.closecode.ui.CcIcon("play", Color.White, 17.dp)
+            }
         }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(cc.divider))
     }
 }
 
@@ -4076,8 +4257,8 @@ private fun IdeExplorer(
         Modifier
             .width(234.dp)
             .fillMaxHeight()
-            // v7: the panel is a rounded card — BOTH top corners are 26, not only the left one.
-            .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+            // The panel is a card with a rounded top-left corner only.
+            .clip(RoundedCornerShape(topStart = 26.dp))
             .background(cc.panel)
             .windowInsetsPadding(WindowInsets.statusBars)
             .clipToBounds(),
@@ -4109,20 +4290,14 @@ private fun IdeExplorer(
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-            HeaderIconButton(
-                icon = CcIcons.Plus,
+            com.closecode.ui.components.HeaderAction(
+                icon = "plus",
                 label = "New file",
-                tint = cc.text2,
-                background = cc.field,
-                iconSize = 18.dp,
                 onClick = onCreateFile,
             )
-            HeaderIconButton(
-                icon = CcIcons.FolderPlus,
+            com.closecode.ui.components.HeaderAction(
+                icon = "folder",
                 label = "New folder",
-                tint = cc.text2,
-                background = cc.field,
-                iconSize = 18.dp,
                 onClick = onCreateFolder,
             )
         }
@@ -4137,7 +4312,7 @@ private fun IdeExplorer(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            CcIcon(CcIcons.Search, cc.muted, 16.dp)
+            com.closecode.ui.CcIcon("search", cc.muted, 16.dp)
             BasicTextField(
                 value = query,
                 onValueChange = onQueryChange,
@@ -4179,7 +4354,7 @@ private fun IdeExplorer(
             }
             LazyRow(
                 Modifier.fillMaxWidth(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 14.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(start = 14.dp, end = 14.dp, bottom = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 items(openTabs, key = { it.path }) { file ->
@@ -4231,39 +4406,20 @@ private fun IdeExplorer(
             LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
                 if (rows.isEmpty()) {
                     item(key = "empty") {
-                        Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 24.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Text(
-                                text = if (q.isNotEmpty()) "No files match" else "This folder is empty",
-                                color = cc.muted,
-                                fontSize = 13.sp,
-                                fontFamily = Sans,
-                                fontWeight = FontWeight.SemiBold,
+                        if (q.isNotEmpty()) {
+                            com.closecode.ui.components.EmptyState(
+                                icon = "search",
+                                title = "No files match",
+                                subtitle = "Try another name.",
                             )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = if (q.isNotEmpty()) "Try another name." else "Create a file or a folder.",
-                                color = cc.textSoft,
-                                fontSize = 12.sp,
-                                fontFamily = Sans,
-                                textAlign = TextAlign.Center,
+                        } else {
+                            com.closecode.ui.components.EmptyState(
+                                icon = "folder",
+                                title = "This folder is empty",
+                                subtitle = "Create a file or a folder.",
+                                actionText = "New file",
+                                onAction = onCreateFile,
                             )
-                            if (q.isEmpty()) {
-                                Spacer(Modifier.height(12.dp))
-                                com.closecode.ui.components.OutlineButton(
-                                    label = "New file",
-                                    onClick = onCreateFile,
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                com.closecode.ui.components.OutlineButton(
-                                    label = "Clone a repository",
-                                    onClick = onCloneRequest,
-                                )
-                            }
                         }
                     }
                 }
@@ -4273,20 +4429,28 @@ private fun IdeExplorer(
                     val closed = open && file.path in collapsed
                     TreeRow(
                         label = row.label,
-                        depth = file.depth + 1,
+                        depth = file.depth,
                         bold = false,
-                        icon = com.closecode.ui.model.fileIconName(file.kind),
+                        icon = when {
+                            file.path.endsWith(".java") || file.path.endsWith(".ts") ||
+                                file.path.endsWith(".tsx") || file.path.endsWith(".jsx") ||
+                                file.path.endsWith(".py") -> "code"
+                            else -> com.closecode.ui.model.fileIconName(file.kind)
+                        },
                         iconTint = when {
                             file.kind == FileKind.Folder -> cc.yellow
-                            file.kind == FileKind.Markdown ||
-                                file.kind == FileKind.Properties -> cc.muted
+                            file.kind == FileKind.Markdown || file.kind == FileKind.Properties ||
+                                file.path.endsWith(".txt") -> cc.muted
                             file.kind == FileKind.Kotlin ||
                                 file.kind == FileKind.Xml ||
                                 file.kind == FileKind.Gradle ||
                                 file.kind == FileKind.Json ||
                                 file.kind == FileKind.Css ||
                                 file.kind == FileKind.Js ||
-                                file.kind == FileKind.Html -> cc.purple
+                                file.kind == FileKind.Html ||
+                                file.path.endsWith(".java") || file.path.endsWith(".ts") ||
+                                file.path.endsWith(".tsx") || file.path.endsWith(".jsx") ||
+                                file.path.endsWith(".py") -> cc.purple
                             else -> cc.blue
                         },
                         chevron = if (open) "cr" else null,
@@ -4304,8 +4468,7 @@ private fun IdeExplorer(
                     item(key = "hint") {
                         Text(
                             text = "Tap a file to open it. Long press for Rename, Duplicate, " +
-                                "Copy path and Delete. A yellow dot means unsaved changes. " +
-                                "The letter on the right is the Git status.",
+                                "Copy path and Delete. The letter on the right is the Git status.",
                             color = cc.faint,
                             fontSize = 11.sp,
                             fontFamily = Sans,
@@ -4341,7 +4504,7 @@ private fun IdeExplorer(
         }
         // v7: the run card floats above the panel's bottom; the panel only reserves its
         // strip so the last rows of either tab are never hidden behind it.
-        Spacer(Modifier.height(84.dp))
+        Spacer(Modifier.height(76.dp))
     }
         // Files, like every side panel, floats the run card. The Source Control tab does not
         // (its commit controls own the bottom strip).
@@ -4367,7 +4530,7 @@ internal fun SectionLabel(text: String) {
     val c = LocalPageColors.current
     Text(
         text = text,
-        color = c.mu.copy(alpha = 0.7f),
+        color = c.mock.muted.copy(alpha = 0.7f),
         fontSize = 10.sp,
         fontFamily = Sans,
         fontWeight = FontWeight.Bold,
@@ -4405,6 +4568,8 @@ internal fun actionsForTree(file: ProjectFile): List<TreeAction> =    if (file.k
         )
     } else {
         listOf(
+            TreeAction.NEW_FILE,
+            TreeAction.NEW_FOLDER,
             TreeAction.RENAME,
             TreeAction.DUPLICATE,
             TreeAction.DELETE,
@@ -4498,20 +4663,11 @@ private fun TreeRow(
                 color = cc.text2,
                 fontSize = 13.5.sp,
                 fontFamily = Sans,
-                fontWeight = if (bold || active) FontWeight.SemiBold else FontWeight.Normal,
+                fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
-            if (dirty) {
-                Box(
-                    Modifier
-                        .padding(start = 6.dp)
-                        .size(6.dp)
-                        .clip(CircleShape)
-                        .background(cc.amber),
-                )
-            }
             if (gitLetter != null) {
                 Text(
                     text = gitLetter,
@@ -5757,6 +5913,31 @@ val applySuggestion: (Int) -> Unit = { index ->
         commit(TextFieldValue(next, TextRange(at + insert.length)))
     }
 
+    /** Inserts a pair, wrapping the selection when there is one, and puts the caret inside. */
+    fun typePair(pair: String) {
+        if (pair.length < 2) {
+            typeAtCaret(pair)
+            return
+        }
+        val open = pair.substring(0, 1)
+        val close = pair.substring(1)
+        val live = fieldValue
+        val start = live.selection.min.coerceIn(0, live.text.length)
+        val end = live.selection.max.coerceIn(0, live.text.length)
+        val selected = live.text.substring(start, end)
+        val next = live.text.substring(0, start) + open + selected + close + live.text.substring(end)
+        val caret = start + open.length + selected.length
+        commit(TextFieldValue(next, TextRange(caret)))
+    }
+
+    /** Moves the caret one character right, to jump over a closing bracket. */
+    fun moveCaretRight() {
+        val live = fieldValue
+        val at = live.selection.max.coerceIn(0, live.text.length)
+        val next = (at + 1).coerceAtMost(live.text.length)
+        if (next != at) commit(TextFieldValue(live.text, TextRange(next)))
+    }
+
     /** Moves the caret one line up or down, keeping the column where the line is long enough. */
     fun moveCaretVertically(delta: Int) {
         val live = fieldValue
@@ -5915,7 +6096,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                     .height(SCOPE_HEADER_HEIGHT)
                     .drawBehind {
                         drawLine(
-                            color = c.ln,
+                            color = c.mock.divider,
                             start = Offset(0f, size.height - 0.5f),
                             end = Offset(size.width, size.height - 0.5f),
                             strokeWidth = 1f,
@@ -5925,7 +6106,7 @@ val applySuggestion: (Int) -> Unit = { index ->
             ) {
                 Text(
                     text = scopeHeader,
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Mono,
                     maxLines = 1,
@@ -5935,11 +6116,13 @@ val applySuggestion: (Int) -> Unit = { index ->
         }
 
         // File chips. The active file is a blurple pill; the rest are quiet grey pills.
+        if (tabs.isNotEmpty()) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .height(TAB_STRIP_HEIGHT)
-                .background(c.editorBg),
+                .background(c.editorBg)
+                .padding(vertical = 9.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             LazyRow(
@@ -5968,12 +6151,11 @@ val applySuggestion: (Int) -> Unit = { index ->
                     start = 12.dp,
                     end = 12.dp,
                 ),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 itemsIndexed(tabs, key = { _, t -> "tab-${t.path}" }) { _, tab ->
                     val isActive = tab.path == active
-                    val dirty = dirtyOf(tab.path)
                     val duplicates = tabs.count { it.name == tab.name } > 1
                     val tabLabel = if (duplicates) {
                         tab.path.substringBeforeLast('/').substringAfterLast('/')
@@ -5986,31 +6168,25 @@ val applySuggestion: (Int) -> Unit = { index ->
                             Modifier
                                 .height(TAB_HEIGHT)
                                 .clip(RoundedCornerShape(15.dp))
-                                .background(if (isActive) c.mock.accent else c.mock.field)
+                                .background(if (isActive) c.mock.content else c.mock.field)
+                                .border(
+                                    1.dp,
+                                    if (isActive) c.mock.border else Color.Transparent,
+                                    RoundedCornerShape(15.dp),
+                                )
                                 .combinedClickable(
                                     onClick = { selectTabKeepingPlace(tab.path) },
                                     onLongClick = { tabMenuFor = tab.path },
                                 )
-                                .padding(horizontal = 14.dp),
+                                .padding(horizontal = 13.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
-                            if (dirty) {
-                                Box(
-                                    Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(
-                                            if (isActive) Color.White else c.mock.warning,
-                                        ),
-                                )
-                            }
                             Text(
                                 text = ellipsizeMiddle(tabLabel),
-                                color = if (isActive) Color.White else c.mock.text2,
+                                color = if (isActive) c.mock.text else c.mock.textSoft,
                                 fontSize = 12.5.sp,
                                 fontFamily = Sans,
-                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium,
+                                fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.widthIn(max = 150.dp),
@@ -6048,6 +6224,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                     }
                 }
             }
+        }
         }
         val popupDensity = androidx.compose.ui.platform.LocalDensity.current
         // The signature tooltip is computed here, above the pill, because the pill
@@ -6215,7 +6392,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                 Text(
                     text = "${codeRange.last - codeRange.first + 1} lines · " +
                         "${lineIndex.lineCount} total · $slowFrames > 32 ms",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Mono,
                 )
@@ -6361,7 +6538,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                         if (fieldValue.text.isEmpty()) {
                             Text(
                                 text = "Empty file",
-                                color = c.mu,
+                                color = c.mock.muted,
                                 fontSize = codeFontSize,
                                 style = androidx.compose.ui.text.TextStyle(
                                     lineHeight = codeLineHeightTextUnit,
@@ -6381,7 +6558,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                         }
                         Text(
                             text = highlighted,
-                            color = c.tx,
+                            color = c.mock.text2,
                             fontSize = codeFontSize,
                             // Centring the glyphs in the fixed row is what lets the gutter number
                             // share the row's baseline.
@@ -6471,7 +6648,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                                 ),
                                 fontFamily = Mono,
                             ),
-                            cursorBrush = SolidColor(c.ac),
+                            cursorBrush = SolidColor(c.mock.accent),
                             // ImeAction.Default with no KeyboardActions, so Enter always inserts a
                             // newline even while the suggestion popup is open. Only Tab or tapping
                             // a row accepts a suggestion. No capitals or corrections: code must
@@ -7115,8 +7292,14 @@ val applySuggestion: (Int) -> Unit = { index ->
                 .clipToBounds(),
         ) {
             EditorKeyRow(
-                onTab = { onToolAction(ToolAction.TAB) },
-                onKey = { glyph -> typeAtCaret(glyph) },
+                onKey = { key ->
+                    when {
+                        key.label == "Tab" -> onToolAction(ToolAction.TAB)
+                        key.moveRight -> moveCaretRight()
+                        key.caretBack > 0 -> typePair(key.insert)
+                        else -> typeAtCaret(key.insert)
+                    }
+                },
             )
         }
     }
@@ -7567,7 +7750,7 @@ private fun RowScope.SelectionBarGlyph(
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        Text(text = glyph, color = c.mu, fontSize = 15.sp, fontFamily = Sans, maxLines = 1)
+        Text(text = glyph, color = c.mock.muted, fontSize = 15.sp, fontFamily = Sans, maxLines = 1)
     }
 }
 
@@ -7869,9 +8052,9 @@ private fun IdeNav(
     Row(
         modifier
             .fillMaxWidth()
-            .background(c.panel)
+            .background(c.mock.panel)
             // Spec 4.2: a 1 dp top border, no pill or indicator behind the active item.
-            .border(1.dp, c.ln, RoundedCornerShape(0.dp)),
+            .border(1.dp, c.mock.divider, RoundedCornerShape(0.dp)),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IdeNavItems.forEach { item ->
@@ -7887,7 +8070,7 @@ private fun IdeNav(
             ) {
                 Text(
                     text = item,
-                    color = if (isActive) c.ac else c.mu,
+                    color = if (isActive) c.mock.accent else c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.SemiBold,
@@ -7904,12 +8087,12 @@ private fun IdeToast(text: String) {
 
     Text(
         text = text,
-        color = c.panel,
+        color = c.mock.panel,
         fontSize = 12.sp,
         fontFamily = Sans,
         modifier = Modifier
             .clip(RoundedCornerShape(10.dp))
-            .background(c.tx)
+            .background(c.mock.text)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     )
 }
@@ -8018,7 +8201,7 @@ internal const val TreeListHeaderItems = 0
  * child would otherwise stretch this strip over the whole editor and squeeze the code area out of
  * existence.
  */
-internal val TAB_STRIP_HEIGHT = 40.dp
+internal val TAB_STRIP_HEIGHT = 48.dp
 
 /** Spec 6.1: the tab's own height inside the strip. */
 internal val TAB_HEIGHT = 30.dp

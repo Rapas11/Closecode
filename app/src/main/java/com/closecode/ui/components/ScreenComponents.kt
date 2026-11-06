@@ -233,10 +233,10 @@ fun ScreenField(
     Box(
         modifier
             .fillMaxWidth()
-            .height(52.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .height(44.dp)
+            .clip(RoundedCornerShape(13.dp))
             .background(c.mock.field)
-            .padding(horizontal = 16.dp),
+            .padding(horizontal = 14.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
         BasicTextField(
@@ -244,7 +244,7 @@ fun ScreenField(
             onValueChange = onChange,
             textStyle = TextStyle(
                 color = c.mock.text,
-                fontSize = 14.sp,
+                fontSize = if (monospace) 12.5.sp else 14.sp,
                 fontFamily = if (monospace) Mono else Sans,
             ),
             keyboardOptions = keyboardOptions,
@@ -255,7 +255,7 @@ fun ScreenField(
                     Text(
                         text = hint,
                         color = c.mock.faint,
-                        fontSize = 14.sp,
+                        fontSize = if (monospace) 12.5.sp else 14.sp,
                         fontFamily = if (monospace) Mono else Sans,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,

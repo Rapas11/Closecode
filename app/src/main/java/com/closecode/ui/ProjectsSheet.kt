@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -130,25 +131,13 @@ fun ProjectsSheet(
                         fontWeight = FontWeight.ExtraBold,
                         modifier = Modifier.weight(1f),
                     )
-                    if (projects.size > 6) {
-                        Box(
-                            Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { searching = !searching },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CcIcon(CcIcons.Search, c.mock.muted, 19.dp)
-                        }
-                    }
                     Box(
                         Modifier
-                            .size(38.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .clickable(onClick = onClose),
+                            .size(34.dp)
+                            .clickable { searching = !searching },
                         contentAlignment = Alignment.Center,
                     ) {
-                        CcIcon(CcIcons.Close, c.mock.text2, 21.dp)
+                        CcIcon(CcIcons.Search, c.mock.textSoft, 21.dp)
                     }
                 }
                 if (searching) {
@@ -232,7 +221,7 @@ fun ProjectsSheet(
                             top = 6.dp,
                             bottom = 4.dp,
                         ),
-                        verticalArrangement = Arrangement.spacedBy(11.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         items(visible, key = { it.id }) { project ->
                             ProjectSwitchRow(
@@ -308,9 +297,9 @@ private fun ProjectSwitchRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .height(58.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (open) c.mock.selected else Color.Transparent)
+            .height(60.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (open) c.mock.field else Color.Transparent)
             .clickable(onClick = onClick)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -336,14 +325,15 @@ private fun ProjectSwitchRow(
                 Box(
                     Modifier
                         .align(Alignment.BottomEnd)
-                        .offset(x = 3.dp, y = 3.dp)
+                        .offset(x = 5.dp, y = 5.dp)
+                        .size(19.dp)
                         .clip(androidx.compose.foundation.shape.CircleShape)
                         .background(c.mock.badge)
-                        .padding(horizontal = 5.dp, vertical = 1.dp)
+                        .border(3.dp, c.mock.rail, androidx.compose.foundation.shape.CircleShape)
                         .semantics { contentDescription = "$count problems" },
                 ) {
                     Text(
-                        text = if (count > 9) "9+" else count.toString(),
+                        text = if (count > 99) "99+" else count.toString(),
                         color = Color.White,
                         fontSize = 10.sp,
                         fontFamily = Sans,
@@ -364,8 +354,6 @@ private fun ProjectSwitchRow(
             )
             Text(
                 text = buildAnnotatedString {
-                    append(if (project.tab == TemplateTab.Web) "Website" else "Android")
-                    append(" · ")
                     val branch = branchOf(project)
                     if (!branch.isNullOrBlank()) {
                         append(branch)
