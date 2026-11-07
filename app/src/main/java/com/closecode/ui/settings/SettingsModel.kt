@@ -155,10 +155,10 @@ fun relativePath(path: String): String {
 /** The six accent swatches offered by the design: blurple, blue, green, amber, red, pink. */
 val AccentOptions = listOf(
     Color(0xFF5865F2),
-    Color(0xFF3B82F6),
-    Color(0xFF10B981),
-    Color(0xFFF59E0B),
-    Color(0xFFEF4444),
+    Color(0xFF2563EB),
+    Color(0xFF248046),
+    Color(0xFFC98A0A),
+    Color(0xFFDA373C),
     Color(0xFFEC4899),
 )
 

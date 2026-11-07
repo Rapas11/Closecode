@@ -1,7 +1,6 @@
 package com.closecode.ui.ide
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +14,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -32,7 +30,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -187,15 +184,7 @@ fun IdeProjectSettingsSheet(
                     tint = Color(0xFFDB4C9B),
                     title = "App icon",
                     sub = if (icon != null) "Custom launcher icon" else "Default Android icon",
-                    value = if (icon != null) "Change" else "Choose",
                     onClick = onPickIcon,
-                    trailing = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            AppIconTile(icon)
-                            Spacer(Modifier.width(6.dp))
-                            com.closecode.ui.CcIcon("cr", c.faint, 15.dp, 2.2f)
-                        }
-                    },
                     showDivider = false,
                 )
                 SettingRow(
@@ -204,7 +193,6 @@ fun IdeProjectSettingsSheet(
                     title = "Icons",
                     sub = "Logo, project icons and icon packs",
                     onClick = onIcons,
-                    trailing = {},
                     showDivider = false,
                 )
             }
@@ -390,24 +378,6 @@ private fun projectIcon(root: File?): ImageBitmap? {
     val file = root?.let { File(it, ProjectIconFiles.LAUNCHER) } ?: return null
     if (!file.isFile) return null
     return runCatching { BitmapFactory.decodeFile(file.path)?.asImageBitmap() }.getOrNull()
-}
-
-@Composable
-private fun AppIconTile(icon: ImageBitmap?) {
-    val c = LocalCcColors.current
-    if (icon != null) {
-        Image(
-            bitmap = icon,
-            contentDescription = null,
-            modifier = Modifier.size(30.dp).clip(RoundedCornerShape(9.dp)),
-            contentScale = ContentScale.Crop,
-        )
-    } else {
-        Box(
-            Modifier.size(30.dp).clip(RoundedCornerShape(9.dp))
-                .background(c.faint.copy(alpha = 0.28f)),
-        )
-    }
 }
 
 @Composable

@@ -779,6 +779,7 @@ fun IdeNameDialog(
     initial: String = "",
     confirmLabel: String = "Create",
     horizontalBias: Float = 0f,
+    subtitle: String? = null,
 ) {
     val c = LocalPageColors.current
     // Keyed on the value it starts with: a dialog that swaps one target for another without
@@ -823,8 +824,19 @@ fun IdeNameDialog(
                 fontSize = 15.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 12.dp),
+                modifier = Modifier.padding(bottom = if (subtitle == null) 12.dp else 4.dp),
             )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    color = c.mock.muted,
+                    fontSize = 11.5.sp,
+                    fontFamily = Mono,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+            }
             Box(
                 Modifier
                     .fillMaxWidth()

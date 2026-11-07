@@ -42,6 +42,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -714,8 +720,11 @@ internal fun IdeSearchSidePanel(
 @Composable
 internal fun IdeTerminalSidePanel(
     sessions: TerminalSessions,
+    commands: List<String>,
     onOpen: (Int) -> Unit,
     onNew: () -> Unit,
+    onRunCommand: (String) -> Unit,
+    onAddCommand: () -> Unit,
     runCard: @Composable () -> Unit,
 ) {
     val c = LocalPageColors.current
@@ -758,7 +767,13 @@ internal fun IdeTerminalSidePanel(
                                 .background(c.mock.blue.copy(alpha = 0.13f)),
                             contentAlignment = Alignment.Center,
                         ) {
-                            com.closecode.ui.CcIcon("term", c.mock.blue, 19.dp, 1.8f)
+                            Text(
+                                text = ">_",
+                                color = c.mock.blue,
+                                fontSize = 12.sp,
+                                fontFamily = Mono,
+                                fontWeight = FontWeight.Medium,
+                            )
                         }
                         Box(
                             Modifier
@@ -787,8 +802,8 @@ internal fun IdeTerminalSidePanel(
                             overflow = TextOverflow.Ellipsis,
                         )
                         Text(
-                            text = "${session.cwd.ifBlank { "Project root" }}${if (running) " · running" else ""}",
-                            color = c.mock.muted,
+                            text = "${session.cwd.ifBlank { "Project root" }} · ${if (running) "running" else "idle"}",
+                            color = if (running) c.mock.green else c.mock.muted,
                             fontSize = 11.sp,
                             fontFamily = Mono,
                             maxLines = 1,
@@ -798,14 +813,83 @@ internal fun IdeTerminalSidePanel(
                     }
                 }
             }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = "Tap a shell to open it. The full terminal keeps the strip's long presses: rename and close.",
-                color = c.mock.faint,
-                fontSize = 10.5.sp,
-                fontFamily = Sans,
-                modifier = Modifier.padding(horizontal = 16.dp),
+            Spacer(Modifier.height(14.dp))
+            com.closecode.ui.components.SecLabel(
+                text = "Saved commands",
+                start = 16.dp,
+                top = 0.dp,
+                bottom = 6.dp,
             )
+            commands.chunked(2).forEach { rowCommands ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    rowCommands.forEach { command ->
+                        val (alias, cmd) = splitAlias(command)
+                        Row(
+                            Modifier
+                                .weight(1f)
+                                .height(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(c.mock.field)
+                                .clickable { onRunCommand(command) }
+                                .padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "›",
+                                color = c.mock.accent,
+                                fontSize = 12.sp,
+                                fontFamily = Mono,
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                text = alias ?: cmd,
+                                color = c.mock.text2,
+                                fontSize = 11.sp,
+                                fontFamily = Mono,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    if (rowCommands.size == 1) Spacer(Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(7.dp))
+            }
+            Box(
+                Modifier
+                    .padding(start = 16.dp, end = 16.dp, top = 3.dp, bottom = 20.dp)
+                    .fillMaxWidth()
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(c.mock.field)
+                    .drawBehind {
+                        val stroke = 1.dp.toPx()
+                        drawRoundRect(
+                            color = c.mock.accent,
+                            topLeft = Offset(stroke / 2f, stroke / 2f),
+                            size = Size(size.width - stroke, size.height - stroke),
+                            cornerRadius = CornerRadius(10.dp.toPx()),
+                            style = Stroke(
+                                width = stroke,
+                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 5f)),
+                            ),
+                        )
+                    }
+                    .clickable(onClick = onAddCommand),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "+ Add command",
+                    color = c.mock.accent,
+                    fontSize = 13.sp,
+                    fontFamily = Mono,
+                )
+            }
         }
     }
 }

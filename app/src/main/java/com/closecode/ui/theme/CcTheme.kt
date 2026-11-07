@@ -25,9 +25,21 @@ import androidx.compose.ui.unit.sp
 @Composable
 fun CcTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
+    accent: Color? = null,
     content: @Composable () -> Unit,
 ) {
-    val colors = if (darkTheme) DarkCcColors() else LightCcColors()
+    val colors = when {
+        darkTheme && accent != null -> DarkCcColors().copy(
+            accent = accent,
+            selectedFile = accent.copy(alpha = 0.28f),
+        )
+        darkTheme -> DarkCcColors()
+        accent != null -> LightCcColors().copy(
+            accent = accent,
+            selectedFile = accent.copy(alpha = 0.16f),
+        )
+        else -> LightCcColors()
+    }
     CompositionLocalProvider(LocalCcColors provides colors) {
         content()
     }

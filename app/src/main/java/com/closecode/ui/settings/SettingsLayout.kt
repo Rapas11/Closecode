@@ -22,6 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -85,19 +89,22 @@ fun SetGroup(
 ) {
     val c = cc()
     Column(modifier) {
-        Text(
-            text = label.uppercase(),
-            color = c.muted,
-            fontSize = 11.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 0.8.sp,
-            modifier = Modifier.padding(start = 18.dp, top = 16.dp, bottom = 6.dp),
-        )
+        if (label.isNotBlank()) {
+            Text(
+                text = label.uppercase(),
+                color = c.muted,
+                fontSize = 11.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.8.sp,
+                modifier = Modifier.padding(start = 18.dp, top = 16.dp, bottom = 6.dp),
+            )
+        }
         Column(
             Modifier
                 .padding(horizontal = 12.dp)
                 .fillMaxWidth()
+                .then(if (label.isBlank()) Modifier.padding(top = 12.dp) else Modifier)
                 .clip(RoundedCornerShape(18.dp))
                 .background(c.field),
             content = content,
@@ -349,6 +356,14 @@ fun SettingsRow(
     val c = cc()
     val icon = rowIcon(row.name)
     val tint = rowTint(row.name, c)
+    var choosing by remember(row) { mutableStateOf(false) }
+    val optionKey = (row as? Row.Options)?.key
+    val choices = if (optionKey != null) (row as Row.Options).choices else emptyList()
+    val selectedChoice = if (row is Row.Options) {
+        if (row.key == null) row.current else settings.option(row.key)
+    } else {
+        ""
+    }
 
     var trailing: (@Composable () -> Unit)? = null
     if (row is Row.Toggle) {
@@ -359,8 +374,13 @@ fun SettingsRow(
             { CcSwitch(on = on, onChange = { next -> onSettingsChange(settings.withFlag(row.key!!, next)) }) }
         }
     } else if (row is Row.Options) {
-        val value = if (row.key == null) row.current else settings.option(row.key!!)
-        trailing = { ActionText(value + row.unit, c.muted, onClick = { }) }
+        trailing = {
+            ActionText(
+                selectedChoice + row.unit,
+                c.muted,
+                onClick = { if (choices.isNotEmpty()) choosing = true },
+            )
+        }
     } else if (row is Row.Nav) {
         trailing = if (row.action.isNotBlank()) {
             { ActionText(row.action, c.muted) { } }
@@ -385,7 +405,7 @@ fun SettingsRow(
     if (row is Row.Nav) {
         onClick = { if (row.id != null) onAction(row.id) }
     } else if (row is Row.Options) {
-        onClick = { }
+        onClick = { if (choices.isNotEmpty()) choosing = true }
     } else if (row is Row.Action) {
         onClick = { onAction(row.id) }
     } else if (row is Row.Account) {
@@ -413,6 +433,19 @@ fun SettingsRow(
         trailing = trailing,
         modifier = modifier,
     )
+
+    if (choosing && optionKey != null) {
+        SettingsChoiceDialog(
+            title = row.name,
+            choices = choices,
+            selected = selectedChoice,
+            onPick = { choice ->
+                choosing = false
+                onSettingsChange(settings.withOption(optionKey, choice))
+            },
+            onDismiss = { choosing = false },
+        )
+    }
 }
 
 private fun rowIcon(name: String): String = when (name) {

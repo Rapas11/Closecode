@@ -37,6 +37,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -59,7 +61,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.ImageVector.Builder
 import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -80,6 +84,7 @@ import java.net.URL
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -89,15 +94,26 @@ data class ProjectIconUi(
     val sizeDp: Int,
     val vector: ImageVector?,
     val pathData: String? = null,
+    val style: String? = null,
+    val viewBox: String? = null,
 )
 
-/** One icon inside a downloaded library pack. */
-data class LibIconUi(
+/**
+ * One icon inside a downloaded library pack. The vector is built on first draw: a pack holds
+ * thousands of icons, and turning every path into an ImageVector up front made selecting a pack
+ * stall and held all of them in memory even though only a gridful is visible.
+ */
+class LibIconUi(
     val name: String,
-    val vector: ImageVector?,
+    private val providedVector: ImageVector? = null,
     val pathData: String? = null,
     val style: String? = null,
-)
+    val viewBox: String? = null,
+) {
+    val vector: ImageVector? by lazy {
+        providedVector ?: pathData?.let { parseVector(it, style, viewBox) }
+    }
+}
 
 /** One saved icon shown on the Code tab. */
 data class SavedIconUi(
@@ -105,7 +121,62 @@ data class SavedIconUi(
     val usedIn: Int?,
     val vector: ImageVector?,
     val pathData: String? = null,
+    val style: String? = null,
+    val viewBox: String? = null,
 )
+
+internal fun displayIconTitle(fileName: String): String {
+    val stem = fileName.substringBeforeLast('.')
+    return stem.removePrefix("ic_").replace('_', ' ').trim().ifBlank { stem }.lowercase()
+}
+
+internal fun iconComposeName(fileName: String): String {
+    val parts = fileName
+        .substringBeforeLast('.')
+        .removePrefix("ic_")
+        .split(Regex("[^A-Za-z0-9]+"))
+        .filter { it.isNotEmpty() }
+    return parts.joinToString("") { part ->
+        part.replaceFirstChar { it.uppercaseChar() }
+    }.ifBlank { "Icon" }
+}
+
+internal fun composeIconCode(icon: SavedIconUi): String {
+    val pathData = icon.pathData ?: return ""
+    val name = iconComposeName(icon.title)
+    val vb = (icon.viewBox ?: "0 0 24 24")
+        .split(' ', ',')
+        .mapNotNull { it.trim().toFloatOrNull() }
+    val minX = vb.getOrNull(0) ?: 0f
+    val minY = vb.getOrNull(1) ?: 0f
+    val vw = vb.getOrNull(2)?.takeIf { it > 0f } ?: 24f
+    val vh = vb.getOrNull(3)?.takeIf { it > 0f } ?: 24f
+    val paint = if (icon.style == "stroke") {
+        "stroke = defaultColors[0], strokeLineWidth = 2f"
+    } else {
+        "fill = defaultColors[0]"
+    }
+    val draw = if (minX == 0f && minY == 0f) {
+        """    .addPath(
+        pathData = PathParser().parsePathString("$pathData").toNodes(),
+        $paint
+    )"""
+    } else {
+        """    .apply {
+        addGroup(translationX = ${-minX}f, translationY = ${-minY}f) {
+            addPath(
+                pathData = PathParser().parsePathString("$pathData").toNodes(),
+                $paint
+            )
+        }
+    }"""
+    }
+    return """val AppIcons.$name: ImageVector by lazy {
+    ImageVector.Builder("$name", 24.dp, 24.dp, ${vw}f, ${vh}f)
+$draw
+    .build()
+}""".trimIndent()
+}
 
 sealed interface PackState {
     object NotLoaded : PackState
@@ -120,6 +191,8 @@ data class PackUi(
     val countText: String,
     val sizeText: String,
     val state: PackState,
+    val url: String = "",
+    val style: String? = null,
 )
 
 /** Shared shell for screens 52-57: header + segmented control. */
@@ -138,6 +211,36 @@ fun IconsShell(
             title = "Icons",
             onBack = onBack,
         )
+        Row(
+            Modifier
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(13.dp))
+                .background(c.rail)
+                .padding(3.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            listOf("This project", "Browse", "Code").forEachIndexed { i, t ->
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (i == tab) c.toggleOff else Color.Transparent)
+                        .clickable { onTab(i) },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = t,
+                        color = if (i == tab) Color.White else c.muted,
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
         Column(
             Modifier
                 .weight(1f)
@@ -154,37 +257,6 @@ fun IconsShell(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 content = footer,
             )
-        }
-    }
-
-    Row(
-        Modifier
-            .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 8.dp)
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(13.dp))
-            .background(c.rail)
-            .padding(3.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        listOf("This project", "Browse", "Code").forEachIndexed { i, t ->
-            Box(
-                Modifier
-                    .weight(1f)
-                    .height(34.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(if (i == tab) c.toggleOff else Color.Transparent)
-                    .clickable { onTab(i) },
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = t,
-                    color = if (i == tab) Color.White else c.muted,
-                    fontSize = 13.sp,
-                    fontFamily = Sans,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                )
-            }
         }
     }
 }
@@ -430,7 +502,7 @@ fun IconsProjectTab(
     IconGroup {
         icons.forEachIndexed { index, i ->
             IconRow(
-                title = i.fileName,
+                title = displayIconTitle(i.fileName),
                 sub = "Vector · ${i.sizeDp} dp",
                 last = false,
                 onClick = { onIcon(i) },
@@ -476,14 +548,17 @@ fun IdeIconsScreen(
     onChangeLogo: () -> Unit = { },
 ) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val c = LocalCcColors.current
 
     val logo by remember(projectRoot) { mutableStateOf(readProjectLogo(projectRoot)) }
     var icons by remember(projectRoot) { mutableStateOf(readProjectIcons(projectRoot)) }
-    val packs by remember(context) { mutableStateOf(listBundledPacks(context)) }
+    var packs by remember(context) { mutableStateOf(loadCachedPackIndex(context)) }
     val packStates = remember { mutableStateMapOf<String, PackState>() }
+    val packJobs = remember { mutableMapOf<String, kotlinx.coroutines.Job>() }
     var selectedPackId by remember { mutableStateOf<String?>(null) }
+    var browsePackId by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     val libraryIcons = remember { mutableStateListOf<LibIconUi>() }
     var selectedIcon by remember { mutableStateOf<String?>(null) }
@@ -530,36 +605,62 @@ fun IdeIconsScreen(
         }
     }
 
-    // Initialise pack states as NotLoaded.
+    // The index is remote; the cached copy above is shown immediately so Browse works offline.
+    LaunchedEffect(Unit) {
+        fetchPackIndex(context).onSuccess { packs = it }
+    }
+
+    // A pack that is already on disk is ready, not "Get": the download survives a restart.
     LaunchedEffect(packs) {
         packStates.clear()
-        packs.forEach { packStates[it.id] = PackState.NotLoaded }
-        selectedPackId = null
+        packs.forEach { pack ->
+            val file = File(context.filesDir, "iconpacks/${pack.id}.json")
+            packStates[pack.id] = if (file.isFile) PackState.Ready else PackState.NotLoaded
+        }
+        selectedPackId = packs.firstOrNull { packStates[it.id] == PackState.Ready }?.id
     }
 
     fun toast(msg: String) {
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
 
-    // Browse: install a bundled pack with real progress.
+    // Browse: download the hosted pack, with progress read from the actual byte stream.
     fun onGetPack(pack: PackUi) {
-        packStates[pack.id] = PackState.Downloading(0f, "0 B of ?")
-        scope.launch {
-            val outcome = withContext(Dispatchers.IO) {
-                installBundledPack(context, pack.id) { fraction ->
-                    packStates[pack.id] = PackState.Downloading(fraction, "${(fraction * 100).toInt()}%")
+        if (pack.url.isBlank()) {
+            packStates[pack.id] = PackState.Failed("This pack has no download address.")
+            return
+        }
+        packJobs.remove(pack.id)?.cancel()
+        packStates[pack.id] = PackState.Downloading(0f, "0 B")
+        val out = File(context.filesDir, "iconpacks/${pack.id}.json")
+        packJobs[pack.id] = scope.launch {
+            val outcome = downloadPack(pack.url, out) { fraction ->
+                scope.launch {
+                    packStates[pack.id] = PackState.Downloading(
+                        fraction,
+                        "${(fraction * 100).toInt()}%",
+                    )
                 }
             }
-            packStates[pack.id] = if (outcome.isSuccess) PackState.Ready else PackState.Failed(outcome.exceptionOrNull()?.message ?: "Download failed")
+            packJobs.remove(pack.id)
+            val icons = if (outcome.isSuccess) readPackFile(context, pack.id) else null
+            packStates[pack.id] = when {
+                !outcome.isSuccess -> PackState.Failed(
+                    outcome.exceptionOrNull()?.message ?: "Download failed",
+                )
+                icons.isNullOrEmpty() -> PackState.Failed("The downloaded pack was empty.")
+                else -> PackState.Ready
+            }
         }
     }
 
     fun onStopPack(pack: PackUi) {
+        packJobs.remove(pack.id)?.cancel()
+        File(context.filesDir, "iconpacks/${pack.id}.json.part").delete()
         packStates[pack.id] = PackState.NotLoaded
     }
 
     val readyPacks = packs.filter { packStates[it.id] == PackState.Ready }
-    val anyReady = readyPacks.isNotEmpty()
 
     LaunchedEffect(readyPacks) {
         if (readyPacks.isNotEmpty()) {
@@ -570,11 +671,15 @@ fun IdeIconsScreen(
 
     // Library: load the selected pack's icons and filter by query.
     LaunchedEffect(selectedPackId, query) {
+        // Typing a name should not re-read a two-megabyte pack on every keystroke.
+        delay(150)
         libraryIcons.clear()
         selectedIcon = null
         val id = selectedPackId
         if (id != null) {
-            val loaded = readPackFile(context, id) ?: emptyList()
+            val loaded = withContext(Dispatchers.IO) {
+                readPackFile(context, id)
+            } ?: emptyList()
             val q = query.lowercase()
             libraryIcons.addAll(loaded.filter { it.name.lowercase().contains(q) })
         }
@@ -603,18 +708,41 @@ fun IdeIconsScreen(
         val outcome = runCatching {
             if (target.exists()) error("A file with this name already exists")
             target.parentFile?.mkdirs()
+            val vb = (icon.viewBox ?: "0 0 24 24")
+                .split(' ', ',')
+                .mapNotNull { it.trim().toFloatOrNull() }
+            val minX = vb.getOrNull(0) ?: 0f
+            val minY = vb.getOrNull(1) ?: 0f
+            val vw = vb.getOrNull(2)?.takeIf { it > 0f } ?: 24f
+            val vh = vb.getOrNull(3)?.takeIf { it > 0f } ?: 24f
+            val pathXml = if (style == "fill") {
+                """<path android:fillColor="#$colorHex" android:pathData="$pathData"/>"""
+            } else {
+                """<path android:fillColor="#00000000" android:strokeColor="#$colorHex" android:strokeWidth="2" android:strokeLineCap="round"
+        android:strokeLineJoin="round" android:pathData="$pathData"/>"""
+            }
+            val body = if (minX == 0f && minY == 0f) {
+                pathXml
+            } else {
+                """<group android:translateX="${-minX}" android:translateY="${-minY}">$pathXml</group>"""
+            }
             val xml = """<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="${sizeDp}dp" android:height="${sizeDp}dp" android:viewportWidth="24" android:viewportHeight="24">
-    ${if (style == "fill")
-        """<path android:fillColor="#$colorHex" android:pathData="$pathData"/>"""
-      else
-        """<path android:strokeColor="#$colorHex" android:strokeWidth="2" android:strokeLineCap="round"
-        android:strokeLineJoin="round" android:pathData="$pathData"/>"""}
+    android:width="${sizeDp}dp" android:height="${sizeDp}dp" android:viewportWidth="$vw" android:viewportHeight="$vh">
+    $body
 </vector>""".trimIndent()
             target.writeText(xml)
         }
         if (outcome.isSuccess) {
-            icons = listOf(ProjectIconUi(fileName, sizeDp, parseVector(pathData))) + icons
+            icons = listOf(
+                ProjectIconUi(
+                    fileName,
+                    sizeDp,
+                    parseVector(pathData, style, icon.viewBox),
+                    pathData,
+                    style,
+                    icon.viewBox,
+                ),
+            ) + icons
             useSheetOpen = false
             toast("Saved")
         } else {
@@ -623,34 +751,56 @@ fun IdeIconsScreen(
     }
 
     // Code tab: build saved icons + code for selected.
-    LaunchedEffect(codeSelected) {
-        val saved = icons.mapIndexed { index, i ->
+    LaunchedEffect(icons, codeSelected) {
+        val saved = icons.map { i ->
             SavedIconUi(
-                i.fileName,
+                displayIconTitle(i.fileName),
                 countIconUses(projectRoot, i.fileName),
                 i.vector,
                 i.pathData,
+                i.style,
+                i.viewBox,
             )
         }
         codeSaved.clear()
         codeSaved.addAll(saved)
-        val sel = saved.getOrNull(codeSelected)
-        codeText = if (sel != null && sel.pathData != null) {
-            val name = sel.title.replaceFirstChar { c: Char -> c.uppercaseChar() }
-            val hex = defaultColors[0].value.toInt().and(0xFFFFFF).toString(16).padStart(6, '0')
-            """val AppIcons.$name: ImageVector by lazy {
-    ImageVector.Builder("$name", 24.dp, 24.dp, 24f, 24f).addPath(
-        pathData = PathParser().parsePathString("${sel.pathData}").toNodes(),
-        fill = defaultColors[0]
-    ).build()
-}""".trimIndent()
-        } else {
-            ""
-        }
-        codeText
+        if (codeSelected !in saved.indices) codeSelected = 0
+        codeText = saved.getOrNull(codeSelected)?.let(::composeIconCode).orEmpty()
     }
 
-    IconsShell(tab = tab, onTab = onTab, onBack = onBack, footer = null) {
+    fun copyCode(text: String, message: String) {
+        if (text.isBlank()) {
+            toast("Nothing to copy")
+            return
+        }
+        clipboard.setText(AnnotatedString(text))
+        toast(message)
+    }
+
+    IconsShell(
+        tab = tab,
+        onTab = onTab,
+        onBack = onBack,
+        footer = if (tab == 2 && codeSaved.isNotEmpty()) {
+            {
+                BigButton(
+                    text = "Copy code for ${codeSaved.size} icons",
+                    onClick = {
+                        copyCode(
+                            codeSaved.joinToString("\n\n") { composeIconCode(it) },
+                            "Code copied",
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    icon = "copy",
+                    bg = c.field,
+                    fg = c.text2,
+                )
+            }
+        } else {
+            null
+        },
+    ) {
         when (tab) {
             0 -> IconsProjectTab(
                 logo = logo?.asImageBitmap(),
@@ -659,89 +809,65 @@ fun IdeIconsScreen(
                 onLogo = { onChangeLogo() },
                 onIcon = { icon ->
                     openUseSheet(
-                        LibIconUi(icon.fileName, icon.vector, icon.pathData),
+                        LibIconUi(
+                            icon.fileName,
+                            icon.vector,
+                            icon.pathData,
+                            icon.style,
+                            icon.viewBox,
+                        ),
                         "This project",
                     )
                 },
                 onAddSvg = { svgLauncher.launch(arrayOf("image/svg+xml", "*/*")) },
             )
-            1 -> IconsBrowseTab(
-                packs = packs,
-                onGet = { pack ->
-                    val current = packStates[pack.id]
-                    if (current is PackState.Downloading) onStopPack(pack) else onGetPack(pack)
-                },
-                onStop = { onStopPack(it) },
-            )
-            else -> {
-                if (!anyReady) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 32.dp, vertical = 40.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text(
-                            text = "Get a pack in Browse",
-                            color = c.text,
-                            fontSize = 15.sp,
-                            fontFamily = Sans,
-                            fontWeight = FontWeight.Bold,
-                        )
-                        Text(
-                            text = "Download an icon pack first, then browse its icons here.",
-                            color = c.muted,
-                            fontSize = 13.sp,
-                            fontFamily = Sans,
-                            lineHeight = 19.5.sp,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(top = 4.dp),
-                        )
-                        Row(
-                            Modifier
-                                .padding(top = 16.dp)
-                                .height(40.dp)
-                                .clip(RoundedCornerShape(13.dp))
-                                .background(c.field)
-                                .clickable { onTab(1) }
-                                .padding(horizontal = 18.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            CcIcon("down", c.text2, 16.dp, 2f)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = "Go to Browse",
-                                color = c.text2,
-                                fontSize = 13.5.sp,
-                                fontFamily = Sans,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                        }
-                    }
+            1 -> {
+                val currentPack = packs.firstOrNull { it.id == browsePackId }
+                if (currentPack == null) {
+                    IconsBrowseTab(
+                        packs = packs,
+                        readyPacks = readyPacks,
+                        onGet = { pack ->
+                            val current = packStates[pack.id]
+                            if (current is PackState.Downloading) onStopPack(pack) else onGetPack(pack)
+                        },
+                        onStop = { onStopPack(it) },
+                        onOpenPack = { pack ->
+                            selectedPackId = pack.id
+                            browsePackId = pack.id
+                            usePackName = pack.name
+                            query = ""
+                        },
+                    )
                 } else {
                     IconsLibraryTab(
-                        packName = selectedPackId ?: readyPacks.first().name,
+                        packName = currentPack.name,
+                        packs = readyPacks,
                         total = libraryIcons.size,
                         query = query,
                         icons = libraryIcons,
                         selected = selectedIcon,
-                        onPack = {
-                            val idx = readyPacks.indexOfFirst { it.id == selectedPackId }
-                            val next = readyPacks[(idx + 1) % readyPacks.size]
-                            selectedPackId = next.id
-                            usePackName = next.name
+                        onPickPack = { pack ->
+                            selectedPackId = pack.id
+                            browsePackId = pack.id
+                            usePackName = pack.name
+                            query = ""
                         },
                         onQuery = { query = it },
                         onTap = { icon ->
                             selectedIcon = icon.name
-                            val pack = readyPacks.firstOrNull { it.id == selectedPackId }
-                                ?: readyPacks.first()
-                            usePackName = pack.name
-                            openUseSheet(icon, usePackName)
+                            usePackName = currentPack.name
+                            openUseSheet(icon, currentPack.name)
                         },
                     )
                 }
             }
+            else -> IconsCodeTab(
+                code = codeText,
+                saved = codeSaved,
+                selected = codeSelected,
+                onSelect = { codeSelected = it },
+            )
         }
     }
 
@@ -758,7 +884,21 @@ fun IdeIconsScreen(
             onColor = { useSheetColorIndex = it },
             onSize = { useSheetSizeIndex = it },
             onName = { useSheetFileName = it; useSheetNameError = null },
-            onCopy = { },
+            onCopy = {
+                copyCode(
+                    composeIconCode(
+                        SavedIconUi(
+                            useSheetFileName,
+                            null,
+                            useIcon!!.vector,
+                            useIcon!!.pathData,
+                            useIcon!!.style,
+                            useIcon!!.viewBox,
+                        ),
+                    ),
+                    "Code copied",
+                )
+            },
             onSave = { saveUseSheet() },
             onDismiss = { useSheetOpen = false },
         )
@@ -767,10 +907,13 @@ fun IdeIconsScreen(
 @Composable
 fun IconsBrowseTab(
     packs: List<PackUi>,
+    readyPacks: List<PackUi>,
     onGet: (PackUi) -> Unit,
     onStop: (PackUi) -> Unit,
+    onOpenPack: (PackUi) -> Unit,
 ) {
     val c = LocalCcColors.current
+    var pickMenuFor by remember { mutableStateOf<String?>(null) }
     Text(
         text = "Get a pack once. It stays on this phone, so it works with no internet.",
         color = c.muted,
@@ -795,7 +938,13 @@ fun IconsBrowseTab(
                 title = p.name,
                 sub = "${p.countText} · ${p.sizeText}",
                 last = index == packs.lastIndex && dl == null,
-                onClick = { },
+                onClick = {
+                    when (val s = p.state) {
+                        is PackState.Downloading -> onStop(p)
+                        PackState.Ready -> pickMenuFor = p.id
+                        else -> onGet(p)
+                    }
+                },
                 tileIcon = { CcIcon("layers", c.text2, 19.dp, 1.8f) },
                 trailing = when (val s = p.state) {
                     is PackState.Downloading -> {
@@ -803,14 +952,29 @@ fun IconsBrowseTab(
                     }
                     PackState.Ready -> {
                         {
-                            Box(
-                                Modifier
-                                    .size(22.dp)
-                                    .clip(RoundedCornerShape(7.dp))
-                                    .background(c.green),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                CcIcon("check", Color.White, 13.dp, 3f)
+                            Box {
+                                PillButton("Pick", c.accent, "check") { pickMenuFor = p.id }
+                                DropdownMenu(
+                                    expanded = pickMenuFor == p.id,
+                                    onDismissRequest = { pickMenuFor = null },
+                                ) {
+                                    readyPacks.forEach { ready ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = ready.name,
+                                                    color = c.text,
+                                                    fontSize = 14.sp,
+                                                    fontFamily = Sans,
+                                                )
+                                            },
+                                            onClick = {
+                                                pickMenuFor = null
+                                                onOpenPack(ready)
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -941,42 +1105,70 @@ fun ProgressLine(
 @Composable
 fun IconsLibraryTab(
     packName: String,
+    packs: List<PackUi>,
     total: Int,
     query: String,
     icons: List<LibIconUi>,
     selected: String?,
-    onPack: () -> Unit,
+    onPickPack: (PackUi) -> Unit,
     onQuery: (String) -> Unit,
     onTap: (LibIconUi) -> Unit,
 ) {
     val c = LocalCcColors.current
-    Row(
+    var packMenuOpen by remember { mutableStateOf(false) }
+    Box(
         Modifier
             .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp)
-            .fillMaxWidth()
-            .height(44.dp)
-            .clip(RoundedCornerShape(13.dp))
-            .background(c.field)
-            .clickable(onClick = onPack)
-            .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .fillMaxWidth(),
     ) {
-        Text(
-            text = "Pack",
-            color = c.muted,
-            fontSize = 12.sp,
-            fontFamily = Sans,
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = packName,
-            color = c.text,
-            fontSize = 14.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.weight(1f),
-        )
-        CcIcon("cd", c.muted, 16.dp, 2.2f)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .clip(RoundedCornerShape(13.dp))
+                .background(c.field)
+                .clickable { packMenuOpen = true }
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Pack",
+                color = c.muted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = packName,
+                color = c.text,
+                fontSize = 14.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            CcIcon("cd", c.muted, 16.dp, 2.2f)
+        }
+        DropdownMenu(
+            expanded = packMenuOpen,
+            onDismissRequest = { packMenuOpen = false },
+        ) {
+            packs.forEach { pack ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = pack.name,
+                            color = c.text,
+                            fontSize = 14.sp,
+                            fontFamily = Sans,
+                        )
+                    },
+                    onClick = {
+                        packMenuOpen = false
+                        onPickPack(pack)
+                    },
+                )
+            }
+        }
     }
     Box(
         Modifier.padding(start = 16.dp, end = 16.dp, bottom = 8.dp)
@@ -1036,9 +1228,10 @@ fun IconsLibraryTab(
                     .clickable { onTap(i) },
                 contentAlignment = Alignment.Center,
             ) {
-                if (i.vector != null) {
+                val iconVector = i.vector
+                if (iconVector != null) {
                     androidx.compose.material3.Icon(
-                        imageVector = i.vector,
+                        imageVector = iconVector,
                         contentDescription = i.name,
                         tint = c.text2,
                         modifier = Modifier.size(24.dp),
@@ -1092,9 +1285,10 @@ fun UseIconSheet(
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (icon.vector != null) {
+                val iconVector = icon.vector
+                if (iconVector != null) {
                     androidx.compose.material3.Icon(
-                        imageVector = icon.vector,
+                        imageVector = iconVector,
                         contentDescription = null,
                         tint = colors[colorIndex],
                         modifier = Modifier.size(52.dp),
@@ -1334,31 +1528,83 @@ fun readProjectIcons(root: File?): List<ProjectIconUi> {
                 val height = Regex("android:height=\"(\\d+)\"").find(text)?.groupValues?.get(1)?.toInt()
                     ?: Regex("height=\"(\\d+)\"").find(text)?.groupValues?.get(1)?.toInt()
                     ?: 24
-                val vector = pathData?.let { parseVector(it) }
+                val style = if (text.contains("android:strokeColor")) "stroke" else "fill"
+                val vw = Regex("android:viewportWidth=\"([0-9.]+)\"").find(text)
+                    ?.groupValues?.get(1) ?: "24"
+                val vh = Regex("android:viewportHeight=\"([0-9.]+)\"").find(text)
+                    ?.groupValues?.get(1) ?: vw
+                val groupX = Regex("android:translateX=\"(-?[0-9.]+)\"").find(text)
+                    ?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
+                val groupY = Regex("android:translateY=\"(-?[0-9.]+)\"").find(text)
+                    ?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
+                val viewBox = "0 0 $vw $vh"
+                    .let { if (groupX == 0f && groupY == 0f) it else "${-groupX} ${-groupY} $vw $vh" }
+                val vector = pathData?.let { parseVector(it, style, viewBox) }
                 ProjectIconUi(
                     fileName = file.nameWithoutExtension,
                     sizeDp = maxOf(width, height),
                     vector = vector,
                     pathData = pathData,
+                    style = style,
+                    viewBox = viewBox,
                 )
             }.getOrNull()
         }
         .sortedBy { it.fileName }
 }
 
-/** Converts an SVG path data string to an ImageVector (24x24 grid). */
-private fun parseVector(pathData: String): ImageVector? {
+/**
+ * Converts SVG path data to an ImageVector. Filled packs (Material Symbols) use a black fill;
+ * stroke packs (Lucide) keep their round caps and joins. A viewBox like "0 -960 960 960" is
+ * honoured with a group translation, because Android vectors have no viewport origin.
+ */
+private fun parseVector(
+    pathData: String,
+    style: String? = null,
+    viewBox: String? = null,
+): ImageVector? {
     return runCatching {
-        Builder(
+        val box = viewBox.orEmpty()
+            .split(' ', ',')
+            .mapNotNull { it.trim().toFloatOrNull() }
+        val minX = box.getOrNull(0) ?: 0f
+        val minY = box.getOrNull(1) ?: 0f
+        val width = box.getOrNull(2)?.takeIf { it > 0f } ?: 24f
+        val height = box.getOrNull(3)?.takeIf { it > 0f } ?: 24f
+        val nodes = PathParser().parsePathString(pathData).toNodes()
+        val builder = Builder(
             name = "icon",
             defaultWidth = 24.dp,
             defaultHeight = 24.dp,
-            viewportWidth = 24f,
-            viewportHeight = 24f,
-        ).addPath(
-            pathData = PathParser().parsePathString(pathData).toNodes(),
-            fill = SolidColor(Color.Black),
-        ).build()
+            viewportWidth = width,
+            viewportHeight = height,
+        )
+        if (minX != 0f || minY != 0f) {
+            builder.addGroup(translationX = -minX, translationY = -minY)
+            if (style == "stroke") {
+                builder.addPath(
+                    pathData = nodes,
+                    fill = null,
+                    stroke = SolidColor(Color.Black),
+                    strokeLineWidth = 2f,
+                    strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                    strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
+                )
+            } else {
+                builder.addPath(pathData = nodes, fill = SolidColor(Color.Black))
+            }
+            builder.clearGroup()
+        } else {
+            builder.addPath(
+                pathData = nodes,
+                fill = if (style == "stroke") null else SolidColor(Color.Black),
+                stroke = if (style == "stroke") SolidColor(Color.Black) else null,
+                strokeLineWidth = 2f,
+                strokeLineCap = androidx.compose.ui.graphics.StrokeCap.Round,
+                strokeLineJoin = androidx.compose.ui.graphics.StrokeJoin.Round,
+            )
+        }
+        builder.build()
     }.getOrNull()
 }
 
@@ -1383,7 +1629,7 @@ suspend fun downloadPack(
     url: String,
     out: File,
     onProgress: (Float) -> Unit,
-): Result<Boolean> = withContext(Dispatchers.IO) {
+): Result<Unit> = withContext(Dispatchers.IO) {
     runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = 30_000
@@ -1394,7 +1640,7 @@ suspend fun downloadPack(
         if (code != 200) {
             error("Download failed ($code)")
         }
-        val total = conn.contentLength.takeIf { it > 0 } ?: 1L
+        val total = conn.contentLengthLong.takeIf { it > 0L } ?: -1L
         val tmp = File(out.path + ".part")
         out.parentFile?.mkdirs()
         conn.inputStream.use { input ->
@@ -1406,37 +1652,101 @@ suspend fun downloadPack(
                     if (n < 0) break
                     o.write(buf, 0, n)
                     done += n
-                    onProgress((done.toFloat() / total.toFloat()).coerceIn(0f, 1f))
+                    if (total > 0L) {
+                        onProgress((done.toFloat() / total.toFloat()).coerceIn(0f, 1f))
+                    }
                 }
             }
         }
-        tmp.renameTo(out)
+        if (out.exists()) out.delete()
+        if (!tmp.renameTo(out)) error("Could not save the downloaded pack")
     }
 }
 
-/** Lists bundled icon packs in the assets folder for offline browsing. */
-fun listBundledPacks(context: Context): List<PackUi> {
+/** Where to find the pack index. Pages first; the raw file is a working fallback. */
+internal val IconPackIndexUrls: List<String> = listOf(
+    "https://rapas11.github.io/iconpacks/packs.json",
+    "https://raw.githubusercontent.com/Rapas11/iconpacks/main/packs.json",
+)
+
+private fun packIndexFile(context: Context): File =
+    File(context.filesDir, "iconpacks/packs.json")
+
+/** Parses an index, resolving every relative pack URL against the index that served it. */
+internal fun parsePackIndex(text: String, baseUrl: String): List<PackUi> {
+    val gson = com.google.gson.Gson()
+    val root = gson.fromJson(text, Any::class.java)
+    val list: List<*> = when (root) {
+        is List<*> -> root
+        is Map<*, *> -> (root["packs"] as? List<*>) ?: emptyList<Any>()
+        else -> emptyList<Any>()
+    }
+    return list.mapNotNull { item ->
+        val map = item as? Map<*, *> ?: return@mapNotNull null
+        val id = (map["id"] as? String)
+            ?: (map["name"] as? String)?.lowercase()?.replace(Regex("[^a-z0-9]+"), "-")
+            ?: return@mapNotNull null
+        val name = map["name"] as? String ?: id
+        val count = (map["count"] as? Number)?.toInt()
+            ?: (map["icons"] as? List<*>)?.size
+            ?: 0
+        val bytes = (map["bytes"] as? Number)?.toLong() ?: 0L
+        val sizeText = (map["size"] as? String) ?: formatPackBytes(bytes)
+        val rel = map["url"] as? String ?: "$id.json"
+        val url = runCatching { URL(URL(baseUrl), rel).toString() }.getOrElse { rel }
+        PackUi(
+            id = id,
+            name = name,
+            countText = count.toString(),
+            sizeText = sizeText,
+            state = PackState.NotLoaded,
+            url = url,
+            style = map["style"] as? String,
+        )
+    }
+}
+
+internal fun formatPackBytes(bytes: Long): String {
+    if (bytes <= 0L) return "unknown"
+    if (bytes < 1024L) return "$bytes B"
+    val kb = bytes / 1024.0
+    if (kb < 1024.0) return String.format(Locale.US, "%.0f KB", kb)
+    return String.format(Locale.US, "%.1f MB", kb / 1024.0)
+}
+
+/** The last index seen, so Browse still lists packs with no connection. */
+fun loadCachedPackIndex(context: Context): List<PackUi> {
+    val file = packIndexFile(context)
+    if (!file.isFile) return emptyList()
     return runCatching {
-        val names = context.assets.list("iconpacks") ?: emptyArray()
-        names.mapNotNull { name ->
-            if (!name.endsWith(".json")) return@mapNotNull null
-            val text = context.assets.open("iconpacks/$name").bufferedReader().readText()
-            val id = name.removeSuffix(".json")
-            val gson = com.google.gson.Gson()
-            val pack = gson.fromJson(text, Map::class.java) as? Map<*, *>
-                ?: return@mapNotNull null
-            val nameStr = pack["name"] as? String ?: id
-            val count = (pack["icons"] as? List<*>)?.size ?: (pack["count"] as? Number)?.toInt() ?: 0
-            val size = text.toByteArray(Charsets.UTF_8).size.toLong()
-            PackUi(
-                id = id,
-                name = nameStr,
-                countText = count.toString(),
-                sizeText = if (size >= 1024) "${size / 1024} KB" else "$size B",
-                state = PackState.NotLoaded,
-            )
-        }
+        parsePackIndex(file.readText(), IconPackIndexUrls.last())
     }.getOrDefault(emptyList())
+}
+
+/** Fetches the hosted index, caching it on success. Returns the cached list on total failure. */
+suspend fun fetchPackIndex(context: Context): Result<List<PackUi>> = withContext(Dispatchers.IO) {
+    var last: Throwable? = null
+    for (base in IconPackIndexUrls) {
+        val attempt = runCatching {
+            val conn = URL(base).openConnection() as HttpURLConnection
+            conn.connectTimeout = 15_000
+            conn.readTimeout = 15_000
+            conn.requestMethod = "GET"
+            conn.connect()
+            val code = conn.responseCode
+            if (code != 200) error("Pack index failed ($code)")
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            val packs = parsePackIndex(text, base)
+            if (packs.isEmpty()) error("The pack index was empty")
+            packIndexFile(context).apply { parentFile?.mkdirs() }.writeText(text)
+            packs
+        }
+        if (attempt.isSuccess) return@withContext attempt
+        last = attempt.exceptionOrNull()
+    }
+    val cached = loadCachedPackIndex(context)
+    if (cached.isNotEmpty()) Result.success(cached)
+    else Result.failure(last ?: IllegalStateException("Could not load icon packs"))
 }
 
 /** Reads a downloaded pack JSON file from app files dir. */
@@ -1458,8 +1768,14 @@ fun readPackFile(context: Context, id: String): List<LibIconUi>? {
             val name = map["name"] as? String ?: return@mapNotNull null
             val pathData = map["pathData"] as? String
             val style = map["style"] as? String
-            val vector = pathData?.let { parseVector(it) }
-            LibIconUi(name = name, vector = vector, pathData = pathData, style = style)
+            val viewBox = map["viewBox"] as? String ?: map["viewbox"] as? String
+            LibIconUi(
+                name = name,
+                providedVector = null,
+                pathData = pathData,
+                style = style,
+                viewBox = viewBox,
+            )
         }
     }.getOrNull()
 }
@@ -1478,35 +1794,6 @@ fun decodeImageUri(context: Context, uri: Uri): Bitmap? {
             context.contentResolver.openInputStream(uri).use { BitmapFactory.decodeStream(it) }
         }
     }.getOrNull()
-}
-
-/** Copies a bundled pack asset into app private storage, reporting real copy progress. */
-suspend fun installBundledPack(
-    context: Context,
-    id: String,
-    onProgress: (Float) -> Unit,
-): Result<Boolean> = withContext(Dispatchers.IO) {
-    runCatching {
-        val assetName = "iconpacks/$id.json"
-        val input = context.assets.open(assetName)
-        val out = File(context.filesDir, "iconpacks/$id.json").apply { parentFile?.mkdirs() }
-        val tmp = File(out.path + ".part")
-        input.use { inp ->
-            val available = inp.available().coerceAtLeast(1)
-            tmp.outputStream().use { o ->
-                val buf = ByteArray(16 * 1024)
-                var done = 0L
-                while (true) {
-                    val n = inp.read(buf)
-                    if (n < 0) break
-                    o.write(buf, 0, n)
-                    done += n
-                    onProgress((done.toFloat() / available).coerceIn(0f, 1f))
-                }
-            }
-        }
-        tmp.renameTo(out)
-    }
 }
 
 /** Rough count of files in the project that reference an icon name. */

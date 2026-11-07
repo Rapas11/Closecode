@@ -66,6 +66,7 @@ internal val IdeRailTools = listOf(
     IdeRailTool("Terminal", "Terminal", CcIcons.Terminal, Color(0xFF2F6FE0)),
     IdeRailTool("Logcat", "Logcat", CcIcons.Logs, Color(0xFF1F9D6B)),
     IdeRailTool("Problems", "Problems", CcIcons.Warning, Color(0xFFD97706)),
+    IdeRailTool("Preview", "Preview", CcIcons.Image, Color(0xFF7B5CE0)),
     IdeRailTool("OpenCode", "AI", CcIcons.Sparkle, Color(0xFFDB4C9B)),
 )
 

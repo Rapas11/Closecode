@@ -47,6 +47,10 @@ val Symbol = FontFamily(
     Font(R.font.jetbrains_mono_bold, FontWeight.Bold),
 )
 
+/** The code editor's font, as chosen in Appearance. Both choices are real families. */
+fun codeFontFamily(name: String): FontFamily =
+    if (name == "System") FontFamily.Monospace else Mono
+
 /** Spec section 3: code line height is fixed at 21 dp and drives all editor geometry. */
 val CodeLineHeight = 21.sp
 

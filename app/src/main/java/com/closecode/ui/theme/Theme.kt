@@ -22,6 +22,7 @@ fun ClosecodeTheme(
     darkTheme: Boolean = androidx.compose.foundation.isSystemInDarkTheme(),
     forceDark: Boolean? = null,
     accent: Color? = null,
+    syntaxColors: String? = null,
     content: @Composable () -> Unit,
 ) {
     val useDark = forceDark ?: darkTheme
@@ -29,7 +30,7 @@ fun ClosecodeTheme(
     // One swatch changes every accent-bearing token at once. The tokens are all aliases of the
     // same idea, so changing only `ac` would leave Material buttons and selections on the old
     // colour while the rest of the screen moved.
-    val colors = accent?.let { picked ->
+    val baseWithAccent = accent?.let { picked ->
         // A tint and its label cannot be the same colour: the outline buttons and the
         // tinted terminal keys draw one on the other, and a solid accent in both places
         // made their labels disappear. Keep the fill translucent, darken the label on
@@ -55,6 +56,28 @@ fun ClosecodeTheme(
         )
     } ?: base
 
+    // The editor reads its syntax tokens from PageColors, so the Appearance scheme has to be
+    // copied here rather than read inside the highlighter: the highlighter only sees one palette.
+    val syntax = when (syntaxColors) {
+        "Default dark" -> DarkColors
+        "Default light" -> LightColors
+        else -> null
+    }
+    val themed = if (syntax == null) {
+        baseWithAccent
+    } else {
+        baseWithAccent.copy(
+            keyword = syntax.keyword,
+            string = syntax.string,
+            comment = syntax.comment,
+            fn = syntax.fn,
+            number = syntax.number,
+            annotation = syntax.annotation,
+            type = syntax.type,
+        )
+    }
+    val colors = themed
+
     val view = LocalView.current
     val window = view.context.activityOrNull()?.window
     SideEffect {
@@ -73,7 +96,7 @@ fun ClosecodeTheme(
 
     // Spec palette from CcTheme.kt (screens 01-57). Restyled screens read LocalCcColors;
     // LocalPageColors stays for the screens still on the old palette during the migration.
-    CcTheme(darkTheme = useDark) {
+    CcTheme(darkTheme = useDark, accent = accent) {
     CompositionLocalProvider(
         LocalPageColors provides colors,
         // Compose tints the text cursor's drag handle and the selection with these. Left at their

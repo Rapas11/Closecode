@@ -121,6 +121,7 @@ class MainActivity : ComponentActivity() {
             ClosecodeTheme(
                 forceDark = useDark,
                 accent = AccentOptions[settings.accentIndex.coerceIn(0, AccentOptions.lastIndex)],
+                syntaxColors = settings.syntaxColors,
             ) {
                 if (crashText != null) {
                     CrashDialog(

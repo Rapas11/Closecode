@@ -430,36 +430,33 @@ fun SettingsScreen(
                 },
             )
         } else if (section != null) {
-            SettingsPage(title = section.title, onBack = { detailOpen = false }) {
-                section.groups.forEachIndexed { gIdx, group ->
-                    if (group.title.isNotBlank()) {
-                        Text(
-                            text = group.title.uppercase(),
-                            color = c.muted,
-                            fontSize = 11.sp,
-                            fontFamily = Sans,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.8.sp,
-                            modifier = Modifier.padding(start = 18.dp, top = 16.dp, bottom = 6.dp),
-                        )
-                    }
-                    SetGroup(group.title) {
-                        group.rows.forEachIndexed { rIdx, row ->
-                            SettingsRow(
-                                row = row,
-                                settings = settings,
-                                onSettingsChange = onSettingsChange,
-                                onAction = ::handleAction,
-                                modifier = Modifier.padding(vertical = 4.dp),
-                            )
-                            if (rIdx != group.rows.lastIndex) {
-                                Box(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .height(1.dp)
-                                        .background(c.divider)
-                                        .padding(start = 62.dp),
+            if (section.id == "appearance") {
+                AppearanceSettingsPage(
+                    settings = settings,
+                    onSettingsChange = onSettingsChange,
+                    onBack = { detailOpen = false },
+                )
+            } else {
+                SettingsPage(title = section.title, onBack = { detailOpen = false }) {
+                    section.groups.forEach { group ->
+                        SetGroup(group.title) {
+                            group.rows.forEachIndexed { rIdx, row ->
+                                SettingsRow(
+                                    row = row,
+                                    settings = settings,
+                                    onSettingsChange = onSettingsChange,
+                                    onAction = ::handleAction,
+                                    modifier = Modifier.padding(vertical = 4.dp),
                                 )
+                                if (rIdx != group.rows.lastIndex) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .height(1.dp)
+                                            .background(c.divider)
+                                            .padding(start = 62.dp),
+                                    )
+                                }
                             }
                         }
                     }

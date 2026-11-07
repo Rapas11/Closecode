@@ -87,6 +87,8 @@ The R8 shrinker and the ECJ compiler are distributed under their respective open
 
 Gson is licensed under the Apache License 2.0. The XZ library is in the public domain. The Termux shell packages retain their own upstream licenses.
 
+The downloadable icon packs keep their upstream licenses. Material Symbols is Copyright Google LLC and licensed under the Apache License 2.0. Lucide is licensed under the ISC License. Both packs are downloaded from the Closecode icon-pack host only when you tap Get.
+
 Full license texts are available from each project's source distribution.
 """.trimIndent()
 

@@ -189,6 +189,7 @@ import com.closecode.ui.model.recentFiles
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.motion
 import com.closecode.ui.theme.Mono
+import com.closecode.ui.theme.codeFontFamily
 import com.closecode.ui.theme.Sans
 import java.io.File
 
@@ -784,6 +785,8 @@ internal fun IdeScreen(
     // Stored like the other preferences; the PTY backend that will read it is not built yet,
     // so the row says so and the pipe terminal runs either way for now.
     var usePipeTerminal by remember { mutableStateOf(kvStore.getInt("terminal_use_pipe", 0) == 1) }
+    val terminalCommands = rememberTerminalCommandsState(projectId)
+    var terminalNewCommand by remember { mutableIntStateOf(0) }
     // True while the suggestion popup is up. It is the tool row's other reason to hide: the popup
     // covers the row, and a row under a popup only steals taps.
     var suggestionsOpen by remember { mutableStateOf(false) }
@@ -1354,16 +1357,13 @@ internal fun IdeScreen(
         }
     }
 
-    fun createEntry(isFolder: Boolean, rawName: String) {
-        // The parent is the row the drawer is pointed at rather than the file that happens to be
-        // open: a file created from a folder lands in that folder, one created with nothing
-        // selected lands at the root, and neither depends on which tab was last switched to.
+    /** The folder the next header-created entry belongs in, from the row last selected. */
+    fun parentForSelection(): String {
         val selected = diskTree.firstOrNull { it.path == selectedPath }
-        val parent = when {
-            selected == null -> ""
-            selected.kind == FileKind.Folder -> selected.path
-            else -> selected.path.substringBeforeLast('/', "")
-        }
+        return newEntryParent(selected?.path, selected?.kind)
+    }
+
+    fun createEntry(isFolder: Boolean, rawName: String, parent: String) {
         val leaf = rawName.trim().removePrefix("/")
         if (leaf.isEmpty()) return
         val relative = if (parent.isEmpty()) leaf else "$parent/$leaf"
@@ -1557,12 +1557,18 @@ internal fun IdeScreen(
         when (action) {
             TreeAction.NEW_FILE -> {
                 selectedPath = if (file.kind == FileKind.Folder) file.path else file.path.substringBeforeLast('/', "")
-                prompt = TreePrompt.New(isFolder = false)
+                prompt = TreePrompt.New(
+                    isFolder = false,
+                    parent = newEntryParent(file.path, file.kind),
+                )
             }
 
             TreeAction.NEW_FOLDER -> {
                 selectedPath = if (file.kind == FileKind.Folder) file.path else file.path.substringBeforeLast('/', "")
-                prompt = TreePrompt.New(isFolder = true)
+                prompt = TreePrompt.New(
+                    isFolder = true,
+                    parent = newEntryParent(file.path, file.kind),
+                )
             }
 
             TreeAction.IMPORT -> {
@@ -2187,6 +2193,11 @@ internal fun IdeScreen(
                 sidebarTool = "Problems"
                 explorerOpen = true
             }
+            "Preview" -> {
+                saveActiveFile(notify = false)
+                explorerOpen = false
+                activePanel = "Preview"
+            }
             "OpenCode" -> {
                 // AI is a full page, so the sidebar gets out of its way instead of staying on
                 // top of it the way the side panels do.
@@ -2208,6 +2219,7 @@ internal fun IdeScreen(
         explorerOpen && explorerTab == FilesTab -> "Files"
         explorerOpen && explorerTab == SourceControlTab -> "GitHub"
         activePanel == "AI" -> "OpenCode"
+        activePanel == "Preview" -> "Preview"
         else -> null
     }
 
@@ -2263,6 +2275,7 @@ internal fun IdeScreen(
                 } else if (sideTool == "Terminal") {
                     IdeTerminalSidePanel(
                         sessions = terminalSessions,
+                        commands = terminalCommands.commands,
                         onOpen = { number ->
                             terminalSessions.select(number)
                             activePanel = "Terminal"
@@ -2272,6 +2285,22 @@ internal fun IdeScreen(
                             terminalSessions.openNew()
                             activePanel = "Terminal"
                             explorerOpen = false
+                        },
+                        onRunCommand = { command ->
+                            val target = terminalSessions.active()
+                            target.input = TextFieldValue(
+                                splitAlias(command).second,
+                                TextRange(splitAlias(command).second.length),
+                            )
+                            target.followOutput = true
+                            target.hasNewOutput = false
+                            activePanel = "Terminal"
+                            explorerOpen = false
+                        },
+                        onAddCommand = {
+                            activePanel = "Terminal"
+                            explorerOpen = false
+                            terminalNewCommand++
                         },
                         runCard = runCard,
                     )
@@ -2317,8 +2346,12 @@ internal fun IdeScreen(
                     tab = explorerTab,
                     gitRevision = gitRevision,
                     onTab = { explorerTab = it },
-                    onCreateFile = { prompt = TreePrompt.New(isFolder = false) },
-                    onCreateFolder = { prompt = TreePrompt.New(isFolder = true) },
+                    onCreateFile = {
+                        prompt = TreePrompt.New(isFolder = false, parent = parentForSelection())
+                    },
+                    onCreateFolder = {
+                        prompt = TreePrompt.New(isFolder = true, parent = parentForSelection())
+                    },
                     onRefresh = { refreshTree() },
                     onCollapseAll = {
                         collapsedFolders = diskTree
@@ -2585,6 +2618,8 @@ internal fun IdeScreen(
                     // The UUID is the history key: a rename must not split a project's commands.
                     projectSlug = projectId,
                     projectName = projectName,
+                    commandsState = terminalCommands,
+                    newCommandRequest = terminalNewCommand,
                     // The holder came from above the screen switch, so this panel owns the draw but
                     // not the shells: leaving the terminal and coming back finds the same processes
                     // with the same output, and so does opening Settings.
@@ -3107,7 +3142,8 @@ internal fun IdeScreen(
         }
 
         if (developerOpen) {
-            IdeDeveloperSheet(
+            IdeDeveloperScreen(
+                projectName = projectName,
                 debugLogOn = debugLogs,
                 usePipe = usePipeTerminal,
                 crashAvailable = CrashReport.readLast(context.filesDir) != null,
@@ -3172,7 +3208,6 @@ internal fun IdeScreen(
                     }
                 },
                 onDismiss = { developerOpen = false },
-                barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
             )
         }
 
@@ -3272,10 +3307,14 @@ internal fun IdeScreen(
             is TreePrompt.New -> IdeNameDialog(
                 title = if (current.isFolder) "New folder" else "New file",
                 hint = if (current.isFolder) "feature" else "MainActivity.kt",
-                horizontalBias = PROMPT_BIAS,
+                subtitle = "in " + current.parent.ifEmpty { projectName },
                 onCreate = {
                     prompt = null
-                    createEntry(isFolder = current.isFolder, rawName = it)
+                    createEntry(
+                        isFolder = current.isFolder,
+                        rawName = it,
+                        parent = current.parent,
+                    )
                 },
                 onDismiss = { prompt = null },
             )
@@ -3285,7 +3324,6 @@ internal fun IdeScreen(
                 hint = current.target.name,
                 initial = current.target.name,
                 confirmLabel = "Rename",
-                horizontalBias = PROMPT_BIAS,
                 onCreate = {
                     prompt = null
                     renameEntry(current.target, it)
@@ -3298,7 +3336,6 @@ internal fun IdeScreen(
                 hint = "app/src/main/java/Main.kt",
                 initial = current.target.path,
                 confirmLabel = if (current.copy) "Copy" else "Move",
-                horizontalBias = PROMPT_BIAS,
                 onCreate = {
                     prompt = null
                     transferEntry(current.target, it, current.copy)
@@ -3941,7 +3978,7 @@ internal fun compactDrawerRows(rows: List<ProjectFile>): List<DrawerRow> {
  * they are three ways of typing a name.
  */
 private sealed interface TreePrompt {
-    data class New(val isFolder: Boolean) : TreePrompt
+    data class New(val isFolder: Boolean, val parent: String) : TreePrompt
     data class Rename(val target: ProjectFile) : TreePrompt
     data class Transfer(val target: ProjectFile, val copy: Boolean) : TreePrompt
 }
@@ -3966,7 +4003,6 @@ private const val MAX_IMPORT_PROBE = 8 * 1024
  * panel instead of the center of the screen, where the editor is. Bias -1 pins to the left
  * edge, +1 to the right; -0.22 lands on the panel's middle.
  */
-private const val PROMPT_BIAS = -0.22f
 
 /**
  * The name a picker gave the file, if it gave one. The display name is the only reliable source:
@@ -3992,6 +4028,17 @@ private fun documentSize(context: Context, uri: Uri): Long? = runCatching {
             if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
         }
 }.getOrNull()
+
+/**
+ * The folder a new entry belongs in: the selected folder itself, the selected file's folder, or
+ * the project root when nothing is selected. Kept pure so the name dialog can freeze the parent
+ * the moment it opens instead of re-reading a mutable selection at submit time.
+ */
+internal fun newEntryParent(path: String?, kind: FileKind?): String = when {
+    path.isNullOrEmpty() -> ""
+    kind == FileKind.Folder -> path
+    else -> path.substringBeforeLast('/', "")
+}
 
 /**
  * A name that is not already used in [folder]. An import never overwrites: there is no undo in
@@ -5068,6 +5115,7 @@ formatRequest: Int = 0,
     // relationship the fixed constant had — so zoom keeps working unchanged, and at the default
     // size with nobody pinching this computes the same 13 sp the constant held.
     val codeFontSize = zoomedFontSize(settings.fontSize, editorScale).sp
+    val editorCodeFont = codeFontFamily(settings.codeFont)
     // Spec section 3: the row tracks the font at its own 20/13 ratio, so a larger font gets a
     // larger row instead of running two lines of code into each other.
     val codeLineHeight = settings.fontSize.sp * CodeLineHeightRatio * editorScale
@@ -6547,7 +6595,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                                         trim = androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
                                     ),
                                 ),
-                                fontFamily = Mono,
+                                fontFamily = editorCodeFont,
                                 // Word wrap off means lines run long, not that lines 2..n vanish:
                                 // only softWrap toggles. maxLines stays unbounded, because one
                                 // line here is the whole visible slice and clipping it to a single
@@ -6569,7 +6617,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                                     trim = androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
                                 ),
                             ),
-                            fontFamily = Mono,
+                            fontFamily = editorCodeFont,
                             // Same as the field above: wrap off clips nothing, it only unwraps.
                             softWrap = settings.wordWrap,
                             maxLines = Int.MAX_VALUE,
@@ -6646,7 +6694,7 @@ val applySuggestion: (Int) -> Unit = { index ->
                                     alignment = androidx.compose.ui.text.style.LineHeightStyle.Alignment.Center,
                                     trim = androidx.compose.ui.text.style.LineHeightStyle.Trim.None,
                                 ),
-                                fontFamily = Mono,
+                                fontFamily = editorCodeFont,
                             ),
                             cursorBrush = SolidColor(c.mock.accent),
                             // ImeAction.Default with no KeyboardActions, so Enter always inserts a

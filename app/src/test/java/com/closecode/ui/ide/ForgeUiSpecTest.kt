@@ -18,7 +18,7 @@ class ForgeUiSpecTest {
     @Test
     fun theRailListsTheDesignToolsInOrder() {
         assertEquals(
-            listOf("Files", "Search", "GitHub", "Terminal", "Logcat", "Problems", "OpenCode"),
+            listOf("Files", "Search", "GitHub", "Terminal", "Logcat", "Problems", "Preview", "OpenCode"),
             IdeRailTools.map { it.id },
         )
     }

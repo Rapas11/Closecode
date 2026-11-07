@@ -75,7 +75,7 @@ val TabSizeChoices = listOf("2", "4", "8")
 val BuildTypeChoices = listOf("Debug", "Release")
 val DownloadNetworkChoices = listOf("Wi-Fi only", "Wi-Fi and mobile")
 val StartFolderChoices = listOf("Project root", "Home")
-val CodeFontChoices = listOf("JetBrains Mono")
+val CodeFontChoices = listOf("JetBrains Mono", "System")
 val SyntaxColorChoices = listOf("Default light", "Default dark")
 
 /**
