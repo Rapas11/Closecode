@@ -48,6 +48,7 @@ import com.closecode.ui.components.SettingRow
 import com.closecode.ui.components.SettingsGroup
 import com.closecode.ui.model.MinSdkOptions
 import com.closecode.ui.model.SdkOptions
+import com.closecode.ui.model.TemplateTab
 import com.closecode.ui.theme.LocalCcColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
@@ -81,6 +82,7 @@ fun IdeProjectSettingsSheet(
     projectRoot: File? = null,
     onSigning: (() -> Unit)? = null,
     onIcons: (() -> Unit)? = null,
+    templateTab: TemplateTab? = null,
 ) {
     val c = LocalCcColors.current
     val context = LocalContext.current
@@ -161,24 +163,26 @@ fun IdeProjectSettingsSheet(
                         null
                     },
                 )
-                SettingRow(
-                    icon = "layers",
-                    tint = c.purple,
-                    title = "Package name",
-                    sub = when {
-                        imported -> "Imported projects keep their package"
-                        problem != null -> problem.message
-                        foreign -> "Installs as $draftPackage"
-                        else -> null
-                    },
-                    value = draftPackage.ifBlank { "—" },
-                    onClick = if (!imported && !busy) {
-                        { editing = ProjectField.PackageName }
-                    } else {
-                        null
-                    },
-                    trailing = {},
-                )
+                if (templateTab == TemplateTab.App) {
+                    SettingRow(
+                        icon = "layers",
+                        tint = c.purple,
+                        title = "Package name",
+                        sub = when {
+                            imported -> "Imported projects keep their package"
+                            problem != null -> problem.message
+                            foreign -> "Installs as $draftPackage"
+                            else -> null
+                        },
+                        value = draftPackage.ifBlank { "—" },
+                        onClick = if (!imported && !busy) {
+                            { editing = ProjectField.PackageName }
+                        } else {
+                            null
+                        },
+                        trailing = {},
+                    )
+                }
                 SettingRow(
                     icon = "image",
                     tint = Color(0xFFDB4C9B),
@@ -223,30 +227,44 @@ fun IdeProjectSettingsSheet(
                 )
             }
 
-            SettingsGroup("Android") {
-                SettingRow(
-                    icon = "play",
-                    tint = c.green,
-                    title = "Minimum SDK",
-                    value = draftMin.ifBlank { "—" },
-                    onClick = if (!imported) {
-                        { editing = ProjectField.MinSdk }
-                    } else {
-                        null
-                    },
-                )
-                SettingRow(
-                    icon = "play",
-                    tint = c.yellow,
-                    title = "Target SDK",
-                    value = draftTarget.ifBlank { "—" },
-                    onClick = if (!imported) {
-                        { editing = ProjectField.TargetSdk }
-                    } else {
-                        null
-                    },
-                    showDivider = false,
-                )
+            if (templateTab == TemplateTab.App) {
+                SettingsGroup("Android") {
+                    SettingRow(
+                        icon = "play",
+                        tint = c.green,
+                        title = "Minimum SDK",
+                        value = draftMin.ifBlank { "—" },
+                        onClick = if (!imported) {
+                            { editing = ProjectField.MinSdk }
+                        } else {
+                            null
+                        },
+                    )
+                    SettingRow(
+                        icon = "play",
+                        tint = c.yellow,
+                        title = "Target SDK",
+                        value = draftTarget.ifBlank { "—" },
+                        onClick = if (!imported) {
+                            { editing = ProjectField.TargetSdk }
+                        } else {
+                            null
+                        },
+                        showDivider = false,
+                    )
+                    SettingRow(
+                        icon = "play",
+                        tint = c.blue,
+                        title = "Compile SDK",
+                        value = draftCompile.ifBlank { "—" },
+                        onClick = if (!imported) {
+                            { editing = ProjectField.CompileSdk }
+                        } else {
+                            null
+                        },
+                        showDivider = false,
+                    )
+                }
             }
 
             SettingsGroup("Signing") {

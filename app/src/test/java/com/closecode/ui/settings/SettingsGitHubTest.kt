@@ -66,19 +66,23 @@ class SettingsGitHubTest {
                     }
             }
 
+        println("ASKED: $asked")
         assertEquals(
             setOf(
                 SettingsAction.PROJECT_LOCATION,
                 SettingsAction.SETUP_GUIDE,
                 SettingsAction.SHELL_TOOLS,
                 SettingsAction.AI_SETTINGS,
-                SettingsAction.DELETE_BUILD_TOOLS,
+                SettingsAction.DOWNLOAD_TOOLCHAIN,
                 SettingsAction.SAVED_COMMANDS,
                 SettingsAction.CONNECT_GITHUB,
+                SettingsAction.CREDENTIALS,
                 SettingsAction.EDIT_GIT_NAME,
                 SettingsAction.EDIT_GIT_EMAIL,
+                SettingsAction.SIGNING_KEYS,
                 SettingsAction.AI_PROVIDER_KEY,
                 SettingsAction.UPDATE_RUNTIME,
+                SettingsAction.PRIVACY,
                 SettingsAction.STORAGE_INSPECT_PROJECTS,
                 SettingsAction.STORAGE_INSPECT_BUILD_TOOLS,
                 SettingsAction.STORAGE_INSPECT_SHELL_TOOLS,

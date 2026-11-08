@@ -40,6 +40,7 @@ import com.closecode.ui.ide.DefaultTerminalCommands
 import com.closecode.ui.ide.GitHubSignIn
 import com.closecode.ui.ide.TERMINAL_COMMANDS_KEY
 import com.closecode.ui.ide.decodeCommands
+import com.closecode.ui.model.TemplateTab
 import com.closecode.ui.project.ProjectRepository
 import com.closecode.ui.theme.LocalCcColors
 import com.closecode.ui.theme.Sans
@@ -148,13 +149,15 @@ fun SettingsScreen(
     onSettingsChange: (Settings) -> Unit,
     onGitHubChanged: () -> Unit = {},
     onOpenSetupGuide: () -> Unit = {},
+    templateTab: TemplateTab? = null,
+    openDetail: Boolean = false,
 ) {
     val context = LocalContext.current
     val repository = rememberProjectRepository()
     val facts = remember(context, repository) { SettingsFacts(context, repository) }
     val scope = rememberCoroutineScope()
     var live by remember { mutableStateOf(SettingsLive()) }
-    var detailOpen by remember { mutableStateOf(false) }
+    var detailOpen by remember { mutableStateOf(openDetail) }
     var refreshKey by remember { mutableStateOf(0) }
     LaunchedEffect(facts, refreshKey) { live = facts.measure() }
 
@@ -331,7 +334,7 @@ fun SettingsScreen(
         return
     }
 
-    val allSections = sections(live, githubLogin, settings)
+    val allSections = sections(live, githubLogin, settings, templateTab)
     val current = allSections.firstOrNull { it.id == activeId } ?: allSections.first()
 
     fun toast(text: String) {

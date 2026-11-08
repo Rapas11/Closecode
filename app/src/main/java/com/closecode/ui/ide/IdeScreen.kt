@@ -177,6 +177,7 @@ import com.closecode.ui.ide.model.suggestionsFor
 import com.closecode.ui.model.FileKind
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.model.SelectedTemplate
+import com.closecode.ui.model.TemplateTab
 import com.closecode.ui.project.ProjectRecord
 import com.closecode.ui.project.ProjectRepository
 import com.closecode.ui.project.headBranch
@@ -186,7 +187,10 @@ import com.closecode.ui.project.ProjectSafety
 import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.model.projectTree
 import com.closecode.ui.model.recentFiles
+import com.closecode.ui.theme.LocalCcColors
 import com.closecode.ui.theme.LocalPageColors
+import com.closecode.ui.theme.TerminalCcColors
+import com.closecode.ui.theme.TerminalPageColors
 import com.closecode.ui.theme.motion
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.codeFontFamily
@@ -204,7 +208,8 @@ internal fun IdeScreen(
     templateName: String, // kept for the project record; the header shows the project name
     slug: String,
     repository: ProjectRepository,
-    onOpenSettings: () -> Unit,
+    onOpenSettings: (TemplateTab?) -> Unit,
+    onOpenTerminalSettings: () -> Unit = {},
     onExit: () -> Unit,
     // Reports whether any open tab has unsaved changes, so leaving can ask first.
     onDirtyChange: (Boolean) -> Unit = {},
@@ -2206,7 +2211,7 @@ internal fun IdeScreen(
             }
             "Settings" -> {
                 saveActiveFile(notify = false)
-                onOpenSettings()
+                onOpenSettings(projectRecord?.tab)
             }
         }
     }
@@ -2240,7 +2245,7 @@ internal fun IdeScreen(
                     changeCount = gitLetters.size,
                     onTool = ::selectRailTool,
                     onRun = ::openRunSheet,
-                    onSettings = { saveActiveFile(notify = false); onOpenSettings() },
+                    onSettings = { saveActiveFile(notify = false); onOpenSettings(projectRecord?.tab) },
                     onProjectClick = { projectSwitcherOpen = true },
                     onProjectSettings = { projectSettingsOpen = true },
                     onDeveloper = { developerOpen = true },
@@ -2613,7 +2618,11 @@ internal fun IdeScreen(
                         }
                     },
                 )
-                "Terminal" -> IdeTerminal(
+                "Terminal" -> CompositionLocalProvider(
+                    LocalPageColors provides TerminalPageColors,
+                    LocalCcColors provides TerminalCcColors,
+                ) {
+                IdeTerminal(
                     projectRoot = runCatching { repository.projectDir(slug) }.getOrNull(),
                     // The UUID is the history key: a rename must not split a project's commands.
                     projectSlug = projectId,
@@ -2637,9 +2646,11 @@ internal fun IdeScreen(
                     // A file made or removed in the terminal is a file the drawer should list,
                     // rather than one that quietly stays wrong until something else refreshes it.
                     onFilesChanged = { refreshTree() },
+                    onOpenTerminalSettings = onOpenTerminalSettings,
                     onBack = ::handleBackPress,
                     modifier = Modifier.weight(1f),
                 )
+                }
                 else -> Column(
                     Modifier
                         .weight(1f)
@@ -2992,7 +3003,7 @@ internal fun IdeScreen(
             onBuild = { activePanel = "Build" },
             onUiInspector = { uiInspectorOpen = true },
             onProjectSettings = { projectSettingsOpen = true },
-            onSettings = onOpenSettings,
+                    onSettings = { onOpenSettings(projectRecord?.tab) },
             onToggleTheme = onToggleTheme,
             onDeveloper = { developerOpen = true },
             versionLabel = BuildInfo.label,
@@ -3087,6 +3098,7 @@ internal fun IdeScreen(
                     if (hasRelease) releaseKeyOpen = true else signingOpen = true
                 },
                 onIcons = { iconsOpen = true },
+                templateTab = record?.tab,
             )
         }
         if (appIconOpen) {
@@ -4112,6 +4124,18 @@ private fun IdePathBar(
                 .padding(start = 18.dp, end = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (filePath.isNotBlank()) {
+                Box(
+                    Modifier
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(cc.accent.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    com.closecode.ui.CcIcon("code", cc.accent, 16.dp, 1.9f)
+                }
+                Spacer(Modifier.width(10.dp))
+            }
             Text(
                 text = fileName,
                 color = cc.text,
@@ -4910,13 +4934,13 @@ formatRequest: Int = 0,
                 selection = run {
                     val saved = caretByFile.remove(active)
                     val displayCaret = saved?.let {
-                        foldMap.toDisplay[it.coerceIn(0, sourceText.length)]
+                        foldMap.displayAt(it)
                     }
                     when {
                         displayCaret != null ->
                             TextRange(displayCaret.coerceIn(0, foldMap.display.length))
                         caretRequest >= 0 -> TextRange(
-                            foldMap.toDisplay[caretRequest.coerceIn(0, sourceText.length)]
+                            foldMap.displayAt(caretRequest)
                                 .coerceIn(0, foldMap.display.length),
                         )
                         else -> TextRange(caretOffsetAtEndOfCode(foldMap.display))
@@ -5001,9 +5025,9 @@ formatRequest: Int = 0,
         fieldValue = TextFieldValue(
             map.display,
             TextRange(
-                map.toDisplay[sourceCaret.coerceIn(0, newSource.length)]
+                map.displayAt(sourceCaret)
                     .coerceIn(0, map.display.length),
-                map.toDisplay[sourceAnchor.coerceIn(0, newSource.length)]
+                map.displayAt(sourceAnchor)
                     .coerceIn(0, map.display.length),
             ),
         )
@@ -5049,9 +5073,9 @@ formatRequest: Int = 0,
         fieldValue = TextFieldValue(
             map.display,
             TextRange(
-                map.toDisplay[caretS.coerceIn(0, sourceText.length)]
+                map.displayAt(caretS)
                     .coerceIn(0, map.display.length),
-                map.toDisplay[anchorS.coerceIn(0, sourceText.length)]
+                map.displayAt(anchorS)
                     .coerceIn(0, map.display.length),
             ),
         )
@@ -5183,7 +5207,7 @@ formatRequest: Int = 0,
     // a file switch the reseed wins the caret and this only adds the follow.
     LaunchedEffect(caretRequest) {
         if (caretRequest < 0) return@LaunchedEffect
-        val at = foldMap.toDisplay[caretRequest.coerceIn(0, sourceText.length)]
+        val at = foldMap.displayAt(caretRequest)
             .coerceIn(0, code.length)
         commit(TextFieldValue(code, TextRange(at)))
     }
@@ -5464,12 +5488,12 @@ formatRequest: Int = 0,
         value = withContext(Dispatchers.Default) { allBracketPairs(sourceText) }
     }
     fun FoldMap.displayRange(sourceRange: IntRange): IntRange? {
-        val a = toDisplay[sourceRange.first.coerceIn(0, sourceText.length)]
-        val b = toDisplay[sourceRange.last.coerceIn(0, sourceText.length)]
+        val a = displayAt(sourceRange.first)
+        val b = displayAt(sourceRange.last)
         // Both ends must land exactly: a clamped end would underline whatever character the
         // fold point happens to sit on.
-        if (toSource[a.coerceIn(0, display.length)] != sourceRange.first) return null
-        if (toSource[b.coerceIn(0, display.length)] != sourceRange.last) return null
+        if (sourceAt(a) != sourceRange.first) return null
+        if (sourceAt(b) != sourceRange.last) return null
         return a..b
     }
     val braceGuides = remember(braceGuidesSrc, foldMap) {
@@ -5523,7 +5547,7 @@ formatRequest: Int = 0,
         } else {
             // The analysis reads source text, so the display caret is mapped before it goes in:
             // with folds above, the two disagree by exactly the hidden span.
-            val sourceCursor = foldMap.toSource[cursor.coerceIn(0, code.length)]
+            val sourceCursor = foldMap.sourceAt(cursor)
             runCatching {
                 if (live.prefixAt(sourceCursor).isNotEmpty() || live.isMemberAccess(sourceCursor)) {
                     live.completionsAt(sourceCursor, limit = 25)
@@ -5579,7 +5603,7 @@ formatRequest: Int = 0,
     }
 
     val kotlinPrefix = if (kotlinItems != null) {
-        val sourceCursor = foldMap.toSource[cursor.coerceIn(0, code.length)]
+        val sourceCursor = foldMap.sourceAt(cursor)
         runCatching { currentAnalysis?.prefixAt(sourceCursor) }.getOrNull().orEmpty()
     } else {
         ""
@@ -6022,7 +6046,7 @@ val applySuggestion: (Int) -> Unit = { index ->
         // half a line would move code the reader did not select. The whole file is formatted
         // from source: folded bodies still count braces, and the display text cannot see them.
         if (!SourceEdits.selectionCoversWholeLines(live.text, from, to)) {
-            val sourceCaret = foldMap.toSource[cursor.coerceIn(0, code.length)]
+            val sourceCaret = foldMap.sourceAt(cursor)
             val formatted = if (activeKind == FileKind.Kotlin || active.endsWith(".kt", true)) {
                 SourceEdits.formatKotlin(sourceText)
             } else {
@@ -6112,7 +6136,7 @@ val applySuggestion: (Int) -> Unit = { index ->
         if (formatRequest == 0) return@LaunchedEffect
         // Whole-file formatting reads the source: the display text is missing folded bodies,
         // and re-indenting from it would stack every line under a fold one level too deep.
-        val sourceCaret = foldMap.toSource[cursor.coerceIn(0, code.length)]
+        val sourceCaret = foldMap.sourceAt(cursor)
         val formatted = if (activeKind == FileKind.Kotlin || active.endsWith(".kt", true)) {
             SourceEdits.formatKotlin(sourceText)
         } else {
@@ -6212,32 +6236,34 @@ val applySuggestion: (Int) -> Unit = { index ->
                         tab.name
                     }
                     Box {
-                        Row(
+                        Column(
                             Modifier
                                 .height(TAB_HEIGHT)
-                                .clip(RoundedCornerShape(15.dp))
-                                .background(if (isActive) c.mock.content else c.mock.field)
-                                .border(
-                                    1.dp,
-                                    if (isActive) c.mock.border else Color.Transparent,
-                                    RoundedCornerShape(15.dp),
-                                )
+                                .clip(RoundedCornerShape(topStart = 11.dp, topEnd = 11.dp))
+                                .background(if (isActive) c.mock.card else Color.Transparent)
                                 .combinedClickable(
                                     onClick = { selectTabKeepingPlace(tab.path) },
                                     onLongClick = { tabMenuFor = tab.path },
                                 )
                                 .padding(horizontal = 13.dp),
-                            verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(
-                                text = ellipsizeMiddle(tabLabel),
-                                color = if (isActive) c.mock.text else c.mock.textSoft,
-                                fontSize = 12.5.sp,
-                                fontFamily = Sans,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.widthIn(max = 150.dp),
+                            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                Text(
+                                    text = ellipsizeMiddle(tabLabel),
+                                    color = if (isActive) c.mock.text else c.mock.textSoft,
+                                    fontSize = 12.5.sp,
+                                    fontFamily = Sans,
+                                    fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.widthIn(max = 150.dp),
+                                )
+                            }
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .height(if (isActive) TAB_UNDERLINE_THICKNESS else 0.dp)
+                                    .background(if (isActive) c.mock.accent else Color.Transparent),
                             )
                         }
                         DropdownMenu(

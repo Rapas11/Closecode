@@ -38,7 +38,7 @@ class SettingsControlsTest {
             .flatMap { section -> section.groups.flatMap { it.rows } }
             .filterIsInstance<Row.Toggle>()
 
-        assertEquals(13, toggles.size)
+        assertEquals(24, toggles.size)
         assertEquals(0, toggles.count { it.key == null })
         assertTrue(toggles.any { it.name == "Word wrap" && it.key == BoolSetting.WORD_WRAP })
         assertTrue(toggles.any { it.name == "Performance overlay" && it.key == BoolSetting.FRAME_STATS })

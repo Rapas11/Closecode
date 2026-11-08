@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.items
@@ -38,6 +39,8 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -82,6 +85,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.debug.DebugLog
+import com.closecode.ui.components.HeaderAction
 import com.closecode.ui.components.ScreenHeader
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.settings.LocalSettings
@@ -160,6 +164,9 @@ internal fun <T> MutableList<T>.appendTerminalLine(line: T): Int {
 
 /** Which side of the chat-style log a row belongs to. */
 internal enum class TermWho { You, Shell }
+
+/** The two faces of one terminal: the conversation, or the saved-command shelf. */
+private enum class TerminalSection { Shells, SavedCommands }
 
 /**
  * One drawn row: an echo of a command (You) or output from the shell. Consecutive output lines
@@ -445,6 +452,7 @@ internal fun IdeTerminal(
     usePipe: Boolean = false,
     onOpenPath: (ProjectFile) -> Unit = {},
     onFilesChanged: () -> Unit = {},
+    onOpenTerminalSettings: () -> Unit = {},
     onBack: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -462,17 +470,17 @@ internal fun IdeTerminal(
     // The Commands sheet, the rename dialog's target shell, and the shelf behind the sheet.
     var renameShell by remember { mutableStateOf<Int?>(null) }
     var commandsPanelOpen by remember { mutableStateOf(false) }
-    // The New-command form, hoisted from the panel so the header closes exactly what system
-    // Back closes. Reset whenever the panel itself closes, matching the old unmount behavior.
-    var commandFormOpen by remember { mutableStateOf(false) }
-    // The shells home (screen 22): the shell list and the saved commands, with the session one
-    // tap away. Sessions keep running either way — their pumps live above this branch.
-    var shellsHome by remember { mutableStateOf(true) }
+    // The saved-command panel's own Add form, inline rather than a page of its own.
+    var commandsPanelAdding by remember { mutableStateOf(false) }
+    // The two top-level tabs share one content area: the chat, or the saved shelf.
+    var terminalSection by remember { mutableStateOf(TerminalSection.Shells) }
+    var shellMenuOpen by remember { mutableStateOf(false) }
+    // The shells home (screen 22) is reachable from the shell selector, while the Shells tab
+    // opens the active conversation directly.
+    var shellsHome by remember { mutableStateOf(false) }
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val promptFocus = remember { androidx.compose.ui.focus.FocusRequester() }
-    var fieldLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
-    var fieldFocused by remember { mutableStateOf(false) }
     val commandKv = remember { com.closecode.ui.settings.SharedPreferencesKeyValueStore(context) }
     // The keyboard height the commands panel must match so nothing jumps: exactly the last
     // keyboard height, defaulting to 216 dp. Tracked live through the platform insets and
@@ -501,6 +509,8 @@ internal fun IdeTerminal(
     /** Swaps the keyboard for the commands panel at the same height. */
     fun openCommandsPanel() {
         commandsPanelOpen = true
+        commandsPanelAdding = false
+        terminalSection = TerminalSection.SavedCommands
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
     }
@@ -508,7 +518,8 @@ internal fun IdeTerminal(
     /** Closes the commands panel and summons the keyboard back. */
     fun backToKeyboard() {
         commandsPanelOpen = false
-        commandFormOpen = false
+        commandsPanelAdding = false
+        terminalSection = TerminalSection.Shells
         promptFocus.requestFocus()
         keyboardController?.show()
     }
@@ -527,8 +538,11 @@ internal fun IdeTerminal(
     LaunchedEffect(newCommandRequest) {
         if (newCommandRequest > 0) {
             shellsHome = false
-            commandsPanelOpen = false
-            commandFormOpen = true
+            terminalSection = TerminalSection.SavedCommands
+            commandsPanelOpen = true
+            commandsPanelAdding = true
+            focusManager.clearFocus(force = true)
+            keyboardController?.hide()
         }
     }
     // The list and the selection belong to the holder, so what this panel reads is a projection of
@@ -542,7 +556,8 @@ internal fun IdeTerminal(
      * Lives at page scope so the shells home can drop into a session with the command typed. */
     fun runSaved(command: String) {
         commandsPanelOpen = false
-        commandFormOpen = false
+        commandsPanelAdding = false
+        terminalSection = TerminalSection.Shells
         session.followOutput = true
         session.hasNewOutput = false
         when (command.trim()) {
@@ -974,12 +989,6 @@ internal fun IdeTerminal(
         // panel, then the screen — so the two can never disagree about what Back means here.
         fun terminalHeaderBack() {
             when {
-                commandFormOpen -> {
-                    com.closecode.ui.ide.BackLog.press("terminal-header", "branch=command-form")
-                    commandFormOpen = false
-                    focusManager.clearFocus(force = true)
-                    keyboardController?.hide()
-                }
                 renameShell != null -> {
                     com.closecode.ui.ide.BackLog.press("terminal-header", "branch=rename-shell")
                     renameShell = null
@@ -987,21 +996,91 @@ internal fun IdeTerminal(
                 commandsPanelOpen -> {
                     com.closecode.ui.ide.BackLog.press("terminal-header", "branch=commands-panel")
                     commandsPanelOpen = false
-                }
-                !shellsHome -> {
-                    com.closecode.ui.ide.BackLog.press("terminal-header", "branch=shells-home")
-                    shellsHome = true
-                    focusManager.clearFocus(force = true)
-                    keyboardController?.hide()
+                    commandsPanelAdding = false
+                    terminalSection = TerminalSection.Shells
                 }
                 else -> onBack()
             }
         }
         Box(Modifier.windowInsetsPadding(WindowInsets.statusBars)) {
             ScreenHeader(
-                origin = "Terminal",
-                title = shellName,
+                origin = null,
+                title = "Terminal",
                 onBack = ::terminalHeaderBack,
+                actions = {
+                    Box {
+                        Row(
+                            Modifier
+                                .height(34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(cc.field)
+                                .clickable { shellMenuOpen = true }
+                                .padding(horizontal = 10.dp)
+                                .semantics { contentDescription = "Select shell" },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        ) {
+                            Text(
+                                text = shellName,
+                                color = cc.text,
+                                fontSize = 12.sp,
+                                fontFamily = Sans,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 88.dp),
+                            )
+                            com.closecode.ui.CcIcon("chevron", cc.muted, 14.dp, 1.8f)
+                        }
+                        DropdownMenu(
+                            expanded = shellMenuOpen,
+                            onDismissRequest = { shellMenuOpen = false },
+                        ) {
+                            sessionList.forEach { candidate ->
+                                val name = candidate.customName?.takeIf { it.isNotBlank() }
+                                    ?: "Shell ${candidate.number}"
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            text = name,
+                                            color = if (candidate.number == activeId) cc.accent else cc.text,
+                                            fontFamily = Sans,
+                                            fontSize = 12.5.sp,
+                                        )
+                                    },
+                                    onClick = {
+                                        sessions.select(candidate.number)
+                                        shellsHome = false
+                                        terminalSection = TerminalSection.Shells
+                                        shellMenuOpen = false
+                                    },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("All shells", color = cc.text, fontFamily = Sans, fontSize = 12.5.sp) },
+                                onClick = {
+                                    shellsHome = true
+                                    terminalSection = TerminalSection.Shells
+                                    shellMenuOpen = false
+                                },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("New shell", color = cc.accent, fontFamily = Sans, fontSize = 12.5.sp) },
+                                onClick = {
+                                    sessions.openNew()
+                                    shellsHome = false
+                                    terminalSection = TerminalSection.Shells
+                                    shellMenuOpen = false
+                                },
+                            )
+                        }
+                    }
+                    HeaderAction(
+                        icon = "cog",
+                        label = "Terminal settings",
+                        onClick = onOpenTerminalSettings,
+                    )
+                },
             )
         }
 
@@ -1035,6 +1114,27 @@ internal fun IdeTerminal(
             }
         }
 
+        TerminalSectionTabs(
+            selected = if (commandsPanelOpen) TerminalSection.SavedCommands else terminalSection,
+            onSelect = { section ->
+                terminalSection = section
+                when (section) {
+                    TerminalSection.Shells -> {
+                        shellsHome = false
+                        commandsPanelOpen = false
+                        commandsPanelAdding = false
+                    }
+                    TerminalSection.SavedCommands -> {
+                        shellsHome = false
+                        commandsPanelOpen = true
+                        commandsPanelAdding = false
+                        focusManager.clearFocus(force = true)
+                        keyboardController?.hide()
+                    }
+                }
+            },
+        )
+
         if (shellsHome) {
             ShellsHome(
                 projectName = projectName,
@@ -1044,10 +1144,12 @@ internal fun IdeTerminal(
                 onOpenShell = { number ->
                     sessions.select(number)
                     shellsHome = false
+                    terminalSection = TerminalSection.Shells
                 },
                 onAddShell = {
                     sessions.openNew()
                     shellsHome = false
+                    terminalSection = TerminalSection.Shells
                 },
                 onRunCommand = { command ->
                     shellsHome = false
@@ -1055,30 +1157,14 @@ internal fun IdeTerminal(
                 },
                 onAddCommand = {
                     shellsHome = false
+                    terminalSection = TerminalSection.SavedCommands
                     commandsPanelOpen = true
-                    commandFormOpen = true
+                    commandsPanelAdding = true
+                    focusManager.clearFocus(force = true)
+                    keyboardController?.hide()
                 },
             )
         } else {
-        // The tab strip, so two shells can exist at once — a server left running in one while Git
-        // work goes on in the other. Above the output rather than below it, because which shell you
-        // are typing into is the more important of the two facts.
-        TerminalTabStrip(
-            sessions = sessionList,
-            activeId = activeId,
-            onSelect = { sessions.select(it) },
-            // One shell closes, and only that one. The old code reassigned the list, which changed
-            // the key of the DisposableEffect that was responsible for killing every shell, so
-            // closing a tab killed the server in the next one along.
-            onClose = { sessions.close(it) },
-            // Adding a tab used to reassign the list, which disposed the effect whose cleanup
-            // closed every shell and then started them all again — so opening a second tab killed
-            // the first one's server without the reader ever leaving the panel.
-            onAdd = { sessions.openNew() },
-            onRename = { renameShell = it },
-        )
-
-        val fontSp = 11.5.sp
         val messages = remember(session, session.lineVersion) {
             buildTermMessages(session.lines, session.lineMeta)
         }
@@ -1158,7 +1244,6 @@ internal fun IdeTerminal(
                         ) {
                             if (message.showHeader) {
                                 Row(
-                                    Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.Bottom,
                                     horizontalArrangement = if (fromUser) {
                                         Arrangement.End
@@ -1167,11 +1252,11 @@ internal fun IdeTerminal(
                                     },
                                 ) {
                                     Text(
-                                        text = if (fromUser) "User" else "Shell",
+                                        text = if (fromUser) "You" else shellName,
                                         color = cc.text,
-                                        fontSize = 14.sp,
+                                        fontSize = 13.5.sp,
                                         fontFamily = Sans,
-                                        fontWeight = FontWeight.Bold,
+                                        fontWeight = FontWeight.SemiBold,
                                         maxLines = 1,
                                     )
                                     val clock = termClock(message.at)
@@ -1180,53 +1265,79 @@ internal fun IdeTerminal(
                                         Text(
                                             text = clock,
                                             color = cc.muted,
-                                            fontSize = 11.sp,
+                                            fontSize = 10.5.sp,
                                             fontFamily = Mono,
                                         )
                                     }
                                 }
-                                Spacer(Modifier.height(3.dp))
+                                Spacer(Modifier.height(5.dp))
                             }
-                            val prompt = message.prompt
-                            if (prompt != null) {
-                                Text(
-                                    text = promptEcho(prompt, message.text),
-                                    color = cc.text2,
-                                    fontSize = 12.sp,
-                                    fontFamily = Mono,
-                                    lineHeight = 18.6.sp,
-                                    textAlign = if (fromUser) {
-                                        androidx.compose.ui.text.style.TextAlign.End
+                            val bubbleShape = RoundedCornerShape(
+                                topStart = 16.dp,
+                                topEnd = 16.dp,
+                                bottomStart = if (fromUser) 16.dp else 4.dp,
+                                bottomEnd = if (fromUser) 4.dp else 16.dp,
+                            )
+                            Box(
+                                Modifier
+                                    .widthIn(max = 320.dp)
+                                    .clip(bubbleShape)
+                                    .background(if (fromUser) cc.accent else cc.field)
+                                    .border(
+                                        width = 1.dp,
+                                        color = if (fromUser) Color.Transparent else cc.border,
+                                        shape = bubbleShape,
+                                    )
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                            ) {
+                                Column(
+                                    horizontalAlignment = if (fromUser) {
+                                        Alignment.End
                                     } else {
-                                        androidx.compose.ui.text.style.TextAlign.Start
+                                        Alignment.Start
                                     },
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            } else {
-                                // A line that names a file of this project becomes a tap on that
-                                // file; a plain failure line keeps its red tint.
-                                val opens = pathsMentionedIn(message.text, tree)
-                                TerminalLine(
-                                    line = message.text,
-                                    color = bodyColor,
-                                    fontSize = 12.sp,
-                                    lineHeight = 18.6.sp,
-                                    textAlign = if (fromUser) {
-                                        androidx.compose.ui.text.style.TextAlign.End
+                                ) {
+                                    val prompt = message.prompt
+                                    if (prompt != null) {
+                                        Text(
+                                            text = promptEcho(prompt, message.text),
+                                            color = if (fromUser) Color.White else cc.text2,
+                                            fontSize = 12.sp,
+                                            fontFamily = Mono,
+                                            lineHeight = 18.6.sp,
+                                            textAlign = if (fromUser) {
+                                                androidx.compose.ui.text.style.TextAlign.End
+                                            } else {
+                                                androidx.compose.ui.text.style.TextAlign.Start
+                                            },
+                                        )
                                     } else {
-                                        androidx.compose.ui.text.style.TextAlign.Start
-                                    },
-                                    modifier = if (opens.isEmpty()) {
-                                        Modifier.fillMaxWidth()
-                                    } else {
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .clickable { onOpenPath(opens.first()) }
-                                            .semantics {
-                                                contentDescription = "Open ${opens.first().path}"
-                                            }
-                                    },
-                                )
+                                        // A line that names a file of this project becomes a tap on
+                                        // that file; a plain failure line keeps its tint.
+                                        val opens = pathsMentionedIn(message.text, tree)
+                                        TerminalLine(
+                                            line = message.text,
+                                            color = if (fromUser) Color.White else bodyColor,
+                                            fontSize = 12.sp,
+                                            lineHeight = 18.6.sp,
+                                            textAlign = if (fromUser) {
+                                                androidx.compose.ui.text.style.TextAlign.End
+                                            } else {
+                                                androidx.compose.ui.text.style.TextAlign.Start
+                                            },
+                                            modifier = if (opens.isEmpty()) {
+                                                Modifier
+                                            } else {
+                                                Modifier
+                                                    .clickable { onOpenPath(opens.first()) }
+                                                    .semantics {
+                                                        contentDescription =
+                                                            "Open ${opens.first().path}"
+                                                    }
+                                            },
+                                        )
+                                    }
+                                }
                             }
                         }
                         if (fromUser) {
@@ -1246,33 +1357,28 @@ internal fun IdeTerminal(
 
         }
 
-        // Screen 23's quick commands: the saved shelf as chips, a tap away from the prompt.
-        QuickCommandChips(commands = savedCommands, onRun = { submit(splitAlias(it).second) })
+        if (savedCommands.isNotEmpty()) {
+            SavedCommandsCard(
+                commands = savedCommands,
+                onRun = { runSaved(splitAlias(it).second) },
+                onViewAll = ::openCommandsPanel,
+            )
+        }
 
-        // The prompt is part of the output: path, dollar, and the line being typed, ending in
-        // a blinking block cursor. Typing happens here with the system keyboard; Enter runs.
-        // No send button: the keyboard's own Enter is the whole submit path.
         PromptRow(
-            dir = displayDir(projectName, session.cwd),
             input = session.input,
             onInput = {
                 session.input = it
                 session.followOutput = true
                 session.hasNewOutput = false
             },
-            fieldLayout = fieldLayout,
-            onLayout = { fieldLayout = it },
-            fieldFocused = fieldFocused,
-            onFocus = { fieldFocused = it },
             focusRequester = promptFocus,
-            fontSp = fontSp,
             onSend = { send() },
             running = session.commandRunning,
             onStop = {
                 session.killRunning()
                 session.appendLine("^C", TermTone.Warning)
             },
-            onCommands = ::toggleCommandsPanel,
         )
 
         // Whatever Tab was unsure about, shown rather than guessed at. It belongs to
@@ -1290,45 +1396,50 @@ internal fun IdeTerminal(
         androidx.activity.compose.BackHandler(enabled = commandsPanelOpen) {
             com.closecode.ui.ide.BackLog.press("terminal", "branch=commands-panel")
             commandsPanelOpen = false
+            commandsPanelAdding = false
+            terminalSection = TerminalSection.Shells
         }
         androidx.activity.compose.BackHandler(enabled = renameShell != null) {
             com.closecode.ui.ide.BackLog.press("terminal", "branch=rename-shell")
             renameShell = null
         }
-        // Deeper handlers (form, panel, rename) run first; this one turns a session into the
-        // shells home. When home is showing, it is disabled and Back belongs to the screen.
+        // Deeper handlers (form, panel, rename) run first; the shells home is a leaf page, so
+        // Back leaves the terminal from it.
         androidx.activity.compose.BackHandler(
-            enabled = !shellsHome && !commandsPanelOpen && renameShell == null && !commandFormOpen,
+            enabled = shellsHome && !commandsPanelOpen && renameShell == null,
         ) {
-            com.closecode.ui.ide.BackLog.press("terminal", "branch=shells-home")
-            shellsHome = true
-            focusManager.clearFocus(force = true)
-            keyboardController?.hide()
+            com.closecode.ui.ide.BackLog.press("terminal", "branch=shells-home-exit")
+            onBack()
         }
         if (commandsPanelOpen) {
             CommandsPanel(
                 commands = savedCommands,
                 heightDp = keyboardHeightDp,
                 onRun = { runSaved(splitAlias(it).second) },
-                onNewCommand = { commandFormOpen = true },
+                adding = commandsPanelAdding,
+                onAddingChange = { commandsPanelAdding = it },
+                onAddCommand = { alias, cmd ->
+                    val entry = if (alias.isNotBlank()) "$alias\u0000$cmd" else cmd
+                    if (entry !in savedCommands) persistCommands(savedCommands + entry)
+                },
                 onRemove = { persistCommands(savedCommands - it) },
                 onKeyboard = ::backToKeyboard,
             )
         }
-        // The key row sits at the very bottom: above the keyboard when it is open, pinned
-        // to the bottom otherwise. It never hides — the bolt needs somewhere to live even
-        // before the keyboard is summoned.
-        TerminalKeyBar(
-            modifier = Modifier.onSizeChanged { keyBarHeightPx = it.height },
-            ctrl = ctrl,
-            alt = alt,
-            onCtrl = { ctrl = nextLatch(ctrl) },
-            onAlt = { alt = nextLatch(alt) },
-            onKey = { onKeyBar(it) },
-            onHistory = { direction ->
-                if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
-            },
-        )
+        // The terminal key row belongs to typing: it rises with the IME and leaves with it.
+        if (imeVisiblePanel) {
+            TerminalKeyBar(
+                modifier = Modifier.onSizeChanged { keyBarHeightPx = it.height },
+                ctrl = ctrl,
+                alt = alt,
+                onCtrl = { ctrl = nextLatch(ctrl) },
+                onAlt = { alt = nextLatch(alt) },
+                onKey = { onKeyBar(it) },
+                onHistory = { direction ->
+                    if (direction > 0) onKeyBar("↑") else onKeyBar("↓")
+                },
+            )
+        }
 
         renameShell?.let { number ->
             val target = sessionList.firstOrNull { it.number == number }
@@ -1346,23 +1457,10 @@ internal fun IdeTerminal(
         }
     }
 
-    if (commandFormOpen) {
-        NewCommandPage(
-            folder = displayDir(projectName, session.cwd),
-            existing = savedCommands,
-            onSave = { cmd, alias ->
-                val entry = if (alias.isNotBlank()) "$alias\u0000$cmd" else cmd
-                if (entry !in savedCommands) persistCommands(savedCommands + entry)
-                commandFormOpen = false
-            },
-            onClose = { commandFormOpen = false },
-        )
-    }
-
-    // Follow is off — and neither the commands panel nor its form is covering the
-    // prompt area: a pill back to the bottom, floating above the key row. The blue dot
-    // says output arrived while the reader was away; tapping re-engages follow and jumps.
-    if (!shellsHome && !session.followOutput && !commandsPanelOpen && !commandFormOpen) {
+    // Follow is off — and the commands panel is not covering the prompt area: a pill back
+    // to the bottom, floating above the key row. The blue dot says output arrived while the
+    // reader was away; tapping re-engages follow and jumps.
+    if (!shellsHome && !session.followOutput && !commandsPanelOpen) {
         Box(
             Modifier
                 .align(Alignment.BottomEnd)
@@ -1533,7 +1631,7 @@ private fun TerminalAvatar(fromUser: Boolean) {
         Modifier
             .size(38.dp)
             .clip(CircleShape)
-            .background(if (fromUser) cc.accent else Color(0xFF6B7280)),
+            .background(if (fromUser) cc.accent else cc.purple),
         contentAlignment = Alignment.Center,
     ) {
         com.closecode.ui.CcIcon(
@@ -1542,6 +1640,64 @@ private fun TerminalAvatar(fromUser: Boolean) {
             19.dp,
             1.8f,
         )
+    }
+}
+
+/** The two top-level tabs: one shared terminal, two faces. */
+@Composable
+private fun TerminalSectionTabs(
+    selected: TerminalSection,
+    onSelect: (TerminalSection) -> Unit,
+) {
+    val cc = LocalCcColors.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(cc.content),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 14.dp, end = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            TerminalSection.entries.forEach { section ->
+                val isSelected = section == selected
+                Column(
+                    Modifier
+                        .clickable { onSelect(section) }
+                        .padding(horizontal = 4.dp, vertical = 10.dp)
+                        .semantics {
+                            contentDescription = when (section) {
+                                TerminalSection.Shells -> "Shells"
+                                TerminalSection.SavedCommands -> "Saved Commands"
+                            }
+                        },
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    Text(
+                        text = when (section) {
+                            TerminalSection.Shells -> "Shells"
+                            TerminalSection.SavedCommands -> "Saved Commands"
+                        },
+                        color = if (isSelected) cc.text else cc.muted,
+                        fontSize = 13.sp,
+                        fontFamily = Sans,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.height(7.dp))
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(2.dp)
+                            .clip(RoundedCornerShape(1.dp))
+                            .background(if (isSelected) cc.accent else Color.Transparent),
+                    )
+                }
+            }
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(cc.divider))
     }
 }
 
@@ -1733,147 +1889,183 @@ private fun DashedAction(text: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PromptRow(
-    dir: String,
-    input: TextFieldValue,
-    onInput: (TextFieldValue) -> Unit,
-    fieldLayout: androidx.compose.ui.text.TextLayoutResult?,
-    onLayout: (androidx.compose.ui.text.TextLayoutResult) -> Unit,
-    fieldFocused: Boolean,
-    onFocus: (Boolean) -> Unit,
-    focusRequester: androidx.compose.ui.focus.FocusRequester,
-    fontSp: androidx.compose.ui.unit.TextUnit,
-    onSend: () -> Unit,
-    running: Boolean = false,
-    onStop: () -> Unit = {},
-    onCommands: () -> Unit = {},
+private fun SavedCommandsCard(
+    commands: List<String>,
+    onRun: (String) -> Unit,
+    onViewAll: () -> Unit,
 ) {
     val cc = LocalCcColors.current
-    val density = LocalDensity.current
-    val blink by rememberInfiniteTransition(label = "cursor").animateFloat(
-        initialValue = 1f,
-        targetValue = 0.15f,
-        animationSpec = infiniteRepeatable(tween(530), RepeatMode.Reverse),
-        label = "blink",
-    )
-    val prefixLen = dir.length + 3
-    val transformation = remember(dir, cc) {
-        object : androidx.compose.ui.text.input.VisualTransformation {
-            override fun filter(
-                text: AnnotatedString,
-            ): androidx.compose.ui.text.input.TransformedText {
-                val combined = androidx.compose.ui.text.buildAnnotatedString {
-                    pushStyle(androidx.compose.ui.text.SpanStyle(color = cc.green))
-                    append(dir)
-                    pop()
-                    pushStyle(androidx.compose.ui.text.SpanStyle(color = cc.muted))
-                    append(" $ ")
-                    pop()
-                    pushStyle(androidx.compose.ui.text.SpanStyle(color = cc.text2))
-                    append(text)
-                    pop()
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp, end = 12.dp, top = 6.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(cc.field)
+            .border(1.dp, cc.border, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "Saved commands",
+                color = cc.text,
+                fontSize = 12.5.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "View all",
+                color = cc.accent,
+                fontSize = 11.5.sp,
+                fontFamily = Sans,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(onClick = onViewAll)
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                    .semantics { contentDescription = "View all saved commands" },
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        commands.take(3).forEachIndexed { index, entry ->
+            val (alias, command) = splitAlias(entry)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onRun(entry) }
+                    .padding(vertical = 7.dp)
+                    .semantics { contentDescription = "Run ${alias ?: command}" },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(26.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(cc.accent.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    com.closecode.ui.CcIcon("term", cc.accent, 14.dp, 1.9f)
                 }
-                return androidx.compose.ui.text.input.TransformedText(
-                    combined,
-                    object : androidx.compose.ui.text.input.OffsetMapping {
-                        override fun originalToTransformed(offset: Int) =
-                            (offset + prefixLen).coerceAtMost(combined.length)
-
-                        override fun transformedToOriginal(offset: Int) =
-                            (offset - prefixLen).coerceIn(0, text.length)
-                    },
-                )
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = alias ?: command.lineSequence().first(),
+                        color = cc.text,
+                        fontSize = 12.5.sp,
+                        fontFamily = Mono,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                    if (alias != null) {
+                        Text(
+                            text = command,
+                            color = cc.muted,
+                            fontSize = 10.5.sp,
+                            fontFamily = Mono,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            if (index < minOf(commands.size, 3) - 1) {
+                Box(Modifier.fillMaxWidth().height(1.dp).background(cc.divider))
             }
         }
     }
+}
+
+@Composable
+private fun PromptRow(
+    input: TextFieldValue,
+    onInput: (TextFieldValue) -> Unit,
+    focusRequester: androidx.compose.ui.focus.FocusRequester,
+    onSend: () -> Unit,
+    running: Boolean = false,
+    onStop: () -> Unit = {},
+) {
+    val cc = LocalCcColors.current
     Row(
         Modifier
             .fillMaxWidth()
             .background(cc.content)
-            .padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 12.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(
-            Modifier
-                .size(38.dp)
-                .clip(CircleShape)
-                .background(cc.field)
-                .clickable(onClick = onCommands)
-                .semantics { contentDescription = "Saved commands" },
-            contentAlignment = Alignment.Center,
-        ) {
-            com.closecode.ui.CcIcon("bolt", cc.amber, 18.dp, 1.8f)
-        }
-        Box(
+        Row(
             Modifier
                 .weight(1f)
-                .height(42.dp)
-                .clip(RoundedCornerShape(21.dp))
-                .background(cc.field)
-                .padding(horizontal = 16.dp),
-            contentAlignment = Alignment.CenterStart,
-        ) {
-            BasicTextField(
-                value = input,
-                onValueChange = onInput,
-                textStyle = TextStyle(
-                    color = cc.text2,
-                    fontFamily = Mono,
-                    fontSize = 13.sp,
-                ),
-                visualTransformation = transformation,
-                // A command is one line. singleLine also makes a hardware Enter trigger the
-                // Send action instead of inserting a newline, so a Bluetooth keyboard works.
-                singleLine = true,
-                cursorBrush = SolidColor(Color.Transparent),
-                // Commands must arrive as typed: the keyboard once turned ls into Ls and
-                // ping into Ping, so capitalization, auto-correct and suggestions stay off.
-                keyboardOptions = KeyboardOptions(
-                    capitalization = KeyboardCapitalization.None,
-                    autoCorrect = false,
-                    keyboardType = KeyboardType.Ascii,
-                    imeAction = ImeAction.Send,
-                ),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
-                onTextLayout = onLayout,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .focusRequester(focusRequester)
-                    .onFocusChanged { onFocus(it.isFocused) },
-            )
-            // The layout holds prompt plus command, so the caret maps past the prefix.
-            val caret = (input.selection.start + prefixLen)
-                .coerceIn(0, input.text.length + prefixLen)
-            val rect = fieldLayout?.let { layout ->
-                runCatching { layout.getCursorRect(caret) }.getOrNull()
-            }
-            if (rect != null && fieldFocused) {
-                Box(
-                    Modifier
-                        .offset { IntOffset(rect.left.roundToInt(), rect.top.roundToInt()) }
-                        .size(7.dp, with(density) { rect.height.toDp() })
-                        .background(cc.accent.copy(alpha = blink)),
-                )
-            }
-        }
-        // Stop lives on the send control: it turns red while a command runs and sends the same
-        // kill the old header button did.
-        Box(
-            Modifier
-                .size(38.dp)
+                .height(52.dp)
                 .clip(CircleShape)
-                .background(if (running) cc.red else cc.accent)
-                .clickable { if (running) onStop() else onSend() }
-                .semantics {
-                    contentDescription = if (running) "Stop the running command" else "Send"
-                },
-            contentAlignment = Alignment.Center,
+                .background(cc.field)
+                .border(1.dp, cc.border, CircleShape)
+                .padding(start = 8.dp, end = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (running) {
-                com.closecode.ui.CcIcon("x", Color.White, 17.dp, 2.2f)
-            } else {
-                com.closecode.ui.CcIcon("send", Color.White, 17.dp, 1.9f)
+            Box(
+                Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(cc.accent.copy(alpha = 0.18f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                com.closecode.ui.CcIcon("term", cc.accent, 17.dp, 1.9f)
+            }
+            Spacer(Modifier.width(10.dp))
+            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                BasicTextField(
+                    value = input,
+                    onValueChange = onInput,
+                    textStyle = TextStyle(
+                        color = cc.text,
+                        fontFamily = Mono,
+                        fontSize = 13.sp,
+                    ),
+                    // A command is one line. singleLine also makes a hardware Enter trigger the
+                    // Send action instead of inserting a newline, so a Bluetooth keyboard works.
+                    singleLine = true,
+                    cursorBrush = SolidColor(cc.accent),
+                    // Commands must arrive as typed: the keyboard once turned ls into Ls and
+                    // ping into Ping, so capitalization, auto-correct and suggestions stay off.
+                    keyboardOptions = KeyboardOptions(
+                        capitalization = KeyboardCapitalization.None,
+                        autoCorrect = false,
+                        keyboardType = KeyboardType.Ascii,
+                        imeAction = ImeAction.Send,
+                    ),
+                    keyboardActions = KeyboardActions(onSend = { onSend() }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester),
+                )
+                if (input.text.isEmpty()) {
+                    Text(
+                        text = "Type a command…",
+                        color = cc.faint,
+                        fontFamily = Mono,
+                        fontSize = 12.5.sp,
+                        maxLines = 1,
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(
+                Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(if (running) cc.red else cc.accent)
+                    .clickable { if (running) onStop() else onSend() }
+                    .semantics {
+                        contentDescription = if (running) "Stop the running command" else "Send"
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (running) {
+                    com.closecode.ui.CcIcon("x", Color.White, 17.dp, 2.2f)
+                } else {
+                    com.closecode.ui.CcIcon("send", Color.White, 17.dp, 1.9f)
+                }
             }
         }
     }
@@ -1882,7 +2074,7 @@ private fun PromptRow(
 /**
  * The commands panel: it swaps the keyboard at the same height, so nothing jumps. Saved
  * commands scroll in two columns (an entry may carry an optional alias, shown as the card
- * label), Add opens the full-page New-command form, and Keyboard summons the keyboard back.
+ * label), Add turns the panel into an inline form, and Keyboard summons the keyboard back.
  * Tapping a card types its command at the prompt without running it, except clear and kill,
  * which act at once because there is nothing to edit about them.
  */
@@ -1892,11 +2084,24 @@ private fun CommandsPanel(
     commands: List<String>,
     heightDp: Int,
     onRun: (String) -> Unit,
-    onNewCommand: () -> Unit,
+    adding: Boolean,
+    onAddingChange: (Boolean) -> Unit,
+    onAddCommand: (String, String) -> Unit,
     onRemove: (String) -> Unit,
     onKeyboard: () -> Unit,
 ) {
     val c = LocalPageColors.current
+    var name by remember { mutableStateOf("") }
+    var command by remember { mutableStateOf("") }
+    val duplicate = name.trim().isNotEmpty() &&
+        commands.any { it.substringBefore('\u0000').equals(name.trim(), ignoreCase = true) }
+    val ready = name.isNotBlank() && command.isNotBlank() && !duplicate
+    LaunchedEffect(adding) {
+        if (adding) {
+            name = ""
+            command = ""
+        }
+    }
     Column(
         Modifier
             .fillMaxWidth()
@@ -1915,13 +2120,33 @@ private fun CommandsPanel(
                 fontFamily = Mono,
                 modifier = Modifier.weight(1f),
             )
+            Row(
+                Modifier
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onAddingChange(!adding) }
+                    .padding(horizontal = 10.dp)
+                    .semantics { contentDescription = if (adding) "Cancel add command" else "Add command" },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                if (!adding) {
+                    com.closecode.ui.CcIcon("plus", c.mock.accent, 14.dp, 2f)
+                }
+                Text(
+                    text = if (adding) "Cancel" else "Add Command",
+                    color = c.mock.accent,
+                    fontSize = 12.sp,
+                    fontFamily = Mono,
+                )
+            }
             Box(
                 Modifier
                     .height(28.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(c.mock.field)
                     .clickable(onClick = onKeyboard)
-                    .padding(horizontal = 12.dp)
+                    .padding(horizontal = 10.dp)
                     .semantics { contentDescription = "Back to keyboard" },
                 contentAlignment = Alignment.Center,
             ) {
@@ -1933,154 +2158,116 @@ private fun CommandsPanel(
             }
         }
         Spacer(Modifier.height(8.dp))
-        androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
-            columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(commands, key = { it }) { command ->
-                // An entry may carry an optional alias before a NUL: the card shows the name,
-                // the prompt still receives the command behind it.
-                val (alias, cmd) = splitAlias(command)
-                Box(
-                    Modifier
-                        .height(36.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(c.mock.field)
-                        .combinedClickable(onClick = { onRun(cmd) }, onLongClick = { onRemove(command) })
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.CenterStart,
-                ) {
-                    Text(
-                        text = alias ?: cmd,
-                        color = c.mock.text2,
-                        fontSize = 11.5.sp,
-                        fontFamily = Mono,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        // Dashed primary outline on a field fill, pinned under the scrolling list: Add opens
-        // the full-page New-command screen (name, command, folder, one Save action).
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(36.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(c.mock.field)
-                .drawBehind {
-                    val stroke = 1.dp.toPx()
-                    drawRoundRect(
-                        color = c.mock.accent,
-                        topLeft = Offset(stroke / 2f, stroke / 2f),
-                        size = Size(size.width - stroke, size.height - stroke),
-                        cornerRadius = CornerRadius(10.dp.toPx()),
-                        style = Stroke(
-                            width = stroke,
-                            pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 5f)),
-                        ),
-                    )
-                }
-                .clickable(onClick = onNewCommand),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "+ Add command",
-                color = c.mock.accent,
-                fontSize = 13.sp,
-                fontFamily = Mono,
-            )
-        }
-    }
-}
-
-/**
- * Screen 24, the New-command page: a name (optional), the command itself, and the folder the
- * shell would run it in, with one Save action. The panel that opened it swaps back to the
- * saved list the moment the page closes, so nothing else about the terminal moves.
- */
-@Composable
-private fun NewCommandPage(
-    folder: String,
-    existing: List<String>,
-    onSave: (String, String) -> Unit,
-    onClose: () -> Unit,
-) {
-    val c = LocalPageColors.current
-    androidx.activity.compose.BackHandler(enabled = true) {
-        com.closecode.ui.ide.BackLog.press("terminal", "branch=command-page")
-        onClose()
-    }
-    var name by remember { mutableStateOf("") }
-    var command by remember { mutableStateOf("") }
-    val duplicate = name.trim().isNotEmpty() &&
-        existing.any { it.substringBefore('\u0000').equals(name.trim(), ignoreCase = true) }
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(c.mock.content)
-            .semantics { contentDescription = "New command" },
-    ) {
-        ScreenHeader(
-            origin = "Terminal",
-            title = "New command",
-            onBack = onClose,
-        )
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
+        if (adding) {
             NewCommandField(label = "Name", value = name, onValue = { name = it }, hint = "Name")
+            Spacer(Modifier.height(7.dp))
+            NewCommandField(
+                label = "Command",
+                value = command,
+                onValue = { command = it },
+                hint = "Command to run",
+                mono = true,
+            )
             if (duplicate) {
                 Text(
                     text = "A command with this name already exists.",
                     color = c.mock.danger,
-                    fontSize = 11.5.sp,
+                    fontSize = 11.sp,
                     fontFamily = Sans,
+                    modifier = Modifier.padding(top = 5.dp),
                 )
             }
-            NewCommandField(label = "Command", value = command, onValue = { command = it }, hint = "Command to run", mono = true)
-            NewCommandField(label = "Folder", value = folder, onValue = {}, hint = "", mono = true, readOnly = true)
             Spacer(Modifier.weight(1f))
-            val ready = name.isNotBlank() && command.isNotBlank() && !duplicate
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
-                    .clip(RoundedCornerShape(15.dp))
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(if (ready) c.mock.accent else c.mock.field)
-                    .clickable(
-                        enabled = ready,
-                        onClick = {
-                            val alias = name.trim()
-                            val cmd = command.trim()
-                            if (cmd.isNotEmpty()) onSave(cmd, alias)
-                        },
-                    )
+                    .clickable(enabled = ready) {
+                        onAddCommand(name.trim(), command.trim())
+                        onAddingChange(false)
+                    }
                     .semantics { contentDescription = "Save command" },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = "Save command",
                     color = if (ready) c.mock.onAccent else c.mock.faint,
-                    fontSize = 15.sp,
-                    fontFamily = Sans,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 13.sp,
+                    fontFamily = Mono,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        } else {
+            androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(2),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(commands, key = { it }) { command ->
+                    // An entry may carry an optional alias before a NUL: the card shows the name,
+                    // the prompt still receives the command behind it.
+                    val (alias, cmd) = splitAlias(command)
+                    Box(
+                        Modifier
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(c.mock.field)
+                            .combinedClickable(onClick = { onRun(cmd) }, onLongClick = { onRemove(command) })
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            text = alias ?: cmd,
+                            color = c.mock.text2,
+                            fontSize = 11.5.sp,
+                            fontFamily = Mono,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            // Dashed primary outline on a field fill, pinned under the scrolling list.
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(c.mock.field)
+                    .drawBehind {
+                        val stroke = 1.dp.toPx()
+                        drawRoundRect(
+                            color = c.mock.accent,
+                            topLeft = Offset(stroke / 2f, stroke / 2f),
+                            size = Size(size.width - stroke, size.height - stroke),
+                            cornerRadius = CornerRadius(10.dp.toPx()),
+                            style = Stroke(
+                                width = stroke,
+                                pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 5f)),
+                            ),
+                        )
+                    }
+                    .clickable { onAddingChange(true) },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "+ Add command",
+                    color = c.mock.accent,
+                    fontSize = 13.sp,
+                    fontFamily = Mono,
                 )
             }
         }
     }
 }
 
-/** One field of the New-command page: a small label, then the value box. */
+/** One field of the inline New-command form: a small label, then the value box. */
 @Composable
 private fun NewCommandField(
     label: String,

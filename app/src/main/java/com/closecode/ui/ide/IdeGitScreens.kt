@@ -106,6 +106,7 @@ fun IdeGitPanel(
     revision: Int = 0,
     onCloneRequest: () -> Unit = {},
     tokenEpoch: Int = 0,
+    onGitHubChanged: () -> Unit = {},
     onDiff: (String) -> Unit = {},
     onCommitDiff: (commitId: String, path: String) -> Unit = { _, _ -> },
     onHistory: () -> Unit = {},
@@ -540,6 +541,7 @@ fun IdeGitPanel(
                         val kept = tokenStore.write(fresh)
                         token = fresh
                         signInOpen = false
+                        onGitHubChanged()
                         if (!kept) {
                             note = "Signed in. This phone cannot keep sign-ins safely, so it will ask again next time."
                         }

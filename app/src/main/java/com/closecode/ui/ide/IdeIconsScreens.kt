@@ -610,31 +610,30 @@ fun IdeIconsScreen(
         fetchPackIndex(context).onSuccess { packs = it }
     }
 
-    // A pack that is already on disk is ready, not "Get": the download survives a restart.
+    // A pack that is already on disk is ready, not "Get": the install survives a restart.
     LaunchedEffect(packs) {
         packStates.clear()
         packs.forEach { pack ->
             val file = File(context.filesDir, "iconpacks/${pack.id}.json")
             packStates[pack.id] = if (file.isFile) PackState.Ready else PackState.NotLoaded
         }
-        selectedPackId = packs.firstOrNull { packStates[it.id] == PackState.Ready }?.id
+        if (packStates[selectedPackId] != PackState.Ready) {
+            selectedPackId = packs.firstOrNull { packStates[it.id] == PackState.Ready }?.id
+        }
     }
 
     fun toast(msg: String) {
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
 
-    // Browse: download the hosted pack, with progress read from the actual byte stream.
+    // Packs ship inside the APK, so Get is an install rather than a network download: the
+    // bundled JSON is copied to files with real progress, then the library opens on it.
     fun onGetPack(pack: PackUi) {
-        if (pack.url.isBlank()) {
-            packStates[pack.id] = PackState.Failed("This pack has no download address.")
-            return
-        }
         packJobs.remove(pack.id)?.cancel()
-        packStates[pack.id] = PackState.Downloading(0f, "0 B")
+        packStates[pack.id] = PackState.Downloading(0f, "Installing…")
         val out = File(context.filesDir, "iconpacks/${pack.id}.json")
         packJobs[pack.id] = scope.launch {
-            val outcome = downloadPack(pack.url, out) { fraction ->
+            val outcome = installBundledPack(context, pack.id, out) { fraction ->
                 scope.launch {
                     packStates[pack.id] = PackState.Downloading(
                         fraction,
@@ -646,10 +645,16 @@ fun IdeIconsScreen(
             val icons = if (outcome.isSuccess) readPackFile(context, pack.id) else null
             packStates[pack.id] = when {
                 !outcome.isSuccess -> PackState.Failed(
-                    outcome.exceptionOrNull()?.message ?: "Download failed",
+                    outcome.exceptionOrNull()?.message ?: "Install failed",
                 )
-                icons.isNullOrEmpty() -> PackState.Failed("The downloaded pack was empty.")
+                icons.isNullOrEmpty() -> PackState.Failed("The bundled pack was empty.")
                 else -> PackState.Ready
+            }
+            if (icons?.isNotEmpty() == true) {
+                selectedPackId = pack.id
+                browsePackId = pack.id
+                usePackName = pack.name
+                query = ""
             }
         }
     }
@@ -663,7 +668,7 @@ fun IdeIconsScreen(
     val readyPacks = packs.filter { packStates[it.id] == PackState.Ready }
 
     LaunchedEffect(readyPacks) {
-        if (readyPacks.isNotEmpty()) {
+        if (readyPacks.isNotEmpty() && packStates[selectedPackId] != PackState.Ready) {
             selectedPackId = readyPacks.first().id
             usePackName = readyPacks.first().name
         }
@@ -1716,10 +1721,13 @@ internal fun formatPackBytes(bytes: Long): String {
 
 /** The last index seen, so Browse still lists packs with no connection. */
 fun loadCachedPackIndex(context: Context): List<PackUi> {
-    val file = packIndexFile(context)
-    if (!file.isFile) return emptyList()
+    val text = runCatching {
+        val file = packIndexFile(context)
+        if (file.isFile) file.readText() else readBundledPackText(context, PACK_INDEX_ASSET)
+    }.getOrNull().orEmpty()
+    if (text.isBlank()) return emptyList()
     return runCatching {
-        parsePackIndex(file.readText(), IconPackIndexUrls.last())
+        parsePackIndex(text, IconPackIndexUrls.last())
     }.getOrDefault(emptyList())
 }
 
@@ -1749,12 +1757,52 @@ suspend fun fetchPackIndex(context: Context): Result<List<PackUi>> = withContext
     else Result.failure(last ?: IllegalStateException("Could not load icon packs"))
 }
 
+/** The pack index and packs are bundled, so Browse works on a fresh install with no network. */
+private const val PACK_INDEX_ASSET = "iconpacks/packs.json"
+
+private fun readBundledPackText(context: Context, path: String): String? =
+    runCatching {
+        context.assets.open(path).bufferedReader().use { it.readText() }
+    }.getOrNull()
+
+/** Copies one bundled pack to app files, reporting real byte progress. */
+private suspend fun installBundledPack(
+    context: Context,
+    id: String,
+    out: File,
+    onProgress: (Float) -> Unit,
+): Result<Unit> = withContext(Dispatchers.IO) {
+    runCatching {
+        val assetPath = "iconpacks/$id.json"
+        val total = runCatching {
+            context.assets.open(assetPath).use { it.available().toLong() }
+        }.getOrDefault(0L)
+        val tmp = File(out.path + ".part")
+        out.parentFile?.mkdirs()
+        context.assets.open(assetPath).use { input ->
+            tmp.outputStream().use { output ->
+                val buffer = ByteArray(32 * 1024)
+                var done = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    output.write(buffer, 0, read)
+                    done += read
+                    if (total > 0L) onProgress((done.toFloat() / total).coerceIn(0f, 1f))
+                }
+                onProgress(1f)
+            }
+        }
+        if (out.exists()) out.delete()
+        if (!tmp.renameTo(out)) error("Could not save the icon pack")
+    }
+}
+
 /** Reads a downloaded pack JSON file from app files dir. */
 fun readPackFile(context: Context, id: String): List<LibIconUi>? {
     val file = File(context.filesDir, "iconpacks/$id.json")
-    if (!file.isFile) return null
     return runCatching {
-        val text = file.readText()
+        val text = if (file.isFile) file.readText() else readBundledPackText(context, "iconpacks/$id.json")
         val gson = com.google.gson.Gson()
         val root = gson.fromJson(text, Any::class.java)
         val list: List<*> = when (root) {

@@ -2,6 +2,7 @@ package com.closecode.ui.settings
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import com.closecode.ui.model.TemplateTab
 
 /**
  * One row of the settings screen.
@@ -198,6 +199,7 @@ fun sections(
     live: SettingsLive,
     githubLogin: String? = null,
     settings: Settings = Settings(),
+    templateTab: TemplateTab? = null,
 ): List<Section> = listOf(
     Section(
         id = "general",
@@ -264,6 +266,11 @@ fun sections(
                     ),
                     Row.Toggle("Word wrap", "Wrap long lines", BoolSetting.WORD_WRAP),
                     Row.Toggle("Show line numbers", null, BoolSetting.LINE_NUMBERS),
+                    Row.Toggle("Auto indent", null, BoolSetting.AUTO_INDENT),
+                    Row.Toggle("Auto close brackets", null, BoolSetting.AUTO_CLOSE_BRACKETS),
+                    Row.Toggle("Bracket guides", null, BoolSetting.BRACKET_GUIDES),
+                    Row.Toggle("Rainbow brackets", null, BoolSetting.RAINBOW_BRACKETS),
+                    Row.Toggle("Code folding", null, BoolSetting.CODE_FOLDING),
                 ),
             ),
             Group(
@@ -316,6 +323,9 @@ fun sections(
                         null,
                         BoolSetting.FORMAT_ON_SAVE,
                     ),
+                    Row.Toggle("Auto import", null, BoolSetting.AUTO_IMPORT),
+                    Row.Toggle("Parameter hints", null, BoolSetting.PARAMETER_HINTS),
+                    Row.Toggle("Quick fixes", null, BoolSetting.QUICK_FIXES),
                 ),
             ),
             Group(
@@ -342,26 +352,59 @@ fun sections(
         groups = listOf(
             Group(
                 "Toolchain",
-                listOf(
-                    Row.Status(
-                        "Build tools",
-                        "Kotlin, Java, dex and signer",
-                        live.toolchainStatus,
-                        ok = live.toolchainStatus == "Ready",
-                    ),
-                    Row.Nav(
-                        "Shell tools",
-                        "Git, Python, Node, curl, zip, jq",
-                        live.shellToolsStatus,
-                        id = SettingsAction.SHELL_TOOLS,
-                    ),
-                    Row.Nav(
-                        "OpenCode runtime",
-                        "Linux libraries it runs on",
-                        live.openCodeRuntimeStatus,
-                        id = SettingsAction.AI_SETTINGS,
-                    ),
-                ),
+                buildList {
+                    add(
+                        Row.Nav(
+                            "Build tools",
+                            live.toolchainStatus,
+                            "Open",
+                            id = SettingsAction.DOWNLOAD_TOOLCHAIN,
+                        )
+                    )
+                    add(Row.Toggle("Build cache", null, BoolSetting.BUILD_CACHE))
+                    add(
+                        Row.Nav(
+                            "Shell tools",
+                            "Git, Python, Node, curl, zip, jq",
+                            live.shellToolsStatus,
+                            id = SettingsAction.SHELL_TOOLS,
+                        )
+                    )
+                    add(
+                        Row.Nav(
+                            "OpenCode runtime",
+                            "Linux libraries it runs on",
+                            live.openCodeRuntimeStatus,
+                            id = SettingsAction.AI_SETTINGS,
+                        )
+                    )
+                    if (templateTab == TemplateTab.App) {
+                        add(
+                            Row.Nav(
+                                "SDK manager",
+                                "Android platforms and build tools",
+                                "Open",
+                                id = SettingsAction.SDK_MANAGER,
+                            )
+                        )
+                        add(
+                            Row.Nav(
+                                "Full Gradle",
+                                "JDK 17 and Gradle for Gradle builds",
+                                "Open",
+                                id = SettingsAction.FULL_GRADLE,
+                            )
+                        )
+                        add(
+                            Row.Nav(
+                                "Native tools",
+                                "NDK and CMake for native code",
+                                "Open",
+                                id = SettingsAction.NATIVE_TOOLS,
+                            )
+                        )
+                    }
+                },
             ),
             Group(
                 "Defaults",
@@ -382,14 +425,18 @@ fun sections(
             ),
             Group(
                 "Remove",
-                listOf(
-                    Row.Action(
-                        "Delete build tools",
-                        "You can download them again",
-                        "Delete",
-                        SettingsAction.DELETE_BUILD_TOOLS,
-                        danger = true,
-                    ),
+                listOfNotNull(
+                    if (templateTab == TemplateTab.App) {
+                        Row.Action(
+                            "Delete build tools",
+                            "You can download them again",
+                            "Delete",
+                            SettingsAction.DELETE_BUILD_TOOLS,
+                            danger = true,
+                        )
+                    } else {
+                        null
+                    }
                 ),
             ),
         ),
@@ -409,6 +456,7 @@ fun sections(
                         "Fallback if PTY is not available",
                         BoolSetting.USE_PIPE_TERMINAL,
                     ),
+                    Row.Toggle("Command history", null, BoolSetting.COMMAND_HISTORY),
                     Row.Options(
                         "Start folder",
                         null,
@@ -420,6 +468,12 @@ fun sections(
                         null,
                         OptionSetting.TERMINAL_FONT_SIZE,
                         TerminalFontSizeChoices,
+                    ),
+                    Row.Options(
+                        "Terminal theme",
+                        null,
+                        OptionSetting.TERMINAL_THEME,
+                        TerminalThemeChoices,
                     ),
                 ),
             ),
@@ -550,6 +604,7 @@ fun sections(
                         OptionSetting.SYNTAX_COLORS,
                         SyntaxColorChoices,
                     ),
+                    Row.Toggle("Animations", null, BoolSetting.ANIMATIONS),
                     Row.CodePreview(),
                 ),
             ),
@@ -618,6 +673,24 @@ fun sections(
                         "GitHub",
                         "Manage",
                         id = SettingsAction.SAVED_SIGN_INS,
+                    ),
+                    Row.Nav(
+                        "Credentials",
+                        "GitHub access token",
+                        "Open",
+                        id = SettingsAction.CREDENTIALS,
+                    ),
+                    Row.Nav(
+                        "Signing keys",
+                        "Release signing key",
+                        "Open",
+                        id = SettingsAction.SIGNING_KEYS,
+                    ),
+                    Row.Nav(
+                        "Privacy",
+                        "OpenCode privacy policy",
+                        "Open",
+                        id = SettingsAction.PRIVACY,
                     ),
                 ),
             ),

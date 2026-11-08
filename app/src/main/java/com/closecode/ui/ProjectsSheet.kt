@@ -10,6 +10,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -71,6 +73,7 @@ fun ProjectsSheet(
     onNewProject: () -> Unit,
     onTemplates: () -> Unit,
     onClose: () -> Unit,
+    onDeleteRequest: (ProjectRecord) -> Unit = {},
 ) {
     val c = LocalPageColors.current
     val screenHeight = LocalConfiguration.current.screenHeightDp
@@ -224,12 +227,13 @@ fun ProjectsSheet(
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         items(visible, key = { it.id }) { project ->
-                            ProjectSwitchRow(
-                                project = project,
-                                open = project.id == openProjectId,
-                                branchOf = branchOf,
-                                onClick = { onOpen(project) },
-                            )
+                        ProjectSwitchRow(
+                            project = project,
+                            open = project.id == openProjectId,
+                            branchOf = branchOf,
+                            onClick = { onOpen(project) },
+                            onLongPress = { onDeleteRequest(project) },
+                        )
                         }
                     }
                 }
@@ -286,11 +290,13 @@ fun ProjectsSheet(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun ProjectSwitchRow(
     project: ProjectRecord,
     open: Boolean,
     branchOf: (ProjectRecord) -> String? = { null },
     onClick: () -> Unit,
+    onLongPress: (ProjectRecord) -> Unit = {},
 ) {
     val c = LocalPageColors.current
     val tile = com.closecode.ui.ide.projectTileColor(project.name)
@@ -300,7 +306,7 @@ private fun ProjectSwitchRow(
             .height(60.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(if (open) c.mock.field else Color.Transparent)
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = { onLongPress(project) })
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(13.dp),

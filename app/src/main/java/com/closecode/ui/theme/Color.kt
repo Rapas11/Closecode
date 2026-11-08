@@ -703,6 +703,91 @@ val DarkColors = PageColors(
     mock = DarkMockColors,
 )
 
+/**
+ * The terminal's scoped palette: the navy/violet ground from the validation mock. It is provided
+ * only around the terminal so the rest of the app keeps the Discord-style dark theme.
+ */
+val TerminalPageColors = DarkColors.copy(
+    bg = Color(0xFF080A12),
+    panel = Color(0xFF0D101B),
+    panel2 = Color(0xFF111420),
+    ln = Color(0xFF23283A),
+    tx = Color(0xFFF2F3FA),
+    mu = Color(0xFF8B90A6),
+    ac = Color(0xFF6C5CE7),
+    selection = Color(0xFF2A2355),
+    editor = Color(0xFF0B0D16),
+    editorBg = Color(0xFF0B0D16),
+    activeLineBg = Color(0xFF141827),
+    divider = Color(0xFF1C2030),
+    text = Color(0xFFE8EAF3),
+    accent = Color(0xFF6C5CE7),
+    surface = Color(0xFF141827),
+    surfaceBorder = Color(0xFF252A3D),
+    chipBg = Color(0xFF171B2B),
+    fieldBg = Color(0xFF171B2B),
+    fieldBorder = Color(0xFF252A3D),
+    primary = Color(0xFF6C5CE7),
+    primaryTint = Color(0x336C5CE7),
+    link = Color(0xFF8B7CFF),
+    textMuted = Color(0xFF8B90A6),
+    textFaint = Color(0xFF6F748A),
+    keyRowBg = Color(0xFF0D101B),
+    keyBg = Color(0xFF171B2B),
+    mock = DarkMockColors.copy(
+        shell = Color(0xFF080A12),
+        rail = Color(0xFF080A12),
+        page = Color(0xFF0B0D16),
+        panel = Color(0xFF0D101B),
+        content = Color(0xFF0B0D16),
+        card = Color(0xFF141827),
+        cardMuted = Color(0xFF111420),
+        field = Color(0xFF171B2B),
+        input = Color(0xFF171B2B),
+        track = Color(0xFF111420),
+        selected = Color(0xFF211C44),
+        selectedFile = Color(0xFF211C44),
+        toggleOff = Color(0xFF3A4057),
+        divider = Color(0xFF1C2030),
+        border = Color(0xFF252A3D),
+        accent = Color(0xFF6C5CE7),
+        onAccent = Color.White,
+        green = Color(0xFF42D392),
+        text = Color(0xFFF2F3FA),
+        text2 = Color(0xFFE8EAF3),
+        textSoft = Color(0xFFB9BED1),
+        muted = Color(0xFF8B90A6),
+        faint = Color(0xFF6F748A),
+        danger = Color(0xFFFF6B6B),
+        warning = Color(0xFFF5B84B),
+        purple = Color(0xFF9B8CFF),
+        purpleBg = Color(0xFF211C44),
+    ),
+)
+
+/** Terminal-scoped CcColors so headers, icons and fields stay on the same navy/violet ground. */
+val TerminalCcColors = DarkCcColors().copy(
+    rail = Color(0xFF080A12),
+    panel = Color(0xFF0D101B),
+    content = Color(0xFF0B0D16),
+    field = Color(0xFF171B2B),
+    selectedRow = Color(0xFF211C44),
+    selectedFile = Color(0xFF211C44),
+    border = Color(0xFF252A3D),
+    divider = Color(0xFF1C2030),
+    toggleOff = Color(0xFF3A4057),
+    text = Color(0xFFF2F3FA),
+    text2 = Color(0xFFE8EAF3),
+    textSoft = Color(0xFFB9BED1),
+    muted = Color(0xFF8B90A6),
+    faint = Color(0xFF6F748A),
+    accent = Color(0xFF6C5CE7),
+    green = Color(0xFF42D392),
+    amber = Color(0xFFF5B84B),
+    red = Color(0xFFFF6B6B),
+    purple = Color(0xFF9B8CFF),
+)
+
 val LocalPageColors = staticCompositionLocalOf { LightColors }
 
 /**

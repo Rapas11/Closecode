@@ -12,6 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberCoroutineScope
 import com.closecode.control.CloseCodeControl
 import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
@@ -47,6 +48,7 @@ import com.closecode.ui.onboarding.OnboardingScreen
 import com.closecode.ui.onboarding.rememberFirstRunStore
 import com.closecode.ui.ide.IdeScreen
 import com.closecode.ui.model.SelectedTemplate
+import com.closecode.ui.model.TemplateTab
 import com.closecode.ui.project.ProjectRecord
 import com.closecode.ui.settings.AccentOptions
 import com.closecode.ui.settings.LocalAnimationsEnabled
@@ -56,6 +58,7 @@ import com.closecode.ui.settings.SettingsScreen
 import com.closecode.ui.settings.rememberSettingsStore
 import com.closecode.ui.theme.ClosecodeTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -134,6 +137,8 @@ class MainActivity : ComponentActivity() {
                 }
                 var encoded by rememberSaveable { mutableStateOf("") }
                 var section by rememberSaveable { mutableStateOf("general") }
+                var settingsTab by remember { mutableStateOf<TemplateTab?>(null) }
+                var settingsOpenDetail by remember { mutableStateOf(false) }
                 // Bumped when the GitHub account changes — a sign-in or a disconnect done on
                 // the settings screen. The screens that hold a token read it when this moves,
                 // so they never keep showing an account that is no longer connected.
@@ -141,6 +146,7 @@ class MainActivity : ComponentActivity() {
 
                 val repository = rememberProjectRepository()
                 val firstRunStore = rememberFirstRunStore()
+                val scope = rememberCoroutineScope()
                 val startRoute = remember {
                     if (firstRunStore.isCompleted()) "hero" else "onboarding"
                 }
@@ -232,10 +238,19 @@ class MainActivity : ComponentActivity() {
                                     ).show()
                                 }
                             }
-                            HeroScreen(
-                                recentProjects = recentProjects,
-                                tokenEpoch = githubTokenEpoch,
-                                branchOf = { record -> repository.headBranch(record.slug) },
+                                HeroScreen(
+                                    recentProjects = recentProjects,
+                                    tokenEpoch = githubTokenEpoch,
+                                    branchOf = { record -> repository.headBranch(record.slug) },
+                                    onGitHubChanged = { githubTokenEpoch++ },
+                                    onDeleteProject = { record ->
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) { repository.delete(record.slug) }
+                                            recentProjects = withContext(Dispatchers.IO) {
+                                                repository.listProjects()
+                                            }
+                                        }
+                                    },
                                 onProjectCreated = { name, selection, templateName, config ->
                                     // Scaffold and register first. If setup is interrupted, the
                                     // project is already in Recents and can be opened again.
@@ -298,6 +313,8 @@ class MainActivity : ComponentActivity() {
                                 onSettingsChange = { settings = settingsStore.write(it) },
                                 onGitHubChanged = { githubTokenEpoch++ },
                                 onOpenSetupGuide = { nav.navigate("onboarding") },
+                                templateTab = settingsTab,
+                                openDetail = settingsOpenDetail,
                             )
                         }
 
@@ -320,8 +337,16 @@ class MainActivity : ComponentActivity() {
                                         slug = current.slug,
                                         repository = repository,
                                         tokenEpoch = githubTokenEpoch,
-                                        onOpenSettings = {
+                                        onOpenSettings = { tab ->
                                             section = "general"
+                                            settingsTab = tab
+                                            settingsOpenDetail = false
+                                            nav.navigate("settings")
+                                        },
+                                        onOpenTerminalSettings = {
+                                            section = "terminal"
+                                            settingsTab = null
+                                            settingsOpenDetail = true
                                             nav.navigate("settings")
                                         },
                                         onExit = { nav.popBackStack("hero", false) },

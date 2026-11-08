@@ -305,8 +305,8 @@ internal fun blockCommentRanges(source: String): List<IntRange> {
  * ArrayIndexOutOfBoundsException that kills the app mid-keystroke.
  */
 internal fun FoldMap.sourceAt(displayOffset: Int): Int =
-    toSource[displayOffset.coerceIn(0, toSource.size - 1)]
+    if (toSource.isEmpty()) 0 else toSource[displayOffset.coerceIn(0, toSource.size - 1)]
 
 /** Source offset to display offset, clamped for the same reason. */
 internal fun FoldMap.displayAt(sourceOffset: Int): Int =
-    toDisplay[sourceOffset.coerceIn(0, toDisplay.size - 1)]
+    if (toDisplay.isEmpty()) 0 else toDisplay[sourceOffset.coerceIn(0, toDisplay.size - 1)]

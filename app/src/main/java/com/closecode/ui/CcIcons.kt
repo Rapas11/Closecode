@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.vector.PathParser
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.closecode.debug.DebugLog
 
 /** Path data for every icon in the design. 24 x 24 grid. */
 object CcIconPaths {
@@ -33,6 +34,7 @@ object CcIconPaths {
         "back" to "M15 18l-6-6 6-6",
         "chevron-left" to "M15 18l-6-6 6-6",
         "chevron-right" to "M9 18l6-6-6-6",
+        "chevron" to "M9 18l6-6-6-6",
         "cross" to "M18 6L6 18M6 6l12 12",
         "search" to "M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.3-4.3",
         "filter" to "M3 6h18M7 12h10M10 18h4",
@@ -74,11 +76,15 @@ object CcIconPaths {
 
 private val cache = HashMap<String, ImageVector>()
 
-/** Builds (and caches) a stroked ImageVector from the path text. */
+/** Builds (and caches) a stroked ImageVector from the path text. Unknown names draw a safe
+ * fallback instead of throwing, so a missing icon can never crash the UI. */
 fun ccIconVector(name: String, strokeWidth: Float = 1.8f, filled: Boolean = false): ImageVector {
     val key = "$name|$strokeWidth|$filled"
     return cache.getOrPut(key) {
-        val d = requireNotNull(CcIconPaths.all[name]) { "Unknown icon: $name" }
+        val d = CcIconPaths.all[name] ?: CcIconPaths.all["plus"]!!
+        if (d == CcIconPaths.all["plus"]) {
+            DebugLog.crumb("ICONS", "unknown icon $name · drew fallback")
+        }
         ImageVector.Builder(
             name = name,
             defaultWidth = 24.dp,

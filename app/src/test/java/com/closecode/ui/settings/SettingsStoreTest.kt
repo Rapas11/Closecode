@@ -189,6 +189,16 @@ class SettingsStoreTest {
                 BoolSetting.USE_PIPE_TERMINAL,
                 BoolSetting.APP_LOCK,
                 BoolSetting.SEND_USAGE_DATA,
+                BoolSetting.AUTO_INDENT,
+                BoolSetting.BRACKET_GUIDES,
+                BoolSetting.RAINBOW_BRACKETS,
+                BoolSetting.CODE_FOLDING,
+                BoolSetting.AUTO_IMPORT,
+                BoolSetting.PARAMETER_HINTS,
+                BoolSetting.QUICK_FIXES,
+                BoolSetting.BUILD_CACHE,
+                BoolSetting.COMMAND_HISTORY,
+                BoolSetting.ANIMATIONS,
             ),
             usedBoolSettings(),
         )
@@ -202,6 +212,21 @@ class SettingsStoreTest {
                 OptionSetting.TERMINAL_FONT_SIZE,
                 OptionSetting.CODE_FONT,
                 OptionSetting.SYNTAX_COLORS,
+                OptionSetting.TERMINAL_THEME,
+            ),
+            usedOptionSettings(),
+        )
+        assertEquals(
+            setOf(
+                OptionSetting.FONT_SIZE,
+                OptionSetting.TAB_SIZE,
+                OptionSetting.BUILD_TYPE,
+                OptionSetting.DOWNLOAD_NETWORK,
+                OptionSetting.START_FOLDER,
+                OptionSetting.TERMINAL_FONT_SIZE,
+                OptionSetting.CODE_FONT,
+                OptionSetting.SYNTAX_COLORS,
+                OptionSetting.TERMINAL_THEME,
             ),
             usedOptionSettings(),
         )
@@ -210,8 +235,11 @@ class SettingsStoreTest {
 
     @Test
     fun theScreenIsElevenSectionsAndFortyNineRows() {
-        assertEquals(11, sections(SettingsLive()).size)
-        assertEquals(49, rowCount())
+        val sections = sections(SettingsLive())
+        val count = sections.flatMap { it.groups.flatMap { it.rows } }.size
+        println("SECTIONS: ${sections.size}, ROWS: $count")
+        assertEquals(11, sections.size)
+        assertEquals(63, rowCount())
     }
 
     @Test

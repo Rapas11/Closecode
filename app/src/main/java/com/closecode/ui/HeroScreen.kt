@@ -33,7 +33,9 @@ import androidx.compose.foundation.verticalScroll
 
 
 
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -386,9 +388,12 @@ fun HeroScreen(
     // settings screen. The token is read again when it does, so this screen never keeps
     // showing an account that is no longer connected.
     tokenEpoch: Int = 0,
+    onGitHubChanged: () -> Unit = {},
+    onDeleteProject: (ProjectRecord) -> Unit = {},
 ) {
     val c = LocalPageColors.current
     var sheetOpen by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<ProjectRecord?>(null) }
     var projectsOpen by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
 
@@ -732,6 +737,56 @@ fun HeroScreen(
                 sheetOpen = true
             },
             onClose = { projectsOpen = false },
+            onDeleteRequest = { pendingDelete = it },
+        )
+    }
+
+    if (pendingDelete != null) {
+        val target = pendingDelete!!
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = {
+                Text(
+                    text = "Delete ${target.name}?",
+                    color = c.mock.text,
+                    fontSize = 17.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            },
+            text = {
+                Text(
+                    text = "This removes the project folder and everything in it. It cannot be undone.",
+                    color = c.mock.muted,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingDelete = null
+                    onDeleteProject(target)
+                }) {
+                    Text(
+                        text = "Delete",
+                        color = c.mock.danger,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text(
+                        text = "Cancel",
+                        color = c.mock.muted,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                    )
+                }
+            },
+            containerColor = c.mock.panel,
         )
     }
 
@@ -850,6 +905,7 @@ fun HeroScreen(
             onSignedIn = { token ->
                 githubToken = token
                 signInOpen = false
+                onGitHubChanged()
                 toast = if (tokenStore.write(token)) {
                     "Signed in to GitHub."
                 } else {

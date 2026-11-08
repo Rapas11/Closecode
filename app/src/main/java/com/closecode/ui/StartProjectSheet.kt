@@ -30,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -47,6 +48,7 @@ import com.closecode.ui.components.TemplateCard
 import com.closecode.ui.ide.CcIcon
 import com.closecode.ui.ide.CcIcons
 import com.closecode.ui.model.ProjectConfig
+import com.closecode.ui.model.defaultPackageName
 import com.closecode.ui.model.SelectedTemplate
 import com.closecode.ui.model.TemplateTab
 import com.closecode.ui.model.Templates
@@ -78,6 +80,14 @@ fun StartProjectSheet(
 
     val currentStep = Step.valueOf(step)
     val config = ProjectConfig.decode(configEncoded)
+
+    // Pre-fill the package from the project name so creation never stalls on an empty package.
+    LaunchedEffect(name) {
+        val n = name.trim()
+        if (n.isNotEmpty() && config.packageName.isBlank()) {
+            configEncoded = config.copy(packageName = defaultPackageName(n)).encode()
+        }
+    }
     val selected = if (selectedIndex >= 0 && selectedTab.isNotEmpty()) {
         SelectedTemplate(TemplateTab.valueOf(selectedTab), selectedIndex)
     } else {
@@ -100,7 +110,7 @@ fun StartProjectSheet(
         val selection = selected ?: return
         val templateName = Templates[selection.tab].orEmpty().getOrNull(selection.index)?.name
         val finalName = name.trim().ifEmpty { templateName ?: "Untitled" }
-        val packageName = config.packageName.trim()
+        val packageName = config.packageName.trim().ifEmpty { defaultPackageName(finalName) }
         val problem = when {
             packageName.isEmpty() -> "Enter a package name in project settings."
             !isValidPackageName(packageName) ->
