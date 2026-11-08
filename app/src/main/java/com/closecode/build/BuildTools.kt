@@ -50,4 +50,7 @@ data class BuildConfigValues(
     val versionCode: Int,
     val versionName: String,
     val useCompose: Boolean,
-)
+    val buildType: String = "debug",
+) {
+    val isRelease: Boolean get() = buildType == "release"
+}

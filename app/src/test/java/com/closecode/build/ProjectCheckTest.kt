@@ -182,6 +182,38 @@ class ProjectCheckTest {
         )
     }
 
+    // -- native projects ------------------------------------------------------------
+
+    @Test
+    fun nativeSourcesAreReportedOnceAsAProjectForFullGradle() {
+        template()
+        val gradle = File(tmp.root, "app/build.gradle.kts")
+        gradle.writeText(
+            gradle.readText() + "\nandroid { externalNativeBuild { cmake { path = " +
+                "file(\"src/main/CMakeLists.txt\") } } }\n",
+        )
+        File(tmp.root, "app/src/main/CMakeLists.txt").writeText(
+            "cmake_minimum_required(VERSION 3.22.1)\n",
+        )
+        val report = report()
+        assertTrue(report.errors.any { "uses C/C++ code" in it.message })
+        assertTrue(report.errors.any { "Native tools" in it.message })
+        assertFalse(report.errors.any { "externalNativeBuild is not supported" in it.message })
+    }
+
+    @Test
+    fun installedNativeToolsPointAtTheGradleBuild() {
+        template()
+        File(tmp.root, "app/src/main/CMakeLists.txt").writeText(
+            "cmake_minimum_required(VERSION 3.22.1)\n",
+        )
+        val input = ProjectFixtures.templateInput().copy(nativeToolsReady = true)
+        val report = ProjectCheck.check(tmp.root, "biz", input)
+        val finding = report.errors.first { "uses C/C++ code" in it.message }
+        assertTrue("--gradle" in finding.message)
+        assertFalse("Install Full Gradle" in finding.message)
+    }
+
     // -- the toolchain versions -----------------------------------------------------
 
     @Test

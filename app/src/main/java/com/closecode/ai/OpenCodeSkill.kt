@@ -11,6 +11,8 @@ import java.io.File
  */
 object OpenCodeSkill {
 
+    internal const val MARKER = "<!-- closecode:skill(b46) -->"
+
     fun directory(project: File): File = File(project, ".opencode/skills/closecode")
 
     fun file(project: File): File = File(directory(project), "SKILL.md")
@@ -18,18 +20,31 @@ object OpenCodeSkill {
     fun script(): String = """
         ---
         name: closecode
-        description: What the CloseCode phone app does for OpenCode — build, install and launch
-          the app on the phone, screenshot it, read its own log, and run static checks when the
-          phone has no Gradle daemon.
+        description: What the CloseCode phone app does for OpenCode — build, install, launch
+          and inspect the app on the phone, drive its screen, read its own log, run static
+          checks, and optionally build with a downloaded Gradle.
         ---
+
+        $MARKER
 
         Everything about the phone is the `closecode` command. Run it inside the project.
 
         - `closecode describe` — the project's facts (package, SDK levels, sources, toolchain).
         - `closecode check` — static project checks, no build.
-        - `closecode build` — build a debug APK with the phone's own engine.
+        - `closecode build` — build a debug APK with the phone's own engine; add `--release`
+          for a release APK.
+        - `closecode clean` — delete the project's build output.
+        - `closecode run` — build, install, launch, and wait until the app is in front.
         - `closecode install` — install the built APK on this phone.
         - `closecode launch` — open the installed app on this phone.
+        - `closecode app` — installed/foreground state, screen size, and UI tree availability.
+        - `closecode stop`, `closecode restart` — send the app home and stop it, or launch again.
+        - `closecode ui dump` — the current screen as a JSON tree of visible nodes.
+        - `closecode ui tap --text TEXT|--id ID|--desc DESC [--index N]` — tap a node.
+        - `closecode ui wait --text TEXT [--gone] [--timeout MS]` — wait for a node.
+        - `closecode ui assert --text TEXT|--id ID|--desc DESC` — fail if a node is absent.
+        - `closecode ui scroll down|up [selector]` — scroll the screen.
+        - `closecode input tap|swipe|longpress|text|key` — raw touch, typing and keys.
         - `closecode logcat` — the installed app's own log.
         - `closecode screenshot` — a screenshot of what the app shows.
         - `closecode export` — export a file or folder out of the project.
@@ -37,22 +52,50 @@ object OpenCodeSkill {
         - `closecode github push|pull` — publish the project to its GitHub repository, or take
           what came back. It signs in through CloseCode itself; the token stays in the app.
 
-        This phone has no Gradle daemon and cannot run `./gradlew`. `closecode gradle`
-        translates the Gradle names it knows: assembleDebug (build), installDebug (build +
-        install), launch (build + install + launch), and test, testDebugUnitTest, lint,
-        lintDebug or check (static checks only — real unit tests do not run on the phone).
+        CloseCode builds with its own engine by default; do not run `./gradlew`. If the
+        project cannot be built that way and the user has installed Full Gradle in Settings,
+        add `--gradle` to `closecode build` or `closecode gradle` to use the downloaded JDK
+        and Gradle distribution. `closecode gradle` accepts assembleDebug/assembleRelease
+        (build an APK), installDebug/installRelease and launch/launchRelease (build and
+        install or open), bundleDebug/bundleRelease (App Bundle), test/testDebugUnitTest,
+        lint/lintDebug, check and tasks, plus flavour tasks such as assembleFreeDebug or
+        bundleFreeRelease. Real Gradle handles the project's dependencies, variants and R8.
+        Without `--gradle`, test, lint and check run the phone's static checks and bundles
+        are refused.
+
+        Projects with C/C++ sources need Full Gradle plus the optional Native tools (NDK
+        and CMake) in Settings. Build them with `closecode build --gradle`; the custom
+        engine cannot compile native code.
+
+        Testing an app: run `closecode run`, use `closecode ui dump` and `ui assert` to check
+        the screen, fix the sources, then run again. Stop after five failed fixes and report
+        what still fails. Android shows its own install confirmation; ask the user to confirm
+        when `run` reports `needsUser`.
     """.trimIndent() + "\n"
 
-    /** Writes the skill when it is missing. Returns the file when it exists afterwards. */
     fun install(project: File): File? {
         val file = file(project)
-        if (file.isFile) return file
+        if (file.isFile) {
+            val existing = runCatching { file.readText() }.getOrNull() ?: return file
+            if (!managed(existing)) return file
+            if (existing == script()) return file
+            return runCatching {
+                file.writeText(script())
+                file
+            }.getOrNull()
+        }
         if (!ensureDirectory(directory(project))) return null
         return runCatching {
             file.writeText(script())
             file
         }.getOrNull()
     }
+
+    private fun managed(text: String): Boolean =
+        text.contains(MARKER) ||
+            (text.contains("name: closecode") &&
+                text.contains("closecode build") &&
+                text.contains("This phone has no Gradle daemon"))
 
     private fun ensureDirectory(directory: File): Boolean =
         directory.isDirectory || directory.mkdirs()

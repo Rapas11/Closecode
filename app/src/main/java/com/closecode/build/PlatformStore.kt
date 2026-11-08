@@ -23,7 +23,8 @@ data class SdkPlatform(
 /**
  * The three platforms Closecode can compile against. API 34 is kept because imported projects
  * still name it; 35 is the template default; 36 is the newest platform Google publishes for
- * this SDK line. The zip is unpacked only far enough to keep `android.jar`.
+ * this SDK line. The zip is unpacked in full so the custom engine and Gradle both get
+ * `android.jar`, `data/res`, and the other platform files.
  */
 val SdkPlatforms = listOf(
     SdkPlatform(
@@ -53,9 +54,10 @@ val SdkPlatforms = listOf(
  * Downloads and keeps Android SDK packages under `files/sdk/`.
  *
  * The platform download is the official Google zip, checked against the SHA-1 in the repository
- * index. The build-tools download is AndroidIDE's Android-native 34.0.4 archive; its aapt2 is
- * used when present and the APK's bundled libaapt2.so remains the fallback. Nothing is unpacked
- * into a directory the user can write: every path is derived here.
+ * index. The build-tools download is AndroidIDE's Android-native 34.0.4 archive; the APK's
+ * bundled 35.x libaapt2.so is preferred because it understands android-35.jar, and the
+ * downloaded aapt2 is the fallback. Nothing is unpacked into a directory the user can write:
+ * every path is derived here.
  */
 class PlatformStore(
     private val context: Context,
@@ -64,6 +66,10 @@ class PlatformStore(
     private val root: File get() = File(context.filesDir, "sdk")
     private val platforms: File get() = File(root, "platforms")
     private val buildTools: File get() = File(root, "build-tools")
+
+    fun rootDir(): File = root
+
+    fun buildToolsVersion(): String = BUILD_TOOLS_VERSION
 
     fun licenseAccepted(): Boolean = kv.getBoolean(KEY_LICENSE, false)
 
@@ -109,27 +115,40 @@ class PlatformStore(
             part.delete()
             throw IOException("The platform download failed its checksum.")
         }
-        val temp = File(context.cacheDir, "sdk-android-$api")
+        val temp = File(context.cacheDir, "sdk-android-$api.tmp")
         temp.deleteRecursively()
         temp.mkdirs()
+        var jar: File? = null
         ZipFile(part).use { zip ->
-            val entry = zip.entries().asSequence().firstOrNull { candidate ->
-                !candidate.isDirectory &&
-                    (candidate.name == "android.jar" || candidate.name.endsWith("/android.jar"))
-            } ?: throw IOException("The platform archive has no android.jar.")
-            val out = File(temp, "android.jar")
-            zip.getInputStream(entry).use { input -> out.outputStream().use { input.copyTo(it) } }
+            val entries = zip.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (entry.isDirectory) continue
+                val name = entry.name.replace('\\', '/')
+                if (name.isEmpty()) continue
+                val out = File(temp, name).canonicalFile
+                if (!out.path.startsWith(temp.canonicalPath + File.separator)) {
+                    throw IOException("Unsafe path in the platform archive: ${entry.name}")
+                }
+                out.parentFile?.mkdirs()
+                zip.getInputStream(entry).use { input ->
+                    out.outputStream().use { output -> input.copyTo(output) }
+                }
+                if (out.name == "android.jar") jar = out
+            }
         }
+        val source = jar?.parentFile
+            ?: throw IOException("The platform archive has no android.jar.")
         val target = platformDir(api)
         target.deleteRecursively()
-        target.mkdirs()
-        val jar = File(target, "android.jar")
-        if (!File(temp, "android.jar").renameTo(jar)) {
-            File(temp, "android.jar").copyTo(jar, overwrite = true)
+        target.parentFile?.mkdirs()
+        if (!source.renameTo(target)) {
+            source.copyRecursively(target, overwrite = true)
+            source.deleteRecursively()
         }
         temp.deleteRecursively()
         part.delete()
-        jar
+        File(target, "android.jar")
     }
 
     fun removePlatform(api: Int): Boolean {

@@ -1,5 +1,6 @@
 package com.closecode.ui.ide
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -7,6 +8,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -21,11 +24,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.debug.SelfTest
+import com.closecode.ui.CcIcon
 import com.closecode.ui.components.PrimaryButton
+import com.closecode.ui.components.ScreenHeader
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
@@ -46,6 +52,268 @@ internal val DeveloperLabels = listOf(
 
 /** Debug builds only: proves the crash report works by stopping the app on purpose. */
 internal const val DeveloperCrashTestLabel = "Crash test"
+
+/**
+ * The project Developer screen: the same tools as the old sheet, but a full page with room for
+ * the icon rows and notes the target layout uses.
+ */
+@Composable
+fun IdeDeveloperScreen(
+    projectName: String,
+    debugLogOn: Boolean,
+    usePipe: Boolean,
+    crashAvailable: Boolean,
+    debugBuild: Boolean,
+    onToggleDebugLog: (Boolean) -> Unit,
+    onCopyLog: () -> Unit,
+    onShareLog: () -> Unit,
+    onClearLog: () -> Unit,
+    onSelfTest: () -> Unit,
+    onViewCrash: () -> Unit,
+    onShareReport: () -> Unit,
+    onClearBuildCache: () -> Unit,
+    onDeleteTools: () -> Unit,
+    onToggleUsePipe: (Boolean) -> Unit,
+    onCrashTest: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    BackHandler(onBack = onDismiss)
+    Column(Modifier.fillMaxSize().background(c.mock.page)) {
+        ScreenHeader(
+            origin = projectName.ifBlank { "Project" },
+            title = "Developer",
+            onBack = onDismiss,
+        )
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            DevSectionLabel("Diagnostics")
+            DevSectionCard {
+                DevIconSwitchRow(
+                    icon = CcIcons.Bug,
+                    tint = c.mock.orange,
+                    label = "Debug log",
+                    note = "Keeps the last 500 lines. Off at every start.",
+                    checked = debugLogOn,
+                    onCheckedChange = onToggleDebugLog,
+                )
+                if (debugLogOn) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 58.dp, end = 14.dp, bottom = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        DeveloperSmallButton("Copy log", onCopyLog)
+                        DeveloperSmallButton("Share log", onShareLog)
+                        DeveloperSmallButton("Clear", onClearLog)
+                    }
+                }
+                DevSectionDivider()
+                DevIconActionRow(
+                    icon = CcIcons.Check,
+                    tint = c.mock.green,
+                    label = "Self-test",
+                    note = "Quick checks with one sentence each.",
+                    onClick = onSelfTest,
+                )
+                DevSectionDivider()
+                DevIconActionRow(
+                    icon = CcIcons.Warning,
+                    tint = c.mock.warning,
+                    label = "View last crash",
+                    note = if (crashAvailable) "The report from the last stop." else "No crash is recorded.",
+                    onClick = onViewCrash,
+                )
+                DevSectionDivider()
+                DevIconActionRow(
+                    icon = CcIcons.External,
+                    tint = c.mock.blue,
+                    label = "Share debug report",
+                    note = "Version, self-test, last 200 log lines and last crash.",
+                    onClick = onShareReport,
+                )
+            }
+
+            DevSectionLabel("Storage")
+            DevSectionCard {
+                DevIconActionRow(
+                    icon = CcIcons.Trash,
+                    tint = c.mock.blue,
+                    label = "Clear build cache",
+                    note = "Deletes this project's build output; the next check builds it again.",
+                    onClick = onClearBuildCache,
+                )
+                DevSectionDivider()
+                DevIconActionRow(
+                    icon = CcIcons.Trash,
+                    tint = c.mock.danger,
+                    label = "Delete build tools",
+                    note = "The compiler pack; it can be downloaded again.",
+                    onClick = onDeleteTools,
+                )
+                DevSectionDivider()
+                DevIconSwitchRow(
+                    icon = CcIcons.Terminal,
+                    tint = c.mock.purple,
+                    label = "Use pipe terminal",
+                    note = "Fallback without colors or Ctrl+C. Applies to new shells.",
+                    checked = usePipe,
+                    onCheckedChange = onToggleUsePipe,
+                )
+            }
+
+            if (debugBuild) {
+                DevSectionLabel("Danger zone")
+                DevSectionCard {
+                    DevIconActionRow(
+                        icon = CcIcons.Warning,
+                        tint = c.mock.danger,
+                        label = DeveloperCrashTestLabel,
+                        note = "Stops the app on purpose to test the crash report.",
+                        onClick = onCrashTest,
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun DevSectionLabel(text: String) {
+    val c = LocalPageColors.current
+    Text(
+        text = text.uppercase(),
+        color = c.mock.muted,
+        fontSize = 10.5.sp,
+        fontFamily = Sans,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.8.sp,
+        modifier = Modifier.padding(start = 4.dp),
+    )
+}
+
+@Composable
+private fun DevSectionCard(content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) {
+    val c = LocalPageColors.current
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(c.mock.card)
+            .padding(vertical = 4.dp),
+        content = content,
+    )
+}
+
+@Composable
+private fun DevSectionDivider() {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 58.dp)
+            .height(1.dp)
+            .background(c.mock.border.copy(alpha = 0.55f)),
+    )
+}
+
+@Composable
+private fun DevIconActionRow(
+    icon: ImageVector,
+    tint: Color,
+    label: String,
+    note: String,
+    onClick: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        DevIconTile(icon, tint)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = label,
+                color = c.mock.text,
+                fontSize = 14.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = note,
+                color = c.mock.muted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        CcIcon(CcIcons.ChevronRight, c.mock.faint, 16.dp)
+    }
+}
+
+@Composable
+private fun DevIconSwitchRow(
+    icon: ImageVector,
+    tint: Color,
+    label: String,
+    note: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        DevIconTile(icon, tint)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = label,
+                color = c.mock.text,
+                fontSize = 14.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Medium,
+            )
+            Text(
+                text = note,
+                color = c.mock.muted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        DeveloperSwitch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun DevIconTile(icon: ImageVector, tint: Color) {
+    Box(
+        Modifier
+            .size(36.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(tint.copy(alpha = 0.14f)),
+        contentAlignment = Alignment.Center,
+    ) {
+        CcIcon(icon, tint, 19.dp)
+    }
+}
 
 /**
  * More > Developer (spec, Debug tools): every tool that lets the phone report facts, in the
@@ -76,7 +344,7 @@ fun IdeDeveloperSheet(
     IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
         Text(
             text = "DEVELOPER",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -104,7 +372,7 @@ fun IdeDeveloperSheet(
             }
             DeveloperActionRow(
                 label = "Self-test",
-                note = "Sixteen checks with one plain sentence each.",
+                note = "Nineteen checks with one plain sentence each.",
             ) {
                 onSelfTest()
                 onDismiss()
@@ -118,7 +386,8 @@ fun IdeDeveloperSheet(
             }
             DeveloperActionRow(
                 label = "Share debug report",
-                note = "The version line, the last self-test, the last 200 log lines and the last crash.",
+                note = "The version line, the last self-test, the last 200 log lines, the " +
+                    "OpenCode server log and the last crash.",
             ) {
                 onShareReport()
                 onDismiss()
@@ -175,7 +444,7 @@ fun IdeSelfTestSheet(
     IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
         Text(
             text = "SELF-TEST",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -189,12 +458,12 @@ fun IdeSelfTestSheet(
                     .padding(horizontal = 16.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(c.panel2)
-                    .border(1.dp, c.ln, RoundedCornerShape(10.dp))
+                    .border(1.dp, c.mock.divider, RoundedCornerShape(10.dp))
                     .padding(12.dp),
             ) {
                 Text(
                     text = facts.ifEmpty { "…" },
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 11.sp,
                     fontFamily = Mono,
                     lineHeight = 16.sp,
@@ -214,13 +483,13 @@ fun IdeSelfTestSheet(
                         .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 12.dp)
                         .height(38.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .border(1.dp, c.ln, RoundedCornerShape(10.dp))
+                        .border(1.dp, c.mock.divider, RoundedCornerShape(10.dp))
                         .clickable(onClick = onCopyReport),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = "Copy report",
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
@@ -244,7 +513,7 @@ fun IdeCrashSheet(
     IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
         Text(
             text = "LAST CRASH",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -258,12 +527,12 @@ fun IdeCrashSheet(
                     .padding(horizontal = 16.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(c.panel2)
-                    .border(1.dp, c.ln, RoundedCornerShape(10.dp))
+                    .border(1.dp, c.mock.divider, RoundedCornerShape(10.dp))
                     .padding(12.dp),
             ) {
                 Text(
                     text = text.take(6000),
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 10.5.sp,
                     fontFamily = Mono,
                     lineHeight = 15.sp,
@@ -300,14 +569,14 @@ private fun DeveloperActionRow(
     ) {
         Text(
             text = label,
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 14.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
         )
         Text(
             text = note,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             fontFamily = Sans,
             modifier = Modifier.padding(top = 2.dp),
@@ -333,14 +602,14 @@ private fun DeveloperSwitchRow(
         Column(Modifier.weight(1f)) {
             Text(
                 text = label,
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 14.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,
             )
             Text(
                 text = note,
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Sans,
                 modifier = Modifier.padding(top = 2.dp),
@@ -359,7 +628,7 @@ private fun DeveloperSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit
             .padding(start = 12.dp)
             .size(width = 38.dp, height = 22.dp)
             .clip(RoundedCornerShape(11.dp))
-            .background(if (checked) c.ac else c.ln)
+            .background(if (checked) c.mock.accent else c.mock.divider)
             .clickable { onCheckedChange(!checked) },
         contentAlignment = if (checked) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
@@ -368,7 +637,7 @@ private fun DeveloperSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit
                 .padding(horizontal = 3.dp)
                 .size(16.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(if (checked) Color.White else c.mu),
+                .background(if (checked) Color.White else c.mock.muted),
         )
     }
 }
@@ -379,13 +648,13 @@ private fun DeveloperSmallButton(label: String, onClick: () -> Unit) {
     Box(
         Modifier
             .clip(RoundedCornerShape(8.dp))
-            .border(1.dp, c.ln, RoundedCornerShape(8.dp))
+            .border(1.dp, c.mock.divider, RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp),
     ) {
         Text(
             text = label,
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 12.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
@@ -397,9 +666,9 @@ private fun DeveloperSmallButton(label: String, onClick: () -> Unit) {
 private fun SelfTestCheckRow(check: SelfTest.Check) {
     val c = LocalPageColors.current
     val statusColor = when (check.status) {
-        SelfTest.Status.Pass -> c.success
-        SelfTest.Status.Fail -> c.red
-        SelfTest.Status.Skipped -> c.mu
+        SelfTest.Status.Pass -> c.mock.green
+        SelfTest.Status.Fail -> c.mock.danger
+        SelfTest.Status.Skipped -> c.mock.muted
     }
     Column(
         Modifier
@@ -409,7 +678,7 @@ private fun SelfTestCheckRow(check: SelfTest.Check) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = "${check.number}. ${check.name}",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,
@@ -425,7 +694,7 @@ private fun SelfTestCheckRow(check: SelfTest.Check) {
         }
         Text(
             text = check.detail,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             fontFamily = Sans,
             modifier = Modifier.padding(top = 2.dp),

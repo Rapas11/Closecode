@@ -1,0 +1,16 @@
+{
+  "ndk": {
+    "version": "27.1.12297006",
+    "fileName": "android-ndk-r27b-aarch64.zip",
+    "url": "https://github.com/MrIkso/AndroidIDE-NDK/releases/download/ndk/android-ndk-r27b-aarch64.zip",
+    "sizeBytes": 564031083,
+    "sha256": ""
+  },
+  "cmake": {
+    "version": "3.22.1",
+    "fileName": "cmake-3.22.1-android-aarch64.zip",
+    "url": "https://github.com/MrIkso/AndroidIDE-NDK/releases/download/cmake/cmake-3.22.1-android-aarch64.zip",
+    "sizeBytes": 20437268,
+    "sha256": "5936755e4d2b28701f1195252188519cd0db18db100fe3406a5738decbe842cc"
+  }
+}

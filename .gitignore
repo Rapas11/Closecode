@@ -25,6 +25,11 @@
 /disp0.png
 /curdisplay.txt
 /shared-*.apk
+*.apk
+
+# Hosted icon packs built by tools/build_icon_packs.py. They belong on the Pages repo,
+# not in the app repository.
+/dist/
 
 # Placed by the pack script, ~4.5 MB of arm64 aapt2. Rebuilt, never committed. The PTY
 # bridge is the exception: it is 10 KB, built by scripts/build-pty.ps1, and the APK needs it.

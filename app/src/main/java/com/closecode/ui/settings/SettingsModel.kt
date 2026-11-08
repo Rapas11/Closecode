@@ -2,35 +2,29 @@ package com.closecode.ui.settings
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
+import com.closecode.ui.model.TemplateTab
 
 /**
  * One row of the settings screen.
  *
- * A row is one of three things: a control bound to a field of [Settings] — so it reads and writes a
- * real preference — a plain read-out of something the app measures, or a control the app does not
- * honour *yet*. The third kind is deliberate: it is on screen so it can be wired up later, and it
- * behaves exactly as it always did rather than being hidden until someone gets to it. Only the rows
- * carrying a [BoolSetting] / [OptionSetting] key change anything.
+ * A row is either a control bound to a field of [Settings], a measured fact, or a destination.
+ * Rows carrying a [BoolSetting] / [OptionSetting] key read and write real preferences; the rest
+ * report something the app measured or open another page.
  */
 sealed interface Row {
     val name: String
     val description: String?
 
-    /**
-     * An on/off control. With [key] it resolves through [Settings]; without one it holds its own
-     * [default] for the session, which is what an unwired row looked like before it was cut.
-     */
+    /** An on/off control. [fixedOn] draws the fixed On state used by auto-save. */
     data class Toggle(
         override val name: String,
         override val description: String? = null,
         val key: BoolSetting? = null,
         val default: Boolean = false,
+        val fixedOn: Boolean = false,
     ) : Row
 
-    /**
-     * A fixed list of choices. With [key] the current value comes from [Settings]; without one the
-     * control shows [current] and stays where it is until a key is given.
-     */
+    /** A fixed list of choices, shown as the current value and a chevron. */
     data class Options(
         override val name: String,
         override val description: String? = null,
@@ -47,12 +41,7 @@ sealed interface Row {
         val value: String,
     ) : Row
 
-    /**
-     * A destination the row leads somewhere else to reach.
-     *
-     * [id] is what the row asks for when it is tapped. A row without one leads nowhere yet and
-     * says so by having nothing to do when pressed.
-     */
+    /** A destination the row leads somewhere else to reach. */
     data class Nav(
         override val name: String,
         override val description: String? = null,
@@ -60,7 +49,7 @@ sealed interface Row {
         val id: SettingsAction? = null,
     ) : Row
 
-    /** A fact with a health signal beside it: green when it is fine, red when it is not. */
+    /** A fact with a health signal beside it: green when it is fine, amber when it is not. */
     data class Status(
         override val name: String,
         override val description: String? = null,
@@ -83,6 +72,24 @@ sealed interface Row {
         override val description: String? = null
     }
 
+    /** The three theme preview cards. */
+    data class Themes(override val name: String, val current: String) : Row {
+        override val description: String? = null
+    }
+
+    /** A live syntax-highlighted snippet under the code rows. */
+    data class CodePreview(override val name: String = "") : Row {
+        override val description: String? = null
+    }
+
+    /** A language support row: a green tick when ready, otherwise a Download action. */
+    data class Language(
+        override val name: String,
+        override val description: String? = null,
+        val ready: Boolean,
+        val id: SettingsAction? = null,
+    ) : Row
+
     /** Something the screen can do rather than show. */
     data class Action(
         override val name: String,
@@ -93,7 +100,7 @@ sealed interface Row {
     ) : Row
 }
 
-/** The actions [Row.Action] can ask for. Named, so nothing matches on a row's display text. */
+/** The actions [Row.Action] and [Row.Nav] can ask for. */
 enum class SettingsAction {
     CLEAR_CACHES,
     DOWNLOAD_TOOLCHAIN,
@@ -102,15 +109,28 @@ enum class SettingsAction {
     DISCONNECT_GITHUB,
     SDK_MANAGER,
     SHELL_TOOLS,
+    FULL_GRADLE,
+    NATIVE_TOOLS,
     CREDENTIALS,
     SIGNING_KEYS,
     LICENSES,
     PRIVACY,
     AI_SETTINGS,
     BIOMETRIC_LOCK,
+    STORAGE_PROJECTS,
     EDIT_GIT_NAME,
     EDIT_GIT_EMAIL,
     EDIT_GIT_DEFAULT_BRANCH,
+    PROJECT_LOCATION,
+    DELETE_BUILD_TOOLS,
+    SAVED_COMMANDS,
+    SAVED_SIGN_INS,
+    AI_PROVIDER_KEY,
+    UPDATE_RUNTIME,
+    SOURCE_CODE,
+    STORAGE_INSPECT_PROJECTS,
+    STORAGE_INSPECT_BUILD_TOOLS,
+    STORAGE_INSPECT_SHELL_TOOLS,
 }
 
 @Immutable
@@ -126,12 +146,21 @@ data class Section(
     val groups: List<Group>,
 )
 
-/** The accent swatches offered by [Row.Accents]. */
+/** An absolute app path with its private prefix folded into "...", as the design shows it. */
+fun relativePath(path: String): String {
+    val marker = "/files/"
+    val index = path.indexOf(marker)
+    return if (index > 0) "..." + path.substring(index) else path
+}
+
+/** The six accent swatches offered by the design: blurple, blue, green, amber, red, pink. */
 val AccentOptions = listOf(
-    Color(0xFFF97316),
-    Color(0xFF3B82F6),
-    Color(0xFF10B981),
-    Color(0xFF8B5CF6),
+    Color(0xFF5865F2),
+    Color(0xFF2563EB),
+    Color(0xFF248046),
+    Color(0xFFC98A0A),
+    Color(0xFFDA373C),
+    Color(0xFFEC4899),
 )
 
 /**
@@ -145,60 +174,75 @@ data class SettingsLive(
     val projectsSize: String = "…",
     val cachesSize: String = "…",
     val buildToolsSize: String = "…",
+    val shellToolsSize: String = "…",
     val debugFilesSize: String = "…",
     val freeSpace: String = "…",
     val version: String = "1.0.0",
     val toolchainStatus: String = "…",
     val toolchainVersions: String = "…",
     val shellToolsStatus: String = "…",
+    val gradleToolsStatus: String = "…",
+    val nativeToolsStatus: String = "…",
+    val openCodeRuntimeStatus: String = "…",
+    val openCodeVersion: String = "…",
+    val providerKeySet: Boolean = false,
+    val savedCommandCount: Int = 0,
 )
 
 /**
  * The settings screen: every row, across every section, built as a function of [live].
  *
- * A function rather than a constant because several rows report something the app measured for
- * this session. Section order is the order they are listed in — general, editor, intelligence,
- * build, terminal, git, ai, appearance, storage, security, about.
- *
- * [githubLogin] is the account this phone is signed in to, or null when it is signed out. It is a
- * parameter rather than a read here because the settings screen is not the only place that knows:
- * the token lives in encrypted storage, and the screen is told what it says.
+ * [githubLogin] is the account this phone is signed in to, or null when it is signed out. The
+ * token itself never reaches this function; only the name it resolved to.
  */
 fun sections(
     live: SettingsLive,
     githubLogin: String? = null,
     settings: Settings = Settings(),
+    templateTab: TemplateTab? = null,
 ): List<Section> = listOf(
     Section(
         id = "general",
         label = "General",
-        icon = "◎",
+        icon = "⚙",
         title = "General",
-        blurb = "Configure how Closecode behaves.",
+        blurb = "Configure how CloseCode behaves.",
         groups = listOf(
             Group(
                 "Startup",
                 listOf(
-                    Row.Value(
+                    Row.Nav(
                         "Default project location",
-                        "Where new projects are created.",
-                        live.projectRoot,
+                        null,
+                        relativePath(live.projectRoot),
+                        id = SettingsAction.PROJECT_LOCATION,
                     ),
                     Row.Toggle(
                         "Open last project",
-                        "Reopen the project you were in when Closecode starts.",
+                        "Start where you stopped",
                         BoolSetting.OPEN_LAST_PROJECT,
                     ),
                     Row.Toggle(
-                        "Auto save",
-                        "Write the file a moment after you stop typing.",
+                        "Auto-save",
+                        "Always on. Every change is saved.",
                         BoolSetting.AUTO_SAVE,
+                        fixedOn = true,
                     ),
                     Row.Nav(
                         "Setup guide",
-                        "Download build tools, shell tools and the AI runtime again.",
+                        "Downloads and first-time setup",
                         "Open",
                         id = SettingsAction.SETUP_GUIDE,
+                    ),
+                ),
+            ),
+            Group(
+                "Performance",
+                listOf(
+                    Row.Toggle(
+                        "Performance overlay",
+                        "Frame times and line counts in the editor",
+                        BoolSetting.FRAME_STATS,
                     ),
                 ),
             ),
@@ -207,63 +251,48 @@ fun sections(
     Section(
         id = "editor",
         label = "Editor",
-        icon = "⌘",
+        icon = "‹›",
         title = "Editor",
-        blurb = "Customize the Closecode code editor.",
+        blurb = "Customize the CloseCode code editor.",
         groups = listOf(
             Group(
-                "Text Editor",
+                "Text",
                 listOf(
                     Row.Options(
                         "Font size",
-                        "Editor text size.",
+                        null,
                         OptionSetting.FONT_SIZE,
                         FontSizeChoices,
-                        unit = " px",
                     ),
-                    Row.Options(
-                        "Tab size",
-                        "Spaces the Tab key inserts.",
-                        OptionSetting.TAB_SIZE,
-                        TabSizeChoices,
-                    ),
-                    Row.Toggle("Line numbers", "Show the number gutter.", BoolSetting.LINE_NUMBERS),
-                    Row.Toggle("Word wrap", "Wrap long lines instead of scrolling sideways.", BoolSetting.WORD_WRAP),
-                    Row.Toggle(
-                        "Code folding",
-                        "Collapse a block behind its first line.",
-                        BoolSetting.CODE_FOLDING,
-                    ),
-                    Row.Toggle(
-                        "Rainbow brackets",
-                        "Colour nested brackets by depth.",
-                        BoolSetting.RAINBOW_BRACKETS,
-                    ),
-                    Row.Toggle("Bracket guides", "Draw a faint rule down each block's own indent level.", BoolSetting.BRACKET_GUIDES),
-                    Row.Toggle(
-                        "Frame stats",
-                        "Show milliseconds per frame over the editor while scrolling.",
-                        BoolSetting.FRAME_STATS,
-                    ),
+                    Row.Toggle("Word wrap", "Wrap long lines", BoolSetting.WORD_WRAP),
+                    Row.Toggle("Show line numbers", null, BoolSetting.LINE_NUMBERS),
+                    Row.Toggle("Auto indent", null, BoolSetting.AUTO_INDENT),
+                    Row.Toggle("Auto close brackets", null, BoolSetting.AUTO_CLOSE_BRACKETS),
+                    Row.Toggle("Bracket guides", null, BoolSetting.BRACKET_GUIDES),
+                    Row.Toggle("Rainbow brackets", null, BoolSetting.RAINBOW_BRACKETS),
+                    Row.Toggle("Code folding", null, BoolSetting.CODE_FOLDING),
                 ),
             ),
             Group(
-                "Behavior",
+                "Typing",
                 listOf(
                     Row.Toggle(
-                        "Auto indent",
-                        "Carry the indentation of the line above onto a new one.",
-                        BoolSetting.AUTO_INDENT,
+                        "Auto-save",
+                        "Always on",
+                        BoolSetting.AUTO_SAVE,
+                        fixedOn = true,
                     ),
                     Row.Toggle(
                         "Auto close brackets",
-                        "Type ( and get (), with the caret in between.",
+                        null,
                         BoolSetting.AUTO_CLOSE_BRACKETS,
                     ),
-                    Row.Toggle(
-                        "Format on save",
-                        "Tidy a Kotlin file as it is written to disk.",
-                        BoolSetting.FORMAT_ON_SAVE,
+                    Row.Options(
+                        "Tab size",
+                        null,
+                        OptionSetting.TAB_SIZE,
+                        TabSizeChoices,
+                        unit = " spaces",
                     ),
                 ),
             ),
@@ -274,83 +303,140 @@ fun sections(
         label = "Code Intelligence",
         icon = "✦",
         title = "Code Intelligence",
-        blurb = "Configure autocomplete, diagnostics and coding assistance.",
+        blurb = "Configure suggestions, problems and language support.",
         groups = listOf(
             Group(
-                "Code Intelligence",
+                "Language help",
                 listOf(
                     Row.Toggle(
-                        "Autocomplete",
-                        "Show code completion suggestions as you type.",
+                        "Suggestions",
+                        "Show while typing",
                         BoolSetting.AUTOCOMPLETE,
                     ),
                     Row.Toggle(
-                        "Auto import",
-                        "Add the import a symbol needs.",
-                        BoolSetting.AUTO_IMPORT,
-                    ),
-                    Row.Toggle(
-                        "Parameter hints",
-                        "Show the arguments a call takes.",
-                        BoolSetting.PARAMETER_HINTS,
-                    ),
-                    Row.Toggle(
-                        "Quick fixes",
-                        "Offer a fix under a problem as you type.",
-                        BoolSetting.QUICK_FIXES,
-                    ),
-                    Row.Toggle(
-                        "Diagnostics",
-                        "Flag problems in the gutter and offer quick fixes.",
+                        "Show problems",
+                        "Errors and warnings in code",
                         BoolSetting.DIAGNOSTICS,
                     ),
+                    Row.Toggle(
+                        "Format on save",
+                        null,
+                        BoolSetting.FORMAT_ON_SAVE,
+                    ),
+                    Row.Toggle("Auto import", null, BoolSetting.AUTO_IMPORT),
+                    Row.Toggle("Parameter hints", null, BoolSetting.PARAMETER_HINTS),
+                    Row.Toggle("Quick fixes", null, BoolSetting.QUICK_FIXES),
+                ),
+            ),
+            Group(
+                "Languages",
+                listOf(
+                    Row.Language(
+                        "Kotlin",
+                        if (live.toolchainStatus == "Ready") "Ready" else "Build tools needed",
+                        ready = live.toolchainStatus == "Ready",
+                        id = SettingsAction.DOWNLOAD_TOOLCHAIN,
+                    ),
+                    Row.Language("TypeScript", "Ready", ready = true),
+                    Row.Language("HTML and CSS", "Ready", ready = true),
                 ),
             ),
         ),
     ),
     Section(
         id = "build",
-        label = "Build & Toolchain",
-        icon = "▣",
-        title = "Build & Toolchain",
-        blurb = "Manage the tools Closecode uses to build Android projects.",
+        label = "Build and Toolchain",
+        icon = "▷",
+        title = "Build and Toolchain",
+        blurb = "Manage the tools CloseCode uses to build Android projects.",
         groups = listOf(
             Group(
                 "Toolchain",
+                buildList {
+                    add(
+                        Row.Nav(
+                            "Build tools",
+                            live.toolchainStatus,
+                            "Open",
+                            id = SettingsAction.DOWNLOAD_TOOLCHAIN,
+                        )
+                    )
+                    add(Row.Toggle("Build cache", null, BoolSetting.BUILD_CACHE))
+                    add(
+                        Row.Nav(
+                            "Shell tools",
+                            "Git, Python, Node, curl, zip, jq",
+                            live.shellToolsStatus,
+                            id = SettingsAction.SHELL_TOOLS,
+                        )
+                    )
+                    add(
+                        Row.Nav(
+                            "OpenCode runtime",
+                            "Linux libraries it runs on",
+                            live.openCodeRuntimeStatus,
+                            id = SettingsAction.AI_SETTINGS,
+                        )
+                    )
+                    if (templateTab == TemplateTab.App) {
+                        add(
+                            Row.Nav(
+                                "SDK manager",
+                                "Android platforms and build tools",
+                                "Open",
+                                id = SettingsAction.SDK_MANAGER,
+                            )
+                        )
+                        add(
+                            Row.Nav(
+                                "Full Gradle",
+                                "JDK 17 and Gradle for Gradle builds",
+                                "Open",
+                                id = SettingsAction.FULL_GRADLE,
+                            )
+                        )
+                        add(
+                            Row.Nav(
+                                "Native tools",
+                                "NDK and CMake for native code",
+                                "Open",
+                                id = SettingsAction.NATIVE_TOOLS,
+                            )
+                        )
+                    }
+                },
+            ),
+            Group(
+                "Defaults",
                 listOf(
-                    Row.Status(
-                        "Compiler pack",
-                        "Kotlin, Java, dex and signer. One Wi-Fi download, then offline.",
-                        live.toolchainStatus,
-                        ok = live.toolchainStatus == "Ready",
+                    Row.Options(
+                        "Default build type",
+                        null,
+                        OptionSetting.BUILD_TYPE,
+                        BuildTypeChoices,
                     ),
-                    Row.Value(
-                        "Pinned versions",
-                        "Kotlin, Java and dex, from the pack descriptor the download checks against.",
-                        live.toolchainVersions,
-                    ),
-                    Row.Action(
-                        "Download build tools",
-                        "One Wi-Fi download, then builds work offline. Resumes if interrupted.",
-                        "Download",
-                        SettingsAction.DOWNLOAD_TOOLCHAIN,
+                    Row.Options(
+                        "Download over",
+                        null,
+                        OptionSetting.DOWNLOAD_NETWORK,
+                        DownloadNetworkChoices,
                     ),
                 ),
             ),
             Group(
-                "Build Behavior",
-                listOf(
-                    Row.Toggle(
-                        "Build cache",
-                        "Reuse the last APK when nothing that affects the build has changed.",
-                        BoolSetting.BUILD_CACHE,
-                    ),
-                    Row.Nav(
-                        "SDK Manager",
-                        "Manage installed Android SDK packages.",
-                        "Open",
-                        id = SettingsAction.SDK_MANAGER,
-                    ),
+                "Remove",
+                listOfNotNull(
+                    if (templateTab == TemplateTab.App) {
+                        Row.Action(
+                            "Delete build tools",
+                            "You can download them again",
+                            "Delete",
+                            SettingsAction.DELETE_BUILD_TOOLS,
+                            danger = true,
+                        )
+                    } else {
+                        null
+                    }
                 ),
             ),
         ),
@@ -363,37 +449,42 @@ fun sections(
         blurb = "Configure the integrated terminal.",
         groups = listOf(
             Group(
-                "Terminal",
+                "Shell",
                 listOf(
-                    Row.Options(
-                        "Default shell",
-                        "Choose the system shell or the optional shell-tools pack.",
-                        OptionSetting.SHELL,
-                        ShellChoices,
+                    Row.Toggle(
+                        "Use pipe terminal",
+                        "Fallback if PTY is not available",
+                        BoolSetting.USE_PIPE_TERMINAL,
                     ),
-                    Row.Nav(
-                        "Shell tools",
-                        "Git, Python, Node, curl, zip and jq from Termux. Optional download.",
-                        live.shellToolsStatus,
-                        SettingsAction.SHELL_TOOLS,
+                    Row.Toggle("Command history", null, BoolSetting.COMMAND_HISTORY),
+                    Row.Options(
+                        "Start folder",
+                        null,
+                        OptionSetting.START_FOLDER,
+                        StartFolderChoices,
                     ),
                     Row.Options(
-                        "Terminal colours",
-                        "The palette a program's own colour codes are drawn against.",
+                        "Font size",
+                        null,
+                        OptionSetting.TERMINAL_FONT_SIZE,
+                        TerminalFontSizeChoices,
+                    ),
+                    Row.Options(
+                        "Terminal theme",
+                        null,
                         OptionSetting.TERMINAL_THEME,
                         TerminalThemeChoices,
                     ),
-                    Row.Options(
-                        "Terminal font size",
-                        "Larger fits less of a line across the screen.",
-                        OptionSetting.TERMINAL_FONT_SIZE,
-                        TerminalFontSizeChoices,
-                        unit = " pt",
-                    ),
-                    Row.Toggle(
-                        "Command history",
-                        "Keep the commands you have run.",
-                        BoolSetting.COMMAND_HISTORY,
+                ),
+            ),
+            Group(
+                "Saved commands",
+                listOf(
+                    Row.Nav(
+                        "Manage saved commands",
+                        "${live.savedCommandCount} commands",
+                        "",
+                        id = SettingsAction.SAVED_COMMANDS,
                     ),
                 ),
             ),
@@ -401,71 +492,77 @@ fun sections(
     ),
     Section(
         id = "git",
-        label = "Git & GitHub",
+        label = "Git and GitHub",
         icon = "⑂",
-        title = "Git & GitHub",
+        title = "Git and GitHub",
         blurb = "Manage Git identity and GitHub connections.",
         groups = listOf(
             Group(
-                "Git Identity",
-                listOf(
-                    Row.Nav(
-                        "Name",
-                        "Author name written into commits.",
-                        settings.gitName.ifBlank { "Not configured" },
-                        id = SettingsAction.EDIT_GIT_NAME,
-                    ),
-                    Row.Nav(
-                        "Email",
-                        "Author email written into commits.",
-                        settings.gitEmail.ifBlank { "Not configured" },
-                        id = SettingsAction.EDIT_GIT_EMAIL,
-                    ),
-                    Row.Nav(
-                        "Default branch",
-                        "Branch new repositories start on.",
-                        settings.gitDefaultBranch,
-                        id = SettingsAction.EDIT_GIT_DEFAULT_BRANCH,
-                    ),
-                ),
-            ),
-            Group(
-                "GitHub",
+                "Account",
                 listOf(
                     if (githubLogin == null) {
                         Row.Nav(
                             "GitHub account",
-                            "Sign in to clone, pull and push.",
-                            "Connect",
+                            "Sign in to clone, pull and push",
+                            "Sign in",
                             id = SettingsAction.CONNECT_GITHUB,
                         )
                     } else {
-                        Row.Nav(
-                            "GitHub account",
-                            "Connected as @$githubLogin.",
-                            "Disconnect",
-                            id = SettingsAction.DISCONNECT_GITHUB,
+                        Row.Account(
+                            initials = githubLogin.take(1).uppercase(),
+                            name = githubLogin,
+                            subtitle = "Signed in with GitHub",
+                            action = "Sign out",
                         )
                     },
+                ),
+            ),
+            Group(
+                "Commits",
+                listOf(
+                    Row.Nav(
+                        "Author name",
+                        null,
+                        settings.gitName.ifBlank { "Not set" },
+                        id = SettingsAction.EDIT_GIT_NAME,
+                    ),
+                    Row.Nav(
+                        "Author email",
+                        null,
+                        settings.gitEmail.ifBlank { "Not set" },
+                        id = SettingsAction.EDIT_GIT_EMAIL,
+                    ),
                 ),
             ),
         ),
     ),
     Section(
         id = "ai",
-        label = "AI",
+        label = "OpenCode AI",
         icon = "✧",
-        title = "AI",
-        blurb = "Configure the AI assistant and agent permissions.",
+        title = "OpenCode AI",
+        blurb = "Set up the OpenCode runtime. Chat lives in the OpenCode tool.",
         groups = listOf(
             Group(
-                "AI Assistant",
+                "OpenCode",
                 listOf(
+                    Row.Status(
+                        "OpenCode runtime",
+                        "Installed",
+                        live.openCodeRuntimeStatus,
+                        ok = live.openCodeRuntimeStatus == "Installed",
+                    ),
                     Row.Nav(
-                        "AI settings",
-                        "Server, default model, agent permissions and skills.",
-                        "Open",
-                        id = SettingsAction.AI_SETTINGS,
+                        "Provider key",
+                        "Used by OpenCode only",
+                        if (live.providerKeySet) "Set" else "Not set",
+                        id = SettingsAction.AI_PROVIDER_KEY,
+                    ),
+                    Row.Nav(
+                        "Update runtime",
+                        "Version ${live.openCodeVersion}",
+                        "Update",
+                        id = SettingsAction.UPDATE_RUNTIME,
                     ),
                 ),
             ),
@@ -476,23 +573,39 @@ fun sections(
         label = "Appearance",
         icon = "◐",
         title = "Appearance",
-        blurb = "Customize the look and feel of Closecode.",
+        blurb = "Customize the look and feel of CloseCode.",
         groups = listOf(
             Group(
                 "Theme",
+                listOf(Row.Themes("Theme", settings.theme)),
+            ),
+            Group(
+                "Accent color",
+                listOf(Row.Accents("Accent color", settings.accentIndex)),
+            ),
+            Group(
+                "Code",
                 listOf(
                     Row.Options(
-                        "Theme",
-                        "Follow the system, or pick one.",
-                        OptionSetting.THEME,
-                        ThemeChoices,
+                        "Code font",
+                        null,
+                        OptionSetting.CODE_FONT,
+                        CodeFontChoices,
                     ),
-                    Row.Accents("Accent color", settings.accentIndex),
-                    Row.Toggle(
-                        "Animations",
-                        "Let panels and controls move.",
-                        BoolSetting.ANIMATIONS,
+                    Row.Options(
+                        "Code size",
+                        null,
+                        OptionSetting.FONT_SIZE,
+                        FontSizeChoices,
                     ),
+                    Row.Options(
+                        "Syntax colors",
+                        null,
+                        OptionSetting.SYNTAX_COLORS,
+                        SyntaxColorChoices,
+                    ),
+                    Row.Toggle("Animations", null, BoolSetting.ANIMATIONS),
+                    Row.CodePreview(),
                 ),
             ),
         ),
@@ -502,27 +615,34 @@ fun sections(
         label = "Storage",
         icon = "▤",
         title = "Storage",
-        blurb = "View and manage Closecode storage.",
+        blurb = "View and manage CloseCode storage.",
         groups = listOf(
             Group(
-                "Storage Usage",
+                "Used by CloseCode",
                 listOf(
-                    Row.Value("Projects", "Everything Closecode has on this device.", live.projectsSize),
-                    Row.Value("Build tools", "The compiler pack, once downloaded.", live.buildToolsSize),
-                    Row.Value("Debug files", "Debug logs and crash reports.", live.debugFilesSize),
-                    Row.Value("Cache", "Temporary files. Deleting them is always safe.", live.cachesSize),
-                    Row.Value("Free space", "What the phone can still write.", live.freeSpace),
-                ),
-            ),
-            Group(
-                "",
-                listOf(
+                    Row.Nav(
+                        "Projects",
+                        null,
+                        live.projectsSize,
+                        id = SettingsAction.STORAGE_INSPECT_PROJECTS,
+                    ),
+                    Row.Nav(
+                        "Build tools",
+                        null,
+                        live.buildToolsSize,
+                        id = SettingsAction.STORAGE_INSPECT_BUILD_TOOLS,
+                    ),
+                    Row.Nav(
+                        "Shell tools",
+                        null,
+                        live.shellToolsSize,
+                        id = SettingsAction.STORAGE_INSPECT_SHELL_TOOLS,
+                    ),
                     Row.Action(
-                        "Clear caches",
-                        "Delete every temporary file Closecode has written.",
+                        "Caches",
+                        live.cachesSize,
                         "Clear",
                         SettingsAction.CLEAR_CACHES,
-                        danger = true,
                     ),
                 ),
             ),
@@ -533,28 +653,44 @@ fun sections(
         label = "Security",
         icon = "◇",
         title = "Security",
-        blurb = "Manage credentials, signing keys and app security.",
+        blurb = "Manage privacy and saved sign-ins.",
         groups = listOf(
             Group(
-                "Security",
+                "Privacy",
                 listOf(
+                    Row.Toggle(
+                        "App lock",
+                        "Ask for fingerprint",
+                        BoolSetting.APP_LOCK,
+                    ),
+                    Row.Toggle(
+                        "Send usage data",
+                        "Off by default",
+                        BoolSetting.SEND_USAGE_DATA,
+                    ),
                     Row.Nav(
-                        "Biometric lock",
-                        "Require biometric authentication when opening Closecode.",
-                        "Coming soon",
-                        id = SettingsAction.BIOMETRIC_LOCK,
+                        "Saved sign-ins",
+                        "GitHub",
+                        "Manage",
+                        id = SettingsAction.SAVED_SIGN_INS,
                     ),
                     Row.Nav(
                         "Credentials",
-                        "Stored tokens and passwords.",
-                        "Manage",
+                        "GitHub access token",
+                        "Open",
                         id = SettingsAction.CREDENTIALS,
                     ),
                     Row.Nav(
                         "Signing keys",
-                        "Keystore files used to sign a build.",
-                        "Manage",
+                        "Release signing key",
+                        "Open",
                         id = SettingsAction.SIGNING_KEYS,
+                    ),
+                    Row.Nav(
+                        "Privacy",
+                        "OpenCode privacy policy",
+                        "Open",
+                        id = SettingsAction.PRIVACY,
                     ),
                 ),
             ),
@@ -565,23 +701,23 @@ fun sections(
         label = "About",
         icon = "ⓘ",
         title = "About",
-        blurb = "Information about Closecode.",
+        blurb = "Information about CloseCode.",
         groups = listOf(
             Group(
-                "Closecode",
+                "App",
                 listOf(
-                    Row.Value("Version", "This build of Closecode.", live.version),
+                    Row.Value("CloseCode", "Open source Android IDE", live.version),
                     Row.Nav(
-                        "Open source licenses",
-                        null,
-                        "View",
-                        id = SettingsAction.LICENSES,
+                        "Source code",
+                        "github.com/closecode",
+                        "Open",
+                        id = SettingsAction.SOURCE_CODE,
                     ),
                     Row.Nav(
-                        "Privacy",
+                        "Licences",
                         null,
-                        "View",
-                        id = SettingsAction.PRIVACY,
+                        "Open",
+                        id = SettingsAction.LICENSES,
                     ),
                 ),
             ),
@@ -592,13 +728,7 @@ fun sections(
 fun sectionById(id: String): Section = sections(SettingsLive()).firstOrNull { it.id == id }
     ?: sections(SettingsLive()).first()
 
-/**
- * Every key a settings row edits, for the test that keeps the two lists honest: a field nobody can
- * reach from the screen is a setting that will never be changed.
- *
- * Only the rows that carry a key count. The unwired rows have none by design — they are on screen
- * waiting to be wired, not claiming to work today.
- */
+/** Every key a settings row edits, for the test that keeps the two lists honest. */
 fun usedBoolSettings(): Set<BoolSetting> = sections(SettingsLive())
     .flatMap { section -> section.groups.flatMap { it.rows } }
     .mapNotNull { row -> (row as? Row.Toggle)?.key }

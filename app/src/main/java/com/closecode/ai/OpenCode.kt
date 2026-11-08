@@ -20,6 +20,8 @@ import java.net.HttpURLConnection
 import java.net.ServerSocket
 import java.net.URL
 import java.nio.file.Files
+import java.security.SecureRandom
+import java.util.Base64
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -30,11 +32,9 @@ import java.util.concurrent.TimeUnit
  * health endpoint is polled once a second, and when it stops answering the app starts it again
  * by itself.
  *
- * The server is unsecured, as OpenCode documents for local use: it is bound to 127.0.0.1 and
- * never to 0.0.0.0, so it is reachable only from this phone, and the page's own fetch and event
- * requests do not have to carry a Basic-auth answer the WebView may not attach. OpenCode's docs:
- * "If OPENCODE_SERVER_PASSWORD is not set, the server will be unsecured. This is fine for local
- * use but should be set for network access."
+ * V2 requires a password for its HTTP API. The server is bound to 127.0.0.1 and never to
+ * 0.0.0.0, and the app generates a fresh random password for each run. The Web UI receives it
+ * once as `auth_token`; the app's own API calls carry Basic auth. The password is never logged.
  *
  * The state is a plain Compose value, so the AI tab, the notification and the log read the same
  * truth.
@@ -270,6 +270,11 @@ object OpenCode {
         }
         val portChoice = freePort()
         val port = portChoice.port
+        val projectDirectory = runCatching { projectRoot.canonicalPath }
+            .getOrDefault(projectRoot.absolutePath)
+        val password = newPassword()
+        val basicAuth = openCodeBasicAuth(password)
+        val authToken = openCodeAuthToken(password)
         val abis = Build.SUPPORTED_ABIS.toList()
         val arch = OpenCodeRuntime.alpineArch(abis)
         if (arch == null) {
@@ -295,11 +300,13 @@ object OpenCode {
                 projectName = projectName,
                 projectId = projectId,
                 projectFolder = projectRoot.name,
-                projectDirectory = projectRoot.absolutePath,
+                projectDirectory = projectDirectory,
                 url = url,
                 pageUrl = projectPageUrl(url, projectRoot),
                 sessionId = "",
                 port = port,
+                authToken = authToken,
+                basicAuth = basicAuth,
                 log = buildList {
                     add(OpenCodeLogLine("Starting OpenCode ${OpenCodeDefaults.VERSION}"))
                     orphanPids.forEach {
@@ -358,7 +365,7 @@ object OpenCode {
             return
         }
 
-        log("Project: ${projectRoot.absolutePath}")
+        log("Project: $projectDirectory")
         log("Program: ${binary.absolutePath}")
         log("Loader: ${OpenCodeRuntime.loader(context, arch).absolutePath}")
 
@@ -375,8 +382,8 @@ object OpenCode {
             var attempt = 1
             while (currentCoroutineContext().isActive) {
                 log(OpenCodeDefaults.launchLine(port))
-                log("Server: local only, unsecured (OpenCode's documented local mode)")
-                log("Waiting for http://${OpenCodeDefaults.HOST}:$port/global/health")
+                log("Server: local only, password-protected")
+                log("Waiting for http://${OpenCodeDefaults.HOST}:$port/api/info")
                 val failure = launchProcess(
                     context,
                     arch,
@@ -384,6 +391,7 @@ object OpenCode {
                     projectRoot,
                     port,
                     proxyPort,
+                    password,
                 )
                 if (failure != null) {
                     if (!currentCoroutineContext().isActive) return
@@ -400,11 +408,18 @@ object OpenCode {
                     return
                 }
 
-                val version = waitForAnswer(port)
+                val version = waitForAnswer(port, basicAuth)
                 runCatching { OpenCodeSkill.install(projectRoot) }
                     .onFailure {
                         log(
                             "Skill not written: ${it.message ?: it.javaClass.simpleName}",
+                            warning = true,
+                        )
+                    }
+                runCatching { OpenCodeAgentMd.install(projectRoot) }
+                    .onFailure {
+                        log(
+                            "AGENTS.md not written: ${it.message ?: it.javaClass.simpleName}",
                             warning = true,
                         )
                     }
@@ -416,7 +431,8 @@ object OpenCode {
                             context,
                             url,
                             projectId,
-                            projectRoot.absolutePath,
+                            projectDirectory,
+                            basicAuth,
                         )
                     }.onFailure {
                         log(
@@ -430,7 +446,7 @@ object OpenCode {
                             phase = OpenCodePhase.Running,
                             version = shown,
                             projectId = projectId,
-                            projectDirectory = projectRoot.absolutePath,
+                            projectDirectory = projectDirectory,
                             url = url,
                             pageUrl = sessionId?.let { id -> OpenCodeSessions.sessionPageUrl(url, id) }
                                 ?: projectPageUrl(url, projectRoot),
@@ -453,7 +469,7 @@ object OpenCode {
                         delay(1_000)
                         if (process?.isAlive != true) break
                         val now = SystemClock.elapsedRealtime()
-                        if (probe(port) != null) {
+                        if (probe(port, basicAuth) != null) {
                             silentSinceMs = null
                         } else {
                             val since = silentSinceMs ?: now.also { silentSinceMs = it }
@@ -498,11 +514,11 @@ object OpenCode {
      * Returns the version it reported (possibly empty), or null when the process died or the
      * server did not answer within [START_TIMEOUT_MS].
      */
-    private suspend fun waitForAnswer(port: Int): String? {
+    private suspend fun waitForAnswer(port: Int, basicAuth: String): String? {
         val deadline = System.currentTimeMillis() + START_TIMEOUT_MS
         while (currentCoroutineContext().isActive) {
             if (process?.isAlive != true) return null
-            probe(port)?.let { return it.version }
+            probe(port, basicAuth)?.let { return it.version }
             if (System.currentTimeMillis() >= deadline) {
                 log("No answer after ${START_TIMEOUT_MS / 1000} s", warning = true)
                 return null
@@ -515,13 +531,12 @@ object OpenCode {
     private data class ServerHealth(val version: String)
 
     /**
-     * One request to `GET /global/health`, the endpoint OpenCode documents for "is the server
-     * up, and which version is it". The server is unsecured on loopback, so no Authorization
-     * header is needed.
+     * One request to `GET /api/info`, the endpoint V2 documents for "is the server up, and
+     * which version is it". The API requires Basic auth even on loopback.
      */
-    private fun probe(port: Int): ServerHealth? {
+    private fun probe(port: Int, basicAuth: String): ServerHealth? {
         val connection = try {
-            URL("http://${OpenCodeDefaults.HOST}:$port/global/health").openConnection()
+            URL("http://${OpenCodeDefaults.HOST}:$port/api/info").openConnection()
                 as HttpURLConnection
         } catch (error: Throwable) {
             return null
@@ -531,6 +546,9 @@ object OpenCode {
             connection.readTimeout = 3_000
             connection.useCaches = false
             connection.requestMethod = "GET"
+            if (basicAuth.isNotBlank()) {
+                connection.setRequestProperty("Authorization", "Basic $basicAuth")
+            }
             if (connection.responseCode != 200) {
                 null
             } else {
@@ -562,6 +580,7 @@ object OpenCode {
         projectRoot: File,
         port: Int,
         proxyPort: Int?,
+        password: String,
     ): String? {
         return try {
             val loader = OpenCodeRuntime.loader(context, arch).absolutePath
@@ -573,7 +592,8 @@ object OpenCode {
                 "--library-path",
                 libraryPath,
                 binary.absolutePath,
-                "web",
+                "--print-logs",
+                "serve",
                 "--hostname",
                 OpenCodeDefaults.HOST,
                 "--port",
@@ -594,15 +614,16 @@ object OpenCode {
                     log("Removed a server still holding port $port (PID $pid)", warning = true)
                 }
             }
-            // No OPENCODE_SERVER_PASSWORD and no OPENCODE_SERVER_USERNAME: the server is bound
-            // to loopback, and OpenCode documents unsecured local use as fine. This is also
-            // what makes the page's own fetch/SSE calls work without the WebView having to
-            // attach a Basic-auth answer it may not carry.
-            //
-            // The server must not try to replace itself, and must not download LSP servers it
-            // would then have to run: both are desktop habits that do not belong in this app's
+            // V2 reads either password variable. Setting both makes the run's password explicit
+            // and keeps a future rename from silently falling back to an unsecured server.
+            builder.environment()["OPENCODE_PASSWORD"] = password
+            builder.environment()["OPENCODE_SERVER_PASSWORD"] = password
+            // The server must not try to replace itself, phone home, or download LSP servers it
+            // would then have to run: all are desktop habits that do not belong in this app's
             // storage. Print logs to stderr so the AI tab's log shows what the server itself
             // says when it refuses to start.
+            builder.environment()["OPENCODE_DISABLE_UPDATE"] = "1"
+            builder.environment()["OPENCODE_DISABLE_TELEMETRY"] = "1"
             builder.environment()["OPENCODE_DISABLE_AUTOUPDATE"] = "true"
             builder.environment()["OPENCODE_DISABLE_LSP_DOWNLOAD"] = "true"
             builder.environment()["OPENCODE_PRINT_LOGS"] = "1"
@@ -642,6 +663,13 @@ object OpenCode {
 
     /** A single-quoted shell argument, safe for a path with spaces in it. */
     private fun shellQuote(value: String): String = quoteShell(value)
+
+    /** A fresh 192-bit password, URL-safe so it can ride in the Web UI's `auth_token`. */
+    private fun newPassword(): String {
+        val bytes = ByteArray(24)
+        SecureRandom().nextBytes(bytes)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+    }
 
     /** The version the program reports about itself, asked of it the same way it is started. */
     private fun readVersion(context: Context, arch: String, binary: File): String {
@@ -695,6 +723,7 @@ object OpenCode {
         val configHome = File(home, "config").apply { mkdirs() }
         environment["XDG_CONFIG_HOME"] = configHome.absolutePath
         OpenCodeConfig.installOnce(configHome)
+        OpenCodeConfig.ensureOpenToTheAgent(configHome)
         // Web search needs no API key, but OpenCode only loads its hosted web tools when one
         // of these flags is set. The fallback covers a provider whose search goes dry.
         environment["OPENCODE_ENABLE_EXA"] = "1"
@@ -703,7 +732,7 @@ object OpenCode {
         // The bash wrapper reads this at each shell invocation, so installing the optional
         // shell tools after the server starts still makes them available without a restart.
         environment["CLOSECODE_SHELL_TOOLS"] = shellTools.absolutePath
-        // Android has no desktop browser. `opencode web` tries to open one after the server is
+        // Android has no desktop browser. A server launch may try to open one after it is
         // listening; without a no-op it exits on ENOENT and the page reconnects forever. The
         // wrapper is also on PATH because some launches ask for `xdg-open` directly.
         environment["BROWSER"] = "/system/bin/true"
@@ -971,7 +1000,7 @@ internal fun openCodeBashScript(): String = """
 internal fun isOpenCodeServerCommandLine(commandLine: String): Boolean {
     val text = commandLine.replace('\u0000', ' ')
     if (!text.contains("opencode")) return false
-    return Regex("(^|\\s)web(\\s|$)").containsMatchIn(text)
+    return Regex("(^|\\s)(web|serve)(\\s|$)").containsMatchIn(text)
 }
 
 /**

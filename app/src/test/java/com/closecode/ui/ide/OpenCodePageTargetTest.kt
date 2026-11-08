@@ -1,14 +1,14 @@
 package com.closecode.ui.ide
 
+import com.closecode.ai.openCodeServerKey
 import com.closecode.ai.projectPageUrl
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The AI tab's page target must never be OpenCode's home screen. The home screen only lists
- * what OpenCode itself has already registered, so while a session is still being created the
- * Projects sidebar is empty and looks broken. The project route opens the project instead.
+ * The AI tab's page target must prefer a real session and fall back to the project-aware home.
+ * V2's router has no V1 base64 directory route; the server's working directory is the project.
  */
 class OpenCodePageTargetTest {
 
@@ -17,7 +17,15 @@ class OpenCodePageTargetTest {
     private val projectUrl = projectPageUrl(baseUrl, directory)
 
     @Test
-    fun aMissingSessionOpensTheProjectRoute() {
+    fun aMissingSessionOpensTheProjectHome() {
+        assertEquals(
+            "$baseUrl/",
+            targetPagePath(baseUrl, projectUrl, savedPath = null, sessionId = ""),
+        )
+    }
+
+    @Test
+    fun aMissingSessionUsesTheProjectAwareHome() {
         assertEquals(
             projectUrl,
             targetPagePath(baseUrl, projectUrl, savedPath = null, sessionId = ""),
@@ -25,22 +33,19 @@ class OpenCodePageTargetTest {
     }
 
     @Test
-    fun aMissingSessionNeverOpensTheHomeScreen() {
-        val home = baseUrl + "/"
-        val target = targetPagePath(baseUrl, projectUrl, savedPath = null, sessionId = "")
-        assertNotEquals(home, target)
-    }
-
-    @Test
-    fun anExistingSessionOpensTheSessionRoute() {
+    fun anExistingSessionOpensTheV2SessionRoute() {
         val target = targetPagePath(baseUrl, projectUrl, savedPath = null, sessionId = "ses_1")
-        assertEquals("$baseUrl/server/aHR0cDovLzEyNy4wLjAuMTo0MDk4/session/ses_1", target)
+        assertEquals(
+            "$baseUrl/server/${openCodeServerKey(baseUrl)}/session/ses_1",
+            target,
+        )
     }
 
     @Test
-    fun aSavedPageWinsOverTheProjectRoute() {
-        val target = targetPagePath(baseUrl, projectUrl, savedPath = "/session/ses_9", sessionId = "")
-        assertEquals("$baseUrl/session/ses_9", target)
+    fun aSavedV2PageWinsOverTheProjectHome() {
+        val saved = "/server/${openCodeServerKey(baseUrl)}/session/ses_9"
+        val target = targetPagePath(baseUrl, projectUrl, savedPath = saved, sessionId = "")
+        assertEquals("$baseUrl$saved", target)
     }
 
     @Test
@@ -62,5 +67,14 @@ class OpenCodePageTargetTest {
             projectUrl,
             targetPagePath(baseUrl, projectUrl, savedPath = "", sessionId = ""),
         )
+    }
+
+    @Test
+    fun theAuthTokenIsAddedOnceAndNeverShown() {
+        val withToken = withAuthToken("$baseUrl/", "abc_123")
+
+        assertEquals("$baseUrl/?auth_token=abc_123", withToken)
+        assertEquals("$baseUrl/", displayPageUrl(withToken))
+        assertTrue(displayPageUrl(withToken).indexOf("auth_token") < 0)
     }
 }

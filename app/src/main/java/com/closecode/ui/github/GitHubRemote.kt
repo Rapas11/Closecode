@@ -1,8 +1,10 @@
 package com.closecode.ui.github
 
+import com.closecode.ui.project.GeneratedPaths
 import java.io.File
 import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.api.errors.RefNotAdvertisedException
+import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.transport.CredentialItem
 import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.transport.RemoteRefUpdate
@@ -57,6 +59,26 @@ class GitHubRemote(private val root: File) {
             }
             val branch = git.repository.branch
                 ?: throw GitHubException("There is no branch to push yet. Make a commit first.")
+            val head = git.repository.resolve(Constants.HEAD)
+            val tracked = buildSet {
+                git.repository.parseCommit(head).tree?.let { tree ->
+                    org.eclipse.jgit.treewalk.TreeWalk(git.repository).use { walk ->
+                        walk.addTree(tree)
+                        walk.isRecursive = true
+                        while (walk.next()) add(walk.pathString)
+                    }
+                }
+                val status = git.status().call()
+                addAll(status.added)
+                addAll(status.changed)
+            }
+            val protected = tracked.filter { GeneratedPaths.isProtectedRelative(it) }
+            if (protected.isNotEmpty()) {
+                throw GitHubException(
+                    "This repository tracks generated or secret files. Remove them from Git " +
+                        "before pushing: " + protected.joinToString(", "),
+                )
+            }
             val result = git.push()
                 .setRemote(ORIGIN)
                 .setCredentialsProvider(tokenCredentials(token))

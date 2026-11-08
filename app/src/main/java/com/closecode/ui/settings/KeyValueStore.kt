@@ -42,7 +42,12 @@ class SharedPreferencesKeyValueStore(context: Context) : KeyValueStore {
         prefs.edit().putString(key, value).apply()
     }
 
-    override fun getInt(key: String, default: Int): Int = prefs.getInt(key, default)
+    override fun getInt(key: String, default: Int): Int = when (val value = prefs.all[key]) {
+        is Int -> value
+        is Number -> value.toInt()
+        is String -> value.toIntOrNull() ?: default
+        else -> default
+    }
 
     override fun putInt(key: String, value: Int) {
         prefs.edit().putInt(key, value).apply()

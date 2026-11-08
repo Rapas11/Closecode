@@ -3,9 +3,11 @@ package com.closecode.ui.ide
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -16,12 +18,14 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,59 +62,74 @@ enum class ToolAction {
 /** Row height. Exported so the editor can reserve exactly this much while the row is hidden. */
 val ToolRowHeight = 46.dp
 
-/** Height of the keyboard key row: 34 dp keys with 4 dp breathing room top and bottom. */
-val EditorKeyRowHeight = 42.dp
+/** Height of the keyboard key row: 32 dp keys, 12 dp padding and a 1 dp rule. */
+val EditorKeyRowHeight = 45.dp
+
+/** One key in the editor key row. [caretBack] puts the caret inside a pair. */
+data class EditorKey(
+    val label: String,
+    val insert: String,
+    val caretBack: Int = 0,
+    val moveRight: Boolean = false,
+)
+
+private val CodeKeys = listOf(
+    EditorKey("Tab", "\t"),
+    EditorKey("{ }", "{}", caretBack = 1),
+    EditorKey("( )", "()", caretBack = 1),
+    EditorKey("[ ]", "[]", caretBack = 1),
+    EditorKey("\" \"", "\"\"", caretBack = 1),
+    EditorKey(";", ";"),
+    EditorKey("=", "="),
+    EditorKey("→", "", moveRight = true),
+)
 
 /**
- * The keyboard key row: Tab plus every bracket, quote and symbol a phone keyboard hides.
+ * The keyboard key row: eight equal keys above the system keyboard.
  * Shown only while the keyboard is up, directly above it, with the bottom bar stepped aside.
- * The first seven keys fit a 380 dp screen; the rest arrive on a sideways swipe.
  */
 @Composable
 fun EditorKeyRow(
-    onTab: () -> Unit,
-    onKey: (String) -> Unit,
+    onKey: (EditorKey) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val c = LocalPageColors.current
-    Row(
+    val cc = com.closecode.ui.theme.LocalCcColors.current
+    Column(
         modifier
             .fillMaxWidth()
-            .height(EditorKeyRowHeight)
-            .background(c.keyRowBg)
-            .border(1.dp, c.divider, RoundedCornerShape(0.dp))
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 4.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+            .background(cc.panel),
     ) {
-        EditorKey("Tab", wide = true, onClick = onTab)
-        listOf("{", "}", "(", ")", ";", "\"", "=", "[", "]", "'", "<", ">", "/", ":", ",", ".", "|")
-            .forEach { glyph -> EditorKey(glyph, wide = false) { onKey(glyph) } }
-    }
-}
-
-/** One 34 dp key: #1A1F2B fill, 12sp mono #C5CAD6, Tab twice as wide. */
-@Composable
-private fun EditorKey(label: String, wide: Boolean, onClick: () -> Unit) {
-    val c = LocalPageColors.current
-    Box(
-        Modifier
-            .width(if (wide) 64.dp else 44.dp)
-            .height(34.dp)
-            .clip(RoundedCornerShape(7.dp))
-            .background(c.keyBg)
-            .clickable(onClick = onClick)
-            .semantics { contentDescription = if (label == "Tab") "Tab" else label },
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            color = c.popupText,
-            fontSize = 12.sp,
-            fontFamily = Mono,
-            maxLines = 1,
-        )
+        Box(Modifier.fillMaxWidth().height(1.dp).background(cc.divider))
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            CodeKeys.forEach { key ->
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(32.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(cc.field)
+                        .pointerInput(key) { detectTapGestures { onKey(key) } }
+                        .semantics { contentDescription = key.label },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = key.label,
+                        color = cc.text2,
+                        fontSize = 12.sp,
+                        fontFamily = Mono,
+                        fontWeight = FontWeight.SemiBold,
+                        lineHeight = 16.sp,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -126,7 +145,7 @@ private fun EditorKey(label: String, wide: Boolean, onClick: () -> Unit) {
  * deliberate.
  */
 internal fun showToolRow(imeVisible: Boolean, suggestionsOpen: Boolean): Boolean =
-    imeVisible && !suggestionsOpen
+    imeVisible
 
 @Composable
 fun IdeToolRow(
@@ -139,8 +158,8 @@ fun IdeToolRow(
         modifier
             .fillMaxWidth()
             .height(ToolRowHeight)
-            .background(c.panel)
-            .border(1.dp, c.ln, RoundedCornerShape(0.dp))
+            .background(c.mock.panel)
+            .border(1.dp, c.mock.divider, RoundedCornerShape(0.dp))
             .horizontalScroll(rememberScrollState())
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -158,7 +177,7 @@ fun IdeToolRow(
                 .padding(horizontal = 6.dp)
                 .width(1.dp)
                 .height(28.dp)
-                .background(c.ln),
+                .background(c.mock.divider),
         )
 
         ToolButton("{", Mono) { onAction(ToolAction.OPEN_BRACE) }
@@ -189,7 +208,7 @@ private fun ToolButton(label: String, family: androidx.compose.ui.text.font.Font
     ) {
         Text(
             text = label,
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 15.sp,
             fontFamily = family,
             maxLines = 1,
@@ -211,7 +230,7 @@ private fun ToolIcon(
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        CcIcon(icon, c.tx, 20.dp)
+        CcIcon(icon, c.mock.text, 20.dp)
     }
 }
 

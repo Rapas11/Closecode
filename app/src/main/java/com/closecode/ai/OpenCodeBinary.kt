@@ -36,22 +36,17 @@ object OpenCodeBinary {
     }
 
     /**
-     * The release file for this phone, or null when the CPU is not one OpenCode ships for.
+     * The npm platform package for this phone, or null when the CPU is not supported.
      *
-     * The phone's *preferred* ABI decides — the first of the supported ones. A phone reports what
-     * it runs best, and an emulator that can also translate ARM lists x86_64 first: taking any
-     * arm64 it mentions instead would hand it a program it can only crash on, which is exactly
-     * what happened before this looked at the first ABI and nothing else.
+     * CloseCode's V2 migration targets 64-bit ARM only. The first ABI decides, because an
+     * emulator can list an ARM ABI it only translates and must not be handed a build it cannot
+     * execute.
      */
-    fun assetForAbis(abis: List<String>): String? = when (abis.firstOrNull()?.lowercase()) {
-        "arm64-v8a" -> "opencode-linux-arm64-musl.tar.gz"
-        "x86_64" -> "opencode-linux-x64-musl.tar.gz"
-        else -> null
-    }
+    fun assetForAbis(abis: List<String>): String? =
+        if (abis.firstOrNull()?.lowercase() == "arm64-v8a") OpenCodeDefaults.NPM_PACKAGE else null
 
-    /** Where the release file is downloaded from. */
-    fun downloadUrl(asset: String): String =
-        "https://github.com/anomalyco/opencode/releases/download/${OpenCodeDefaults.TAG}/$asset"
+    /** Where the pinned npm tarball is downloaded from. */
+    fun downloadUrl(asset: String): String = OpenCodeDefaults.NPM_TARBALL
 
     /**
      * The program on the phone, downloading it first if this is the first start.
@@ -67,38 +62,50 @@ object OpenCodeBinary {
     ): Install {
         val asset = assetForAbis(abis)
             ?: throw IllegalStateException(
-                "This phone's CPU is not one OpenCode runs on. It needs ARM64 or x86_64.",
+                "This phone's CPU is not one OpenCode runs on. CloseCode V2 needs ARM64.",
             )
         val target = binaryFile(context)
         val marker = markerFile(context)
-        val expectedMarker = asset.replace(".tar.gz", "-${OpenCodeDefaults.VERSION}.tar.gz")
+        val expectedMarker = "opencode-${OpenCodeDefaults.VERSION}-arm64-musl"
         if (isInstalled(context) && marker.isFile && marker.readText().trim() == expectedMarker) {
             return Install(target, changed = false)
         }
 
         val url = downloadUrl(asset)
         installDir(context).mkdirs()
-        val archive = File(installDir(context), expectedMarker)
+        val archive = File(installDir(context), "cli-linux-arm64-musl-${OpenCodeDefaults.VERSION}.tgz")
         if (marker.isFile && marker.readText().trim() != expectedMarker) {
             installDir(context).listFiles()
-                ?.filter { it.name.endsWith(".tar.gz") && it.name != expectedMarker }
+                ?.filter { it.isFile && it.name != archive.name && it.name != target.name }
+                ?.filter { it.name.endsWith(".tgz") || it.name.endsWith(".tar.gz") }
                 ?.forEach { it.delete() }
         }
+        if (archive.isFile && archive.length() > 0L &&
+            Downloads.sha256(archive) != OpenCodeDefaults.NPM_TARBALL_SHA256
+        ) {
+            archive.delete()
+        }
         if (!archive.isFile || archive.length() == 0L) {
-            Downloads.get(url, archive, what = "OpenCode download", onProgress = onProgress)
+            Downloads.get(url, archive, what = "OpenCode V2 download", onProgress = onProgress)
         } else {
             onProgress(100)
         }
+        if (Downloads.sha256(archive) != OpenCodeDefaults.NPM_TARBALL_SHA256) {
+            archive.delete()
+            throw IllegalStateException("The OpenCode V2 download did not match its hash.")
+        }
 
         val staged = File(installDir(context), "opencode.new")
-        val part = File(installDir(context), "opencode.new.part")
         staged.delete()
-        part.delete()
         try {
-            val entry = TarReader.extractFirstFile(archive.inputStream(), staged)
+            val entry = TarReader.extractFile(
+                archive.inputStream(),
+                OpenCodeDefaults.NPM_BINARY_PATH,
+                staged,
+            )
             if (entry == null) {
                 archive.delete()
-                throw IllegalStateException("The downloaded OpenCode archive held no program.")
+                throw IllegalStateException("The OpenCode V2 archive held no program.")
             }
             staged.setExecutable(true, false)
             staged.setReadable(true, false)
@@ -108,7 +115,6 @@ object OpenCodeBinary {
             return Install(target, changed = true)
         } catch (error: Throwable) {
             staged.delete()
-            part.delete()
             archive.delete()
             throw error
         }

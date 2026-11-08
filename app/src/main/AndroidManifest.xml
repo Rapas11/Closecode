@@ -12,6 +12,7 @@
          screen every time, and Android 12+ needs a one-time allow-this-source toggle
          the app opens settings for but can never flip itself. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
 
     <!-- The one-time build-tools download runs as a foreground service so it survives
          leaving the screen; its notification shows the percent and carries Cancel. -->
@@ -146,6 +147,9 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Running the OpenCode assistant server on the phone" />
         </service>
+        <receiver
+            android:name=".ai.OpenCodeStopReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

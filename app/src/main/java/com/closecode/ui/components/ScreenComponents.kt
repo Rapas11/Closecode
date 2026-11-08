@@ -71,8 +71,8 @@ fun AppSegmentedControl(
                 Modifier
                     .weight(1f)
                     .height(28.dp)
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(if (on) c.popupSelected else Color.Transparent)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(if (on) c.mock.selected else Color.Transparent)
                     .clickable { onSelect(index) },
                 contentAlignment = Alignment.Center,
             ) {
@@ -82,7 +82,7 @@ fun AppSegmentedControl(
                 ) {
                     Text(
                         text = item.label,
-                        color = if (on) Color.White else c.textMuted,
+                        color = if (on) c.mock.text else c.mock.muted,
                         fontSize = 12.sp,
                         fontFamily = Sans,
                         fontWeight = if (on) FontWeight.Medium else FontWeight.Normal,
@@ -129,16 +129,16 @@ fun PrimaryButton(
     Box(
         modifier
             .fillMaxWidth()
-            .height(44.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (enabled) c.primary else c.chipBg)
+            .height(54.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(if (enabled) c.mock.accent else c.mock.card)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = if (enabled) c.af else c.textFaint,
-            fontSize = 14.sp,
+            color = if (enabled) c.mock.onAccent else c.mock.faint,
+            fontSize = 15.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
@@ -158,17 +158,17 @@ fun OutlineButton(
     Box(
         modifier
             .fillMaxWidth()
-            .height(38.dp)
-            .clip(RoundedCornerShape(9.dp))
-            .background(if (enabled) c.primaryTint else c.chipBg)
-            .border(1.dp, if (enabled) c.primary else c.fieldBorder, RoundedCornerShape(9.dp))
+            .height(48.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(if (enabled) c.mock.card else c.mock.cardMuted)
+            .border(1.dp, if (enabled) c.mock.border else c.mock.border, RoundedCornerShape(16.dp))
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = if (enabled) c.link else c.textFaint,
-            fontSize = 13.sp,
+            color = if (enabled) c.mock.text else c.mock.faint,
+            fontSize = 14.sp,
             fontFamily = Sans,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -209,10 +209,9 @@ fun ScreenCard(
     androidx.compose.foundation.layout.Column(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(c.surface)
-            .border(1.dp, c.surfaceBorder, RoundedCornerShape(12.dp))
-            .padding(12.dp),
+            .clip(RoundedCornerShape(20.dp))
+            .background(c.mock.card)
+            .padding(16.dp),
         content = content,
     )
 }
@@ -235,18 +234,17 @@ fun ScreenField(
         modifier
             .fillMaxWidth()
             .height(44.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .background(c.fieldBg)
-            .border(1.dp, c.fieldBorder, RoundedCornerShape(10.dp))
-            .padding(horizontal = 12.dp),
+            .clip(RoundedCornerShape(13.dp))
+            .background(c.mock.field)
+            .padding(horizontal = 14.dp),
         contentAlignment = Alignment.CenterStart,
     ) {
         BasicTextField(
             value = value,
             onValueChange = onChange,
             textStyle = TextStyle(
-                color = c.text,
-                fontSize = 13.sp,
+                color = c.mock.text,
+                fontSize = if (monospace) 12.5.sp else 14.sp,
                 fontFamily = if (monospace) Mono else Sans,
             ),
             keyboardOptions = keyboardOptions,
@@ -256,8 +254,8 @@ fun ScreenField(
                 if (value.isEmpty()) {
                     Text(
                         text = hint,
-                        color = c.textFaint,
-                        fontSize = 13.sp,
+                        color = c.mock.faint,
+                        fontSize = if (monospace) 12.5.sp else 14.sp,
                         fontFamily = if (monospace) Mono else Sans,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -309,10 +307,11 @@ fun ScreenSectionLabel(text: String, modifier: Modifier = Modifier) {
     val c = LocalPageColors.current
     Text(
         text = text.uppercase(),
-        color = c.textFaint,
+        color = c.mock.faint,
         fontSize = 11.sp,
         fontFamily = Sans,
-        letterSpacing = 0.72.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.8.sp,
         maxLines = 1,
         modifier = modifier,
     )

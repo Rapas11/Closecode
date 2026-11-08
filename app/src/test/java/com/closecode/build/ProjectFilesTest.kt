@@ -63,6 +63,31 @@ class ProjectFilesTest {
     }
 
     @Test
+    fun aVersionChangeRewritesTheBuildFileAndManifestLabel() {
+        ProjectFixtures.template(tmp.root)
+        val result = ProjectFiles.applyVersion(tmp.root, "CloseCode Demo", "2.4.1", 27)
+        assertTrue(result.problems.toString(), result.ok)
+        val gradle = File(tmp.root, "app/build.gradle.kts").readText()
+        assertTrue("versionName = \"2.4.1\"" in gradle)
+        assertTrue("versionCode = 27" in gradle)
+        val strings = File(tmp.root, "app/src/main/res/values/strings.xml").readText()
+        assertTrue("<string name=\"app_name\">CloseCode Demo</string>" in strings)
+    }
+
+    @Test
+    fun anAppNameUpdatesAStringResourceWhenTheManifestPointsAtIt() {
+        ProjectFixtures.template(tmp.root)
+        val manifest = File(tmp.root, "app/src/main/AndroidManifest.xml")
+        manifest.writeText(manifest.readText().replace("android:label=\"Biz\"", "android:label=\"@string/app_name\""))
+        val strings = File(tmp.root, "app/src/main/res/values/strings.xml")
+        strings.parentFile?.mkdirs()
+        strings.writeText("<resources><string name=\"app_name\">Biz</string></resources>")
+        val result = ProjectFiles.applyVersion(tmp.root, "Demo & Co", "1.2", 3)
+        assertTrue(result.problems.toString(), result.ok)
+        assertTrue("<string name=\"app_name\">Demo &amp; Co</string>" in strings.readText())
+    }
+
+    @Test
     fun aPackageChangeOnAProjectWithoutSourcesIsStillFine() {
         ProjectFixtures.template(tmp.root)
         File(tmp.root, "app/src/main/java").deleteRecursively()

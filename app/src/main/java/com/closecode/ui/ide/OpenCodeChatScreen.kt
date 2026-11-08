@@ -9,6 +9,7 @@ import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.util.Log
 import android.webkit.ConsoleMessage
+import android.webkit.HttpAuthHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -21,11 +22,13 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,6 +36,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
@@ -50,7 +54,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
@@ -66,10 +72,13 @@ import com.closecode.ai.OpenCodeSessions
 import com.closecode.ai.isRestorableOpenCodePage
 import com.closecode.ai.openCodePagePath
 import com.closecode.ai.openCodePageUrl
+import com.closecode.ai.openCodePasswordFromBasicAuth
 import com.closecode.ai.openCodeServerKey
 import com.closecode.ai.rebaseOpenCodeServerPath
+import com.closecode.ui.components.DesignBackButton
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Sans
+import java.net.URLEncoder
 import org.json.JSONObject
 
 /**
@@ -84,10 +93,11 @@ import org.json.JSONObject
  *  - the back button goes back inside the page first, and only leaves the page at its start —
  *    leaving never stops the server.
  *
- * The server is unsecured on loopback, as OpenCode documents for local use, so there is no
- * password box to fill and no HTTP-auth challenge to answer. The page's console and its own
- * network failures are copied into [OpenCodePageLog] so the AI tab can show them when the page
- * loads but does not work.
+ * V2's server is password-protected even on loopback. The official page receives the password
+ * once as `auth_token`, then keeps it in its own storage; the app's own API calls use Basic auth.
+ * The page's console and its own network failures are copied into [OpenCodePageLog] so the AI tab
+ * can show them when the page loads but does not work. The password is stripped from every log
+ * line and from the address shown in the bar.
  */
 @SuppressLint("SetJavaScriptEnabled", "AddVsClear")
 @Composable
@@ -96,6 +106,8 @@ fun OpenCodeChatScreen(
     projectUrl: String,
     projectDirectory: String,
     sessionId: String = "",
+    authToken: String = "",
+    basicAuth: String = "",
     generation: Int = 0,
     onBack: () -> Unit,
     onAuthenticate: () -> Unit,
@@ -111,10 +123,12 @@ fun OpenCodeChatScreen(
             savedPath = savedPagePath(context, baseUrl, projectDirectory),
             sessionId = sessionId,
         )
-        return PageTarget(target, false)
+        return PageTarget(withAuthToken(target, authToken), false)
     }
-    val initialTarget = remember(baseUrl, projectUrl, projectDirectory, sessionId) { pageTarget() }
-    var currentUrl by remember { mutableStateOf(initialTarget.url) }
+    val initialTarget = remember(baseUrl, projectUrl, projectDirectory, sessionId, authToken) {
+        pageTarget()
+    }
+    var currentUrl by remember { mutableStateOf(displayPageUrl(initialTarget.url)) }
     var fileCallback by remember { mutableStateOf<ValueCallback<Array<Uri>>?>(null) }
     val fileLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
@@ -143,13 +157,15 @@ fun OpenCodeChatScreen(
     // new-session route, which creates a session the reader never asked for.
     BackHandler { onBack() }
 
-    LaunchedEffect(baseUrl, projectUrl, projectDirectory, sessionId, generation) {
+    LaunchedEffect(baseUrl, projectUrl, projectDirectory, sessionId, authToken, basicAuth, generation) {
         val view = holder.view ?: return@LaunchedEffect
         if (holder.baseUrl == baseUrl &&
             holder.projectUrl == projectUrl &&
             holder.projectDirectory == projectDirectory &&
             holder.sessionId == sessionId &&
-            holder.generation == generation
+            holder.generation == generation &&
+            holder.authToken == authToken &&
+            holder.basicAuth == basicAuth
         ) {
             return@LaunchedEffect
         }
@@ -159,9 +175,11 @@ fun OpenCodeChatScreen(
         holder.projectDirectory = projectDirectory
         holder.sessionId = sessionId
         holder.generation = generation
+        holder.authToken = authToken
+        holder.basicAuth = basicAuth
         holder.bootstrap = target.bootstrap
-        currentUrl = target.url
-        OpenCodePageLog.add("open ${target.url}")
+        currentUrl = displayPageUrl(target.url)
+        OpenCodePageLog.add("open ${displayPageUrl(target.url)}")
         view.loadUrl(target.url)
     }
 
@@ -175,7 +193,7 @@ fun OpenCodeChatScreen(
     Column(
         modifier
             .fillMaxSize()
-            .background(c.bg),
+            .background(c.mock.page),
     ) {
         OpenCodePageBar(
             url = currentUrl,
@@ -241,6 +259,8 @@ fun OpenCodeChatScreen(
                         holder.projectDirectory = projectDirectory
                         holder.sessionId = sessionId
                         holder.generation = generation
+                        holder.authToken = authToken
+                        holder.basicAuth = basicAuth
                         holder.bootstrap = target.bootstrap
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
@@ -250,7 +270,7 @@ fun OpenCodeChatScreen(
                         // focus on load: that is what opens the keyboard before the user has
                         // touched anything. A tap on the prompt still focuses it normally.
                         settings.setNeedInitialFocus(false)
-                        setBackgroundColor(AndroidColor.parseColor("#0F1117"))
+                        setBackgroundColor(c.mock.page.toArgb())
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(
                                 view: WebView?,
@@ -286,12 +306,13 @@ fun OpenCodeChatScreen(
                                 isReload: Boolean,
                             ) {
                                 if (pageUrl == null) return
-                                currentUrl = pageUrl
+                                val shown = displayPageUrl(pageUrl)
+                                currentUrl = shown
                                 rememberPagePath(
                                     view?.context,
                                     holder.baseUrl,
                                     holder.projectDirectory,
-                                    pageUrl,
+                                    shown,
                                 )
                             }
 
@@ -300,8 +321,8 @@ fun OpenCodeChatScreen(
                                 startedUrl: String?,
                                 favicon: Bitmap?,
                             ) {
-                                if (startedUrl != null) currentUrl = startedUrl
-                                OpenCodePageLog.add("page started: $startedUrl")
+                                if (startedUrl != null) currentUrl = displayPageUrl(startedUrl)
+                                OpenCodePageLog.add("page started: ${displayPageUrl(startedUrl.orEmpty())}")
                                 installPageLog(view)
                                 installViewportFix(view)
                             }
@@ -311,27 +332,20 @@ fun OpenCodeChatScreen(
                             }
 
                             override fun onPageFinished(view: WebView?, finishedUrl: String?) {
-                                OpenCodePageLog.add("page finished: $finishedUrl")
+                                OpenCodePageLog.add("page finished: ${displayPageUrl(finishedUrl.orEmpty())}")
                                 if (finishedUrl != null) {
-                                    currentUrl = finishedUrl
+                                    val shown = displayPageUrl(finishedUrl)
+                                    currentUrl = shown
                                     rememberPagePath(
                                         view?.context,
                                         holder.baseUrl,
                                         holder.projectDirectory,
-                                        finishedUrl,
+                                        shown,
                                     )
                                 }
                                 installPageLog(view)
                                 installViewportFix(view)
-                                if (holder.bootstrap) {
-                                    holder.bootstrap = false
-                                    installResumeScript(
-                                        view,
-                                        holder.baseUrl,
-                                        holder.projectUrl,
-                                        holder.projectDirectory,
-                                    )
-                                }
+                                holder.bootstrap = false
                                 // React can mount a moment after the document finishes; apply
                                 // once more after that so the page fills the WebView at once.
                                 view?.postDelayed({ installViewportFix(view) }, 300)
@@ -354,8 +368,25 @@ fun OpenCodeChatScreen(
                                 errorResponse: WebResourceResponse?,
                             ) {
                                 OpenCodePageLog.add(
-                                    "http ${errorResponse?.statusCode}: ${request?.url}",
+                                    "http ${errorResponse?.statusCode}: " +
+                                        displayPageUrl(request?.url?.toString().orEmpty()),
                                 )
+                            }
+
+                            override fun onReceivedHttpAuthRequest(
+                                view: WebView?,
+                                handler: HttpAuthHandler?,
+                                host: String?,
+                                realm: String?,
+                            ) {
+                                val local = host == "127.0.0.1" ||
+                                    host == "localhost" || host == "::1"
+                                val password = openCodePasswordFromBasicAuth(holder.basicAuth)
+                                if (local && password != null) {
+                                    handler?.proceed("opencode", password)
+                                } else {
+                                    handler?.cancel()
+                                }
                             }
                         }
                         addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
@@ -371,10 +402,12 @@ fun OpenCodeChatScreen(
 }
 
 /**
- * The small app bar above OpenCode's own page, matching the app's top bar.
+ * Screen 50's header: OpenCode (the origin, bold) and Chat (the current screen).
  *
- * OpenCode's page has its own header; this bar is only the way out, a refresh, the browser
- * fallback and the project link. The page itself is untouched below it.
+ * OpenCode's page has its own header and its own composer; this bar only says where the reader
+ * came from and offers the way out. The page itself is untouched below it. The refresh, browser,
+ * copy and authenticate actions stay available from a long-press on the title, so the drawn
+ * header keeps the exact two-part title and no extra button.
  */
 @Composable
 private fun OpenCodePageBar(
@@ -391,45 +424,49 @@ private fun OpenCodePageBar(
     Row(
         Modifier
             .fillMaxWidth()
-            .background(c.panel)
+            .background(c.mock.panel)
             .windowInsetsPadding(WindowInsets.statusBars)
-            .height(52.dp)
+            .height(56.dp)
             .drawBehind {
                 drawLine(
-                    color = c.divider,
+                    color = c.mock.border,
                     start = androidx.compose.ui.geometry.Offset(0f, size.height - 0.5f),
                     end = androidx.compose.ui.geometry.Offset(size.width, size.height - 0.5f),
                     strokeWidth = 1f,
                 )
             }
-            .padding(horizontal = 10.dp),
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        PageBarButton(
-            icon = CcIcons.ChevronLeft,
-            label = "Back",
-            tint = c.iconTint,
-            onClick = onBack,
-        )
-        Text(
-            text = "OpenCode",
-            color = c.brightText,
-            fontSize = 14.sp,
-            fontFamily = Sans,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
-        Box {
-            PageBarButton(
-                icon = CcIcons.More,
-                label = "More",
-                tint = if (menuOpen) c.tx else c.iconTint,
-                background = if (menuOpen) c.panel2 else Color.Transparent,
-                onClick = { menuOpen = true },
-            )
+        DesignBackButton(onClick = onBack)
+        Box(Modifier.weight(1f)) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectTapGestures(onLongPress = { menuOpen = true })
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "OpenCode",
+                    color = c.mock.text,
+                    fontSize = 16.5.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "Chat",
+                    color = c.mock.muted,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    maxLines = 1,
+                )
+            }
             DropdownMenu(
                 expanded = menuOpen,
                 onDismissRequest = { menuOpen = false },
@@ -480,35 +517,29 @@ private fun PageBarMenuText(text: String) {
     val c = LocalPageColors.current
     Text(
         text = text,
-        color = c.tx,
+        color = c.mock.text,
         fontSize = 13.sp,
         fontFamily = Sans,
     )
 }
 
-/** One 34 x 34 page-bar button holding a 19 dp icon. */
-@Composable
-private fun PageBarButton(
-    icon: ImageVector,
-    label: String,
-    tint: Color,
-    background: Color = Color.Transparent,
-    onClick: () -> Unit,
-) {
-    Box(
-        Modifier
-            .size(34.dp)
-            .clip(RoundedCornerShape(9.dp))
-            .background(background)
-            .clickable(onClick = onClick)
-            .semantics { contentDescription = label },
-        contentAlignment = Alignment.Center,
-    ) {
-        CcIcon(icon, tint, 19.dp)
-    }
+private data class PageTarget(val url: String, val bootstrap: Boolean)
+
+/** Adds V2's one-time `auth_token` to a page URL without touching its path. */
+internal fun withAuthToken(url: String, authToken: String): String {
+    if (url.isBlank() || authToken.isBlank()) return url
+    val separator = if (url.contains('?')) "&" else "?"
+    return url + separator + "auth_token=" + URLEncoder.encode(authToken, "UTF-8")
 }
 
-private data class PageTarget(val url: String, val bootstrap: Boolean)
+/** The address that is safe to show, copy, and log: no password in the query string. */
+internal fun displayPageUrl(url: String): String {
+    if (!url.contains("auth_token=")) return url
+    val base = url.substringBefore('?')
+    val query = url.substringAfter('?', "").substringBefore('#')
+    val kept = query.split('&').filter { it.isNotBlank() && !it.startsWith("auth_token=") }
+    return if (kept.isEmpty()) base else base + "?" + kept.joinToString("&")
+}
 
 /**
  * The page the AI tab opens for a project. A missing session must never land on OpenCode's
@@ -539,6 +570,8 @@ private class WebViewHolder {
     var projectDirectory: String = ""
     var sessionId: String = ""
     var generation: Int = -1
+    var authToken: String = ""
+    var basicAuth: String = ""
     var bootstrap: Boolean = false
 }
 

@@ -50,8 +50,24 @@ class OpenCodeSkillTest {
         val description = script.substringAfter("description: ").substringBefore("\n\n")
         assertTrue(description.length in 1..1024)
         assertTrue(script.contains("closecode build"))
+        assertTrue(script.contains("closecode run"))
+        assertTrue(script.contains("closecode ui dump"))
         assertTrue(script.contains("closecode gradle"))
-        assertTrue(script.contains("no Gradle daemon"))
+        assertTrue(script.contains("--gradle"))
+    }
+
+    @Test
+    fun aManagedSkillFromAnOlderBuildIsUpdated() {
+        val file = OpenCodeSkill.install(project)!!
+        file.writeText(
+            "---\nname: closecode\ndescription: Old\n---\n" +
+                "This phone has no Gradle daemon and closecode build was all it knew.\n",
+        )
+
+        OpenCodeSkill.install(project)
+
+        assertEquals(OpenCodeSkill.script(), file.readText())
+        assertTrue(file.readText().contains(OpenCodeSkill.MARKER))
     }
 
     @Test

@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -41,6 +42,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.closecode.ui.theme.LocalCcColors
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import kotlinx.coroutines.channels.Channel
@@ -75,9 +77,20 @@ internal fun distanceToBottomPx(
     return (viewportEndPx - lastVisibleEndPx).toFloat().coerceAtLeast(0f)
 }
 
+/** How a scrollback row should read in the chat-style log. */
+internal enum class TermTone { User, Output, Success, Warning, Error, Dim }
+
+/** The timestamp and tone that travel beside a plain [TerminalSession.lines] string. */
+internal data class TermMeta(val at: Long, val tone: TermTone)
+
 internal class TerminalSession(val number: Int) {
     val output = Channel<String>(Channel.UNLIMITED)
     val lines = mutableStateListOf<String>()
+    /** Parallel to [lines]; a row appended without metadata falls back to plain output. */
+    val lineMeta = mutableStateListOf<TermMeta>()
+    /** Bumped on every append/clear so the log can cache its grouped rows. */
+    var lineVersion by mutableIntStateOf(0)
+        private set
     var input by mutableStateOf(TextFieldValue(""))
     var lastExit by mutableStateOf<Int?>(null)
     var cwd by mutableStateOf("")
@@ -149,6 +162,26 @@ internal class TerminalSession(val number: Int) {
     }
 
     /**
+     * Appends one row and its metadata together. [lines] stays a plain string list because the
+     * shell, the tests and the selection container all speak that type; the times and tones live
+     * beside it instead of replacing it.
+     */
+    fun appendLine(line: String, tone: TermTone = TermTone.Output): Int {
+        val dropped = lines.appendTerminalLine(line)
+        repeat(dropped) { if (lineMeta.isNotEmpty()) lineMeta.removeAt(0) }
+        lineMeta.add(TermMeta(System.currentTimeMillis(), tone))
+        while (lineMeta.size > lines.size) lineMeta.removeAt(0)
+        lineVersion++
+        return dropped
+    }
+
+    fun clearLines() {
+        lines.clear()
+        lineMeta.clear()
+        lineVersion++
+    }
+
+    /**
      * Runs one line, recording it and remembering it, and reports whether it changed anything on
      * disk so the drawer can follow.
      *
@@ -164,7 +197,7 @@ internal class TerminalSession(val number: Int) {
     ): Boolean {
         val text = sanitizeCommand(command)
         if (text.isEmpty()) return false
-        lines.appendTerminalLine("$prompt$text")
+        appendLine("$prompt$text", TermTone.User)
         run(text)
         commandRunning = true
         cwdAfterCommand(cwd, "", text)?.let { cwd = it }
@@ -186,13 +219,17 @@ internal class TerminalSession(val number: Int) {
     ) {
         val text = sanitizeCommand(command)
         val target = codeTarget(text)
-        lines.appendTerminalLine(
-            when {
-                opened != null -> "Opened ${opened.path} in the editor"
-                target != null -> "No file called $target in this project"
-                else -> "code needs a file name"
-            }
-        )
+        when {
+            opened != null -> appendLine(
+                "Opened ${opened.path} in the editor",
+                TermTone.Success,
+            )
+            target != null -> appendLine(
+                "No file called $target in this project",
+                TermTone.Warning,
+            )
+            else -> appendLine("code needs a file name", TermTone.Warning)
+        }
         history = addToHistory(history, text)
         if (projectSlug.isNotEmpty()) historyStore.write(projectSlug, history)
         historyIndex = history.size
@@ -236,6 +273,16 @@ internal fun encodeCommands(commands: List<String>): String = commands.joinToStr
 
 internal fun decodeCommands(raw: String?): List<String> =
     raw.orEmpty().split('\u001F').map { it.trim() }.filter { it.isNotEmpty() }
+
+/**
+ * A saved entry may name itself: "Safe push\u0000git push --force" shows the name on the card
+ * and sends only the command to the prompt. Entries without a NUL are the command alone.
+ */
+internal fun splitAlias(entry: String): Pair<String?, String> {
+    val cut = entry.indexOf('\u0000')
+    if (cut <= 0) return null to entry
+    return entry.take(cut).trim() to entry.substring(cut + 1)
+}
 
 /** Preference key for the Commands sheet shelf. Global, not per project: tools are tools. */
 internal const val TERMINAL_COMMANDS_KEY = "terminal.commands"
@@ -295,51 +342,42 @@ internal fun TerminalTabStrip(
     onRename: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val c = LocalPageColors.current
+    val cc = LocalCcColors.current
     var menuFor by remember { mutableStateOf<Int?>(null) }
     Row(
         modifier
             .fillMaxWidth()
-            .background(c.panel)
+            .background(cc.content)
             .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 8.dp, vertical = 4.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         sessions.forEach { session ->
             val active = session.number == activeId
-            val label = tabLabel(session.number, session.cwd, session.customName)
+            val label = session.customName?.takeIf { it.isNotBlank() }
+                ?: "Shell ${session.number}"
             Box {
-                Column(
+                Box(
                     Modifier
-                        .height(26.dp)
-                        .clip(RoundedCornerShape(7.dp))
-                        .background(if (active) c.chipBg else Color.Transparent)
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .background(if (active) cc.accent else cc.field)
                         .combinedClickable(
                             onClick = { onSelect(session.number) },
                             onLongClick = { menuFor = session.number },
                         )
-                        .padding(horizontal = 12.dp)
+                        .padding(horizontal = 14.dp)
                         .semantics { contentDescription = label },
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
+                    contentAlignment = Alignment.Center,
                 ) {
                     Text(
                         text = label,
-                        color = if (active) Color.White else c.textMuted,
+                        color = if (active) Color.White else cc.textSoft,
                         fontSize = 12.sp,
                         fontFamily = Mono,
-                        fontWeight = if (active) FontWeight.Medium else FontWeight.Normal,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
                         maxLines = 1,
-                    )
-                    // The accent line under the active chip. Inside the chip rather than below
-                    // it, so the strip stays 26 dp and the line never takes its own row.
-                    Box(
-                        Modifier
-                            .width(20.dp)
-                            .height(2.dp)
-                            .clip(RoundedCornerShape(1.dp))
-                            .background(if (active) c.accent else Color.Transparent),
                     )
                 }
                 DropdownMenu(
@@ -366,16 +404,17 @@ internal fun TerminalTabStrip(
         }
         Box(
             Modifier
-                .size(26.dp)
-                .clip(RoundedCornerShape(7.dp))
-                .border(1.dp, c.fieldBorder, RoundedCornerShape(7.dp))
+                .size(30.dp)
+                .clip(CircleShape)
+                .background(cc.field)
                 .clickable { onAdd() }
                 .semantics { contentDescription = "New shell" },
             contentAlignment = Alignment.Center,
         ) {
-            Text("+", color = c.text, fontSize = 14.sp, fontFamily = Mono)
+            com.closecode.ui.CcIcon("plus", cc.textSoft, 16.dp, 2.2f)
         }
     }
+
 }
 
 /**

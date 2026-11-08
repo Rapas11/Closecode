@@ -1,0 +1,15 @@
+{
+  "name": "Basic",
+  "icons": [
+    { "name": "home", "pathData": "M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z", "style": "solid" },
+    { "name": "star", "pathData": "M12 2l2.9 6.1 6.7.9-4.9 4.7 1.2 6.6L12 17.8 6.1 20.3l1.2-6.6L2.4 9l6.7-.9z", "style": "solid" },
+    { "name": "heart", "pathData": "M12 21s-7-4.4-9.3-8.2C.9 9.4 2.4 5.5 6 5.5c2 0 3.2 1.1 4 2.3.8-1.2 2-2.3 4-2.3 3.6 0 5.1 3.9 3.3 7.3C19 16.6 12 21 12 21z", "style": "solid" },
+    { "name": "folder", "pathData": "M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z", "style": "solid" },
+    { "name": "check", "pathData": "M20 6 9 17l-5-5", "style": "stroke" },
+    { "name": "bolt", "pathData": "M13 2 3 14h7l-1 8 10-12h-7z", "style": "solid" },
+    { "name": "user", "pathData": "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21a8 8 0 0 1 16 0", "style": "stroke" },
+    { "name": "globe", "pathData": "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18", "style": "stroke" },
+    { "name": "search", "pathData": "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM21 21l-4.3-4.3", "style": "stroke" },
+    { "name": "bell", "pathData": "M12 3a5 5 0 0 0-5 5v3.5L5 16h14l-2-4.5V8a5 5 0 0 0-5-5zM9 19a3 3 0 0 0 6 0", "style": "stroke" }
+  ]
+}

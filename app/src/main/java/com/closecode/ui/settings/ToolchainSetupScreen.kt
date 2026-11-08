@@ -88,7 +88,7 @@ fun ToolchainSetupScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.bg)
+            .background(c.mock.page)
             .statusBarsPadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
@@ -222,11 +222,11 @@ fun ToolchainSetupScreen(
 
             ToolchainState.Ready -> {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = "✓", color = c.success, fontSize = 16.sp, fontFamily = Sans)
+                    Text(text = "✓", color = c.mock.green, fontSize = 16.sp, fontFamily = Sans)
                     Spacer(Modifier.size(6.dp))
                     Text(
                         text = "Build tools are ready.",
-                        color = c.success,
+                        color = c.mock.green,
                         fontSize = 14.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,

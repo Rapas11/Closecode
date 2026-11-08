@@ -52,6 +52,8 @@ object ProjectCheck {
         val cacheModules: Set<String> = emptySet(),
         /** Compile platforms the phone can actually link against. Empty means the old default. */
         val installedCompileSdks: Set<Int> = emptySet(),
+        /** True when the optional NDK and CMake have been installed. */
+        val nativeToolsReady: Boolean = false,
     )
 
     const val INVALID_PACKAGE_MESSAGE =
@@ -97,6 +99,7 @@ object ProjectCheck {
     fun check(projectDir: File, slug: String, input: Input = Input()): Report {
         val findings = mutableListOf<Finding>()
         val facts = GradleReader.read(projectDir)
+        val native = NativeProject.detect(projectDir, facts)
 
         // 1. The manifest: valid XML, and one screen Android can open.
         val manifestFile = File(projectDir, "app/src/main/AndroidManifest.xml")
@@ -310,11 +313,26 @@ object ProjectCheck {
 
         // 8. Whatever else the build files declare, named with its file and line.
         for (bit in facts.unsupported) {
+            if (native.usesNative && NativeProject.isNativeBit(bit.what)) continue
             findings += Finding(
                 Severity.Error,
                 "${bit.what} is not supported yet.",
                 bit.place.file,
                 bit.place.line,
+            )
+        }
+        if (native.usesNative) {
+            val first = native.reasons.firstOrNull()
+            val next = if (input.nativeToolsReady) {
+                "Use the Full Gradle build: closecode build --gradle."
+            } else {
+                "Install Full Gradle and Native tools in Settings, then build with --gradle."
+            }
+            findings += Finding(
+                Severity.Error,
+                "This project uses C/C++ code. $next",
+                first?.place?.file,
+                first?.place?.line,
             )
         }
 

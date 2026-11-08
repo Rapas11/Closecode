@@ -11,7 +11,9 @@ plugins {
 // The build number is raised for every APK handed to the user. The More sheet, every log
 // and every report print it beside the version name and the short commit, so whichever
 // APK is installed says which one it is. ("unknown" only when git is not reachable.)
-val closecodeBuild = 47
+val closecodeBuild = 63
+// The last number in the user-facing version is the passing test count at build time.
+val closecodeTests = 1485
 val closecodeGitCommit: String = runCatching {
     providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }
         .standardOutput.asText.get().trim()
@@ -32,7 +34,7 @@ android {
         minSdk = 28
         targetSdk = 28
         versionCode = closecodeBuild
-        versionName = "1.0"
+        versionName = "0.$closecodeBuild.$closecodeTests"
         buildConfigField("String", "GIT_COMMIT", "\"$closecodeGitCommit\"")
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -76,7 +78,6 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("androidx.activity:activity-compose:1.9.3")
     // One back stack for the top-level screens (list, recent, settings, IDE). Inner panels
     // stay explicit state with an ordered BackHandler chain — they share one composition and

@@ -143,14 +143,14 @@ fun IdeBlockPanel(
             Modifier
                 .fillMaxWidth()
                 .height(38.dp)
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(0.dp))
+                .background(c.mock.panel)
+                .border(1.dp, c.mock.divider, RoundedCornerShape(0.dp))
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = "BLOCKS",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
@@ -158,14 +158,14 @@ fun IdeBlockPanel(
             )
             Text(
                 text = "  hold a block, then drag it",
-                color = c.mu.copy(alpha = 0.7f),
+                color = c.mock.muted.copy(alpha = 0.7f),
                 fontSize = 11.sp,
                 fontFamily = Sans,
             )
             Box(Modifier.weight(1f))
             Text(
                 text = fileName,
-                color = c.ac,
+                color = c.mock.accent,
                 fontSize = 12.sp,
                 fontFamily = Mono,
                 maxLines = 1,
@@ -178,13 +178,13 @@ fun IdeBlockPanel(
                 Modifier
                     .clip(RoundedCornerShape(7.dp))
                     .background(c.panel2)
-                    .border(1.dp, c.ln, RoundedCornerShape(7.dp))
+                    .border(1.dp, c.mock.divider, RoundedCornerShape(7.dp))
                     .clickable(onClick = onAddBlock)
                     .padding(horizontal = 10.dp, vertical = 5.dp),
             ) {
                 Text(
                     text = "+ Block",
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Medium,
@@ -205,7 +205,7 @@ fun IdeBlockPanel(
                     } else {
                         "This file can't be projected to blocks yet."
                     },
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                     textAlign = TextAlign.Center,
@@ -216,13 +216,13 @@ fun IdeBlockPanel(
                         .padding(top = 14.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(c.panel2)
-                        .border(1.dp, c.ac, RoundedCornerShape(8.dp))
+                        .border(1.dp, c.mock.accent, RoundedCornerShape(8.dp))
                         .clickable(onClick = onAddBlock)
                         .padding(horizontal = 16.dp, vertical = 8.dp),
                 ) {
                     Text(
                         text = "+ Block",
-                        color = c.ac,
+                        color = c.mock.accent,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
@@ -265,7 +265,7 @@ fun IdeBlockPanel(
                             .background(if (isDragged) c.panel2 else Color.Transparent)
                             .border(
                                 width = if (isDragged) 1.dp else 0.dp,
-                                color = if (isDragged) c.ac else Color.Transparent,
+                                color = if (isDragged) c.mock.accent else Color.Transparent,
                                 shape = RoundedCornerShape(7.dp),
                             )
                             .drawBehind {
@@ -273,7 +273,7 @@ fun IdeBlockPanel(
                                 val line = 2.dp.toPx()
                                 val y = if (hint?.edge == DropEdge.Top) line / 2f else size.height - line / 2f
                                 drawLine(
-                                    color = c.ac,
+                                    color = c.mock.accent,
                                     start = Offset(0f, y),
                                     end = Offset(size.width, y),
                                     strokeWidth = line,
@@ -294,7 +294,7 @@ fun IdeBlockPanel(
                                     // down when it is showing.
                                     CcIcon(
                                         CcIcons.Chevron,
-                                        if (isCollapsed) c.mu else c.ac,
+                                        if (isCollapsed) c.mock.muted else c.mock.accent,
                                         14.dp,
                                         Modifier.graphicsLayer {
                                             rotationZ = if (isCollapsed) 0f else 90f
@@ -321,7 +321,7 @@ fun IdeBlockPanel(
 
                             Text(
                                 text = node.title,
-                                color = if (isDragged) c.tx else c.tx.copy(alpha = 0.92f),
+                                color = if (isDragged) c.mock.text else c.mock.text.copy(alpha = 0.92f),
                                 fontSize = 13.sp,
                                 fontFamily = Mono,
                                 maxLines = 1,
@@ -334,14 +334,14 @@ fun IdeBlockPanel(
                             if (node.isContainer) {
                                 Text(
                                     text = "${node.children.size}",
-                                    color = c.mu,
+                                    color = c.mock.muted,
                                     fontSize = 11.sp,
                                     fontFamily = Mono,
                                 )
                             }
                             Text(
                                 text = "L${node.startLine + 1}",
-                                color = c.mu.copy(alpha = 0.7f),
+                                color = c.mock.muted.copy(alpha = 0.7f),
                                 fontSize = 10.sp,
                                 fontFamily = Mono,
                                 modifier = Modifier.padding(start = 8.dp),
@@ -361,7 +361,7 @@ fun IdeBlockPanel(
                                 ) {
                                     Text(
                                         text = if (isCollapsed) "+" else "–",
-                                        color = c.tx,
+                                        color = c.mock.text,
                                         fontSize = 14.sp,
                                         fontFamily = Mono,
                                     )
@@ -380,8 +380,8 @@ fun IdeBlockPanel(
             Modifier
                 .fillMaxWidth()
                 .height(26.dp)
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(0.dp))
+                .background(c.mock.panel)
+                .border(1.dp, c.mock.divider, RoundedCornerShape(0.dp))
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -389,11 +389,11 @@ fun IdeBlockPanel(
                 Modifier
                     .size(6.dp)
                     .clip(CircleShape)
-                    .background(c.ac),
+                    .background(c.mock.accent),
             )
             Text(
                 text = "  live projection · synced with Code",
-                color = c.mu.copy(alpha = 0.75f),
+                color = c.mock.muted.copy(alpha = 0.75f),
                 fontSize = 11.sp,
                 fontFamily = Sans,
             )
@@ -411,7 +411,7 @@ private fun glyphOf(kind: BlockKind): String = when (kind) {
 }
 
 private fun colorOf(kind: BlockKind, c: PageColors): Color = when (kind) {
-    BlockKind.Declaration -> c.ac
+    BlockKind.Declaration -> c.mock.accent
     BlockKind.Function -> c.purple
-    BlockKind.Statement -> c.mu
+    BlockKind.Statement -> c.mock.muted
 }

@@ -30,6 +30,18 @@ data class ProjectFile(
 
 enum class FileKind { Folder, Kotlin, Xml, Gradle, Properties, Markdown, Json, Html, Css, Js, Csv, Image, Unknown }
 
+/**
+ * v9 tree icons: code files use the code glyph, folders the folder glyph, everything else the
+ * plain file glyph. The design spec asks for one icon per class, not one per extension.
+ */
+fun fileIconName(kind: FileKind): String = when (kind) {
+    FileKind.Folder -> "folder"
+    FileKind.Kotlin, FileKind.Xml, FileKind.Gradle,
+    FileKind.Json, FileKind.Css, FileKind.Js, FileKind.Html,
+    -> "code"
+    else -> "file"
+}
+
 val Templates: Map<TemplateTab, List<ProjectTemplate>> = mapOf(
     TemplateTab.Web to listOf(
         ProjectTemplate("Landing page", "Hero, features and a call to action.", "HTML · CSS", 24f),

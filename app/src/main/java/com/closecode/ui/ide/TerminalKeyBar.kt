@@ -35,34 +35,33 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.ui.settings.KeyValueStore
 import com.closecode.ui.settings.SharedPreferencesKeyValueStore
-import com.closecode.ui.theme.LocalPageColors
+import com.closecode.ui.theme.LocalCcColors
 import com.closecode.ui.theme.Mono
 
-/** The keys a phone keyboard cannot send, and which a shell cannot do without. */
-internal val TerminalKeyBarKeys: List<Pair<String, String>> = listOf(
-    "ESC" to "",
-    "TAB" to "	",
+/** The first row, exactly as screen 23 draws it: each pair inserts both characters. */
+internal val PrimaryTerminalKeys: List<Pair<String, String>> = listOf(
+    "Esc" to "\u001B",
+    "{ }" to "{}",
+    "( )" to "()",
+    "[ ]" to "[]",
+    "\" \"" to "\"\"",
+    ";" to ";",
+    "=" to "=",
+    "→" to "\t",
+)
+
+/** The slim second row: modifiers and the keys the guide leaves out. */
+internal val SecondaryTerminalKeys: List<Pair<String, String>> = listOf(
     "|" to "|",
     "~" to "~",
-    "/" to "/",
     "↑" to "↑",
     "↓" to "↓",
 )
 
-/** The four tinted keys: ESC and TAB with the modifiers, armed blue like the modifiers. */
-private val TintedKeys = setOf("ESC", "TAB")
-
 /**
- * The bar of terminal keys that sits above the soft keyboard.
- *
- * Nine keys, in spec order: ESC, TAB, CTRL, ALT, pipe, tilde, slash, up, down. A phone keyboard
- * has no ESC, no pipe and no arrows, so a shell on one is missing exactly the keys that make it
- * navigable. CTRL and ALT latch rather than toggling off, so a shortcut is one tap plus one key.
- * Clear lives in the Commands sheet and stopping is the header's Stop button, so neither takes
- * a key here.
- *
- * It is always on rather than appearing on demand, because a bar that hides itself is a bar that
- * cannot be found with a thumb.
+ * The two-row terminal key bar above the input bar. The first row is the guide's punctuation
+ * row; the second keeps the modifiers and the keys a phone keyboard hides. ESC and Tab are still
+ * reachable, and a vertical drag on either row walks command history.
  */
 @Composable
 internal fun TerminalKeyBar(
@@ -72,44 +71,41 @@ internal fun TerminalKeyBar(
     onAlt: () -> Unit,
     onKey: (String) -> Unit,
     onHistory: (Int) -> Unit,
-    onCommands: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val c = LocalPageColors.current
-    Column(modifier.fillMaxWidth().background(c.keyRowBg)) {
-        Box(Modifier.fillMaxWidth().height(1.dp).background(c.divider))
+    val cc = LocalCcColors.current
+    Column(modifier.fillMaxWidth().background(cc.panel)) {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(cc.divider))
         Row(
             Modifier
                 .fillMaxWidth()
-                // A vertical drag anywhere on the bar walks the command history, and nothing else
-                // claims it: the buttons take taps, and a drag is told apart from a tap by slop
-                // rather than by where it landed.
+                .verticalSwipeTo(onHistory)
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            PrimaryTerminalKeys.forEach { (label, key) ->
+                KeyChip(
+                    label,
+                    label,
+                    modifier = Modifier.weight(1f),
+                    onTap = { onKey(key) },
+                )
+            }
+        }
+        Row(
+            Modifier
+                .fillMaxWidth()
                 .verticalSwipeTo(onHistory)
                 .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 8.dp, vertical = 6.dp),
+                .padding(start = 10.dp, end = 10.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            // The bolt opens Commands; it looks like the other dark keys, not the blue four.
-            Box(
-                Modifier
-                    .height(34.dp)
-                    .clip(RoundedCornerShape(7.dp))
-                    .background(c.chipBg)
-                    .border(1.dp, Color.Transparent, RoundedCornerShape(7.dp))
-                    .clickable(onClick = onCommands)
-                    .padding(horizontal = 13.dp)
-                    .semantics { contentDescription = "Saved commands" },
-                contentAlignment = Alignment.Center,
-            ) {
-                CcIcon(CcIcons.Zap, c.textMuted, 15.dp)
-            }
-            PlainKey("ESC", tinted = true) { onKey("\u001B") }
-            PlainKey("TAB", tinted = true) { onKey("	") }
-            ModifierKey("CTRL", ctrl, onCtrl)
-            ModifierKey("ALT", alt, onAlt)
-            TerminalKeyBarKeys.drop(2).forEach { (label, key) ->
-                PlainKey(label, tinted = false) { onKey(key) }
+            ModifierKey("Ctrl", ctrl, onCtrl)
+            ModifierKey("Alt", alt, onAlt)
+            SecondaryTerminalKeys.forEach { (label, key) ->
+                KeyChip(label, label, slim = true, onTap = { onKey(key) })
             }
         }
     }
@@ -150,66 +146,73 @@ private fun Modifier.verticalSwipeTo(onSwipe: (Int) -> Unit): Modifier = pointer
     }
 }
 
-/** One modifier key: identical to ESC/TAB, with an outline only while armed. */
+/** One modifier key: field fill, accent outline while armed, stronger fill while locked. */
 @Composable
 private fun ModifierKey(label: String, latch: ModifierLatch, onTap: () -> Unit) {
-    val c = LocalPageColors.current
+    val cc = LocalCcColors.current
     val armed = modifierApplies(latch)
     val locked = latch == ModifierLatch.LOCKED
-    // Same fill as its neighbours either way; locked is drawn darker on top of it so armed
-    // ("the next key") and locked ("every key") still read apart. The outline is the armed
-    // signal and appears only then, so an idle row is four flat blue keys.
     val fill = when {
-        locked -> c.accent.copy(alpha = 0.45f)
-        else -> c.primaryTint
+        locked -> cc.accent.copy(alpha = 0.28f)
+        else -> cc.field
     }
     Box(
         Modifier
-            .height(34.dp)
-            .clip(RoundedCornerShape(7.dp))
+            .height(26.dp)
+            .clip(RoundedCornerShape(8.dp))
             .background(fill)
             .border(
                 1.dp,
-                if (armed) c.accent else Color.Transparent,
-                RoundedCornerShape(7.dp),
+                if (armed) cc.accent else Color.Transparent,
+                RoundedCornerShape(8.dp),
             )
             .clickable(onClick = onTap)
-            .padding(horizontal = 13.dp)
+            .padding(horizontal = 10.dp)
             .semantics { contentDescription = "$label ${latch.name.lowercase()}" },
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = label,
-            color = c.link,
-            fontSize = 12.sp,
+            color = if (armed) cc.accent else cc.text2,
+            fontSize = 11.5.sp,
             fontFamily = Mono,
-            fontWeight = FontWeight.Bold,
+            fontWeight = FontWeight.SemiBold,
         )
     }
 }
 
-/** One ordinary key: 34 dp tall, blue like the modifiers for ESC/TAB, chip gray for the rest. */
+/** One key: 32 dp on the guide row, 26 dp on the slim row, field fill, mono label. */
 @Composable
-private fun PlainKey(label: String, tinted: Boolean, onTap: () -> Unit) {
-    val c = LocalPageColors.current
+private fun KeyChip(
+    label: String,
+    description: String,
+    slim: Boolean = false,
+    modifier: Modifier = Modifier,
+    onTap: () -> Unit,
+    content: @Composable (() -> Unit)? = null,
+) {
+    val cc = LocalCcColors.current
     Box(
-        Modifier
-            .height(34.dp)
-            .clip(RoundedCornerShape(7.dp))
-            .background(if (tinted) c.primaryTint else c.chipBg)
-            .border(1.dp, Color.Transparent, RoundedCornerShape(7.dp))
+        modifier
+            .height(if (slim) 26.dp else 32.dp)
+            .clip(RoundedCornerShape(if (slim) 8.dp else 9.dp))
+            .background(cc.field)
             .clickable(onClick = onTap)
-            .padding(horizontal = 13.dp)
-            .semantics { contentDescription = label },
+            .padding(horizontal = if (slim) 10.dp else 9.dp)
+            .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            color = if (tinted) c.link else c.popupText,
-            fontSize = 12.sp,
-            fontFamily = Mono,
-            fontWeight = if (tinted) FontWeight.Bold else FontWeight.Normal,
-        )
+        if (content != null) {
+            content()
+        } else {
+            Text(
+                text = label,
+                color = cc.text2,
+                fontSize = if (slim) 11.5.sp else 12.5.sp,
+                fontFamily = Mono,
+                fontWeight = FontWeight.Medium,
+            )
+        }
     }
 }
 

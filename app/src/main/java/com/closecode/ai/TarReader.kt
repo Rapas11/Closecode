@@ -95,6 +95,52 @@ object TarReader {
     }
 
     /**
+     * One named regular file in a gzipped tar, written into [into] as it arrives.
+     *
+     * The npm tarball starts with `package/package.json`, so taking the first file would install
+     * the manifest instead of the program. The name is matched exactly, and the file is written
+     * through the same `.part`-then-rename path as [extractFirstFile].
+     */
+    fun extractFile(gzip: InputStream, name: String, into: File): Entry? {
+        GZIPInputStream(gzip.buffered()).use { gz ->
+            val header = ByteArray(BLOCK)
+            var longName: String? = null
+            while (true) {
+                if (!readFully(gz, header)) break
+                if (isAllZero(header)) break
+
+                val entryName = longName ?: readString(header, 0, 100)
+                val size = readOctal(header, 124, 12)
+                val type = header[156].toInt().toChar()
+                longName = null
+
+                when (type) {
+                    'L' -> longName = readLongName(gz, size)
+
+                    '0', NUL, '7' -> {
+                        if (entryName == name && size > 0) {
+                            val directory = into.parentFile
+                            directory?.mkdirs()
+                            val part = File(directory, into.name + PART)
+                            FileOutputStream(part).use { out -> copyExactly(gz, size, out) }
+                            if (into.exists()) into.delete()
+                            if (!part.renameTo(into)) {
+                                part.copyTo(into, overwrite = true)
+                                part.delete()
+                            }
+                            return Entry(entryName, size)
+                        }
+                        skipRaw(gz, blocksFor(size))
+                    }
+
+                    else -> skipRaw(gz, blocksFor(size))
+                }
+            }
+        }
+        return null
+    }
+
+    /**
      * Every file in a gzipped tar, written into the directory [into].
      *
      * This is how a package of libraries is unpacked. An Alpine package is a tar of `lib/` and

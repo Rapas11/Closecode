@@ -14,8 +14,6 @@ internal object ProjectSafety {
         "google-services.json",
     )
 
-    private val AlwaysHidden = setOf(".closecode.json")
-
     /** Ceiling on a single file read. Past this the load would block the UI thread long enough to
      *  trip the ANR watchdog, and the editor cannot render it anyway. */
     private const val MAX_READ_BYTES = 8L * 1024 * 1024
@@ -28,7 +26,7 @@ internal object ProjectSafety {
         return SecretPatterns.any { glob(it, base) }
     }
 
-    fun isHiddenName(name: String): Boolean = name in AlwaysHidden
+    fun isHiddenName(name: String): Boolean = GeneratedPaths.isAlwaysHiddenName(name)
 
     /**
      * Resolves [relative] against [root] and refuses anything that escapes it,

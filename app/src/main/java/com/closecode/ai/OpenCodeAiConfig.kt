@@ -1,5 +1,6 @@
 package com.closecode.ai
 
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.File
@@ -11,9 +12,10 @@ import java.io.File
  * write keeps the keys the page does not understand — anything OpenCode itself or a user wrote
  * must survive one settings edit.
  *
- * Values live in the JSON exactly as OpenCode reads them: `"model": "provider/model"` and
- * `"permission": { <tool>: "allow" | "ask" | "deny" }`. OpenCode applies them on the next
- * server start, which the page says.
+ * V2 stores permissions as an ordered ruleset:
+ * `"permissions": [{ "action": ..., "resource": ..., "effect": ... }]`. The page edits the
+ * wildcard rule for each action; rules for particular files (the default `.env` asks) are left
+ * alone. OpenCode applies the file on the next server start, which the page says.
  */
 object OpenCodeAiConfig {
 
@@ -21,13 +23,10 @@ object OpenCodeAiConfig {
     val TOOLS = listOf(
         Tool("read", "Files read"),
         Tool("edit", "Files edited"),
-        Tool("bash", "Shell commands"),
+        Tool("shell", "Shell commands"),
         Tool("webfetch", "Pages fetched"),
         Tool("websearch", "Web search"),
-        Tool("skill", "Skills loaded"),
-        Tool("task", "Subagents"),
         Tool("external_directory", "Project folders outside the app"),
-        Tool("doom_loop", "Stuck-recovery prompts"),
     )
 
     data class Tool(val key: String, val label: String)
@@ -65,14 +64,20 @@ object OpenCodeAiConfig {
         else addProperty("model", model)
     }
 
-    /** The action the config has for [tool], or "" when the user has not touched it yet. */
+    /** The wildcard action the config has for [tool], or "" when the user has not touched it. */
     fun permission(json: JsonObject, tool: String): String {
-        val permissions = json.getAsJsonObject("permission") ?: return ""
-        return permissions.getAsJsonPrimitive(tool)?.asString?.takeIf { it in ACTIONS }.orEmpty()
+        val rules = json.getAsJsonArray("permissions") ?: return ""
+        for (index in 0 until rules.size()) {
+            val rule = rules.get(index) as? JsonObject ?: continue
+            if (stringField(rule, "action") != tool) continue
+            if (stringField(rule, "resource") != "*") continue
+            return stringField(rule, "effect").takeIf { it in ACTIONS }.orEmpty()
+        }
+        return ""
     }
 
     /**
-     * Steps the tool one [ACTIONS] key forward, writing the key once it leaves `allow`'s
+     * Steps the tool one [ACTIONS] key forward, writing the rule once it leaves `allow`'s
      * default and removing it when the walk arrives back at the start.
      */
     fun withPermissionCycled(json: JsonObject, tool: String): JsonObject {
@@ -86,20 +91,48 @@ object OpenCodeAiConfig {
         return withPermission(json, tool, next)
     }
 
-    /** Writes one tool's action, removing the key when [action] is not a real one. */
+    /** Writes one tool's wildcard rule, removing it when [action] is not a real one. */
     fun withPermission(json: JsonObject, tool: String, action: String): JsonObject {
         val next = json.deepCopy()
-        if (action !in ACTIONS) {
-            next.getAsJsonObject("permission")?.remove(tool)
-            return next
+        val rules = next.getAsJsonArray("permissions") ?: JsonArray().also {
+            next.add("permissions", it)
         }
-        val permissions = next.getAsJsonObject("permission") ?: JsonObject().also {
-            next.add("permission", it)
+        for (index in rules.size() - 1 downTo 0) {
+            val rule = rules.get(index) as? JsonObject ?: continue
+            if (stringField(rule, "action") == tool &&
+                stringField(rule, "resource") == "*"
+            ) {
+                rules.remove(index)
+            }
         }
-        permissions.addProperty(tool, action)
+        if (action in ACTIONS) {
+            rules.add(JsonObject().apply {
+                addProperty("action", tool)
+                addProperty("resource", "*")
+                addProperty("effect", action)
+            })
+        }
         return next
+    }
+
+    /** True when the ruleset has the wildcard allow that makes the agent hands-free. */
+    fun hasWildcardAllow(json: JsonObject): Boolean {
+        val rules = json.getAsJsonArray("permissions") ?: return false
+        for (index in 0 until rules.size()) {
+            val rule = rules.get(index) as? JsonObject ?: continue
+            if (stringField(rule, "action") == "*" &&
+                stringField(rule, "resource") == "*" &&
+                stringField(rule, "effect") == ALLOW
+            ) {
+                return true
+            }
+        }
+        return false
     }
 
     /** True when nothing about [tool] is in the config, so OpenCode walks its own default. */
     fun untouched(json: JsonObject, tool: String) = permission(json, tool).isEmpty()
+
+    private fun stringField(json: JsonObject, name: String): String =
+        runCatching { json.get(name)?.asString }.getOrNull().orEmpty()
 }

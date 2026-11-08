@@ -48,6 +48,7 @@ import kotlin.math.roundToInt
 import com.closecode.lang.Diagnostic
 import com.closecode.lang.DiagnosticCodes
 import com.closecode.lang.Severity
+import com.closecode.ui.components.TextLink
 import com.closecode.ui.theme.LocalPageColors
 import com.closecode.ui.theme.Mono
 import com.closecode.ui.theme.Sans
@@ -59,8 +60,8 @@ import com.closecode.ui.theme.Sans
  * underlines, pills and lightbulb are all positioned against it, so it must not be "measured" into
  * a different value. Pinch zoom multiplies it rather than replacing it.
  */
-val CodeLineHeight = 20.sp
-val CodeFontSize = 12.sp
+val CodeLineHeight = 21.sp
+val CodeFontSize = 11.5.sp
 
 /**
  * Gutter width, exactly 56 dp with no border.
@@ -76,7 +77,7 @@ val GutterWidth = 56.dp
  * are siblings inside one scroll container. Adding a second pad to the gutter is what used to drop
  * every line number and status dot half a line below its own code.
  */
-val EditorTopPadding = 4.dp
+val EditorTopPadding = 6.dp
 
 /** Alias kept for callers that read the gutter's padding by name; it is the editor's, not its own. */
 val GutterPadding = EditorTopPadding
@@ -88,7 +89,7 @@ val GutterPadding = EditorTopPadding
 val GutterTopInset = 0.dp
 
 /** Gutter numbers are right aligned to end at 38 dp from the gutter's left edge. */
-val GutterNumberPadding = 18.dp
+val GutterNumberPadding = 12.dp
 
 /** No inset between gutter and code: the code area starts at exactly x = 56 dp. */
 val CodeLeftInset = 0.dp
@@ -840,7 +841,7 @@ fun LineNumberLayer(
                 }
                 Text(
                     text = "$numbered",
-                    color = if (onCaret) c.lineNumberActive else c.lineNumber,
+                    color = c.mock.faint,
                     fontSize = 11.sp,
                     style = androidx.compose.ui.text.TextStyle(
                         // The row's own height as the number's line height, centred the way the code
@@ -1976,6 +1977,7 @@ internal fun ProblemSheet(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
     fileLabel: String? = null,
+    onAskAi: (ProjectDiagnostic) -> Unit = {},
 ) {
     val c = LocalPageColors.current
 
@@ -1988,8 +1990,8 @@ internal fun ProblemSheet(
         modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
-            .background(c.panel)
-            .border(1.dp, c.ln, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
+            .background(c.mock.panel)
+            .border(1.dp, c.mock.divider, RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
             .padding(12.dp),
     ) {
         Row(
@@ -2000,7 +2002,7 @@ internal fun ProblemSheet(
         ) {
             Text(
                 text = scope.heading(),
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 14.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
@@ -2008,14 +2010,14 @@ internal fun ProblemSheet(
             Box(Modifier.weight(1f))
             Text(
                 text = "${ordered.size}",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Mono,
                 modifier = Modifier.padding(end = 10.dp),
             )
             Text(
                 text = "✕",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 16.sp,
                 fontFamily = Sans,
                 modifier = Modifier.clickable(onClick = onDismiss),
@@ -2031,7 +2033,7 @@ internal fun ProblemSheet(
                 } else {
                     "No problems. Code is clean."
                 },
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 modifier = Modifier
@@ -2056,7 +2058,7 @@ internal fun ProblemSheet(
                         .padding(bottom = 8.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(c.panel2)
-                        .border(1.dp, c.ln, RoundedCornerShape(10.dp))
+                        .border(1.dp, c.mock.divider, RoundedCornerShape(10.dp))
                         .clickable { onSelect(row) }
                         .padding(10.dp),
                     verticalAlignment = Alignment.Top,
@@ -2072,7 +2074,7 @@ internal fun ProblemSheet(
                     Column(Modifier.padding(start = 10.dp)) {
                         Text(
                             text = diagnostic.message,
-                            color = c.tx,
+                            color = c.mock.text,
                             fontSize = 13.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.Bold,
@@ -2102,11 +2104,12 @@ internal fun ProblemSheet(
                             if (rowFile != null) {
                                 Text(
                                     text = "$rowFile:${diagnostic.line}",
-                                    color = c.mu,
+                                    color = c.mock.muted,
                                     fontSize = 11.sp,
                                     fontFamily = Mono,
                                 )
                             }
+                            TextLink(label = "Ask AI", onClick = { onAskAi(row) })
                         }
                     }
                 }
@@ -2132,20 +2135,20 @@ fun IdeActionCard(
         modifier
             .clip(RoundedCornerShape(10.dp))
             .background(c.panel2)
-            .border(1.dp, c.ln, RoundedCornerShape(10.dp)),
+            .border(1.dp, c.mock.divider, RoundedCornerShape(10.dp)),
     ) {
         rows.forEachIndexed { index, (title, subtitle) ->
             val isSel = index == selected
             Column(
                 Modifier
                     .fillMaxWidth()
-                    .background(if (isSel) c.ac.copy(alpha = 0.22f) else androidx.compose.ui.graphics.Color.Transparent)
+                    .background(if (isSel) c.mock.accent.copy(alpha = 0.22f) else androidx.compose.ui.graphics.Color.Transparent)
                     .clickable { onSelect(index) }
                     .padding(horizontal = 10.dp, vertical = 7.dp),
             ) {
                 Text(
                     text = title,
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     fontFamily = Mono,
                     maxLines = 1,
@@ -2154,7 +2157,7 @@ fun IdeActionCard(
                 if (!subtitle.isNullOrBlank()) {
                     Text(
                         text = subtitle,
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 10.sp,
                         fontFamily = Mono,
                         maxLines = 1,
@@ -2163,7 +2166,7 @@ fun IdeActionCard(
                 }
             }
             if (index != rows.lastIndex) {
-                Box(Modifier.fillMaxWidth().height(1.dp).background(c.ln.copy(alpha = 0.5f)))
+                Box(Modifier.fillMaxWidth().height(1.dp).background(c.mock.divider.copy(alpha = 0.5f)))
             }
         }
     }

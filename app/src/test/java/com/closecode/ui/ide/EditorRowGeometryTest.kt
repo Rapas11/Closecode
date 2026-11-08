@@ -44,7 +44,7 @@ class EditorRowGeometryTest {
         // The editor has exactly one top padding. A second one inside the gutter is what put every
         // line number and status dot half a line below the code it labels.
         assertEquals(0f, GutterTopInset.value, 0.001f)
-        assertEquals(4f, EditorTopPadding.value, 0.001f)
+        assertEquals(6f, EditorTopPadding.value, 0.001f)
         assertEquals(EditorTopPadding.value, GutterPadding.value, 0.001f)
     }
 

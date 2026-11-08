@@ -122,7 +122,7 @@ internal fun displayFolder(path: String): String = path.substringBeforeLast('/',
  * rather than as a crash. Sign-in, remotes and pushing arrive with the GitHub client.
  */
 @Composable
-fun IdeGitPanel(
+private fun LegacyIdeGitPanel(
     projectName: String,
     projectRoot: File?,
     // Bumped by the editor whenever a file is written, created or deleted. CHANGES describes
@@ -284,7 +284,7 @@ fun IdeGitPanel(
             .fillMaxSize()
             // Opaque so the file tree sitting underneath this panel in the drawer never shows
             // through while the Source Control tab is open.
-            .background(c.panel)
+            .background(c.mock.panel)
             .verticalScroll(scroll)
             .padding(bottom = 20.dp),
     ) {
@@ -353,7 +353,7 @@ fun IdeGitPanel(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        CcIcon(CcIcons.Check, c.success, 16.dp)
+                        CcIcon(CcIcons.Check, c.mock.green, 16.dp)
                         Text(
                             text = "Everything is saved",
                             color = c.text,
@@ -595,14 +595,14 @@ private fun PanelNote(title: String, body: String) {
     ) {
         Text(
             text = title,
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 13.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
         )
         Text(
             text = body,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 12.sp,
             fontFamily = Sans,
             lineHeight = 17.sp,
@@ -615,7 +615,7 @@ private fun ErrorLine(message: String) {
     val c = LocalPageColors.current
     Text(
         text = message,
-        color = c.red,
+        color = c.mock.danger,
         fontSize = 11.sp,
         fontFamily = Sans,
         lineHeight = 16.sp,
@@ -1045,7 +1045,7 @@ private fun BranchDialog(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
-                        if (name == current) CcIcon(CcIcons.Check, c.success, 16.dp)
+                        if (name == current) CcIcon(CcIcons.Check, c.mock.green, 16.dp)
                     }
                 }
             }
@@ -1361,7 +1361,7 @@ private fun GitHubSection(
     note?.let {
         Text(
             text = it,
-            color = c.success,
+            color = c.mock.green,
             fontSize = 11.sp,
             fontFamily = Sans,
             lineHeight = 16.sp,
@@ -1431,7 +1431,7 @@ private fun GitHubSection(
     ) {
         Text(
             text = "@${account?.login ?: "signed in"}",
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 13.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -1441,7 +1441,7 @@ private fun GitHubSection(
         )
         Text(
             text = "Sign out",
-            color = c.ac,
+            color = c.mock.accent,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -1457,7 +1457,7 @@ private fun GitHubSection(
             if (!hasCommits) {
                 Text(
                     text = "Commit something first — a repository with no history has nothing to publish.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     lineHeight = 17.sp,
@@ -1466,7 +1466,7 @@ private fun GitHubSection(
                 Text(
                     text = "A private repository named \"$projectName\" will be created under " +
                         "${account?.login ?: "your account"} and this project pushed to it.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     lineHeight = 17.sp,
@@ -1481,7 +1481,7 @@ private fun GitHubSection(
             if (!hasCommits) {
                 Text(
                     text = "Commit something first — a repository with no history has nothing to push.",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     lineHeight = 17.sp,
@@ -1507,7 +1507,7 @@ private fun GitHubSection(
             }
             Text(
                 text = remoteUrl,
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 10.sp,
                 fontFamily = Sans,
                 maxLines = 1,
@@ -1517,7 +1517,7 @@ private fun GitHubSection(
 
         Text(
             text = if (showRepos) "Hide repositories" else "Use an existing repository",
-            color = c.ac,
+            color = c.mock.accent,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -1525,7 +1525,7 @@ private fun GitHubSection(
         )
         Text(
             text = "Clone a repository",
-            color = c.ac,
+            color = c.mock.accent,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -1537,7 +1537,7 @@ private fun GitHubSection(
         if (repos.isEmpty()) {
             Text(
                 text = "Loading your repositories…",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 11.sp,
                 fontFamily = Sans,
                 modifier = Modifier.padding(start = 17.dp, end = 14.dp, top = 6.dp),
@@ -1554,7 +1554,7 @@ private fun GitHubSection(
                 ) {
                     Text(
                         text = repo.fullName,
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 12.sp,
                         fontFamily = Sans,
                         maxLines = 1,
@@ -1563,7 +1563,7 @@ private fun GitHubSection(
                     )
                     Text(
                         text = if (repo.isPrivate) "private" else "public",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 10.sp,
                         fontFamily = Sans,
                         modifier = Modifier.padding(start = 8.dp),
@@ -1581,7 +1581,7 @@ private fun GitHubSection(
  * so a changed row is never shown as an addition with the old text silently missing.
  */
 @Composable
-internal fun DiffScreen(
+private fun LegacyDiffScreen(
     projectRoot: File?,
     path: String,
     onBack: () -> Unit,
@@ -1640,7 +1640,7 @@ internal fun DiffScreen(
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.panel),
+            .background(c.mock.panel),
     ) {
         val current = rows
         val added = current?.count { it.newLine != null && it.newLine != it.oldLine } ?: 0
@@ -1677,7 +1677,7 @@ internal fun DiffScreen(
             if (current != null) {
                 Text(
                     text = "+$added ",
-                    color = c.success,
+                    color = c.mock.green,
                     fontSize = 12.sp,
                     fontFamily = Mono,
                 )
@@ -1964,11 +1964,14 @@ private fun HistorySection(
 
 private fun relativeTime(whenMillis: Long): String {
     val minutes = ((System.currentTimeMillis() - whenMillis) / 60_000).coerceAtLeast(0)
+    val hours = minutes / 60
+    val days = minutes / (24 * 60)
     return when {
         minutes < 1 -> "just now"
         minutes < 60 -> "$minutes min ago"
-        minutes < 24 * 60 -> "${minutes / 60} hr ago"
-        else -> "${minutes / (24 * 60)} days ago"
+        hours < 24L -> if (hours == 1L) "1 hour ago" else "$hours hours ago"
+        days == 1L -> "1 day ago"
+        else -> "$days days ago"
     }
 }
 
@@ -2176,7 +2179,7 @@ private fun UnifiedFileCard(
                 modifier = Modifier.weight(1f),
             )
             val (tagBg, tagFg) = when {
-                tagAdded -> c.spec.diffAddBg to c.success
+                tagAdded -> c.spec.diffAddBg to c.mock.green
                 tagDeleted -> c.spec.diffDelBg to c.error
                 else -> c.chipBg to c.textMuted
             }
@@ -2264,7 +2267,7 @@ private fun UnifiedFileCard(
                                     Text(
                                         text = "${row.sign} ",
                                         color = when {
-                                            row.added -> c.success
+                                            row.added -> c.mock.green
                                             row.removed -> c.error
                                             else -> c.spec.diffContext
                                         },
@@ -2334,7 +2337,7 @@ private fun historyFilterLabel(filter: Int): String = when (filter) {
  * the funnel limits by time.
  */
 @Composable
-internal fun HistoryPage(
+private fun LegacyHistoryPage(
     projectName: String,
     branch: String,
     projectRoot: File?,
@@ -2376,7 +2379,7 @@ internal fun HistoryPage(
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.panel),
+            .background(c.mock.panel),
     ) {
         Row(
             Modifier
@@ -2615,7 +2618,7 @@ internal fun HistoryPage(
                                 ) {
                                     Text(
                                         text = "HEAD",
-                                        color = c.success,
+                                        color = c.mock.green,
                                         fontSize = 11.sp,
                                         fontFamily = Sans,
                                     )
@@ -2739,7 +2742,7 @@ private sealed interface CommitDiffItem {
  * headers, not a hundred full diffs.
  */
 @Composable
-internal fun CommitPage(
+private fun LegacyCommitPage(
     commitId: String,
     projectRoot: File?,
     revision: Int,
@@ -2861,7 +2864,7 @@ internal fun CommitPage(
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.panel),
+            .background(c.mock.panel),
     ) {
         Row(
             Modifier
@@ -3082,7 +3085,7 @@ internal fun CommitPage(
                         note?.let {
                             Text(
                                 text = it,
-                                color = c.success,
+                                color = c.mock.green,
                                 fontSize = 12.sp,
                                 fontFamily = Sans,
                                 modifier = Modifier.padding(start = 16.dp, end = 14.dp, top = 4.dp),
@@ -3227,7 +3230,7 @@ private fun CommitFileHeader(
         else -> "Tap to load"
     }
     val (tagBg, tagFg) = when {
-        isNew -> c.spec.diffAddBg to c.success
+        isNew -> c.spec.diffAddBg to c.mock.green
         isDel -> c.spec.diffDelBg to c.error
         state is CommitDiffState.Failed -> c.statusDeletedBg to c.error
         else -> c.chipBg to c.textMuted
@@ -3374,7 +3377,7 @@ private fun UnifiedDiffRow(
         Text(
             text = "${row.sign} ",
             color = when {
-                row.added -> c.success
+                row.added -> c.mock.green
                 row.removed -> c.error
                 else -> c.spec.diffContext
             },

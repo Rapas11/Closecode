@@ -1,0 +1,13 @@
+{
+  "version": "1",
+  "repo": "https://packages.termux.dev/apt/termux-main",
+  "roots": ["openjdk-17"],
+  "required": ["lib/jvm/java-17-openjdk/bin/java"],
+  "distribution": {
+    "version": "8.13",
+    "fileName": "gradle-8.13-bin.zip",
+    "url": "https://services.gradle.org/distributions/gradle-8.13-bin.zip",
+    "sizeBytes": 136983045,
+    "sha256": "20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78"
+  }
+}

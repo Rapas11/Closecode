@@ -1,4 +1,4 @@
-﻿package com.closecode.ui
+package com.closecode.ui
 
 import androidx.activity.compose.BackHandler
 import com.closecode.ui.ide.BackLog
@@ -47,18 +47,13 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.closecode.rememberProjectRepository
-import com.closecode.ui.model.relativeTime
-import com.closecode.ui.screens.CloneScreen
-import com.closecode.ui.screens.CloningScreen
-import com.closecode.ui.screens.RepoListState
-import com.closecode.ui.screens.RepoUi
-import com.closecode.ui.components.SheetHeader
+import com.closecode.ui.components.ScreenHeader
 import com.closecode.ui.github.GitHubClient
 import com.closecode.ui.github.GitHubClone
 import com.closecode.ui.github.GitHubRepo
 import com.closecode.ui.github.needsAuthentication
 import com.closecode.ui.ide.CcIcon
-import com.closecode.ui.ide.GitHubSignInBody
+import com.closecode.ui.ide.GitHubSignIn
 import com.closecode.ui.ide.SignInAction
 import com.closecode.ui.ide.describeFailure
 import com.closecode.ui.project.ProjectRecord
@@ -106,7 +101,6 @@ fun GitHubCloneScreen(
     onCloned: (ProjectRecord) -> Unit,
 ) {
     val c = LocalPageColors.current
-    val cc = com.closecode.ui.theme.CcTheme.colors
     val scope = rememberCoroutineScope()
     val keyboard = LocalSoftwareKeyboardController.current
     val clipboard = LocalClipboardManager.current
@@ -138,12 +132,6 @@ fun GitHubCloneScreen(
     // Which kind of failure it was, because only one of them has an answer that helps: a network
     // error wants a retry, an authentication error wants a token the user does not have here.
     var authFailure by remember { mutableStateOf(false) }
-    // Bumped by the list's Retry; the listing effect is keyed on it.
-    var reloadKey by remember { mutableStateOf(0) }
-    // Screen 05 stays up from the first byte until success, cancel or Back.
-    var cloningVisible by remember { mutableStateOf(false) }
-    var showStopDialog by remember { mutableStateOf(false) }
-    val cloneLog = remember { androidx.compose.runtime.mutableStateListOf<String>() }
     var active by remember { mutableStateOf<ActiveClone?>(null) }
     var cloneJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var fraction by remember { mutableStateOf<Float?>(null) }
@@ -161,18 +149,11 @@ fun GitHubCloneScreen(
     // The screen underneath installs its own handler, and it always goes one level up — out of
     // the project entirely. So this route has to claim Back for itself while it is composed.
     BackHandler(onBack = {
-        when {
-            showStopDialog -> showStopDialog = false
-            cloningVisible && active != null -> showStopDialog = true
-            cloningVisible -> cloningVisible = false
-            else -> {
-                BackLog.press("github-clone", "branch=dismiss")
-                onDismiss()
-            }
-        }
+        BackLog.press("github-clone", "branch=dismiss")
+        onDismiss()
     })
 
-    LaunchedEffect(token, reloadKey) {
+    LaunchedEffect(token) {
         val active = token
         if (active == null) {
             repos = null
@@ -205,10 +186,6 @@ fun GitHubCloneScreen(
         lastAttempt = CloneAttempt(name, remoteUrl, tokenUsed)
         val holder = ActiveClone(name, remoteUrl)
         active = holder
-        cloningVisible = true
-        showStopDialog = false
-        cloneLog.clear()
-        cloneLog.add("Cloning into ~/$name...")
         fraction = null
         phaseText = "Connecting to GitHub"
         downloadedBytes = 0
@@ -224,9 +201,6 @@ fun GitHubCloneScreen(
                                 if (active === holder) {
                                     fraction = progress.fraction
                                     phaseText = progress.phase
-                                    if (cloneLog.lastOrNull() != progress.phase) {
-                                        cloneLog.add(progress.phase)
-                                    }
                                 }
                             }
                         }.getOrThrow()
@@ -273,130 +247,181 @@ fun GitHubCloneScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize().systemBarsPadding()) {
-        if (cloningVisible) {
-            CloningScreen(
-                origin = "GitHub",
-                phase = phaseText,
-                percent = fraction,
-                sizeText = formatBytes(downloadedBytes),
-                log = cloneLog,
-                error = if (active == null) failure else null,
-                onRetry = {
-                    val retry = lastAttempt
-                    if (retry != null) {
-                        startClone(retry.folder, retry.remoteUrl, retry.token)
-                    } else {
-                        cloningVisible = false
-                    }
-                },
-                onCancel = { showStopDialog = true },
-                onBack = {
-                    if (active != null) showStopDialog = true else cloningVisible = false
-                },
-            )
-            if (showStopDialog) {
-                com.closecode.ui.components.CcConfirmDialog(
-                    title = "Stop cloning?",
-                    text = "The files downloaded so far will be deleted.",
-                    confirmText = "Stop",
-                    destructive = true,
-                    onConfirm = {
-                        showStopDialog = false
-                        cancelClone()
-                        cloningVisible = false
-                    },
-                    onDismiss = { showStopDialog = false },
+    Box(Modifier.fillMaxSize().background(c.mock.page).systemBarsPadding()) {
+        AnimatedVisibility(
+            visible = true,
+            enter = fadeIn(tween(200)),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                ScreenHeader(
+                    origin = "GitHub",
+                    title = "Clone a repository",
+                    onBack = onDismiss,
                 )
-            }
-        } else {
-            val folderTaken = remember(folder) {
-                folder.isNotBlank() && repository.folderTaken(folder)
-            }
-            CloneScreen(
-                origin = "GitHub",
-                url = link,
-                onUrl = { link = it },
-                urlError = if (linkErrorVisible) cloneLinkError(link) else null,
-                folder = folder,
-                onFolder = {
-                    folder = it
-                    folderTouched = true
-                },
-                folderError = if (folderTaken) {
-                    "That project name or folder is already taken."
-                } else {
-                    null
-                },
-                repos = when {
-                    token == null -> RepoListState.NotConnected
-                    failure != null -> RepoListState.Error(failure.orEmpty())
-                    repos == null -> RepoListState.Loading
-                    else -> RepoListState.Loaded(
-                        repos.orEmpty().map {
-                            RepoUi(
-                                fullName = it.fullName,
-                                cloneUrl = it.cloneUrl,
-                                updatedText = "Updated " + relativeTime(it.pushedAtMillis),
-                            )
-                        },
-                    )
-                },
-                query = repoQuery,
-                onQuery = { repoQuery = it },
-                onPickRepo = { repo ->
-                    link = repo.cloneUrl
-                    folder = repo.fullName.substringAfter('/')
-                    folderTouched = true
-                },
-                onRetry = {
-                    val retry = lastAttempt
-                    if (failure != null && retry != null && !authFailure) {
-                        startClone(retry.folder, retry.remoteUrl, retry.token)
-                    } else {
-                        reloadKey++
-                    }
-                },
-                onSignIn = { signingIn = true },
-                onClone = {
-                    keyboard?.hide()
-                    startClone(folder, link, token)
-                },
-                onBack = onDismiss,
-            )
 
-            if (signingIn) {
-                Box(
+                Column(
                     Modifier
-                        .fillMaxSize()
-                        .background(cc.dim)
-                        .clickable { signingIn = false },
-                    contentAlignment = Alignment.Center,
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                 ) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp)
-                            .clip(RoundedCornerShape(20.dp))
-                            .background(cc.panel)
-                            .clickable { }
-                            .padding(16.dp),
-                    ) {
-                        GitHubSignInBody(
-                            onSignedIn = { fresh ->
-                                onToken(fresh)
-                                signingIn = false
-                                val retry = retryAfterSignIn
-                                retryAfterSignIn = null
-                                failure = null
-                                authFailure = false
-                                retry?.invoke(fresh)
-                            },
-                            onCancel = { signingIn = false },
-                            modifier = Modifier.fillMaxWidth(),
+                    val running = active
+                    if (running != null) {
+                        CloneProgress(
+                            folder = running.folder,
+                            remoteUrl = running.remoteUrl,
+                            phase = phaseText,
+                            fraction = fraction,
+                            downloadedBytes = downloadedBytes,
+                            onCancel = ::cancelClone,
                         )
+                    } else {
+                        failure?.let { message ->
+                            CloneFailure(
+                                message = message,
+                                authLabel = if (authFailure) "Sign in again" else null,
+                                onAuthenticate = { signingIn = true },
+                            )
+                            // A failure that is not about signing in wants a second try with
+                            // the same arguments, not a retyped form.
+                            val retry = lastAttempt
+                            if (!authFailure && retry != null) {
+                                com.closecode.ui.components.OutlineButton(
+                                    label = "Try again",
+                                    onClick = {
+                                        startClone(retry.folder, retry.remoteUrl, retry.token)
+                                    },
+                                )
+                            }
+                        }
+
+                        val folderTaken = remember(folder) {
+                            folder.isNotBlank() && repository.folderTaken(folder)
+                        }
+                        CloneForm(
+                            link = link,
+                            onLink = { link = it },
+                            linkError = if (linkErrorVisible) cloneLinkError(link) else null,
+                            folder = folder,
+                            onFolder = {
+                                folder = it
+                                folderTouched = true
+                            },
+                            folderTaken = folderTaken,
+                            onPaste = {
+                                scope.launch {
+                                    clipboard.getText()?.text?.trim()?.takeIf { it.isNotEmpty() }
+                                        ?.let { link = it }
+                                }
+                            },
+                            canClone = cloneLinkError(link) == null && link.isNotBlank() &&
+                                folder.isNotBlank() && !folderTaken,
+                            onClone = {
+                                keyboard?.hide()
+                                startClone(folder, link, token)
+                            },
+                        )
+
+                        OrDivider()
+
+                        if (token == null) {
+                            // Signed out: the card says what signing in unlocks. Public links
+                            // above work without it, so the form stays usable either way.
+                            com.closecode.ui.components.ScreenCard {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CcIcon(
+                                        com.closecode.ui.ide.CcIcons.Github,
+                                        c.mock.text,
+                                        20.dp,
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(
+                                        text = "See your repositories here",
+                                        color = c.mock.text,
+                                        fontSize = 13.sp,
+                                        fontFamily = Sans,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                }
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = "Sign in once to pick private and public repositories " +
+                                        "from a list. Public links above work without signing in.",
+                                    color = c.mock.muted,
+                                    fontSize = 12.sp,
+                                    fontFamily = Sans,
+                                    lineHeight = 17.sp,
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                com.closecode.ui.components.OutlineButton(
+                                    label = "Sign in with GitHub",
+                                    onClick = { signingIn = true },
+                                )
+                            }
+                        } else {
+                            RepositoryList(
+                                repos = repos,
+                                query = repoQuery,
+                                onQuery = { repoQuery = it },
+                                busy = active != null,
+                                disabled = active != null,
+                                loadingMore = loadingMore,
+                                canLoadMore = (repos?.size ?: 0) >= repoPage * 30,
+                                onLoadMore = {
+                                    val activeToken = token ?: return@RepositoryList
+                                    if (loadingMore) return@RepositoryList
+                                    loadingMore = true
+                                    scope.launch {
+                                        val next = withContext(Dispatchers.IO) {
+                                            client.repositories(activeToken, repoPage + 1)
+                                        }
+                                        next.onSuccess { more ->
+                                            repoPage++
+                                            repos = (repos.orEmpty() + more).distinctBy { it.fullName }
+                                        }.onFailure { error ->
+                                            failure = describeFailure(
+                                                error,
+                                                "GitHub could not list your repositories.",
+                                            )
+                                        }
+                                        loadingMore = false
+                                    }
+                                },
+                                onPick = { repo ->
+                                    startClone(
+                                        folderName = repo.fullName.substringAfter('/'),
+                                        remoteUrl = repo.cloneUrl,
+                                        tokenUsed = token,
+                                    )
+                                },
+                            )
+                        }
                     }
                 }
+            }
+        }
+
+        // The sign-in asked for from this screen is a full page on top of everything, never an
+        // inline card: its body owns a vertical scroll, and nesting that scroll inside the list
+        // column above measured one infinity against another and took the app down
+        // (IllegalStateException, CheckScrollableContainerConstraints).
+        if (signingIn) {
+            Box(Modifier.fillMaxSize().background(c.mock.page)) {
+                GitHubSignIn(
+                    onSignedIn = { fresh ->
+                        onToken(fresh)
+                        signingIn = false
+                        val retry = retryAfterSignIn
+                        retryAfterSignIn = null
+                        failure = null
+                        authFailure = false
+                        retry?.invoke(fresh)
+                    },
+                    onDismiss = { signingIn = false },
+                )
             }
         }
     }
@@ -415,19 +440,18 @@ private fun CloneFailure(
     onAuthenticate: () -> Unit,
 ) {
     val c = LocalPageColors.current
-    val shape = RoundedCornerShape(10.dp)
+    val shape = RoundedCornerShape(14.dp)
     Row(
         Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(c.red.copy(alpha = 0.10f))
-            .border(1.dp, c.red.copy(alpha = 0.45f), shape)
+            .background(c.mock.dangerBg)
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             text = message,
-            color = c.red,
+            color = c.mock.danger,
             fontSize = 12.5.sp,
             fontFamily = Sans,
             lineHeight = 17.sp,
@@ -457,24 +481,26 @@ private fun CloneForm(
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Text(
             text = "Repository link",
-            color = c.iconTint,
+            color = c.mock.textSoft,
             fontSize = 12.sp,
             fontFamily = Sans,
+            fontWeight = FontWeight.SemiBold,
         )
         Row(
             Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(10.dp))
-                .background(c.fieldBg)
-                .border(1.dp, c.fieldBorder, RoundedCornerShape(10.dp))
-                .padding(start = 13.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                .height(44.dp)
+                .clip(RoundedCornerShape(13.dp))
+                .background(c.mock.field)
+                .border(1.dp, c.mock.border, RoundedCornerShape(13.dp))
+                .padding(start = 14.dp, end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.weight(1f)) {
                 if (link.isEmpty()) {
                     Text(
                         text = "https://github.com/owner/repository",
-                        color = c.textFaint,
+                        color = c.mock.faint,
                         fontSize = 12.sp,
                         fontFamily = Mono,
                         maxLines = 1,
@@ -486,11 +512,11 @@ private fun CloneForm(
                     onValueChange = onLink,
                     singleLine = true,
                     textStyle = TextStyle(
-                        color = c.text,
-                        fontSize = 12.sp,
+                        color = c.mock.text,
+                        fontSize = 12.5.sp,
                         fontFamily = Mono,
                     ),
-                    cursorBrush = SolidColor(c.accent),
+                    cursorBrush = SolidColor(c.mock.accent),
                     keyboardOptions = KeyboardOptions.Default,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -501,14 +527,14 @@ private fun CloneForm(
                 Modifier
                     .height(30.dp)
                     .clip(RoundedCornerShape(7.dp))
-                    .background(c.chipBg)
+                    .background(c.mock.rail)
                     .clickable(onClick = onPaste)
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = "Paste",
-                    color = c.text,
+                    color = c.mock.text,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Medium,
@@ -518,16 +544,17 @@ private fun CloneForm(
         if (linkError != null) {
             Text(
                 text = linkError,
-                color = c.error,
+                color = c.mock.danger,
                 fontSize = 12.sp,
                 fontFamily = Sans,
             )
         }
         Text(
             text = "Save in folder",
-            color = c.iconTint,
+            color = c.mock.textSoft,
             fontSize = 12.sp,
             fontFamily = Sans,
+            fontWeight = FontWeight.SemiBold,
         )
         com.closecode.ui.components.ScreenField(
             value = folder,
@@ -537,7 +564,7 @@ private fun CloneForm(
         if (folderTaken) {
             Text(
                 text = "That project name or folder is already taken.",
-                color = c.error,
+                color = c.mock.danger,
                 fontSize = 12.sp,
                 fontFamily = Sans,
             )
@@ -561,13 +588,161 @@ private fun OrDivider() {
         Box(Modifier.weight(1f).height(1.dp).background(c.divider))
         Text(
             text = "OR CHOOSE FROM GITHUB",
-            color = c.textFaint,
+            color = c.mock.faint,
             fontSize = 11.sp,
             fontFamily = Sans,
             letterSpacing = 0.72.sp,
             modifier = Modifier.padding(horizontal = 12.dp),
         )
         Box(Modifier.weight(1f).height(1.dp).background(c.divider))
+    }
+}
+
+/**
+ * The download as it happens: icon tile, name and link, bar with percent and size, three steps,
+ * and a red Cancel that deletes the half-downloaded folder.
+ */
+@Composable
+private fun CloneProgress(
+    folder: String,
+    remoteUrl: String,
+    phase: String,
+    fraction: Float?,
+    downloadedBytes: Long,
+    onCancel: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.height(24.dp))
+        Box(
+            Modifier
+                .size(56.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(c.primaryTint),
+            contentAlignment = Alignment.Center,
+        ) {
+            CcIcon(
+                com.closecode.ui.ide.CcIcons.CloudDownload,
+                c.link,
+                26.dp,
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = "Cloning $folder",
+            color = c.mock.text,
+            fontSize = 17.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = remoteUrl.removePrefix("https://"),
+            color = c.mock.muted,
+            fontSize = 12.sp,
+            fontFamily = Mono,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.height(16.dp))
+        // 8 dp bar: accent fill on a chip track. Unknown totals fill halfway and pulse by
+        // indeterminate mode rather than lying about a percentage.
+        if (fraction == null) {
+            androidx.compose.material3.LinearProgressIndicator(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp)),
+                color = c.mock.accent,
+                trackColor = c.mock.rail,
+            )
+        } else {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(c.mock.rail),
+            ) {
+                Box(
+                    Modifier
+                        .fillMaxWidth(fraction.coerceIn(0f, 1f))
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(c.mock.accent),
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = phase,
+                color = c.mock.muted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = if (fraction == null) {
+                    formatBytes(downloadedBytes)
+                } else {
+                    "${(fraction * 100).toInt()}% · ${formatBytes(downloadedBytes)}"
+                },
+                color = c.mock.muted,
+                fontSize = 12.sp,
+                fontFamily = Mono,
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        CloneStep(done = true, current = false, label = "Connected to GitHub")
+        Spacer(Modifier.height(8.dp))
+        CloneStep(done = false, current = true, label = "Downloading files")
+        Spacer(Modifier.height(8.dp))
+        CloneStep(done = false, current = false, label = "Open as a project")
+        Spacer(Modifier.height(16.dp))
+        com.closecode.ui.components.TextLink(
+            label = "Cancel",
+            color = c.mock.danger,
+            onClick = onCancel,
+        )
+    }
+}
+
+@Composable
+private fun CloneStep(done: Boolean, current: Boolean, label: String) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        when {
+            done -> CcIcon(com.closecode.ui.ide.CcIcons.Check, c.mock.green, 16.dp)
+            current -> androidx.compose.material3.CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                color = c.mock.text,
+                strokeWidth = 2.dp,
+            )
+            else -> Box(
+                Modifier
+                    .size(14.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .border(1.5.dp, c.mock.faint, androidx.compose.foundation.shape.CircleShape),
+            )
+        }
+        Spacer(Modifier.width(10.dp))
+        Text(
+            text = label,
+            color = when {
+                done -> c.mock.green
+                current -> c.mock.text
+                else -> c.mock.faint
+            },
+            fontSize = 13.sp,
+            fontFamily = Sans,
+        )
     }
 }
 
@@ -667,7 +842,7 @@ private fun RepositoryList(
     when {
         listed == null -> Text(
             text = "Asking GitHub for your repositories…",
-            color = c.textMuted,
+            color = c.mock.muted,
             fontSize = 13.sp,
             fontFamily = Sans,
             modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
@@ -676,7 +851,7 @@ private fun RepositoryList(
         listed.isEmpty() -> Text(
             text = "You have no repositories yet. Publish a project first and it will show up " +
                 "here.",
-            color = c.textMuted,
+            color = c.mock.muted,
             fontSize = 13.sp,
             fontFamily = Sans,
             lineHeight = 19.sp,
@@ -707,7 +882,7 @@ private fun RepositoryList(
             if (query.isNotBlank() && shown.isEmpty()) {
                 Text(
                     text = "Nothing matches “$query”.",
-                    color = c.textMuted,
+                    color = c.mock.muted,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                 )
@@ -736,21 +911,21 @@ private fun RepoRow(
             .fillMaxWidth()
             .height(54.dp)
             .clip(shape)
-            .background(c.surface)
-            .border(1.dp, c.surfaceBorder, shape)
+            .background(c.mock.panel)
+            .border(1.dp, c.mock.border, shape)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         CcIcon(
             if (repo.isPrivate) com.closecode.ui.ide.CcIcons.Lock else com.closecode.ui.ide.CcIcons.Book,
-            c.textMuted,
+            c.mock.muted,
             16.dp,
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 text = repo.fullName.substringAfter('/'),
-                color = c.text,
+                color = c.mock.text,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,
@@ -759,7 +934,7 @@ private fun RepoRow(
             )
             Text(
                 text = updatedLine(repo),
-                color = c.textMuted,
+                color = c.mock.muted,
                 fontSize = 11.sp,
                 fontFamily = Sans,
                 maxLines = 1,
@@ -773,14 +948,14 @@ private fun RepoRow(
             Modifier
                 .height(28.dp)
                 .clip(RoundedCornerShape(7.dp))
-                .background(if (disabled) c.chipBg else c.popupSelected)
+                .background(if (disabled) c.mock.rail else c.mock.accent)
                 .clickable(enabled = !disabled, onClick = onClone)
                 .padding(horizontal = 14.dp),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = "Clone",
-                color = if (disabled) c.textFaint else androidx.compose.ui.graphics.Color.White,
+                color = if (disabled) c.mock.faint else androidx.compose.ui.graphics.Color.White,
                 fontSize = 12.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,

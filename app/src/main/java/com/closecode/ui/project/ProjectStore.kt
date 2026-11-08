@@ -77,11 +77,11 @@ class ProjectStore(context: Context) {
         }
     }
 
-    fun readTree(slug: String): List<ProjectFile> {
+    fun readTree(slug: String, showGenerated: Boolean = false): List<ProjectFile> {
         val root = projectDir(slug)
         if (!root.isDirectory) return emptyList()
         val out = mutableListOf<ProjectFile>()
-        walk(root, into = out)
+        walk(root, into = out, showGenerated = showGenerated)
         return out
     }
 
@@ -159,26 +159,25 @@ class ProjectStore(context: Context) {
         return targetFile to target
     }
 
-    private fun walk(dir: File, into: MutableList<ProjectFile>, prefix: String = "") {
+    private fun walk(
+        dir: File,
+        into: MutableList<ProjectFile>,
+        prefix: String = "",
+        showGenerated: Boolean = false,
+    ) {
         val children = dir.listFiles()?.sortedWith(
             compareByDescending<File> { it.isDirectory }.thenBy { it.name.lowercase() }
         ) ?: return
 
         for (child in children) {
-            if (isHiddenEntry(child.name)) continue
             val relative = if (prefix.isEmpty()) child.name else "$prefix/${child.name}"
+            if (GeneratedPaths.isExplorerHidden(relative, child.isDirectory, showGenerated)) {
+                continue
+            }
             into.add(projectEntry(relative, child.isDirectory))
-            if (child.isDirectory) walk(child, into, relative)
+            if (child.isDirectory) walk(child, into, relative, showGenerated)
         }
     }
-
-    /**
-     * Entries the drawer never shows. `.git` is an implementation detail of version control: the
-     * repository is manipulated through the GitHub tab, never by browsing inside it, and showing
-     * hundreds of objects under a folder named `.git` only invites the user to edit one.
-     */
-    private fun isHiddenEntry(name: String): Boolean =
-        ProjectSafety.isHiddenName(name) || name == ".git"
 
     fun deleteProject(slug: String): Boolean {
         val dir = projectDir(slug)

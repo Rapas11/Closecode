@@ -157,13 +157,13 @@ private fun highlightProgramCode(
     bracketCycle: List<Color>,
     initialDepth: Int,
 ): AnnotatedString {
-    val commentStyle = SpanStyle(color = c.text, fontStyle = FontStyle.Italic)
+    val commentStyle = SpanStyle(color = c.codeComment, fontStyle = FontStyle.Italic)
     val stringStyle = SpanStyle(color = c.codeString)
-    val annotationStyle = SpanStyle(color = c.text)
+    val annotationStyle = SpanStyle(color = c.codeFunction)
     val keywordStyle = SpanStyle(color = c.codeKeyword, fontWeight = FontWeight.Medium)
     val functionStyle = SpanStyle(color = c.codeFunction)
     val typeStyle = SpanStyle(color = c.codeType)
-    val numberStyle = SpanStyle(color = c.text)
+    val numberStyle = SpanStyle(color = c.codeNumber)
 
     // Depth carries across lines, because a block does. A counter reset per line gave every line's
     // first bracket the same colour no matter how deep in the file it sat, which is the one thing the
@@ -419,11 +419,11 @@ private fun endOfCharLiteral(source: String, start: Int): Int {
  * comment colour and the tag never closed on screen.
  */
 internal fun highlightMarkup(text: String, c: PageColors): AnnotatedString {
-    val commentStyle = SpanStyle(color = c.text, fontStyle = FontStyle.Italic)
+    val commentStyle = SpanStyle(color = c.codeComment, fontStyle = FontStyle.Italic)
     val stringStyle = SpanStyle(color = c.codeString)
     val tagStyle = SpanStyle(color = c.codeKeyword, fontWeight = FontWeight.Medium)
-    val attrStyle = SpanStyle(color = c.codeType)
-    val punctuationStyle = SpanStyle(color = c.mu)
+    val attrStyle = SpanStyle(color = c.codeVariable)
+    val punctuationStyle = SpanStyle(color = c.mock.muted)
 
     return buildAnnotatedString {
         text.lines().forEachIndexed { index, raw ->
@@ -504,11 +504,11 @@ private fun AnnotatedString.Builder.appendMarkupTag(
  * same class of bug the `//` case above caused.
  */
 internal fun highlightStylesheet(text: String, c: PageColors): AnnotatedString {
-    val commentStyle = SpanStyle(color = c.text, fontStyle = FontStyle.Italic)
+    val commentStyle = SpanStyle(color = c.codeComment, fontStyle = FontStyle.Italic)
     val keywordStyle = SpanStyle(color = c.codeKeyword, fontWeight = FontWeight.Medium)
-    val propStyle = SpanStyle(color = c.codeType)
+    val propStyle = SpanStyle(color = c.codeVariable)
     val valueStyle = SpanStyle(color = c.codeString)
-    val numberStyle = SpanStyle(color = c.text)
+    val numberStyle = SpanStyle(color = c.codeNumber)
 
     return buildAnnotatedString {
         var inComment = false

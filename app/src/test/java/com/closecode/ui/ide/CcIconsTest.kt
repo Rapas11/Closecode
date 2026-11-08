@@ -1,5 +1,7 @@
 package com.closecode.ui.ide
 
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.closecode.ui.ccIconVector
 import org.junit.Test
 
 class CcIconsTest {
@@ -67,5 +69,18 @@ class CcIconsTest {
             check(icon.defaultWidth.value > 0f)
             check(icon.defaultHeight.value > 0f)
         }
+    }
+
+    @Test
+    fun chevronIconResolves() {
+        check(ccIconVector("chevron") is ImageVector)
+        check(ccIconVector("chevron").defaultWidth.value > 0f)
+    }
+
+    @Test
+    fun unknownIconDoesNotThrow() {
+        val icon = ccIconVector("totally-made-up-icon-name")
+        check(icon is ImageVector)
+        check(icon.defaultWidth.value > 0f)
     }
 }
