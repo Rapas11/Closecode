@@ -38,13 +38,14 @@ class SettingsControlsTest {
             .flatMap { section -> section.groups.flatMap { it.rows } }
             .filterIsInstance<Row.Toggle>()
 
-        assertEquals(24, toggles.size)
+        assertEquals(22, toggles.size)
         assertEquals(0, toggles.count { it.key == null })
         assertTrue(toggles.any { it.name == "Word wrap" && it.key == BoolSetting.WORD_WRAP })
         assertTrue(toggles.any { it.name == "Performance overlay" && it.key == BoolSetting.FRAME_STATS })
         assertTrue(toggles.any { it.name == "Use pipe terminal" && it.key == BoolSetting.USE_PIPE_TERMINAL })
         assertTrue(toggles.any { it.name == "App lock" && it.key == BoolSetting.APP_LOCK })
         assertTrue(toggles.any { it.name == "Send usage data" && it.key == BoolSetting.SEND_USAGE_DATA })
+        assertTrue(toggles.any { it.name == "Sora editor" && it.key == BoolSetting.SORA_EDITOR })
         assertEquals("On", toggleStateLabel(true))
         assertEquals("Off", toggleStateLabel(false))
     }

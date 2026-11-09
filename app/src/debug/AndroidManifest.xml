@@ -1,0 +1,22 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <activity android:name="com.closecode.MainActivity">
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/sora_probe_shortcuts" />
+        </activity>
+        <activity
+            android:name=".debug.probe.SoraProbeActivity"
+            android:configChanges="keyboardHidden|orientation|screenSize|screenLayout|uiMode"
+            android:exported="true"
+            android:label="Sora Probe"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

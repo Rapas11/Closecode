@@ -20,6 +20,7 @@ enum class BoolSetting {
     RAINBOW_BRACKETS,
     FRAME_STATS,
     CODE_FOLDING,
+    SORA_EDITOR,
     AUTO_IMPORT,
     PARAMETER_HINTS,
     QUICK_FIXES,
@@ -100,6 +101,7 @@ data class Settings(
     val rainbowBrackets: Boolean = false,
     val frameStats: Boolean = false,
     val codeFolding: Boolean = true,
+    val soraEditor: Boolean = true,
     val autoImport: Boolean = true,
     val parameterHints: Boolean = true,
     val quickFixes: Boolean = true,
@@ -140,6 +142,7 @@ data class Settings(
         BoolSetting.RAINBOW_BRACKETS -> rainbowBrackets
         BoolSetting.FRAME_STATS -> frameStats
         BoolSetting.CODE_FOLDING -> codeFolding
+        BoolSetting.SORA_EDITOR -> soraEditor
         BoolSetting.AUTO_IMPORT -> autoImport
         BoolSetting.PARAMETER_HINTS -> parameterHints
         BoolSetting.QUICK_FIXES -> quickFixes
@@ -166,6 +169,7 @@ data class Settings(
         BoolSetting.RAINBOW_BRACKETS -> copy(rainbowBrackets = value)
         BoolSetting.FRAME_STATS -> copy(frameStats = value)
         BoolSetting.CODE_FOLDING -> copy(codeFolding = value)
+        BoolSetting.SORA_EDITOR -> copy(soraEditor = value)
         BoolSetting.AUTO_IMPORT -> copy(autoImport = value)
         BoolSetting.PARAMETER_HINTS -> copy(parameterHints = value)
         BoolSetting.QUICK_FIXES -> copy(quickFixes = value)
@@ -280,6 +284,7 @@ class SettingsStore(private val kv: KeyValueStore) {
         rainbowBrackets = kv.getBoolean(KEY_RAINBOW_BRACKETS, Settings().rainbowBrackets),
         frameStats = kv.getBoolean(KEY_FRAME_STATS, Settings().frameStats),
         codeFolding = kv.getBoolean(KEY_CODE_FOLDING, Settings().codeFolding),
+        soraEditor = kv.getBoolean(KEY_SORA_EDITOR, Settings().soraEditor),
         autoImport = kv.getBoolean(KEY_AUTO_IMPORT, Settings().autoImport),
         parameterHints = kv.getBoolean(KEY_PARAMETER_HINTS, Settings().parameterHints),
         quickFixes = kv.getBoolean(KEY_QUICK_FIXES, Settings().quickFixes),
@@ -354,6 +359,7 @@ class SettingsStore(private val kv: KeyValueStore) {
         kv.putBoolean(KEY_RAINBOW_BRACKETS, settings.rainbowBrackets)
         kv.putBoolean(KEY_FRAME_STATS, settings.frameStats)
         kv.putBoolean(KEY_CODE_FOLDING, settings.codeFolding)
+        kv.putBoolean(KEY_SORA_EDITOR, settings.soraEditor)
         kv.putBoolean(KEY_AUTO_IMPORT, settings.autoImport)
         kv.putBoolean(KEY_PARAMETER_HINTS, settings.parameterHints)
         kv.putBoolean(KEY_QUICK_FIXES, settings.quickFixes)
@@ -397,6 +403,7 @@ class SettingsStore(private val kv: KeyValueStore) {
         const val KEY_RAINBOW_BRACKETS = "rainbow_brackets"
         const val KEY_FRAME_STATS = "frame_stats"
         const val KEY_CODE_FOLDING = "code_folding"
+        const val KEY_SORA_EDITOR = "sora_editor"
         const val KEY_AUTO_IMPORT = "auto_import"
         const val KEY_PARAMETER_HINTS = "parameter_hints"
         const val KEY_QUICK_FIXES = "quick_fixes"

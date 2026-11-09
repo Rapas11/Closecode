@@ -106,6 +106,10 @@ dependencies {
     // device-flow step opens github.com/login/device in a Chrome Custom Tab.
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("androidx.browser:browser:1.8.0")
+    // Sora is the editor behind every code tab. Its rope-backed Content and viewport-only
+    // layout keep a 50k-line file responsive where the Compose editor stalls the main thread.
+    implementation(platform("io.github.rosemoe:editor-bom:0.24.4"))
+    implementation("io.github.rosemoe:editor")
 
     testImplementation("junit:junit:4.13.2")
     // Project metadata and the permanent reservation registry are JSON on disk; the Android

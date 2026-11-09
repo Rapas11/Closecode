@@ -56,12 +56,167 @@ internal fun highlightCode(
     language: CodeLanguage,
     bracketCycle: List<Color> = emptyList(),
     initialDepth: Int = 0,
+    initialContext: HighlightContext = HighlightContext(),
 ): AnnotatedString =
     when (language) {
-        CodeLanguage.PROGRAMMING -> highlightProgramCode(text, c, bracketCycle, initialDepth)
-        CodeLanguage.MARKUP -> highlightMarkup(text, c)
-        CodeLanguage.STYLESHEET -> highlightStylesheet(text, c)
+        CodeLanguage.PROGRAMMING ->
+            highlightProgramCode(text, c, bracketCycle, initialDepth, initialContext)
+        CodeLanguage.MARKUP -> highlightMarkup(text, c, initialContext)
+        CodeLanguage.STYLESHEET -> highlightStylesheet(text, c, initialContext)
     }
+
+/**
+ * Lexical state at the start of a line: what a window highlight must know so it does not start
+ * neutral in the middle of a block comment or a multi-line string.
+ */
+internal data class HighlightContext(
+    val blockCommentDepth: Int = 0,
+    val multilineStringDelimiter: String? = null,
+    val markupComment: Boolean = false,
+)
+
+/**
+ * The lexical state at the start of each line in [text], for [language].
+ *
+ * This is the same state machine the colour pass follows, but without emitting spans. A window
+ * highlight reads the context at its first line and starts from there, so a block comment or
+ * multi-line string that began above the window keeps its colour.
+ */
+internal fun highlightContexts(text: String, language: CodeLanguage): List<HighlightContext> {
+    val contexts = ArrayList<HighlightContext>()
+    var state = HighlightContext()
+    contexts.add(state)
+    var i = 0
+    while (i < text.length) {
+        if (text[i] == '\n') {
+            i++
+            contexts.add(state)
+            continue
+        }
+        when (language) {
+            CodeLanguage.PROGRAMMING -> {
+                state = when {
+                    state.blockCommentDepth > 0 -> {
+                        when {
+                            text.startsWith("/*", i) -> {
+                                i += 2
+                                state.copy(blockCommentDepth = state.blockCommentDepth + 1)
+                            }
+                            text.startsWith("*/", i) -> {
+                                i += 2
+                                state.copy(blockCommentDepth = state.blockCommentDepth - 1)
+                            }
+                            else -> {
+                                i++
+                                state
+                            }
+                        }
+                    }
+                    state.multilineStringDelimiter != null -> {
+                        val delimiter = state.multilineStringDelimiter
+                        if (text.startsWith(delimiter, i)) {
+                            i += delimiter.length
+                            state.copy(multilineStringDelimiter = null)
+                        } else {
+                            i++
+                            state
+                        }
+                    }
+                    text.startsWith("//", i) -> {
+                        while (i < text.length && text[i] != '\n') i++
+                        state
+                    }
+                    text.startsWith("/*", i) -> {
+                        i += 2
+                        state.copy(blockCommentDepth = 1)
+                    }
+                    text.startsWith("\"\"\"", i) -> {
+                        i += 3
+                        state.copy(multilineStringDelimiter = "\"\"\"")
+                    }
+                    text.startsWith("'''", i) -> {
+                        i += 3
+                        state.copy(multilineStringDelimiter = "'''")
+                    }
+                    text[i] == '`' -> {
+                        i++
+                        state.copy(multilineStringDelimiter = "`")
+                    }
+                    text[i] == '"' || text[i] == '\'' -> {
+                        i = skipQuoted(text, i, text[i])
+                        state
+                    }
+                    else -> {
+                        i++
+                        state
+                    }
+                }
+            }
+            CodeLanguage.STYLESHEET -> {
+                state = when {
+                    state.blockCommentDepth > 0 -> {
+                        if (text.startsWith("*/", i)) {
+                            i += 2
+                            state.copy(blockCommentDepth = 0)
+                        } else {
+                            i++
+                            state
+                        }
+                    }
+                    text.startsWith("/*", i) -> {
+                        i += 2
+                        state.copy(blockCommentDepth = 1)
+                    }
+                    text[i] == '"' || text[i] == '\'' -> {
+                        i = skipQuoted(text, i, text[i])
+                        state
+                    }
+                    else -> {
+                        i++
+                        state
+                    }
+                }
+            }
+            CodeLanguage.MARKUP -> {
+                state = when {
+                    state.markupComment -> {
+                        if (text.startsWith("-->", i)) {
+                            i += 3
+                            state.copy(markupComment = false)
+                        } else {
+                            i++
+                            state
+                        }
+                    }
+                    text.startsWith("<!--", i) -> {
+                        i += 4
+                        state.copy(markupComment = true)
+                    }
+                    else -> {
+                        i++
+                        state
+                    }
+                }
+            }
+        }
+    }
+    return contexts
+}
+
+private fun skipQuoted(text: String, start: Int, quote: Char): Int {
+    var i = start + 1
+    while (i < text.length && text[i] != '\n') {
+        if (text[i] == '\\') {
+            i += 2
+        } else if (text[i] == quote) {
+            return i + 1
+        } else {
+            i++
+        }
+    }
+    return i
+}
+
 
 /** Which rules a buffer is coloured by, decided from the text itself. */
 internal enum class CodeLanguage {
@@ -156,6 +311,7 @@ private fun highlightProgramCode(
     c: PageColors,
     bracketCycle: List<Color>,
     initialDepth: Int,
+    initialContext: HighlightContext,
 ): AnnotatedString {
     val commentStyle = SpanStyle(color = c.codeComment, fontStyle = FontStyle.Italic)
     val stringStyle = SpanStyle(color = c.codeString)
@@ -170,6 +326,8 @@ private fun highlightProgramCode(
     // feature is for.
     // Depth carries across lines *and* across windows: a block spans both.
     var bracketDepth = initialDepth
+    var blockCommentDepth = initialContext.blockCommentDepth
+    var multilineStringDelimiter = initialContext.multilineStringDelimiter
     return buildAnnotatedString {
         text.lines().forEachIndexed { index, raw ->
             if (index > 0) append('\n')
@@ -178,14 +336,88 @@ private fun highlightProgramCode(
             while (i < n) {
                 val ch = raw[i]
                 when {
-                    ch == '/' && i + 1 < n && (raw[i + 1] == '/' || raw[i + 1] == '*') -> {
-                        val end = if (raw[i + 1] == '/') n else {
-                            val close = raw.indexOf("*/", i + 2)
-                            if (close < 0) n else close + 2
+                    blockCommentDepth > 0 -> {
+                        var j = i
+                        while (j < n) {
+                            when {
+                                raw.startsWith("/*", j) -> {
+                                    blockCommentDepth++
+                                    j += 2
+                                }
+                                raw.startsWith("*/", j) -> {
+                                    blockCommentDepth--
+                                    j += 2
+                                    if (blockCommentDepth == 0) break
+                                }
+                                else -> j++
+                            }
                         }
+                        val end = if (blockCommentDepth > 0) n else j
+                        if (end > i) withStyle(commentStyle) { append(raw, i, end) }
+                        i = end
+                    }
+
+                    multilineStringDelimiter != null -> {
+                        val delimiter = multilineStringDelimiter!!
+                        val close = raw.indexOf(delimiter, i)
+                        val end = if (close < 0) n else close + delimiter.length
+                        withStyle(stringStyle) {
+                            append(raw, i, end)
+                        }
+                        if (close >= 0) multilineStringDelimiter = null
+                        i = end
+                    }
+
+                    raw.startsWith("//", i) -> {
+                        withStyle(commentStyle) {
+                            append(raw, i, n)
+                        }
+                        i = n
+                    }
+
+                    raw.startsWith("/*", i) -> {
+                        var j = i + 2
+                        var depth = 1
+                        while (j < n && depth > 0) {
+                            when {
+                                raw.startsWith("/*", j) -> {
+                                    depth++
+                                    j += 2
+                                }
+                                raw.startsWith("*/", j) -> {
+                                    depth--
+                                    j += 2
+                                }
+                                else -> j++
+                            }
+                        }
+                        val end = if (depth > 0) n else j
                         withStyle(commentStyle) {
                             append(raw, i, end)
                         }
+                        blockCommentDepth = depth
+                        i = end
+                    }
+
+                    ch == '"' && raw.startsWith("\"\"\"", i) ||
+                        ch == '\'' && raw.startsWith("'''", i) -> {
+                        val delimiter = if (ch == '"') "\"\"\"" else "'''"
+                        val close = raw.indexOf(delimiter, i + 3)
+                        val end = if (close < 0) n else close + 3
+                        withStyle(stringStyle) {
+                            append(raw, i, end)
+                        }
+                        if (close < 0) multilineStringDelimiter = delimiter
+                        i = end
+                    }
+
+                    ch == '`' -> {
+                        val close = raw.indexOf('`', i + 1)
+                        val end = if (close < 0) n else close + 1
+                        withStyle(stringStyle) {
+                            append(raw, i, end)
+                        }
+                        if (close < 0) multilineStringDelimiter = "`"
                         i = end
                     }
 
@@ -418,12 +650,17 @@ private fun endOfCharLiteral(source: String, start: Int): Int {
  * the `//` swallowed as a comment, so the closing quote and the rest of the line drew in the
  * comment colour and the tag never closed on screen.
  */
-internal fun highlightMarkup(text: String, c: PageColors): AnnotatedString {
+internal fun highlightMarkup(
+    text: String,
+    c: PageColors,
+    initialContext: HighlightContext = HighlightContext(),
+): AnnotatedString {
     val commentStyle = SpanStyle(color = c.codeComment, fontStyle = FontStyle.Italic)
     val stringStyle = SpanStyle(color = c.codeString)
     val tagStyle = SpanStyle(color = c.codeKeyword, fontWeight = FontWeight.Medium)
     val attrStyle = SpanStyle(color = c.codeVariable)
     val punctuationStyle = SpanStyle(color = c.mock.muted)
+    var inComment = initialContext.markupComment
 
     return buildAnnotatedString {
         text.lines().forEachIndexed { index, raw ->
@@ -431,10 +668,19 @@ internal fun highlightMarkup(text: String, c: PageColors): AnnotatedString {
             var i = 0
             val n = raw.length
             while (i < n) {
-                if (raw.startsWith("<!--", i)) {
+                if (inComment) {
                     val close = raw.indexOf("-->", i)
                     val end = if (close < 0) n else close + 3
                     withStyle(commentStyle) { append(raw, i, end) }
+                    inComment = close < 0
+                    i = end
+                    continue
+                }
+                if (raw.startsWith("<!--", i)) {
+                    val close = raw.indexOf("-->", i + 4)
+                    val end = if (close < 0) n else close + 3
+                    withStyle(commentStyle) { append(raw, i, end) }
+                    inComment = close < 0
                     i = end
                     continue
                 }
@@ -503,7 +749,11 @@ private fun AnnotatedString.Builder.appendMarkupTag(
  * closed on its own line. A stylesheet comment left open swallows the rules after it, which is the
  * same class of bug the `//` case above caused.
  */
-internal fun highlightStylesheet(text: String, c: PageColors): AnnotatedString {
+internal fun highlightStylesheet(
+    text: String,
+    c: PageColors,
+    initialContext: HighlightContext = HighlightContext(),
+): AnnotatedString {
     val commentStyle = SpanStyle(color = c.codeComment, fontStyle = FontStyle.Italic)
     val keywordStyle = SpanStyle(color = c.codeKeyword, fontWeight = FontWeight.Medium)
     val propStyle = SpanStyle(color = c.codeVariable)
@@ -511,7 +761,7 @@ internal fun highlightStylesheet(text: String, c: PageColors): AnnotatedString {
     val numberStyle = SpanStyle(color = c.codeNumber)
 
     return buildAnnotatedString {
-        var inComment = false
+        var inComment = initialContext.blockCommentDepth > 0
         text.lines().forEachIndexed { index, raw ->
             if (index > 0) append('\n')
             var i = 0

@@ -83,6 +83,13 @@ internal enum class TermTone { User, Output, Success, Warning, Error, Dim }
 /** The timestamp and tone that travel beside a plain [TerminalSession.lines] string. */
 internal data class TermMeta(val at: Long, val tone: TermTone)
 
+internal data class CommandRun(
+    val echoIndex: Int,
+    val startedAt: Long,
+    var exitCode: Int? = null,
+    var endedAt: Long? = null,
+)
+
 internal class TerminalSession(val number: Int) {
     val output = Channel<String>(Channel.UNLIMITED)
     val lines = mutableStateListOf<String>()
@@ -91,6 +98,7 @@ internal class TerminalSession(val number: Int) {
     /** Bumped on every append/clear so the log can cache its grouped rows. */
     var lineVersion by mutableIntStateOf(0)
         private set
+    val commandRuns = mutableStateListOf<CommandRun>()
     var input by mutableStateOf(TextFieldValue(""))
     var lastExit by mutableStateOf<Int?>(null)
     var cwd by mutableStateOf("")
@@ -178,7 +186,19 @@ internal class TerminalSession(val number: Int) {
     fun clearLines() {
         lines.clear()
         lineMeta.clear()
+        commandRuns.clear()
         lineVersion++
+    }
+
+    fun beginRun(echoIndex: Int) {
+        commandRuns.add(CommandRun(echoIndex, System.currentTimeMillis()))
+        while (commandRuns.size > TERMINAL_MAX_LINES) commandRuns.removeAt(0)
+    }
+
+    fun finishRun(exitCode: Int) {
+        val run = commandRuns.lastOrNull { it.exitCode == null } ?: return
+        run.exitCode = exitCode
+        run.endedAt = System.currentTimeMillis()
     }
 
     /**
@@ -198,6 +218,7 @@ internal class TerminalSession(val number: Int) {
         val text = sanitizeCommand(command)
         if (text.isEmpty()) return false
         appendLine("$prompt$text", TermTone.User)
+        beginRun(lines.lastIndex)
         run(text)
         commandRunning = true
         cwdAfterCommand(cwd, "", text)?.let { cwd = it }
@@ -219,6 +240,7 @@ internal class TerminalSession(val number: Int) {
     ) {
         val text = sanitizeCommand(command)
         val target = codeTarget(text)
+        beginRun(lines.lastIndex)
         when {
             opened != null -> appendLine(
                 "Opened ${opened.path} in the editor",
@@ -230,6 +252,7 @@ internal class TerminalSession(val number: Int) {
             )
             else -> appendLine("code needs a file name", TermTone.Warning)
         }
+        finishRun(if (opened != null) 0 else 1)
         history = addToHistory(history, text)
         if (projectSlug.isNotEmpty()) historyStore.write(projectSlug, history)
         historyIndex = history.size
@@ -327,96 +350,6 @@ internal fun tabLabel(number: Int, cwd: String, custom: String? = null): String 
     if (room <= 1) return head
     return "$head · …${leaf.takeLast(room)}"
 }
-/**
- * The row of terminal tabs: 26 dp chips, monospace labels, the active one in white with a
- * 2 dp accent line under it, and a plus chip for another shell. Long press renames or closes.
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-internal fun TerminalTabStrip(
-    sessions: List<TerminalSession>,
-    activeId: Int,
-    onSelect: (Int) -> Unit,
-    onClose: (Int) -> Unit,
-    onAdd: () -> Unit,
-    onRename: (Int) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val cc = LocalCcColors.current
-    var menuFor by remember { mutableStateOf<Int?>(null) }
-    Row(
-        modifier
-            .fillMaxWidth()
-            .background(cc.content)
-            .horizontalScroll(rememberScrollState())
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        sessions.forEach { session ->
-            val active = session.number == activeId
-            val label = session.customName?.takeIf { it.isNotBlank() }
-                ?: "Shell ${session.number}"
-            Box {
-                Box(
-                    Modifier
-                        .height(30.dp)
-                        .clip(RoundedCornerShape(15.dp))
-                        .background(if (active) cc.accent else cc.field)
-                        .combinedClickable(
-                            onClick = { onSelect(session.number) },
-                            onLongClick = { menuFor = session.number },
-                        )
-                        .padding(horizontal = 14.dp)
-                        .semantics { contentDescription = label },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = label,
-                        color = if (active) Color.White else cc.textSoft,
-                        fontSize = 12.sp,
-                        fontFamily = Mono,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                        maxLines = 1,
-                    )
-                }
-                DropdownMenu(
-                    expanded = menuFor == session.number,
-                    onDismissRequest = { menuFor = null },
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Rename", fontFamily = Mono) },
-                        onClick = {
-                            menuFor = null
-                            onRename(session.number)
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Close shell", fontFamily = Mono) },
-                        enabled = sessions.size > 1,
-                        onClick = {
-                            menuFor = null
-                            onClose(session.number)
-                        },
-                    )
-                }
-            }
-        }
-        Box(
-            Modifier
-                .size(30.dp)
-                .clip(CircleShape)
-                .background(cc.field)
-                .clickable { onAdd() }
-                .semantics { contentDescription = "New shell" },
-            contentAlignment = Alignment.Center,
-        ) {
-            com.closecode.ui.CcIcon("plus", cc.textSoft, 16.dp, 2.2f)
-        }
-    }
-
-}
-
 /**
  * The shells, held above every screen that can be replaced.
  *

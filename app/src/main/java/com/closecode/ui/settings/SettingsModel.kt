@@ -270,23 +270,12 @@ fun sections(
                     Row.Toggle("Auto close brackets", null, BoolSetting.AUTO_CLOSE_BRACKETS),
                     Row.Toggle("Bracket guides", null, BoolSetting.BRACKET_GUIDES),
                     Row.Toggle("Rainbow brackets", null, BoolSetting.RAINBOW_BRACKETS),
-                    Row.Toggle("Code folding", null, BoolSetting.CODE_FOLDING),
+                    Row.Toggle("Sora editor", "Fast editor, recommended for large files", BoolSetting.SORA_EDITOR),
                 ),
             ),
             Group(
                 "Typing",
                 listOf(
-                    Row.Toggle(
-                        "Auto-save",
-                        "Always on",
-                        BoolSetting.AUTO_SAVE,
-                        fixedOn = true,
-                    ),
-                    Row.Toggle(
-                        "Auto close brackets",
-                        null,
-                        BoolSetting.AUTO_CLOSE_BRACKETS,
-                    ),
                     Row.Options(
                         "Tab size",
                         null,

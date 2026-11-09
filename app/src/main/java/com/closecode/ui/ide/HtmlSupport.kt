@@ -281,16 +281,18 @@ internal fun htmlTagDiagnostics(source: String): List<Diagnostic> {
     return out
 }
 
-private fun unclosedTagDiagnostic(tag: OpenTag): Diagnostic =
-    Diagnostic(
+private fun unclosedTagDiagnostic(tag: OpenTag): Diagnostic {
+    val start = (tag.offset - tag.name.length - 1).coerceAtLeast(0)
+    return Diagnostic(
         severity = Severity.ERROR,
         message = "Unclosed <${tag.name}>",
-        offset = tag.offset,
+        offset = start,
         length = 1 + tag.name.length,
         line = tag.line,
         column = 1,
         code = DiagnosticCodes.HTML_UNCLOSED_TAG,
     )
+}
 
 /** The language a buffer looks like, for the checks that must not run on code. */
 private fun languageNameFor(source: String): String =

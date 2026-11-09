@@ -64,3 +64,39 @@ class TerminalLogTest {
         assertEquals(TermTone.values().toList().distinct(), TermTone.values().toList())
     }
 }
+
+class TerminalChatGroupTest {
+
+    @Test
+    fun oneCommandBecomesOneUserBubbleAndOneShellCard() {
+        val lines = listOf("~/proj $ ls", "app", "build")
+        val meta = listOf(
+            TermMeta(1000, TermTone.User),
+            TermMeta(1100, TermTone.Output),
+            TermMeta(1200, TermTone.Output),
+        )
+        val runs = listOf(CommandRun(0, 1000, exitCode = 0, endedAt = 1200))
+        val chat = buildTermChat(lines, meta, runs, "Shell 1", commandRunning = false)
+        assertEquals(2, chat.size)
+        assertTrue(chat[0] is TermChat.User)
+        val shell = chat[1] as TermChat.Shell
+        assertEquals(2, shell.lines.size)
+        assertEquals(0, shell.run?.exitCode)
+        assertFalse(shell.running)
+    }
+
+    @Test
+    fun aRunningCommandWithoutOutputStillShowsAStopCard() {
+        val chat = buildTermChat(
+            lines = listOf("~/proj $ sleep 30"),
+            meta = listOf(TermMeta(1000, TermTone.User)),
+            runs = listOf(CommandRun(0, 1000)),
+            shellName = "Shell 1",
+            commandRunning = true,
+        )
+        assertEquals(2, chat.size)
+        val shell = chat[1] as TermChat.Shell
+        assertTrue(shell.running)
+        assertTrue(shell.lines.isEmpty())
+    }
+}

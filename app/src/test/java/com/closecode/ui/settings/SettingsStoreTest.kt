@@ -192,7 +192,7 @@ class SettingsStoreTest {
                 BoolSetting.AUTO_INDENT,
                 BoolSetting.BRACKET_GUIDES,
                 BoolSetting.RAINBOW_BRACKETS,
-                BoolSetting.CODE_FOLDING,
+                BoolSetting.SORA_EDITOR,
                 BoolSetting.AUTO_IMPORT,
                 BoolSetting.PARAMETER_HINTS,
                 BoolSetting.QUICK_FIXES,
@@ -239,7 +239,7 @@ class SettingsStoreTest {
         val count = sections.flatMap { it.groups.flatMap { it.rows } }.size
         println("SECTIONS: ${sections.size}, ROWS: $count")
         assertEquals(11, sections.size)
-        assertEquals(63, rowCount())
+        assertEquals(61, rowCount())
     }
 
     @Test

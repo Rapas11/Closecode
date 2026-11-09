@@ -34,7 +34,7 @@ private fun material(name: String, vararg paths: String): ImageVector =
     }.build()
 
 /** Brand marks that Material does not carry stay as stroked outlines. */
-private fun strokeIcon(name: String, path: String): ImageVector =
+private fun strokeIcon(name: String, path: String, strokeWidth: Float = 2f): ImageVector =
     ImageVector.Builder(
         name = name,
         defaultWidth = 24.dp,
@@ -44,7 +44,7 @@ private fun strokeIcon(name: String, path: String): ImageVector =
     ).addPath(
         pathData = addPathNodes(path),
         stroke = SolidColor(Color.Black),
-        strokeLineWidth = 2f,
+        strokeLineWidth = strokeWidth,
         strokeLineCap = StrokeCap.Round,
         strokeLineJoin = StrokeJoin.Round,
     ).build()
@@ -274,6 +274,24 @@ object CcIcons {
         "M20 4H4C2.89 4 2 4.9 2 6v12c0 1.1.89 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.91-2-2-2z" +
             "M20 18H4V8h16v10zM18 17h-6v-2h6v2zM7.5 17l-1.41-1.41L8.67 13l-2.59-2.59L7.5 9l4 4" +
             "-4 4z",
+    )
+    val Term = strokeIcon("term", "M5 8l5 4-5 4M13 17h6", 1.9f)
+    val Log = strokeIcon("log", "M4 6h16M4 12h16M4 18h10", 1.9f)
+    val Preview = strokeIcon(
+        "preview",
+        "M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM10 9v6l5-3z",
+        1.9f,
+    )
+    val RailSliders = strokeIcon(
+        "sliders",
+        "M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4",
+        1.9f,
+    )
+    val Wrench = strokeIcon(
+        "wrench",
+        "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94" +
+            "l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
+        1.9f,
     )
     val Code = material(
         "code",

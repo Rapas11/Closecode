@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="sora_probe_short">Sora Probe</string>
+    <string name="sora_probe_long">Open Sora Probe</string>
+</resources>

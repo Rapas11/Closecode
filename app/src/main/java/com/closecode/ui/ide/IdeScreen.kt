@@ -16,6 +16,7 @@ import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -78,6 +79,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -350,9 +352,6 @@ internal fun IdeScreen(
         }
     }
     var explorerOpen by remember { mutableStateOf(false) }
-    // True while the code view has been scrolled sideways: the sidebar swipe then belongs to the
-    // code until it has been scrolled back to its left end (see IdeWorkspace.canScrollLeft).
-    val codeCanScrollLeft = remember { mutableStateOf(false) }
     var projectSwitcherOpen by remember { mutableStateOf(false) }
     // How many times the drawer has been opened: the hint line under the tree shows for the
     // first three opens, then never again.
@@ -414,12 +413,11 @@ internal fun IdeScreen(
     // always been.
     var moreOpen by remember { mutableStateOf(false) }
     var uiInspectorOpen by remember { mutableStateOf(false) }
-    // Every one-field tree operation lands here: creating, renaming, moving and copying all ask
-    // for a name first, so there is one place a name is asked for and one dialog that asks.
+    // The header's New file / New folder buttons and the transfer prompts still ask for a name
+    // through the one-field dialog; row long-presses use FileActionCard instead.
     var prompt by remember { mutableStateOf<TreePrompt?>(null) }
-    // The row a delete is waiting to be confirmed on. Nothing goes on the tap that offered it:
-    // there is no undo in this editor, so the second tap is the one that counts.
-    var confirmDelete by remember { mutableStateOf<ProjectFile?>(null) }
+    // The row a long press opened the in-place action card for.
+    var fileCardTarget by remember { mutableStateOf<FileCardTarget?>(null) }
     // The folder a system picker should drop its contents into, and the pick itself. The picker's
     // callback only pairs the two up; the read and the write happen in the effect below, which
     // runs with the composition that is actually on screen.
@@ -1368,31 +1366,44 @@ internal fun IdeScreen(
         return newEntryParent(selected?.path, selected?.kind)
     }
 
-    fun createEntry(isFolder: Boolean, rawName: String, parent: String) {
+    fun createEntry(
+        isFolder: Boolean,
+        rawName: String,
+        parent: String,
+        reportError: Boolean = true,
+    ): String? {
         val leaf = rawName.trim().removePrefix("/")
-        if (leaf.isEmpty()) return
+        if (leaf.isEmpty()) return "Enter a name"
         val relative = if (parent.isEmpty()) leaf else "$parent/$leaf"
-        runCatching {
+        return runCatching {
             if (isFolder) repository.createFolder(slug, relative)
             else repository.createFile(slug, relative, "")
-        }.onSuccess {
-            // Open every folder between the root and the new entry. The drawer hides a subtree the
-            // moment its folder is collapsed, so without this the row is computed and never drawn
-            // — which is what "the file did not appear" always was.
-            ancestorFoldersOf(relative).forEach { folder ->
-                collapsedFolders = collapsedFolders - folder
-            }
-            // Built rather than rediscovered: the record lands in the same frame as the write, and
-            // there is no second tree walk left to race the refresh below.
-            val created = repository.entryFor(slug, relative, isFolder)
-            refreshTree()
-            if (isFolder) {
-                selectedPath = created.path
-            } else {
-                openFile(created)
-            }
-            toast = "Created $leaf"
-        }.onFailure { toast = it.message ?: "Could not create $leaf" }
+        }.fold(
+            onSuccess = {
+                // Open every folder between the root and the new entry. The drawer hides a subtree the
+                // moment its folder is collapsed, so without this the row is computed and never drawn
+                // — which is what "the file did not appear" always was.
+                ancestorFoldersOf(relative).forEach { folder ->
+                    collapsedFolders = collapsedFolders - folder
+                }
+                // Built rather than rediscovered: the record lands in the same frame as the write, and
+                // there is no second tree walk left to race the refresh below.
+                val created = repository.entryFor(slug, relative, isFolder)
+                refreshTree()
+                if (isFolder) {
+                    selectedPath = created.path
+                } else {
+                    openFile(created)
+                }
+                toast = "Created $leaf"
+                null
+            },
+            onFailure = {
+                val message = it.message ?: "Could not create $leaf"
+                if (reportError) toast = message
+                message
+            },
+        )
     }
 
     /**
@@ -1415,15 +1426,26 @@ internal fun IdeScreen(
     // Renames may land on a name another folder already uses. Buffers are keyed by path, so
     // the two files stay two buffers and nothing is refused: tabs sharing a name show their
     // parent folder beside it instead.
-    fun renameEntry(target: ProjectFile, newName: String) {
-        runCatching { repository.renamePath(slug, target.path, newName) }
-            .onSuccess { landed ->
-                val isFolder = target.kind == FileKind.Folder
-                retargetPath(target, repository.entryFor(slug, landed, isFolder))
-                refreshTree()
-                toast = "Renamed to $newName"
-            }
-            .onFailure { toast = it.message ?: "Could not rename ${target.name}" }
+    fun renameEntry(
+        target: ProjectFile,
+        newName: String,
+        reportError: Boolean = true,
+    ): String? {
+        return runCatching { repository.renamePath(slug, target.path, newName) }
+            .fold(
+                onSuccess = { landed ->
+                    val isFolder = target.kind == FileKind.Folder
+                    retargetPath(target, repository.entryFor(slug, landed, isFolder))
+                    refreshTree()
+                    toast = "Renamed to $newName"
+                    null
+                },
+                onFailure = {
+                    val message = it.message ?: "Could not rename ${target.name}"
+                    if (reportError) toast = message
+                    message
+                },
+            )
     }
 
     fun transferEntry(target: ProjectFile, destination: String, copy: Boolean) {
@@ -1442,28 +1464,35 @@ internal fun IdeScreen(
         }
     }
 
-    fun deleteEntry(target: ProjectFile) {
+    fun deleteEntry(target: ProjectFile, reportError: Boolean = true): String? {
         val prefix = "${target.path}/"
-        runCatching { repository.deletePath(slug, target.path) }
-            .onSuccess {
-                // A deleted file's tab, buffer and dirty flag go with it. Left behind, the strip
-                // keeps drawing a file that is no longer on disk and the next save recreates it.
-                fun inside(file: ProjectFile) = file.path == target.path || file.path.startsWith(prefix)
-                val gone = tabs.filter(::inside)
-                gone.forEach { file ->
-                    liveBuffers.remove(file.path)
-                    diskContents.remove(file.path)
-                    dirtyTabs.remove(file.path)
-                }
-                tabs = tabs.filterNot(::inside)
-                if (gone.any { it.path == active }) active = tabs.lastOrNull()?.path.orEmpty()
-                if (selectedPath?.let { it == target.path || it.startsWith(prefix) } == true) {
-                    selectedPath = tabs.firstOrNull { it.path == active }?.path
-                }
-                refreshTree()
-                toast = "Deleted ${target.name}"
-            }
-            .onFailure { toast = it.message ?: "Could not delete ${target.name}" }
+        return runCatching { repository.deletePath(slug, target.path) }
+            .fold(
+                onSuccess = {
+                    // A deleted file's tab, buffer and dirty flag go with it. Left behind, the strip
+                    // keeps drawing a file that is no longer on disk and the next save recreates it.
+                    fun inside(file: ProjectFile) = file.path == target.path || file.path.startsWith(prefix)
+                    val gone = tabs.filter(::inside)
+                    gone.forEach { file ->
+                        liveBuffers.remove(file.path)
+                        diskContents.remove(file.path)
+                        dirtyTabs.remove(file.path)
+                    }
+                    tabs = tabs.filterNot(::inside)
+                    if (gone.any { it.path == active }) active = tabs.lastOrNull()?.path.orEmpty()
+                    if (selectedPath?.let { it == target.path || it.startsWith(prefix) } == true) {
+                        selectedPath = tabs.firstOrNull { it.path == active }?.path
+                    }
+                    refreshTree()
+                    toast = "Deleted ${target.name}"
+                    null
+                },
+                onFailure = {
+                    val message = it.message ?: "Could not delete ${target.name}"
+                    if (reportError) toast = message
+                    message
+                },
+            )
     }
 
     /**
@@ -1557,43 +1586,9 @@ internal fun IdeScreen(
             .onFailure { toast = it.message ?: "Could not duplicate ${target.name}" }
     }
 
-    /** Every long-press action, in one place: the row is selected first, so creation lands in it. */
-    fun onTreeAction(action: TreeAction, file: ProjectFile) {
-        when (action) {
-            TreeAction.NEW_FILE -> {
-                selectedPath = if (file.kind == FileKind.Folder) file.path else file.path.substringBeforeLast('/', "")
-                prompt = TreePrompt.New(
-                    isFolder = false,
-                    parent = newEntryParent(file.path, file.kind),
-                )
-            }
-
-            TreeAction.NEW_FOLDER -> {
-                selectedPath = if (file.kind == FileKind.Folder) file.path else file.path.substringBeforeLast('/', "")
-                prompt = TreePrompt.New(
-                    isFolder = true,
-                    parent = newEntryParent(file.path, file.kind),
-                )
-            }
-
-            TreeAction.IMPORT -> {
-                selectedPath = file.path
-                importFolder = file.path
-                importLauncher.launch(ImportMimeTypes)
-            }
-
-            TreeAction.RENAME -> prompt = TreePrompt.Rename(file)
-            TreeAction.DUPLICATE -> duplicateEntry(file)
-            TreeAction.COPY_PATH -> {
-                treeClipboard.setText(androidx.compose.ui.text.AnnotatedString(file.path))
-                toast = "Path copied"
-            }
-            TreeAction.MOVE -> prompt = TreePrompt.Transfer(file, copy = false)
-            TreeAction.COPY -> prompt = TreePrompt.Transfer(file, copy = true)
-            TreeAction.SHARE -> shareEntry(file)
-            TreeAction.DELETE -> confirmDelete = file
-        }
-    }
+    /** The live tree record for a card target; the card itself only carries the path. */
+    fun cardTargetFile(target: FileCardTarget): ProjectFile? =
+        diskTree.firstOrNull { it.path == target.path }
 
     // Spec 6.9: the status bar counts the whole project. Debounced harder than the per-file pass
     // and capped by file count, because this re-runs on every keystroke in any file. The key is the
@@ -1935,7 +1930,7 @@ internal fun IdeScreen(
         fun backState() = "panel=$activePanel ime=$imeOpen popups=" + listOfNotNull(
             "addBlock".takeIf { addBlockOpen },
             "prompt".takeIf { prompt != null },
-            "confirmDelete".takeIf { confirmDelete != null },
+            "fileCard".takeIf { fileCardTarget != null },
             "clone".takeIf { cloneOpen },
             "runSheet".takeIf { runSheetOpen },
             "runPage".takeIf { runFinishedOpen },
@@ -1979,9 +1974,9 @@ internal fun IdeScreen(
                 BackLog.press("main", "${backState()} branch=prompt")
                 prompt = null
             }
-            confirmDelete != null -> {
-                BackLog.press("main", "${backState()} branch=confirmDelete")
-                confirmDelete = null
+            fileCardTarget != null -> {
+                BackLog.press("main", "${backState()} branch=fileCard")
+                fileCardTarget = null
             }
             cloneOpen -> {
                 BackLog.press("main", "${backState()} branch=clone")
@@ -2235,7 +2230,6 @@ internal fun IdeScreen(
             if (open) dismissKeyboard()
         },
         keyboardVisible = imeOpen,
-        canScrollLeft = { codeCanScrollLeft.value },
         sidebar = {
             Row(Modifier.fillMaxHeight()) {
                 IdeRail(
@@ -2379,7 +2373,14 @@ internal fun IdeScreen(
                                             onCommitDiff = { id, path -> commitDiff = id to path },
                                             onHistory = { historyOpen = true },
                                             onCommitOpen = { commitOpen = it },
-                    onAction = { action, file -> onTreeAction(action, file) },
+                    onFileLongPress = { file, anchor ->
+                        fileCardTarget = FileCardTarget(
+                            path = file.path,
+                            name = file.name,
+                            isFolder = file.kind == FileKind.Folder,
+                            anchor = anchor,
+                        )
+                    },
                     onSelect = { file ->
                         // The row is the working point for the next creation whether it
                         // is a folder or a file, so it is recorded either way; only a
@@ -2818,7 +2819,6 @@ internal fun IdeScreen(
                                         canUndo = undo
                                         canRedo = redo
                                     },
-                                    codeScrollLeft = codeCanScrollLeft,
                                     onSuggestionsOpen = { suggestionsOpen = it },
                                     showToolRow = showToolRow(imeOpen, suggestionsOpen),
                                     imeOpen = imeOpen,
@@ -3331,18 +3331,6 @@ internal fun IdeScreen(
                 onDismiss = { prompt = null },
             )
 
-            is TreePrompt.Rename -> IdeNameDialog(
-                title = "Rename",
-                hint = current.target.name,
-                initial = current.target.name,
-                confirmLabel = "Rename",
-                onCreate = {
-                    prompt = null
-                    renameEntry(current.target, it)
-                },
-                onDismiss = { prompt = null },
-            )
-
             is TreePrompt.Transfer -> IdeNameDialog(
                 title = if (current.copy) "Copy to" else "Move to",
                 hint = "app/src/main/java/Main.kt",
@@ -3356,20 +3344,38 @@ internal fun IdeScreen(
             )
         }
 
-        confirmDelete?.let { target ->
-            IdeConfirmDialog(
-                title = "Delete ${target.name}?",
-                message = if (target.kind == FileKind.Folder) {
-                    "Everything inside ${target.path} goes with it. This cannot be undone."
-                } else {
-                    "${target.path} is removed. This cannot be undone."
+        fileCardTarget?.let { target ->
+            FileActionCard(
+                target = target,
+                onCreateFile = { t, name ->
+                    createEntry(
+                        isFolder = false,
+                        rawName = name,
+                        parent = newEntryParent(
+                            t.path,
+                            if (t.isFolder) FileKind.Folder else FileKind.Unknown,
+                        ),
+                        reportError = false,
+                    )
                 },
-                confirmLabel = "Delete",
-                onConfirm = {
-                    confirmDelete = null
-                    deleteEntry(target)
+                onCreateFolder = { t, name ->
+                    createEntry(
+                        isFolder = true,
+                        rawName = name,
+                        parent = newEntryParent(
+                            t.path,
+                            if (t.isFolder) FileKind.Folder else FileKind.Unknown,
+                        ),
+                        reportError = false,
+                    )
                 },
-                onDismiss = { confirmDelete = null },
+                onRename = { t, name ->
+                    cardTargetFile(t)?.let { renameEntry(it, name, reportError = false) }
+                        ?: "This item is no longer in the project"
+                },
+                onDuplicate = { t -> cardTargetFile(t)?.let { duplicateEntry(it) } },
+                onDelete = { t -> cardTargetFile(t)?.let { deleteEntry(it, reportError = false) } },
+                onDismiss = { fileCardTarget = null },
             )
         }
 
@@ -3985,13 +3991,10 @@ internal fun compactDrawerRows(rows: List<ProjectFile>): List<DrawerRow> {
 }
 
 /**
- * The one field a tree operation asks for before it happens. Creating starts blank, renaming
- * starts on the leaf and moving starts on the whole path — the same dialog three ways, because
- * they are three ways of typing a name.
+ * The one field the header's create buttons and the transfer action ask for before they happen.
  */
 private sealed interface TreePrompt {
     data class New(val isFolder: Boolean, val parent: String) : TreePrompt
-    data class Rename(val target: ProjectFile) : TreePrompt
     data class Transfer(val target: ProjectFile, val copy: Boolean) : TreePrompt
 }
 
@@ -4124,18 +4127,6 @@ private fun IdePathBar(
                 .padding(start = 18.dp, end = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (filePath.isNotBlank()) {
-                Box(
-                    Modifier
-                        .size(28.dp)
-                        .clip(RoundedCornerShape(9.dp))
-                        .background(cc.accent.copy(alpha = 0.16f)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    com.closecode.ui.CcIcon("code", cc.accent, 16.dp, 1.9f)
-                }
-                Spacer(Modifier.width(10.dp))
-            }
             Text(
                 text = fileName,
                 color = cc.text,
@@ -4252,9 +4243,9 @@ private fun IdeExplorer(
     // The hint line shows for the drawer's first three opens, then never again.
     hintVisible: Boolean,
     onSelect: (ProjectFile) -> Unit,
-    // The long-press menu. It is carried up because every one of its actions needs the repository,
-    // the open tabs or a dialog, and the drawer has none of those.
-    onAction: (TreeAction, ProjectFile) -> Unit,
+    // A long press hands the row and the pressed window point to the screen, which owns the
+    // popup card and the repository actions it runs.
+    onFileLongPress: (ProjectFile, IntOffset) -> Unit,
     // Carried through to the GitHub tab: it only says *when* a clone should start. The route that
     // runs one is full-screen, so it lives at screen level, and only the screen has room for it.
     onCloneRequest: () -> Unit,
@@ -4500,6 +4491,7 @@ private fun IdeExplorer(
                     val closed = open && file.path in collapsed
                     TreeRow(
                         label = row.label,
+                        path = file.path,
                         depth = file.depth,
                         bold = false,
                         icon = when {
@@ -4531,8 +4523,7 @@ private fun IdeExplorer(
                         gitStatus = gitLetters[file.path],
                         dirty = file.path in dirtyPaths,
                         onClick = { onSelect(file) },
-                        actions = actionsForTree(file),
-                        onAction = { action -> onAction(action, file) },
+                        onLongPress = { anchor -> onFileLongPress(file, anchor) },
                     )
                 }
                 if (hintVisible && rows.isNotEmpty()) {
@@ -4647,22 +4638,10 @@ internal fun actionsForTree(file: ProjectFile): List<TreeAction> =    if (file.k
         )
     }
 
-/** Screen 11 icon set: plus, folder, edit, copy, trash. */
-private fun TreeAction.menuIcon(): String = when (this) {
-    TreeAction.NEW_FILE -> "plus"
-    TreeAction.NEW_FOLDER -> "folder"
-    TreeAction.RENAME -> "edit"
-    TreeAction.DUPLICATE -> "copy"
-    TreeAction.DELETE -> "trash"
-    TreeAction.COPY_PATH, TreeAction.MOVE, TreeAction.COPY -> "copy"
-    TreeAction.IMPORT -> "file"
-    TreeAction.SHARE -> "share"
-}
-
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun TreeRow(
     label: String,
+    path: String,
     depth: Int,
     bold: Boolean,
     icon: String,
@@ -4674,19 +4653,9 @@ private fun TreeRow(
     gitStatus: com.closecode.ui.components.StatusKind? = null,
     dirty: Boolean = false,
     onClick: () -> Unit,
-    actions: List<TreeAction> = emptyList(),
-    onAction: (TreeAction) -> Unit = {},
+    onLongPress: ((IntOffset) -> Unit)? = null,
 ) {
-    val c = LocalPageColors.current
     val cc = com.closecode.ui.theme.LocalCcColors.current
-    var menuOpen by remember { mutableStateOf(false) }
-    // Screen 11: the menu is anchored under the row it belongs to. Measured against the area
-    // under the status bar, which is where CcMenuOverlay starts drawing its dim layer.
-    val density = LocalDensity.current
-    var anchorTop by remember { mutableStateOf(0.dp) }
-    // Status bar height is a composition read; the row's position is not, so measure it here.
-    val statusTop = androidx.compose.foundation.layout.WindowInsets.statusBars
-        .asPaddingValues().calculateTopPadding()
     // Screen 10: 6 dp + 14 dp per level, no guide lines, 38 dp rows, 11 dp radius.
     val indentStep = 14.dp
     val chevRotation by androidx.compose.animation.core.animateFloatAsState(
@@ -4694,6 +4663,9 @@ private fun TreeRow(
         animationSpec = tween(durationMillis = 120),
         label = "chevron",
     )
+    val currentClick by rememberUpdatedState(onClick)
+    val currentLongPress by rememberUpdatedState(onLongPress)
+    var rowPos by remember { mutableStateOf(Offset.Zero) }
     val (gitColor, gitLetter) = when (gitStatus) {
         com.closecode.ui.components.StatusKind.Added -> cc.green to "A"
         com.closecode.ui.components.StatusKind.Modified -> cc.amber to "M"
@@ -4702,80 +4674,60 @@ private fun TreeRow(
         null -> Color.Unspecified to null
     }
 
-    Box {
-        Row(
-            Modifier
-                .padding(horizontal = 8.dp, vertical = 1.dp)
-                .fillMaxWidth()
-                .height(38.dp)
-                .clip(RoundedCornerShape(11.dp))
-                .background(if (active) cc.selectedFile else Color.Transparent)
-                .onGloballyPositioned { coords ->
-                    anchorTop = with(density) { coords.positionInWindow().y.toDp() } - statusTop
-                }
-                .combinedClickable(onClick = onClick, onLongClick = { menuOpen = true })
-                .padding(start = 6.dp + indentStep * depth, end = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(Modifier.width(13.dp).height(13.dp), contentAlignment = Alignment.Center) {
-                if (chevron != null) {
-                    com.closecode.ui.CcIcon(
-                        chevron,
-                        if (chevronTint == Color.Unspecified) cc.faint else chevronTint,
-                        13.dp,
-                        2.2f,
-                        Modifier.rotate(chevRotation),
-                    )
-                }
+    Row(
+        Modifier
+            .padding(horizontal = 8.dp, vertical = 1.dp)
+            .fillMaxWidth()
+            .height(38.dp)
+            .clip(RoundedCornerShape(11.dp))
+            .background(if (active) cc.selectedFile else Color.Transparent)
+            .onGloballyPositioned { rowPos = it.positionInWindow() }
+            .pointerInput(path) {
+                detectTapGestures(
+                    onTap = { currentClick() },
+                    onLongPress = { press ->
+                        currentLongPress?.invoke(
+                            IntOffset(
+                                (rowPos.x + press.x).roundToInt(),
+                                (rowPos.y + press.y).roundToInt(),
+                            ),
+                        )
+                    },
+                )
             }
-            com.closecode.ui.CcIcon(icon, iconTint, 17.dp, 1.7f, Modifier.padding(start = 8.dp, end = 8.dp))
-            Text(
-                text = label,
-                color = cc.text2,
-                fontSize = 13.5.sp,
-                fontFamily = Sans,
-                fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            if (gitLetter != null) {
-                Text(
-                    text = gitLetter,
-                    color = gitColor,
-                    fontSize = 11.sp,
-                    fontFamily = Mono,
-                    fontWeight = FontWeight.Bold,
+            .padding(start = 6.dp + indentStep * depth, end = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.width(13.dp).height(13.dp), contentAlignment = Alignment.Center) {
+            if (chevron != null) {
+                com.closecode.ui.CcIcon(
+                    chevron,
+                    if (chevronTint == Color.Unspecified) cc.faint else chevronTint,
+                    13.dp,
+                    2.2f,
+                    Modifier.rotate(chevRotation),
                 )
             }
         }
-        if (menuOpen) {
-            val screenH = LocalConfiguration.current.screenHeightDp.dp
-            val menuH = (actions.size * 42 + 12 + if (actions.contains(TreeAction.DELETE)) 9 else 0).dp
-            val top = if (anchorTop + 38.dp + menuH + 16.dp > screenH) {
-                (anchorTop - menuH).coerceAtLeast(8.dp)
-            } else {
-                anchorTop + 38.dp
-            }
-            com.closecode.ui.components.CcMenuOverlay(
-                top = top,
-                onDismiss = { menuOpen = false },
-            ) {
-                actions.forEach { action ->
-                    if (action == TreeAction.DELETE) {
-                        com.closecode.ui.components.CcMenuDivider()
-                    }
-                    com.closecode.ui.components.CcMenuItem(
-                        icon = action.menuIcon(),
-                        label = action.label,
-                        destructive = action == TreeAction.DELETE,
-                        onClick = {
-                            menuOpen = false
-                            onAction(action)
-                        },
-                    )
-                }
-            }
+        com.closecode.ui.CcIcon(icon, iconTint, 17.dp, 1.7f, Modifier.padding(start = 8.dp, end = 8.dp))
+        Text(
+            text = label,
+            color = cc.text2,
+            fontSize = 13.5.sp,
+            fontFamily = Sans,
+            fontWeight = if (bold) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (gitLetter != null) {
+            Text(
+                text = gitLetter,
+                color = gitColor,
+                fontSize = 11.sp,
+                fontFamily = Mono,
+                fontWeight = FontWeight.Bold,
+            )
         }
     }
 }
@@ -4842,10 +4794,6 @@ formatRequest: Int = 0,
     // Ctrl S from a hardware keyboard, which the palette advertises as the save shortcut.
     onSaveRequest: () -> Unit = {},
     onHistoryState: (Boolean, Boolean) -> Unit = { _, _ -> },
-    // Fed from the code's sideways scroll: true while the code can still move further left.
-    // The sidebar swipe reads it so a swipe over sideways code scrolls the code instead of
-    // opening the panel.
-    codeScrollLeft: MutableState<Boolean> = mutableStateOf(false),
     // The file's path inside the project, for the version-control margin marks. The tab name is
     // not enough: two folders can hold the same name, and only the path addresses the git object.
     relativePath: String? = null,
@@ -4859,6 +4807,49 @@ formatRequest: Int = 0,
     onPlaceChange: (Map<String, Int>, Map<String, Pair<Int, Int>>) -> Unit = { _, _ -> },
     modifier: Modifier = Modifier,
 ) {
+    if (LocalSettings.current.soraEditor) {
+        SoraIdeEditorArea(
+            tabs = tabs,
+            active = active,
+            language = language,
+            contentFor = contentFor,
+            onSelectTab = onSelectTab,
+            onCloseTab = onCloseTab,
+            onCloseOthers = onCloseOthers,
+            onCloseAll = onCloseAll,
+            onSuggestionsOpen = onSuggestionsOpen,
+            showToolRow = showToolRow,
+            imeOpen = imeOpen,
+            editorScale = editorScale,
+            onBufferChange = onBufferChange,
+            onToast = onToast,
+            dirtyOf = dirtyOf,
+            problemSheetLine = problemSheetLine,
+            activeKind = activeKind,
+            formatRequest = formatRequest,
+            formatSelectionRequest = formatSelectionRequest,
+            problemSheetScope = problemSheetScope,
+            projectDiagnostics = projectDiagnostics,
+            onOpenProjectFile = onOpenProjectFile,
+            onAskDiagnostic = onAskDiagnostic,
+            onSelectionFormat = onSelectionFormat,
+            undoRequest = undoRequest,
+            redoRequest = redoRequest,
+            sourceRevision = sourceRevision,
+            caretRequest = caretRequest,
+            onCaretChange = onCaretChange,
+            projectSymbols = projectSymbols,
+            onSaveRequest = onSaveRequest,
+            onHistoryState = onHistoryState,
+            relativePath = relativePath,
+            projectRoot = projectRoot,
+            initialCaret = initialCaret,
+            initialScroll = initialScroll,
+            onPlaceChange = onPlaceChange,
+            modifier = modifier,
+        )
+        return
+    }
     val c = LocalPageColors.current
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val settings = LocalSettings.current
@@ -5115,11 +5106,6 @@ formatRequest: Int = 0,
     // drifted out of step with the code and error line numbers pointed at the wrong line.
     val codeScroll = rememberScrollState()
     val codeHScroll = rememberScrollState()
-    // The workspace's swipe reads this: sideways code eats a right swipe until it has been
-    // scrolled back to its left end (the 40 dp edge still opens the panel either way).
-    LaunchedEffect(codeHScroll) {
-        snapshotFlow { codeHScroll.value > 0 }.collect { codeScrollLeft.value = it }
-    }
     val scrollMotion = motion<Float>(200)
     // A scroll nobody asked for — the field's own bring-into-view is the usual suspect — is
     // still caught here, with the timestamp that says which finished job it followed.
@@ -6236,34 +6222,27 @@ val applySuggestion: (Int) -> Unit = { index ->
                         tab.name
                     }
                     Box {
-                        Column(
+                        Box(
                             Modifier
                                 .height(TAB_HEIGHT)
-                                .clip(RoundedCornerShape(topStart = 11.dp, topEnd = 11.dp))
-                                .background(if (isActive) c.mock.card else Color.Transparent)
+                                .clip(RoundedCornerShape(15.dp))
+                                .background(if (isActive) c.mock.accent else c.mock.field)
                                 .combinedClickable(
                                     onClick = { selectTabKeepingPlace(tab.path) },
                                     onLongClick = { tabMenuFor = tab.path },
                                 )
-                                .padding(horizontal = 13.dp),
+                                .padding(horizontal = 15.dp),
+                            contentAlignment = Alignment.Center,
                         ) {
-                            Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                Text(
-                                    text = ellipsizeMiddle(tabLabel),
-                                    color = if (isActive) c.mock.text else c.mock.textSoft,
-                                    fontSize = 12.5.sp,
-                                    fontFamily = Sans,
-                                    fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.widthIn(max = 150.dp),
-                                )
-                            }
-                            Box(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .height(if (isActive) TAB_UNDERLINE_THICKNESS else 0.dp)
-                                    .background(if (isActive) c.mock.accent else Color.Transparent),
+                            Text(
+                                text = ellipsizeMiddle(tabLabel),
+                                color = if (isActive) Color.White else c.mock.textSoft,
+                                fontSize = 12.5.sp,
+                                fontFamily = Sans,
+                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.widthIn(max = 150.dp),
                             )
                         }
                         DropdownMenu(
@@ -7403,52 +7382,6 @@ private val ERROR_TICK_HEIGHT = 3.dp
  * long line without scrolling sideways, not so far that a phone screen holds three characters.
  */
 internal val EditorScaleRange = 0.6f..2.4f
-
-/** How far in from the left edge a pull open may start. A region of the screen, not a tolerance. */
-internal val DrawerEdgeBand = 28.dp
-
-/**
- * True when a drag started inside the left-edge band and travelled far enough right to be a pull
- * open. Both halves matter: a drag that starts clear of the edge is the editor's own scroll, and a
- * nudge that never leaves the band is a mis-tap on the side of the phone.
- */
-internal fun shouldOpenFromSwipe(startXPx: Float, edgePx: Float, dxPx: Float, slopPx: Float): Boolean =
-    startXPx <= edgePx && dxPx >= slopPx
-
-/**
- * Pulling right from the left edge opens the drawer, the way a phone's own panels do.
- *
- * Armed only while [enabled], so the same drag over an open drawer is left to the scrim that
- * closes it. Nothing is consumed until the pull is recognised — a tap near the edge is still just
- * a tap — and a second finger is the pinch's business, not the drawer's, so a two-finger gesture
- * resets the start point rather than opening anything.
- */
-private fun Modifier.edgeSwipeToOpenDrawer(
-    enabled: Boolean,
-    edgePx: Float,
-    slopPx: Float,
-    onOpen: () -> Unit,
-): Modifier = pointerInput(enabled) {
-    if (!enabled) return@pointerInput
-    awaitEachGesture {
-        var startX = Float.NaN
-        var opened = false
-        do {
-            val event = awaitPointerEvent(PointerEventPass.Initial)
-            val change = event.changes.filter { it.pressed }.singleOrNull()
-            if (change == null) {
-                startX = Float.NaN
-                continue
-            }
-            if (startX.isNaN()) startX = change.position.x
-            if (!opened && shouldOpenFromSwipe(startX, edgePx, change.position.x - startX, slopPx)) {
-                opened = true
-                onOpen()
-                event.changes.forEach { it.consume() }
-            }
-        } while (event.changes.any { it.pressed })
-    }
-}
 
 /**
  * The font a pinch leaves the editor at — the size the settings picked, multiplied by however far

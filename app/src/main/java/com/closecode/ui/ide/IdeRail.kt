@@ -63,32 +63,49 @@ internal val IdeRailTools = listOf(
     IdeRailTool("Files", "Files", CcIcons.FolderOpen, Color(0xFF2F6FE0)),
     IdeRailTool("Search", "Search", CcIcons.Search, Color(0xFF2B3036)),
     IdeRailTool("GitHub", "GitHub", CcIcons.Github, Color(0xFF2F6FE0)),
-    IdeRailTool("Terminal", "Terminal", CcIcons.Terminal, Color(0xFF2F6FE0)),
-    IdeRailTool("Logcat", "Logcat", CcIcons.Logs, Color(0xFF1F9D6B)),
+    IdeRailTool("Terminal", "Terminal", CcIcons.Term, Color(0xFF60A5FA)),
+    IdeRailTool("Logcat", "Logcat", CcIcons.Log, Color(0xFF34D399)),
     IdeRailTool("Problems", "Problems", CcIcons.Warning, Color(0xFFD97706)),
-    IdeRailTool("Preview", "Preview", CcIcons.Image, Color(0xFF7B5CE0)),
+    IdeRailTool("Preview", "Preview", CcIcons.Preview, Color(0xFFA78BFA)),
     IdeRailTool("OpenCode", "AI", CcIcons.Sparkle, Color(0xFFDB4C9B)),
 )
 
-// v7: the full 300 dp sidebar (rail 66 + panel 234) rides behind the editor card, and the
-// 40 dp left edge always opens it even while the code is scrolled sideways.
+// v7: the full 300 dp sidebar (rail 66 + panel 234) rides behind the editor card, and a
+// narrow left edge strip opens it without taking the rest of the screen's scrolls.
 private val SidebarWidth = 300.dp
-private val EdgeZone = 40.dp
+
+/** How far in from the left edge a pull open may start. A region of the screen, not a tolerance. */
+internal val DrawerEdgeBand = 20.dp
+
+/**
+ * Whether a gesture belongs to the sidebar. Closed, only a rightward, mostly horizontal drag that
+ * starts inside [DrawerEdgeBand] may open it; every other drag stays with the editor or terminal.
+ * Once open, a horizontal drag anywhere on the card may still close it.
+ */
+internal fun shouldClaimSidebarSwipe(
+    startXPx: Float,
+    edgePx: Float,
+    accXPx: Float,
+    accYPx: Float,
+    slopPx: Float,
+    sidebarOpen: Boolean,
+): Boolean {
+    val pastSlop = abs(accXPx) >= slopPx
+    val mostlyHorizontal = abs(accXPx) > 2f * abs(accYPx)
+    val allowed = sidebarOpen || startXPx <= edgePx
+    val opening = sidebarOpen || accXPx > 0f
+    return pastSlop && mostlyHorizontal && allowed && opening
+}
 
 /**
  * The editor card sits over the rail + panel. The sidebar is one surface: it never opens on its
- * own. It opens with a right swipe from anywhere on the editor — mostly horizontal, and while the
- * code can still scroll further left the swipe belongs to the code — while the first 40 dp at the
- * left edge always opens it.
+ * own, and it only opens from a right swipe that begins in [DrawerEdgeBand].
  */
 @Composable
 internal fun IdeWorkspace(
     sidebarOpen: Boolean,
     onSidebarOpenChange: (Boolean) -> Unit,
     keyboardVisible: Boolean,
-    // True while the code view is scrolled sideways: the swipe then scrolls the code back first
-    // and only the 40 dp edge opens the sidebar. False on screens without sideways scrolling.
-    canScrollLeft: () -> Boolean = { false },
     sidebar: @Composable () -> Unit,
     overlays: @Composable BoxScope.() -> Unit = {},
     content: @Composable BoxScope.() -> Unit,
@@ -96,7 +113,7 @@ internal fun IdeWorkspace(
     val c = LocalPageColors.current
     val density = androidx.compose.ui.platform.LocalDensity.current
     val widthPx = with(density) { SidebarWidth.toPx() }
-    val edgePx = with(density) { EdgeZone.toPx() }
+    val edgePx = with(density) { DrawerEdgeBand.toPx() }
     val touchSlopPx = androidx.compose.ui.platform.LocalViewConfiguration.current.touchSlop
     val offset = remember { Animatable(0f) }
     val scope = rememberCoroutineScope()
@@ -126,14 +143,14 @@ internal fun IdeWorkspace(
                     shadowElevation = 24f * progress
                 }
                 .background(c.mock.page)
-                .pointerInput(sidebarOpen, keyboardVisible, canScrollLeft) {
+                .pointerInput(sidebarOpen, keyboardVisible) {
                     if (keyboardVisible) return@pointerInput
                     awaitEachGesture {
                         // The Initial pass sees every touch before the editor does, but only
                         // takes the ones that are the sidebar swipe; everything else falls
                         // through to the editor underneath.
                         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                        val inEdge = down.position.x <= edgePx
+                        val startX = down.position.x
                         val tracker = VelocityTracker()
                         val startOffset = offset.value
                         var dragValue = startOffset
@@ -151,11 +168,7 @@ internal fun IdeWorkspace(
                             if (!claimed) {
                                 // Correction 3: the swipe is only ours after a 10 dp touch slop,
                                 // and then only while it is mostly horizontal.
-                                val pastSlop = abs(accX) >= touchSlopPx
-                                val mostlyHorizontal = abs(accX) > 2f * abs(accY)
-                                val allowed = sidebarOpen || inEdge || !canScrollLeft()
-                                val opening = sidebarOpen || accX > 0f
-                                if (pastSlop && mostlyHorizontal && allowed && opening) {
+                                if (shouldClaimSidebarSwipe(startX, edgePx, accX, accY, touchSlopPx, sidebarOpen)) {
                                     claimed = true
                                     change.consume()
                                     tracker.addPosition(change.uptimeMillis, change.position)
@@ -244,9 +257,10 @@ internal fun IdeRail(
                 "Files" -> c.mock.yellow
                 "Search" -> c.mock.blue
                 "GitHub" -> c.mock.text2
-                "Terminal" -> c.mock.blue
-                "Logcat" -> c.mock.green
+                "Terminal" -> Color(0xFF60A5FA)
+                "Logcat" -> Color(0xFF34D399)
                 "Problems" -> c.mock.orange
+                "Preview" -> Color(0xFFA78BFA)
                 "OpenCode" -> c.mock.pink
                 else -> tool.tint
             }
@@ -262,19 +276,19 @@ internal fun IdeRail(
         Spacer(Modifier.weight(1f))
         RailItem(
             label = "Project settings",
-            icon = CcIcons.Layers,
+            icon = CcIcons.RailSliders,
             selected = false,
             badge = 0,
-            tint = c.mock.textSoft,
+            tint = Color(0xFFC7CBD9),
             onClick = onProjectSettings,
         )
         Spacer(Modifier.size(11.dp))
         RailItem(
             label = "Developer",
-            icon = CcIcons.Bug,
+            icon = CcIcons.Wrench,
             selected = false,
             badge = 0,
-            tint = c.mock.textSoft,
+            tint = Color(0xFF2DD4BF),
             onClick = onDeveloper,
         )
         Spacer(Modifier.size(11.dp))
