@@ -23,6 +23,9 @@ object NativeProject {
 
     fun isNativeBit(what: String): Boolean = what in nativeKeys
 
+    /** `ndkVersion` only matters when the project has real native input. */
+    fun isOptionalConfig(what: String): Boolean = what == "ndkVersion"
+
     fun detect(projectDir: File, facts: BuildFacts = GradleReader.read(projectDir)): NativeUsage {
         val reasons = mutableListOf<NativeReason>()
         var requested: String? = null
@@ -34,7 +37,6 @@ object NativeProject {
                     reasons += NativeReason("externalNativeBuild", Place(file, index + 1))
                 }
                 if (Regex("\\bndkVersion\\b").containsMatchIn(code)) {
-                    reasons += NativeReason("ndkVersion", Place(file, index + 1))
                     requested = requested ?: Regex("ndkVersion\\s*=\\s*\"([^\"]+)\"")
                         .find(code)
                         ?.groupValues
@@ -46,30 +48,35 @@ object NativeProject {
                 }
             }
         }
-        val sourceRoot = File(projectDir, "app/src/main")
+        val sourceRoot = File(projectDir, "app/src")
         if (sourceRoot.isDirectory) {
             sourceRoot.walkTopDown()
                 .filter { it.isFile }
                 .forEach { file ->
-                    when (file.name) {
-                        "CMakeLists.txt" -> reasons += NativeReason(
-                            "CMakeLists.txt",
-                            Place(file.relativeTo(projectDir).path, 1),
-                        )
-                        "Android.mk", "Application.mk" -> reasons += NativeReason(
-                            file.name,
-                            Place(file.relativeTo(projectDir).path, 1),
-                        )
+                    val relative = file.relativeTo(projectDir).path
+                    when {
+                        file.name == "CMakeLists.txt" ->
+                            reasons += NativeReason("CMakeLists.txt", Place(relative, 1))
+                        file.name == "Android.mk" || file.name == "Application.mk" ->
+                            reasons += NativeReason(file.name, Place(relative, 1))
+                        file.extension.lowercase() in NATIVE_SOURCE_EXTENSIONS ->
+                            reasons += NativeReason("native source $relative", Place(relative, 1))
+                        relative.contains("/jni/") || relative.contains("/cpp/") ->
+                            reasons += NativeReason("native source $relative", Place(relative, 1))
                     }
                 }
         }
-        facts.unsupported
-            .filter { isNativeBit(it.what) }
-            .forEach { reasons += NativeReason(it.what, it.place) }
+        // A bare ndkVersion pin is not native input; it only explains a project that already
+        // has C/C++ sources or a native build file.
+        if (requested != null && reasons.isNotEmpty()) {
+            reasons += NativeReason("ndkVersion", reasons.firstOrNull()?.place)
+        }
         return NativeUsage(
             usesNative = reasons.isNotEmpty(),
             reasons = reasons.distinctBy { it.what to it.place },
             requestedNdkVersion = requested,
         )
     }
+
+    private val NATIVE_SOURCE_EXTENSIONS = setOf("c", "cc", "cpp", "cxx", "h", "hh", "hpp")
 }

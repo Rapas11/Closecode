@@ -443,8 +443,10 @@ class ProjectCheckTest {
         assertTrue(
             report.errors.any { "Kotlin 2.0.21 is not supported yet" in it.message },
         )
+        // The Compose plugin ties the compiler to the Kotlin version; the Kotlin rule
+        // already names 2.0.21, so it is not reported a second time as a Compose error.
         assertTrue(
-            report.errors.any { "The Compose compiler 2.0.21 is not supported yet" in it.message },
+            report.errors.none { "The Compose compiler 2.0.21 is not supported yet" in it.message },
         )
     }
 }

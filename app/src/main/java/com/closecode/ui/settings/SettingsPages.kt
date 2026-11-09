@@ -362,7 +362,7 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
         }
         PageCard {
             Text(
-                "AndroidIDE build-tools 34.0.4",
+                "AndroidIDE build-tools 35.0.1",
                 color = c.mock.text,
                 fontSize = 14.sp,
                 fontFamily = Sans,

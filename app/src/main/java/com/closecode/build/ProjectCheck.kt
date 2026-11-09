@@ -259,7 +259,9 @@ object ProjectCheck {
                         "to app/build.gradle.kts.",
                     "app/build.gradle.kts",
                 )
-            } else if (facts.composeCompiler != null && facts.composeCompiler != ProjectPins.COMPOSE_COMPILER) {
+            } else if (!facts.composeCompilerFromPlugin && facts.composeCompiler != null &&
+                facts.composeCompiler != ProjectPins.COMPOSE_COMPILER
+            ) {
                 findings += Finding(
                     Severity.Error,
                     "The Compose compiler ${facts.composeCompiler} is not supported yet. " +
@@ -313,7 +315,11 @@ object ProjectCheck {
 
         // 8. Whatever else the build files declare, named with its file and line.
         for (bit in facts.unsupported) {
-            if (native.usesNative && NativeProject.isNativeBit(bit.what)) continue
+            if (NativeProject.isNativeBit(bit.what) &&
+                (native.usesNative || NativeProject.isOptionalConfig(bit.what))
+            ) {
+                continue
+            }
             findings += Finding(
                 Severity.Error,
                 "${bit.what} is not supported yet.",

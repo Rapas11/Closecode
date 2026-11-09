@@ -92,11 +92,17 @@ object BuildSetupFactory {
             val native = nativeStore.toolchain()
             val nativeMissing = if (nativeUsage.usesNative) nativeStore.missing() else emptyList()
             val gradlePlatform = platformStore.androidJar(compileSdk)
-            val gradleBuildTools = platformStore.buildToolsDir()
+            val agpVersion = facts.plugins
+                .firstOrNull { it.id == "com.android.application" || it.id == "com.android.library" }
+                ?.version
+            val requiredBuildTools = platformStore.requiredBuildToolsVersion(agpVersion)
+            val gradleBuildTools = platformStore.bestBuildTools(requiredBuildTools)
             val gradleMissing = buildList {
                 if (!gradleStore.isReady()) add("Gradle tools")
                 if (gradlePlatform == null) add("Android $compileSdk platform")
-                if (gradleBuildTools == null) add("build-tools ${platformStore.buildToolsVersion()}")
+                if (gradleBuildTools == null) {
+                    add("build-tools $requiredBuildTools (or newer)")
+                }
                 if (aapt2 == null) add("aapt2")
                 if (nativeUsage.usesNative && native == null) add("Native tools")
             }
@@ -107,8 +113,8 @@ object BuildSetupFactory {
                     gradleHome = gradleStore.gradleHome,
                     sdkRoot = platformStore.rootDir(),
                     platformDir = platformStore.platformDir(compileSdk),
-                    buildToolsDir = gradleBuildTools!!,
-                    buildToolsVersion = platformStore.buildToolsVersion(),
+                    buildToolsDir = gradleBuildTools!!.second,
+                    buildToolsVersion = gradleBuildTools.first,
                     aapt2 = aapt2,
                     aapt2Env = gradleAapt2Env,
                     distributionVersion = gradleStore.manifest.distribution.version,

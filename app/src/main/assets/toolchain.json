@@ -5,9 +5,9 @@
     "compileSdk":  35,
     "minSdkFloor":  24,
     "aapt2":  {
-                  "version":  "34.0.4",
-                  "license":  "Apache-2.0 (AOSP aapt2); arm64 build from AndroidIDEOfficial/androidide-tools (GPL-3.0 repository)",
-                  "source":  "https://github.com/AndroidIDEOfficial/androidide-tools/releases/tag/v34.0.4"
+                  "version":  "35.0.1",
+                  "license":  "Apache-2.0 (AOSP aapt2); arm64 build from AndroidIDE-Rv2Official/androidide-rv2-tools (GPL-3.0 repository)",
+                  "source":  "https://github.com/AndroidIDE-Rv2Official/androidide-rv2-tools/releases/tag/v35.0.1"
               },
     "files":  [
                   {

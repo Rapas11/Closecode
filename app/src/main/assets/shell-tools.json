@@ -1,7 +1,18 @@
 {
   "version": "2",
   "repo": "https://packages.termux.dev/apt/termux-main",
-  "roots": ["git", "curl", "python", "python-pip", "nodejs", "npm", "zip", "jq", "ca-certificates"],
+  "roots": [
+    "git",
+    "curl",
+    "python",
+    "python-pip",
+    "nodejs",
+    "npm",
+    "zip",
+    "jq",
+    "ca-certificates",
+    "uv"
+  ],
   "required": [
     "bin/git",
     "bin/curl",
@@ -13,6 +24,8 @@
     "bin/npm",
     "bin/npx",
     "bin/zip",
-    "bin/jq"
+    "bin/jq",
+    "bin/uv",
+    "bin/uvx"
   ]
 }

@@ -32,6 +32,8 @@ data class BuildFacts(
     val kotlinPlace: Place? = null,
     val composeCompiler: String? = null,
     val composeCompilerPlace: Place? = null,
+    /** True when the Compose compiler comes from the Kotlin Compose plugin, not composeOptions. */
+    val composeCompilerFromPlugin: Boolean = false,
     val composeBom: String? = null,
     val composeBomPlace: Place? = null,
     val plugins: List<DeclaredPlugin> = emptyList(),
@@ -88,6 +90,8 @@ object GradleReader {
         val bom = libraries.firstOrNull { it.module == "androidx.compose:compose-bom" }
 
         val packageName = app?.packageName
+        val composeCompilerFromPlugin = app?.composeCompiler == null &&
+            usesComposePlugin && kotlinPlugin?.version != null
         val composeCompiler = app?.composeCompiler
             ?: if (usesComposePlugin) kotlinPlugin?.version else null
         val composeCompilerPlace = app?.composeCompilerPlace
@@ -108,6 +112,7 @@ object GradleReader {
             kotlinPlace = kotlinPlugin?.place,
             composeCompiler = composeCompiler,
             composeCompilerPlace = composeCompilerPlace,
+            composeCompilerFromPlugin = composeCompilerFromPlugin,
             composeBom = bom?.version,
             composeBomPlace = bom?.place,
             plugins = plugins,
@@ -434,9 +439,18 @@ object GradleReader {
             intValue(code, "minSdk")?.let { minSdk = it; minSdkPlace = place }
             intValue(code, "targetSdk")?.let { targetSdk = it; targetSdkPlace = place }
             intValue(code, "compileSdk")?.let { compileSdk = it; compileSdkPlace = place }
-            Regex("^\\s*kotlinCompilerExtensionVersion\\s*=\\s*\"([^\"]+)\"").find(code)?.let {
-                composeCompiler = it.groupValues[1]
-                composeCompilerPlace = place
+            Regex(
+                "kotlinCompilerExtensionVersion\\s*=\\s*(?:\"([^\"]+)\"|" +
+                    "libs\\.versions\\.([A-Za-z0-9_.]+)(?:\\.get\\(\\))?)",
+            ).find(code)?.let { match ->
+                val fromCatalog = match.groupValues[2]
+                composeCompiler = if (fromCatalog.isNotEmpty()) {
+                    catalog.versions[fromCatalog]
+                        ?: catalog.versions[fromCatalog.replace('.', '-')]
+                } else {
+                    match.groupValues[1]
+                }
+                if (composeCompiler != null) composeCompilerPlace = place
             }
         }
 

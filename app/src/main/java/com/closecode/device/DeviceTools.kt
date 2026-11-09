@@ -174,7 +174,9 @@ object DeviceTools {
                 .apply { addProperty("needsAccessibility", true) }
         val action = arguments.firstOrNull()?.lowercase(Locale.US) ?: "dump"
         val rest = arguments.drop(1)
-        return when (action) {
+        AutomationStatus.begin("ui $action")
+        return try {
+            when (action) {
             "dump", "tree" -> {
                 val limit = optionInt(rest, "--limit") ?: 500
                 val snapshot = service.snapshot(limit)
@@ -283,6 +285,9 @@ object DeviceTools {
                 }
             }
             else -> error("Use: ui dump|tap|wait|assert|scroll ...")
+            }
+        } finally {
+            AutomationStatus.end()
         }
     }
 
@@ -375,7 +380,9 @@ object DeviceTools {
         val service = CloseCodeAccessibilityService.current()
             ?: return error("Enable CloseCode in Settings > Accessibility, then try again.")
                 .apply { addProperty("needsAccessibility", true) }
-        return when (action) {
+        AutomationStatus.begin("input $action")
+        return try {
+            when (action) {
             "tap" -> {
                 val x = arguments.getOrNull(1)?.toFloatOrNull()
                 val y = arguments.getOrNull(2)?.toFloatOrNull()
@@ -422,9 +429,11 @@ object DeviceTools {
                 else error("Android refused the $key key.")
             }
             else -> error("Use: input tap|swipe|longpress|text|key ...")
+            }
+        } finally {
+            AutomationStatus.end()
         }
     }
-
     private fun packageStamp(context: Context, packageName: String): Long? = runCatching {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.packageManager.getPackageInfo(

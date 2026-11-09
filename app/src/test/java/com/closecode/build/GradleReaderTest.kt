@@ -48,6 +48,7 @@ class GradleReaderTest {
         assertEquals("com.example", facts.packageName)
         assertEquals("2.0.21", facts.kotlinVersion)
         assertEquals("2.0.21", facts.composeCompiler)
+        assertTrue(facts.composeCompilerFromPlugin)
         assertEquals("2024.09.00", facts.composeBom)
         assertEquals(26, facts.minSdk)
         assertEquals(35, facts.targetSdk)

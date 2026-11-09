@@ -22,15 +22,22 @@ import com.closecode.ui.ide.TerminalSessions
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -204,6 +211,7 @@ class MainActivity : ComponentActivity() {
                     LocalSettings provides settings,
                     LocalAnimationsEnabled provides settings.animations,
                 ) {
+                    Box(Modifier.fillMaxSize()) {
                     NavHost(navController = nav, startDestination = startRoute) {
                         composable("onboarding") {
                             OnboardingScreen(
@@ -382,6 +390,27 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+                    }
+                    if (com.closecode.device.AutomationStatus.active) {
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.errorContainer)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "CloseCode is controlling this device",
+                                modifier = Modifier.fillMaxWidth(0.78f),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            TextButton(onClick = { com.closecode.device.AutomationStatus.stop() }) {
+                                Text("Stop")
+                            }
+                        }
+                    }
                     }
                 }
 

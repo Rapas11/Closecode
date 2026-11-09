@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.SystemClock
 import com.closecode.control.CloseCodeControl
 import com.closecode.debug.DebugLog
+import com.closecode.tools.ShellEnvironment
 import com.closecode.tools.ShellToolsRepo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -736,9 +737,14 @@ object OpenCode {
         // listening; without a no-op it exits on ENOENT and the page reconnects forever. The
         // wrapper is also on PATH because some launches ask for `xdg-open` directly.
         environment["BROWSER"] = "/system/bin/true"
+        val shellPaths = ShellEnvironment.paths(context)
+        val javaHome = ShellEnvironment.javaHome(shellPaths)
+        val gradleBin = ShellEnvironment.gradleBin(shellPaths)
         environment["PATH"] = listOf(
             tools.absolutePath,
             File(shellTools, "bin").absolutePath,
+            javaHome?.let { File(it, "bin").absolutePath }.orEmpty(),
+            gradleBin?.absolutePath.orEmpty(),
             "/system/bin",
             "/system/xbin",
             environment["PATH"].orEmpty(),
@@ -746,6 +752,14 @@ object OpenCode {
         if (File(shellTools, "bin/sh").exists()) {
             environment["PREFIX"] = shellTools.absolutePath
             environment["TERMUX_PREFIX"] = shellTools.absolutePath
+        }
+        javaHome?.let { environment["JAVA_HOME"] = it.absolutePath }
+        ShellEnvironment.gradleHome(shellPaths)?.let {
+            environment["GRADLE_USER_HOME"] = it.absolutePath
+        }
+        shellPaths.sdk.takeIf { it.isDirectory }?.let {
+            environment["ANDROID_HOME"] = it.absolutePath
+            environment["ANDROID_SDK_ROOT"] = it.absolutePath
         }
         // OpenCode's shell tool asks for bash. Android ships sh, and the wrapper on PATH keeps
         // the tool's `bash -lc` and `bash -c` forms working without a fake bash.
@@ -789,12 +803,25 @@ object OpenCode {
         val libraries = OpenCodeRuntime.libraryPath(context)
         val binary = OpenCodeBinary.binaryFile(context)
         val ca = runCatching { OpenCodeCa.ensure(context).absolutePath }.getOrDefault("")
+        val shellPaths = ShellEnvironment.paths(context)
+        val javaHome = ShellEnvironment.javaHome(shellPaths)
+        val gradleBin = ShellEnvironment.gradleBin(shellPaths)
         val path = listOf(
             tools.absolutePath,
             File(shellTools, "bin").absolutePath,
+            javaHome?.let { File(it, "bin").absolutePath }.orEmpty(),
+            gradleBin?.absolutePath.orEmpty(),
             "/system/bin",
             "/system/xbin",
-        ).joinToString(":")
+        ).filter { it.isNotBlank() }.joinToString(":")
+        val extraEnv = buildMap {
+            javaHome?.let { put("JAVA_HOME", it.absolutePath) }
+            ShellEnvironment.gradleHome(shellPaths)?.let { put("GRADLE_USER_HOME", it.absolutePath) }
+            shellPaths.sdk.takeIf { it.isDirectory }?.let {
+                put("ANDROID_HOME", it.absolutePath)
+                put("ANDROID_SDK_ROOT", it.absolutePath)
+            }
+        }
         val content = authWrapperScript(
             temp = temp.absolutePath,
             home = home.absolutePath,
@@ -810,6 +837,7 @@ object OpenCode {
             shellToolsPrefix = shellTools.absolutePath.takeIf {
                 File(shellTools, "bin/sh").exists()
             },
+            extraEnv = extraEnv,
         )
         if (!file.isFile || file.readText() != content) file.writeText(content)
         if (!file.setExecutable(true, false)) {
@@ -1079,6 +1107,7 @@ internal fun authWrapperScript(
     caFile: String = "",
     proxyPort: Int? = null,
     shellToolsPrefix: String? = null,
+    extraEnv: Map<String, String> = emptyMap(),
 ): String = buildString {
     appendLine("#!/system/bin/sh")
     appendLine("# Same environment as the web server, so auth lands in the same store.")
@@ -1105,6 +1134,9 @@ internal fun authWrapperScript(
         OpenCodeProxy.environment(proxyPort).toSortedMap().forEach { (key, value) ->
             appendLine("export $key=${quoteShell(value)}")
         }
+    }
+    extraEnv.toSortedMap().forEach { (key, value) ->
+        appendLine("export $key=${quoteShell(value)}")
     }
     appendLine(
         "exec ${quoteShell(loader)} " +

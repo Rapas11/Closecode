@@ -64,6 +64,29 @@ class NativeProjectTest {
     }
 
     @Test
+    fun anNdkVersionPinAloneIsNotNativeSource() {
+        val gradle = appBuild()
+        gradle.writeText(
+            gradle.readText() + "\nandroid { ndkVersion = \"27.1.12297006\" }\n",
+        )
+        val usage = NativeProject.detect(tmp.root)
+        assertFalse(usage.usesNative)
+        assertEquals("27.1.12297006", usage.requestedNdkVersion)
+    }
+
+    @Test
+    fun aCppFileUnderSrcIsNativeSource() {
+        appBuild()
+        val cpp = File(tmp.root, "app/src/main/cpp/native-lib.cpp").apply {
+            parentFile?.mkdirs()
+            writeText("int x = 1;")
+        }
+        val usage = NativeProject.detect(tmp.root)
+        assertTrue(usage.usesNative)
+        assertTrue(usage.reasons.any { it.what.contains(cpp.name) })
+    }
+
+    @Test
     fun prebuiltJniLibrariesAreNotNativeSources() {
         appBuild()
         File(tmp.root, "app/src/main/jniLibs/arm64-v8a").mkdirs()

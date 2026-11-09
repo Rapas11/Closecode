@@ -193,7 +193,7 @@ object CloseCodeControl {
                     it.soTimeout = 0
                     runBlocking { restart(context, request, output) }
                 }
-                "accessibility" -> send(output, accessibility(context))
+                "accessibility" -> send(output, accessibility(context, args(request)))
                 "describe" -> {
                     it.soTimeout = 0
                     runBlocking { send(output, describe(context, request)) }
@@ -206,6 +206,15 @@ object CloseCodeControl {
                     it.soTimeout = 0
                     tools(context, request, output)
                 }
+                "setup" -> {
+                    it.soTimeout = 0
+                    setup(context, request, output)
+                }
+                "doctor" -> {
+                    it.soTimeout = 0
+                    doctor(context, request, output)
+                }
+                "toolchain" -> send(output, toolchain(context, request))
                 "build" -> {
                     it.soTimeout = 0
                     runBlocking { build(context, request, output) }
@@ -327,6 +336,29 @@ object CloseCodeControl {
         return description
     }
 
+    private fun doctor(context: Context, request: JsonObject, output: OutputStream) {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        send(output, DoctorCommand.run(context, project))
+    }
+
+    private fun toolchain(context: Context, request: JsonObject): JsonObject {
+        val action = args(request).firstOrNull()?.lowercase() ?: "status"
+        return when (action) {
+            "status", "json" -> ToolchainStatusCommand.run(context)
+            else -> error("usage: closecode toolchain status --json")
+        }
+    }
+
+    private fun setup(context: Context, request: JsonObject, output: OutputStream) {
+        val options = SetupCommand.parse(args(request))
+        val response = SetupCommand.run(context, options) { event -> send(output, event) }
+        send(output, response)
+    }
+
     private fun tool(context: Context, request: JsonObject, output: OutputStream) {
         val arguments = args(request)
         val name = arguments.firstOrNull()
@@ -424,24 +456,51 @@ object CloseCodeControl {
         })
     }
 
-    private fun accessibility(context: Context): JsonObject {
+    private fun accessibility(context: Context, arguments: List<String>): JsonObject {
+        val action = arguments.firstOrNull()?.lowercase() ?: "status"
         if (CloseCodeAccessibilityService.connected()) {
             return JsonObject().apply {
                 addProperty("ok", true)
                 addProperty("enabled", true)
+                addProperty("action", action)
             }
         }
+        if (action != "enable" && action != "on" && action != "open") {
+            return JsonObject().apply {
+                addProperty("ok", false)
+                addProperty("enabled", false)
+                addProperty("action", action)
+                addProperty("needsUser", true)
+                addProperty("remedy", "Run closecode accessibility enable, then enable CloseCode.")
+            }
+        }
+        val component = android.content.ComponentName(
+            context,
+            CloseCodeAccessibilityService::class.java,
+        ).flattenToString()
         val opened = runCatching {
-            context.startActivity(
-                android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            val intent = android.content.Intent(
+                android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS,
             )
+                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(":settings:fragment_args_key", component)
+                .putExtra(
+                    ":settings:show_fragment_args",
+                    android.os.Bundle().apply {
+                        putString(":settings:fragment_args_key", component)
+                    },
+                )
+            context.startActivity(intent)
         }.isSuccess
         return JsonObject().apply {
-            addProperty("ok", opened)
+            addProperty("ok", false)
             addProperty("enabled", false)
+            addProperty("needsUser", true)
+            addProperty("action", "enable")
+            addProperty("url", "android.settings.ACCESSIBILITY_SETTINGS")
+            addProperty("component", component)
             if (!opened) addProperty("error", "Android did not open accessibility settings.")
-            else addProperty("note", "Enable CloseCode in the accessibility settings, then try input again.")
+            else addProperty("note", "Enable CloseCode under Settings > Accessibility, then retry.")
         }
     }
 
@@ -945,6 +1004,7 @@ object CloseCodeControl {
         val last = BuildCoordinator.last()
         return JsonObject().apply {
             addProperty("ok", true)
+            addProperty("accessibility", CloseCodeAccessibilityService.connected())
             addProperty("running", active != null)
             if (active != null) {
                 addProperty("id", active.id)
@@ -1071,6 +1131,54 @@ object CloseCodeControl {
 internal fun controlCommandScript(basePath: String): String = """
     #!/system/bin/sh
     BASE='$basePath'
+    DATA=${'$'}(dirname "${'$'}(dirname "${'$'}BASE")")
+    FILES="${'$'}DATA/files"
+    SHELL_TOOLS="${'$'}DATA/file/u"
+    GRADLE_PREFIX="${'$'}DATA/file/g"
+    export TMPDIR="${'$'}FILES/tmp"
+    mkdir -p "${'$'}TMPDIR" 2>/dev/null
+    if [ -x "${'$'}SHELL_TOOLS/bin/sh" ]; then
+      export PREFIX="${'$'}SHELL_TOOLS"
+      export TERMUX_PREFIX="${'$'}SHELL_TOOLS"
+      export PATH="${'$'}SHELL_TOOLS/bin:${'$'}HOME/.local/bin:${'$'}PATH"
+      export LD_LIBRARY_PATH="${'$'}SHELL_TOOLS/lib${'$'}{LD_LIBRARY_PATH:+:${'$'}LD_LIBRARY_PATH}"
+      export TMPDIR="${'$'}SHELL_TOOLS/tmp"
+      export npm_config_prefix="${'$'}SHELL_TOOLS"
+      export NODE_PATH="${'$'}SHELL_TOOLS/lib/node_modules"
+      export PIP_CACHE_DIR="${'$'}SHELL_TOOLS/cache/pip"
+      export PYTHONUSERBASE="${'$'}HOME/.local"
+      export SHELL="${'$'}SHELL_TOOLS/bin/sh"
+      mkdir -p "${'$'}TMPDIR" 2>/dev/null
+      if [ -f "${'$'}SHELL_TOOLS/etc/tls/cert.pem" ]; then
+        export SSL_CERT_FILE="${'$'}SHELL_TOOLS/etc/tls/cert.pem"
+        export CURL_CA_BUNDLE="${'$'}SHELL_TOOLS/etc/tls/cert.pem"
+        export GIT_SSL_CAINFO="${'$'}SHELL_TOOLS/etc/tls/cert.pem"
+        export NODE_EXTRA_CA_CERTS="${'$'}SHELL_TOOLS/etc/tls/cert.pem"
+      fi
+    fi
+    JAVA_HOME="${'$'}GRADLE_PREFIX/lib/jvm/java-17-openjdk"
+    if [ ! -x "${'$'}JAVA_HOME/bin/java" ]; then
+      JAVA_HOME="${'$'}SHELL_TOOLS/lib/jvm/java-17-openjdk"
+    fi
+    if [ -x "${'$'}JAVA_HOME/bin/java" ]; then
+      export JAVA_HOME
+      export PATH="${'$'}JAVA_HOME/bin:${'$'}PATH"
+    else
+      unset JAVA_HOME
+    fi
+    for GRADLE_DIR in "${'$'}FILES"/gradle/gradle-*; do
+      if [ -x "${'$'}GRADLE_DIR/bin/gradle" ]; then
+        export PATH="${'$'}GRADLE_DIR/bin:${'$'}PATH"
+        break
+      fi
+    done
+    if [ -d "${'$'}FILES/sdk" ]; then
+      export ANDROID_HOME="${'$'}FILES/sdk"
+      export ANDROID_SDK_ROOT="${'$'}FILES/sdk"
+    fi
+    if [ -d "${'$'}FILES/gradle/home" ]; then
+      export GRADLE_USER_HOME="${'$'}FILES/gradle/home"
+    fi
     help() {
       case "${'$'}{1:-}" in
         build|b) echo "usage: closecode build [--gradle] [--release]" ;;
@@ -1085,10 +1193,13 @@ internal fun controlCommandScript(basePath: String): String = """
         export|x) echo "usage: closecode export [name]" ;;
         screenshot|shot) echo "usage: closecode screenshot [name]" ;;
         input|in) echo "usage: closecode input tap|x|y|text|key|swipe|back|home|recents ..." ;;
-        accessibility|a) echo "usage: closecode accessibility" ;;
+        accessibility|a) echo "usage: closecode accessibility [status|enable]" ;;
         describe|d) echo "usage: closecode describe" ;;
         tool|t) echo "usage: closecode tool aapt2|d8|r8|kotlinc [args...]" ;;
         tools) echo "usage: closecode tools [status|install|remove]" ;;
+        setup) echo "usage: closecode setup --gradle|--web|--python|--native|--all|--remove <component>" ;;
+        doctor|doc) echo "usage: closecode doctor [--json]" ;;
+        toolchain) echo "usage: closecode toolchain status [--json]" ;;
         gradle|g) echo "usage: closecode gradle <task> [--gradle]" ;;
         check|chk) echo "usage: closecode check" ;;
         github|gh) echo "usage: closecode github push|pull [--force]" ;;
@@ -1098,7 +1209,7 @@ internal fun controlCommandScript(basePath: String): String = """
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools gradle check github run app stop restart ui clean"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain gradle check github run app stop restart ui clean"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac
@@ -1129,12 +1240,15 @@ internal fun controlCommandScript(basePath: String): String = """
       d|describe) CMD=describe ;;
       t|tool) CMD=tool ;;
       tools) CMD=tools ;;
+      setup) CMD=setup ;;
+      doctor|doc) CMD=doctor ;;
+      toolchain) CMD=toolchain ;;
       g|gradle) CMD=gradle ;;
       chk|check) CMD=check ;;
       gh|github) CMD=github ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|gradle|check|github|run|app|stop|restart|ui|clean) ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|gradle|check|github|run|app|stop|restart|ui|clean) ;;
       *) help >&2; exit 2 ;;
     esac
     case "${'$'}{2:-}" in
