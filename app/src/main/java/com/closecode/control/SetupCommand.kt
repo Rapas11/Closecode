@@ -1,6 +1,7 @@
 package com.closecode.control
 
 import android.content.Context
+import com.closecode.build.GradleWrapper
 import com.closecode.build.PlatformStore
 import com.closecode.build.SetupKeepAliveService
 import com.closecode.debug.DebugLog
@@ -36,6 +37,7 @@ object SetupCommand {
         val yes: Boolean = false,
         val wifiOnly: Boolean = false,
         val remove: String? = null,
+        val gradleVersion: String? = null,
     ) {
         val wantsGradle: Boolean get() = gradle || all
         val wantsWeb: Boolean get() = web || python || all
@@ -73,6 +75,13 @@ object SetupCommand {
                         index++
                     }
                 }
+                "--gradle-version" -> {
+                    val value = arguments.getOrNull(index + 1)
+                    if (value != null) {
+                        options = options.copy(gradleVersion = value.trim())
+                        index++
+                    }
+                }
                 "--remove" -> {
                     val value = arguments.getOrNull(index + 1)
                     if (value != null) {
@@ -84,6 +93,8 @@ object SetupCommand {
                     options = options.copy(buildTools = arg.substringAfter('='))
                 } else if (arg.startsWith("--sdk=")) {
                     arg.substringAfter('=').toIntOrNull()?.let { options = options.copy(sdk = it) }
+                } else if (arg.startsWith("--gradle-version=")) {
+                    options = options.copy(gradleVersion = arg.substringAfter('=').trim())
                 } else if (arg.startsWith("--remove=")) {
                     options = options.copy(remove = arg.substringAfter('=').lowercase())
                 }
@@ -95,6 +106,7 @@ object SetupCommand {
 
     fun usage(): String = """
         usage: closecode setup --gradle [--sdk 35] [--build-tools 35.0.0] [--ndk] [--cmake]
+               closecode setup --gradle --gradle-version 8.12
                closecode setup --web
                closecode setup --python
                closecode setup --native
@@ -106,6 +118,7 @@ object SetupCommand {
     fun run(
         context: Context,
         options: Options,
+        cwd: String? = null,
         emit: (JsonObject) -> Unit,
     ): JsonObject {
         if (!options.valid) {
@@ -114,7 +127,7 @@ object SetupCommand {
         SetupKeepAliveService.start(context)
         return try {
             if (!options.remove.isNullOrBlank()) return remove(context, options.remove, emit)
-            install(context, options, emit)
+            install(context, options, cwd, emit)
         } catch (error: Throwable) {
             DebugLog.crumb("SETUP", "failed: ${error.message ?: error.javaClass.simpleName}")
             emit(event("error").apply {
@@ -130,6 +143,7 @@ object SetupCommand {
     private fun install(
         context: Context,
         options: Options,
+        cwd: String?,
         emit: (JsonObject) -> Unit,
     ): JsonObject {
         val platform = PlatformStore(context, SharedPreferencesKeyValueStore(context))
@@ -200,9 +214,16 @@ object SetupCommand {
         }
 
         if (options.wantsGradle) {
+            val wrapper = options.gradleVersion
+                ?: cwd?.takeIf { it.isNotBlank() }?.let {
+                    GradleWrapper.version(File(it))
+                }
+            val gradleVersion = wrapper
+                ?.takeIf { gradle.manifest.forVersion(it) != null }
+                ?: gradle.manifest.distribution.version
             var lastBytes = 0L
             var lastAt = System.currentTimeMillis()
-            val result = gradle.install { progress ->
+            val result = gradle.install(progress = { progress ->
                 val now = System.currentTimeMillis()
                 val speed = if (now > lastAt) {
                     ((progress.doneBytes - lastBytes) * 1000L / (now - lastAt)).coerceAtLeast(0)
@@ -215,6 +236,7 @@ object SetupCommand {
                 }
                 emit(event("download").apply {
                     addProperty("component", "jdk-gradle")
+                    addProperty("gradleVersion", gradleVersion)
                     addProperty("stage", progress.stage)
                     addProperty("received", progress.doneBytes)
                     addProperty("total", progress.totalBytes)
@@ -222,11 +244,12 @@ object SetupCommand {
                     progress.packageName?.let { addProperty("package", it) }
                     addProperty("message", progress.message)
                 })
-            }
+            }, version = gradleVersion)
             if (!result.ok) throw IllegalStateException(result.error ?: "The Gradle tools did not install.")
             emit(event("verify").apply {
                 addProperty("component", "jdk-gradle")
-                addProperty("ok", gradle.isReady())
+                addProperty("gradleVersion", gradleVersion)
+                addProperty("ok", gradle.isReady(gradleVersion))
             })
         }
 

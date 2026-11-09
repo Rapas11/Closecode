@@ -22,7 +22,10 @@ data class GradleDistribution(
 data class GradleToolsManifest(
     val tools: ShellToolsManifest,
     val distribution: GradleDistribution,
+    val distributions: Map<String, GradleDistribution> = mapOf(distribution.version to distribution),
 ) {
+    fun forVersion(version: String): GradleDistribution? = distributions[version]
+
     companion object {
         fun load(context: Context): GradleToolsManifest =
             runCatching {
@@ -32,15 +35,34 @@ data class GradleToolsManifest(
         fun parse(json: String): GradleToolsManifest {
             val root = JsonParser.parseString(json).asJsonObject
             val distribution = root.getAsJsonObject("distribution")
+            val fallback = GradleDistribution(
+                version = distribution?.get("version")?.asString.orEmpty(),
+                fileName = distribution?.get("fileName")?.asString.orEmpty(),
+                url = distribution?.get("url")?.asString.orEmpty(),
+                sizeBytes = distribution?.get("sizeBytes")?.asLong ?: 0L,
+                sha256 = distribution?.get("sha256")?.asString.orEmpty(),
+            )
+            val catalog = LinkedHashMap<String, GradleDistribution>()
+            if (fallback.version.isNotBlank()) catalog[fallback.version] = fallback
+            root.getAsJsonArray("distributions")?.forEach { element ->
+                runCatching {
+                    val item = element.asJsonObject
+                    val entry = GradleDistribution(
+                        version = item.get("version")?.asString.orEmpty(),
+                        fileName = item.get("fileName")?.asString.orEmpty(),
+                        url = item.get("url")?.asString.orEmpty(),
+                        sizeBytes = item.get("sizeBytes")?.asLong ?: 0L,
+                        sha256 = item.get("sha256")?.asString.orEmpty(),
+                    )
+                    if (entry.version.isNotBlank() && entry.url.isNotBlank()) {
+                        catalog[entry.version] = entry
+                    }
+                }
+            }
             return GradleToolsManifest(
                 tools = ShellToolsManifest.parse(json),
-                distribution = GradleDistribution(
-                    version = distribution?.get("version")?.asString.orEmpty(),
-                    fileName = distribution?.get("fileName")?.asString.orEmpty(),
-                    url = distribution?.get("url")?.asString.orEmpty(),
-                    sizeBytes = distribution?.get("sizeBytes")?.asLong ?: 0L,
-                    sha256 = distribution?.get("sha256")?.asString.orEmpty(),
-                ),
+                distribution = fallback,
+                distributions = catalog,
             )
         }
 
@@ -59,8 +81,15 @@ class GradleToolsStore(
     val home: File get() = termux.home
     val gradleRoot: File get() = File(context.filesDir, "gradle")
     val distributionDir: File
-        get() = File(gradleRoot, "gradle-${manifest.distribution.version}")
-    val gradle: File get() = File(distributionDir, "bin/gradle")
+        get() = distributionDir(manifest.distribution.version)
+    val gradle: File get() = gradleFor(manifest.distribution.version)
+
+    fun distributionDir(version: String): File = File(gradleRoot, "gradle-$version")
+    fun gradleFor(version: String): File = File(distributionDir(version), "bin/gradle")
+
+    fun installedVersions(): List<String> = gradleRoot.listFiles().orEmpty()
+        .filter { it.isDirectory && File(it, INSTALLED).isFile }
+        .mapNotNull { it.name.removePrefix("gradle-").takeIf { name -> name != it.name } }
     val javaHome: File get() = File(directory, "lib/jvm/java-17-openjdk")
     val java: File get() = File(javaHome, "bin/java")
     val gradleHome: File get() = File(gradleRoot, "home")
@@ -74,12 +103,12 @@ class GradleToolsStore(
         cachePrefix = "gradle-tools",
     )
 
-    fun isReady(): Boolean =
-        manifest.distribution.version.isNotBlank() &&
+    fun isReady(version: String = manifest.distribution.version): Boolean =
+        version.isNotBlank() &&
             termux.isReady() &&
             java.isFile &&
-            gradle.isFile &&
-            File(distributionDir, INSTALLED).isFile
+            gradleFor(version).isFile &&
+            File(distributionDir(version), INSTALLED).isFile
 
     fun installedBytes(): Long = termux.installedBytes() + gradleRoot.walkTopDown()
         .filter { it.isFile }
@@ -87,8 +116,12 @@ class GradleToolsStore(
 
     fun installedPackages(): List<String> = termux.installedPackages()
 
-    fun install(progress: (ShellToolsStore.Progress) -> Unit): ShellToolsStore.Result {
-        if (isReady()) return ShellToolsStore.Result(true)
+    fun install(
+        progress: (ShellToolsStore.Progress) -> Unit,
+        version: String? = null,
+    ): ShellToolsStore.Result {
+        val wanted = version?.takeIf { it.isNotBlank() } ?: manifest.distribution.version
+        if (isReady(wanted)) return ShellToolsStore.Result(true)
         if (!termux.isReady()) {
             val result = termux.install(progress)
             if (!result.ok) return result
@@ -96,7 +129,12 @@ class GradleToolsStore(
         if (!java.isFile) {
             return ShellToolsStore.Result(false, "The Gradle JDK has no java binary.")
         }
-        val distribution = manifest.distribution
+        val distribution = manifest.forVersion(wanted)
+            ?: return ShellToolsStore.Result(
+                false,
+                "Gradle $wanted is not in the download catalog. " +
+                    "Installed: ${installedVersions().joinToString().ifBlank { "none" }}.",
+            )
         if (distribution.version.isBlank() || distribution.url.isBlank()) {
             return ShellToolsStore.Result(false, "The Gradle manifest is missing.")
         }
@@ -138,9 +176,10 @@ class GradleToolsStore(
             File(extracted, INSTALLED).writeText(
                 "${distribution.version}\n${distribution.sha256}\n",
             )
-            distributionDir.deleteRecursively()
-            if (!extracted.renameTo(distributionDir)) {
-                extracted.copyRecursively(distributionDir, overwrite = true)
+            val target = distributionDir(distribution.version)
+            target.deleteRecursively()
+            if (!extracted.renameTo(target)) {
+                extracted.copyRecursively(target, overwrite = true)
                 extracted.deleteRecursively()
             }
             temp.deleteRecursively()

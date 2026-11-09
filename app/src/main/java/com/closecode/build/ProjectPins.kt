@@ -48,6 +48,7 @@ object ProjectPins {
 
     /** Below this, packaging an APK is not worth starting. */
     const val FREE_SPACE_FLOOR_BYTES = 300L * 1024 * 1024
+    const val GRADLE_FREE_SPACE_FLOOR_BYTES = 3L * 1024 * 1024 * 1024
 
     /** The plugins the build understands. Anything else is named, not run. */
     val supportedPlugins: Set<String> = setOf(

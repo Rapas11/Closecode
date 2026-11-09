@@ -87,7 +87,13 @@ object ToolchainStatusCommand {
             add("gradle", JsonObject().apply {
                 addProperty("home", gradle.distributionDir.absolutePath)
                 addProperty("distribution", gradle.manifest.distribution.version)
-                addProperty("ok", gradle.gradle.isFile)
+                add("installed", JsonArray().apply {
+                    gradle.installedVersions().sorted().forEach { add(it) }
+                })
+                add("versions", JsonArray().apply {
+                    gradle.manifest.distributions.keys.sorted().forEach { add(it) }
+                })
+                addProperty("ok", gradle.isReady())
             })
             addProperty("gradleUserHome", gradle.gradleHome.absolutePath)
             addProperty("sdkRoot", platform.rootDir().absolutePath)

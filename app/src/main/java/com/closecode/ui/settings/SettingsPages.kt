@@ -663,7 +663,9 @@ internal fun GradleToolsPage(
         progress = null
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                store.install { update -> scope.launch { progress = update } }
+                store.install(progress = { update ->
+                    scope.launch { progress = update }
+                })
             }
             installing = false
             progress = null

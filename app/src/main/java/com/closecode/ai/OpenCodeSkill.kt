@@ -30,12 +30,17 @@ object OpenCodeSkill {
         Everything about the phone is the `closecode` command. Run it inside the project.
 
         - `closecode describe` — the project's facts (package, SDK levels, sources, toolchain).
+        - `closecode doctor` — what is missing and the exact command that fixes it.
+        - `closecode toolchain status --json` — JDK, Gradle, SDK and cache paths and sizes.
         - `closecode check` — static project checks, no build.
-        - `closecode build` — build a debug APK with the phone's own engine; add `--release`
-          for a release APK.
-        - `closecode clean` — delete the project's build output.
+        - `closecode setup --gradle` — install Full Gradle, the SDK and build-tools.
+        - `closecode build` — build a debug APK; add `--release` for a release APK. Gradle is
+          selected automatically when it is installed, the phone's engine otherwise.
+        - `closecode clean [--gradle-caches|--sdk]` — delete build output, Gradle dependency
+          caches, or the downloaded SDK.
         - `closecode run` — build, install, launch, and wait until the app is in front.
         - `closecode install` — install the built APK on this phone.
+        - `closecode signing status|generate|import` — the key used for release APKs.
         - `closecode launch` — open the installed app on this phone.
         - `closecode app` — installed/foreground state, screen size, and UI tree availability.
         - `closecode stop`, `closecode restart` — send the app home and stop it, or launch again.
@@ -45,6 +50,7 @@ object OpenCodeSkill {
         - `closecode ui assert --text TEXT|--id ID|--desc DESC` — fail if a node is absent.
         - `closecode ui scroll down|up [selector]` — scroll the screen.
         - `closecode input tap|swipe|longpress|text|key` — raw touch, typing and keys.
+        - `closecode accessibility status|enable` — the service that drives other UI.
         - `closecode logcat` — the installed app's own log.
         - `closecode screenshot` — a screenshot of what the app shows.
         - `closecode export` — export a file or folder out of the project.
@@ -52,10 +58,10 @@ object OpenCodeSkill {
         - `closecode github push|pull` — publish the project to its GitHub repository, or take
           what came back. It signs in through CloseCode itself; the token stays in the app.
 
-        CloseCode builds with its own engine by default; do not run `./gradlew`. If the
-        project cannot be built that way and the user has installed Full Gradle in Settings,
-        add `--gradle` to `closecode build` or `closecode gradle` to use the downloaded JDK
-        and Gradle distribution. `closecode gradle` accepts assembleDebug/assembleRelease
+        CloseCode never runs `./gradlew`. When Full Gradle is installed it is the default
+        build engine; otherwise the phone's own engine is used. `closecode build --gradle`
+        forces Gradle, and `closecode gradle` runs a named task with the downloaded JDK and
+        Gradle distribution. `closecode gradle` accepts assembleDebug/assembleRelease
         (build an APK), installDebug/installRelease and launch/launchRelease (build and
         install or open), bundleDebug/bundleRelease (App Bundle), test/testDebugUnitTest,
         lint/lintDebug, check and tasks, plus flavour tasks such as assembleFreeDebug or

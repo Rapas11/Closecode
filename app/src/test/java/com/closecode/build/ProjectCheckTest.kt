@@ -182,6 +182,35 @@ class ProjectCheckTest {
         )
     }
 
+    @Test
+    fun theGradleCheckSuppressesEngineOnlyCompatibilityFindings() {
+        template()
+        val gradle = File(tmp.root, "app/build.gradle.kts")
+        gradle.writeText(gradle.readText().replace("2024.04.01", "2024.09.00"))
+        val custom = ProjectCheck.check(tmp.root, "biz", ProjectFixtures.templateInput())
+        assertTrue(custom.errors.any { it.engineOnly })
+        val real = ProjectCheck.check(
+            tmp.root,
+            "biz",
+            ProjectFixtures.templateInput(),
+            gradle = true,
+        )
+        assertFalse(real.errors.any { it.engineOnly })
+        assertFalse(real.errors.any { "com.foo:bar is not supported" in it.message })
+    }
+
+    @Test
+    fun aGradleBuildNeedsThreeGigabytes() {
+        template()
+        val report = ProjectCheck.check(
+            tmp.root,
+            "biz",
+            ProjectFixtures.templateInput(freeBytes = 1L * 1024 * 1024 * 1024),
+            gradle = true,
+        )
+        assertTrue(report.errors.any { "Not enough free storage" in it.message })
+    }
+
     // -- native projects ------------------------------------------------------------
 
     @Test
@@ -402,12 +431,12 @@ class ProjectCheckTest {
         template()
         assertTrue(
             report(freeBytes = 100L * 1024 * 1024).errors.any {
-                it.message == "Not enough free storage to build."
+                "Not enough free storage to build" in it.message
             },
         )
         assertTrue(
             report(freeBytes = 2L * 1024 * 1024 * 1024).errors.none {
-                it.message == "Not enough free storage to build."
+                "Not enough free storage to build" in it.message
             },
         )
     }

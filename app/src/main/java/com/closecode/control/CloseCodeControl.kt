@@ -8,6 +8,8 @@ import com.closecode.build.BuildReport
 import com.closecode.build.BuildSetup
 import com.closecode.build.BuildSetupFactory
 import com.closecode.build.BuildState
+import com.closecode.build.CompileDriver
+import com.closecode.build.GradleDiagnostics
 import com.closecode.build.GradlePlan
 import com.closecode.build.GradleRunner
 import com.closecode.build.ProjectCheck
@@ -215,6 +217,13 @@ object CloseCodeControl {
                     doctor(context, request, output)
                 }
                 "toolchain" -> send(output, toolchain(context, request))
+                "signing" -> send(
+                    output,
+                    runCatching {
+                        SigningCommand.run(context, args(request), string(request, "cwd"))
+                    }
+                        .getOrElse { error(it.message ?: "Signing command failed.") },
+                )
                 "build" -> {
                     it.soTimeout = 0
                     runBlocking { build(context, request, output) }
@@ -355,7 +364,11 @@ object CloseCodeControl {
 
     private fun setup(context: Context, request: JsonObject, output: OutputStream) {
         val options = SetupCommand.parse(args(request))
-        val response = SetupCommand.run(context, options) { event -> send(output, event) }
+        val response = SetupCommand.run(
+            context,
+            options,
+            string(request, "cwd"),
+        ) { event -> send(output, event) }
         send(output, response)
     }
 
@@ -515,6 +528,45 @@ object CloseCodeControl {
     private fun int(request: JsonObject, key: String): Int? =
         runCatching { request.get(key)?.asInt }.getOrNull()
 
+    /**
+     * Full Gradle is the default whenever it is installed: it is the only engine that
+     * understands the project's own plugins and dependencies. The custom engine remains an
+     * explicit fallback (`--engine closecode`) or the automatic choice when Gradle is not ready.
+     */
+    private fun chooseGradle(arguments: List<String>, gradleReady: Boolean): Boolean {
+        var custom = false
+        var forced = false
+        var index = 0
+        while (index < arguments.size) {
+            when (val argument = arguments[index]) {
+                "--gradle", "--full-gradle", "--real", "--engine=gradle" -> forced = true
+                "--no-gradle", "--custom", "--engine=closecode" -> custom = true
+                "--engine" -> when (arguments.getOrNull(index + 1)?.lowercase()) {
+                    "gradle" -> forced = true
+                    "closecode" -> custom = true
+                }
+            }
+            index++
+        }
+        return when {
+            custom -> false
+            forced -> true
+            else -> gradleReady
+        }
+    }
+
+    /**
+     * True when the custom engine's own compatibility findings say it cannot build this
+     * project (native code, a plugin or library it does not pin). Then the honest answer is
+     * Gradle — and if Gradle is not installed, `needsSetup`, not a misleading custom build.
+     */
+    private fun gradleRequired(project: BuildSetup.Project, setup: BuildSetup): Boolean =
+        runCatching {
+            ProjectCheck.check(project.directory, project.id, setup.checkInput)
+                .findings
+                .any { it.engineOnly && it.severity == ProjectCheck.Severity.Error }
+        }.getOrDefault(false)
+
     private suspend fun build(
         context: Context,
         request: JsonObject,
@@ -540,9 +592,8 @@ object CloseCodeControl {
             return null
         }
         val arguments = args(request)
-        val useGradle = arguments.any {
-            it == "--gradle" || it == "--full-gradle" || it == "--real"
-        }
+        val gradleNeeded = setup.gradle == null && gradleRequired(resolved, setup)
+        val useGradle = chooseGradle(arguments, setup.gradle != null || gradleNeeded)
         send(output, JsonObject().apply {
             addProperty("ok", true)
             addProperty("event", "start")
@@ -554,6 +605,11 @@ object CloseCodeControl {
             add("missing", com.google.gson.JsonArray().apply {
                 (if (useGradle) setup.gradleMissing else setup.missing).forEach { add(it) }
             })
+            if (useGradle && setup.gradle == null) {
+                addProperty("command", "closecode setup --gradle")
+            } else if (!useGradle && setup.missing.isNotEmpty()) {
+                addProperty("command", "closecode setup --all")
+            }
         })
         val onEvent: (JsonObject) -> Unit = { event -> send(output, event) }
         val onLog: (String) -> Unit = { text ->
@@ -603,6 +659,41 @@ object CloseCodeControl {
     private data class BuildRun(val project: BuildSetup.Project, val outcome: BuildOutcome)
 
     private fun clean(context: Context, request: JsonObject): JsonObject {
+        if (BuildCoordinator.active() != null) {
+            return error("A build is running; cancel it before cleaning caches.")
+        }
+        val flags = args(request)
+        val gradleCaches = flags.any { it == "--gradle-caches" || it == "--gradle" }
+        val sdk = flags.any { it == "--sdk" }
+        if (gradleCaches || sdk) {
+            val targets = mutableListOf<File>()
+            if (gradleCaches) {
+                val gradleHome = com.closecode.tools.GradleToolsStore(context).gradleHome
+                targets += listOf("caches", "daemon", "native", ".tmp")
+                    .map { File(gradleHome, it) }
+                targets += File(context.cacheDir, "build-cache")
+            }
+            if (sdk) {
+                targets += com.closecode.build.PlatformStore(
+                    context,
+                    com.closecode.ui.settings.SharedPreferencesKeyValueStore(context),
+                ).rootDir()
+            }
+            val existing = targets.filter { it.exists() }
+            val before = existing.sumOf { sizeOf(it) }
+            var removed = true
+            existing.forEach { file ->
+                if (!file.deleteRecursively()) removed = false
+            }
+            return JsonObject().apply {
+                addProperty("ok", removed)
+                addProperty("removedBytes", before)
+                add("paths", com.google.gson.JsonArray().apply {
+                    existing.forEach { add(it.absolutePath) }
+                })
+                if (!removed) addProperty("error", "Some cache files could not be removed.")
+            }
+        }
         val project = resolveProject(
             context,
             cwd = string(request, "cwd"),
@@ -618,6 +709,9 @@ object CloseCodeControl {
             if (!removed) addProperty("error", "Could not remove the build folder.")
         }
     }
+
+    private fun sizeOf(file: File): Long =
+        if (file.isFile) file.length() else file.walkTopDown().filter { it.isFile }.sumOf { it.length() }
 
     private fun appStatus(context: Context, request: JsonObject): JsonObject {
         val project = resolveProject(
@@ -793,6 +887,7 @@ object CloseCodeControl {
             send(output, JsonObject().apply {
                 addProperty("ok", false)
                 addProperty("error", "Full Gradle is not ready.")
+                addProperty("command", "closecode setup --gradle")
                 add("missing", com.google.gson.JsonArray().apply {
                     setup.gradleMissing.forEach { add(it) }
                 })
@@ -834,7 +929,28 @@ object CloseCodeControl {
             return
         }
         if (result.timedOut || result.code != 0) {
-            send(output, error(GradleRunner.failureMessage(result)))
+            val diagnostics = GradleDiagnostics.parse(result.output)
+            val failure = if (diagnostics.any { it.kind == CompileDriver.Diagnostic.Kind.Error }) {
+                BuildOutcome.CompileFailed(
+                    diagnostics,
+                    result.code,
+                    result.durationMs,
+                    result.logPath,
+                )
+            } else {
+                BuildOutcome.Failed(
+                    GradleRunner.failureMessage(result),
+                    diagnostics,
+                    result.code,
+                    result.durationMs,
+                    result.logPath,
+                )
+            }
+            send(output, BuildReport.outcome(failure).apply {
+                addProperty("ok", false)
+                addProperty("error", BuildReport.summary(failure))
+                addProperty("task", task)
+            })
             return
         }
         val bundle = if (task.startsWith("bundle")) {
@@ -851,6 +967,8 @@ object CloseCodeControl {
             addProperty("ok", true)
             addProperty("task", task)
             addProperty("exit", result.code)
+            addProperty("durationMs", result.durationMs)
+            result.logPath?.let { addProperty("logPath", it) }
             addProperty(
                 "result",
                 when {
@@ -1183,7 +1301,7 @@ internal fun controlCommandScript(basePath: String): String = """
       case "${'$'}{1:-}" in
         build|b) echo "usage: closecode build [--gradle] [--release]" ;;
         run|r) echo "usage: closecode run [--gradle] [--release]" ;;
-        clean) echo "usage: closecode clean" ;;
+        clean) echo "usage: closecode clean [--gradle-caches|--sdk]" ;;
         status|s) echo "usage: closecode status" ;;
         cancel|c) echo "usage: closecode cancel" ;;
         ping|p) echo "usage: closecode ping" ;;
@@ -1200,6 +1318,7 @@ internal fun controlCommandScript(basePath: String): String = """
         setup) echo "usage: closecode setup --gradle|--web|--python|--native|--all|--remove <component>" ;;
         doctor|doc) echo "usage: closecode doctor [--json]" ;;
         toolchain) echo "usage: closecode toolchain status [--json]" ;;
+        signing|sign) echo "usage: closecode signing status|generate|import|select|delete" ;;
         gradle|g) echo "usage: closecode gradle <task> [--gradle]" ;;
         check|chk) echo "usage: closecode check" ;;
         github|gh) echo "usage: closecode github push|pull [--force]" ;;
@@ -1209,7 +1328,7 @@ internal fun controlCommandScript(basePath: String): String = """
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain gradle check github run app stop restart ui clean"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing gradle check github run app stop restart ui clean"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac
@@ -1243,12 +1362,13 @@ internal fun controlCommandScript(basePath: String): String = """
       setup) CMD=setup ;;
       doctor|doc) CMD=doctor ;;
       toolchain) CMD=toolchain ;;
+      signing|sign) CMD=signing ;;
       g|gradle) CMD=gradle ;;
       chk|check) CMD=check ;;
       gh|github) CMD=github ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|gradle|check|github|run|app|stop|restart|ui|clean) ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|gradle|check|github|run|app|stop|restart|ui|clean) ;;
       *) help >&2; exit 2 ;;
     esac
     case "${'$'}{2:-}" in

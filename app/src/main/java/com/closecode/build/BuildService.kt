@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.closecode.MainActivity
@@ -25,6 +26,8 @@ import com.closecode.debug.DebugLog
  */
 class BuildService : Service() {
 
+    private var wakeLock: PowerManager.WakeLock? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -37,6 +40,7 @@ class BuildService : Service() {
             ACTION_START -> {
                 val project = intent.getStringExtra(EXTRA_PROJECT).orEmpty()
                 running = true
+                acquireWakeLock()
                 startForegroundCompat(progressNotification(project, "Starting…", indeterminate = true))
             }
             ACTION_UPDATE -> {
@@ -55,12 +59,14 @@ class BuildService : Service() {
                 val text = intent.getStringExtra(EXTRA_TEXT).orEmpty()
                 val project = intent.getStringExtra(EXTRA_PROJECT).orEmpty()
                 running = false
+                releaseWakeLock()
                 manager().notify(ID_DONE, doneNotification(project, text, ok))
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
             ACTION_STOP -> {
                 running = false
+                releaseWakeLock()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -70,7 +76,30 @@ class BuildService : Service() {
 
     override fun onDestroy() {
         running = false
+        releaseWakeLock()
         super.onDestroy()
+    }
+
+    private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return
+        runCatching {
+            val manager = getSystemService(PowerManager::class.java)
+            wakeLock = manager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "closecode:build",
+            ).apply {
+                setReferenceCounted(false)
+                acquire(MAX_BUILD_MS)
+            }
+            DebugLog.crumb("BUILD", "wake lock acquired")
+        }.onFailure { error ->
+            DebugLog.crumb("BUILD", "wake lock failed: ${error.javaClass.simpleName}")
+        }
+    }
+
+    private fun releaseWakeLock() {
+        runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
+        wakeLock = null
     }
 
     private fun startForegroundCompat(notification: Notification) {
@@ -171,6 +200,7 @@ class BuildService : Service() {
         const val CHANNEL_DONE = "build_done"
         private const val ID_PROGRESS = 51
         private const val ID_DONE = 52
+        private const val MAX_BUILD_MS = 90L * 60L * 1000L
 
         const val ACTION_START = "com.closecode.build.START"
         const val ACTION_UPDATE = "com.closecode.build.UPDATE"

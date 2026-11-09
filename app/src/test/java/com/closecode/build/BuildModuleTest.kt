@@ -268,7 +268,7 @@ class BuildModuleTest {
             InMemoryKeyValueStore(),
         )
         val outcome = BuildEngine(toolchain).build(tmp.root, "biz")
-        assertTrue(outcome is BuildOutcome.Blocked)
+        assertTrue(outcome is BuildOutcome.NeedsSetup)
     }
 
     @Test

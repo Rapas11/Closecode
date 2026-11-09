@@ -35,11 +35,42 @@ class GradleToolsTest {
     }
 
     @Test
+    fun theDistributionCatalogIncludesTheDefaultVersion() {
+        val manifest = GradleToolsManifest.parse(
+            """
+            {
+              "version": "1",
+              "distribution": {
+                "version": "8.13",
+                "fileName": "gradle-8.13-bin.zip",
+                "url": "https://example.test/gradle-8.13-bin.zip",
+                "sizeBytes": 1,
+                "sha256": "a"
+              },
+              "distributions": [
+                {
+                  "version": "8.12",
+                  "fileName": "gradle-8.12-bin.zip",
+                  "url": "https://example.test/gradle-8.12-bin.zip",
+                  "sizeBytes": 2,
+                  "sha256": "b"
+                }
+              ]
+            }
+            """.trimIndent(),
+        )
+        assertEquals("8.12", manifest.forVersion("8.12")?.version)
+        assertEquals("8.13", manifest.forVersion("8.13")?.version)
+        assertEquals(null, manifest.forVersion("9.0"))
+    }
+
+    @Test
     fun theShippedManifestPointsAtTheJdkInsideTheTermuxPrefix() {
         val manifest = GradleToolsManifest.parse(
             java.io.File("src/main/assets/gradle-tools.json").readText(),
         )
         assertEquals("8.13", manifest.distribution.version)
+        assertTrue(manifest.distributions.size >= 10)
         assertTrue(
             manifest.tools.required.contains("lib/jvm/java-17-openjdk/bin/java"),
         )

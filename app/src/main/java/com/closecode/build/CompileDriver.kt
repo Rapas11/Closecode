@@ -109,11 +109,13 @@ object CompileDriver {
         val line: Int,
         val kind: Kind,
         val message: String,
+        val column: Int = 1,
+        val code: String? = null,
     ) {
         enum class Kind { Error, Warning }
     }
 
-    private val KotlincLine = Regex("^(.+\\.kt):(\\d+):\\d+: (warning|error): (.*)$")
+    private val KotlincLine = Regex("^(.+\\.kt):(\\d+):(\\d+): (warning|error): (.*)$")
     private val EcjJavacLine = Regex("^(.+\\.java):(\\d+): (warning|error): (.*)$")
 
     /**
@@ -137,8 +139,9 @@ object CompileDriver {
                 offset = 0,
                 length = 0,
                 line = parsed.line,
-                column = 1,
-                code = if (severity == com.closecode.lang.Severity.ERROR) "E0001" else "W0001",
+                column = parsed.column,
+                code = parsed.code
+                    ?: if (severity == com.closecode.lang.Severity.ERROR) "E0001" else "W0001",
             ),
         )
     }
@@ -151,11 +154,30 @@ object CompileDriver {
     fun parseDiagnostic(line: String): Diagnostic? {
         val match = KotlincLine.matchEntire(line.trim()) ?: EcjJavacLine.matchEntire(line.trim())
             ?: return null
-        return Diagnostic(
-            path = match.groupValues[1],
-            line = match.groupValues[2].toIntOrNull()?.coerceAtLeast(1) ?: 1,
-            kind = if (match.groupValues[3] == "warning") Diagnostic.Kind.Warning else Diagnostic.Kind.Error,
-            message = match.groupValues[4].trim(),
-        )
+        val hasColumn = match.groupValues.size > 5
+        return if (hasColumn) {
+            Diagnostic(
+                path = match.groupValues[1],
+                line = match.groupValues[2].toIntOrNull()?.coerceAtLeast(1) ?: 1,
+                kind = if (match.groupValues[4] == "warning") {
+                    Diagnostic.Kind.Warning
+                } else {
+                    Diagnostic.Kind.Error
+                },
+                message = match.groupValues[5].trim(),
+                column = match.groupValues[3].toIntOrNull()?.coerceAtLeast(1) ?: 1,
+            )
+        } else {
+            Diagnostic(
+                path = match.groupValues[1],
+                line = match.groupValues[2].toIntOrNull()?.coerceAtLeast(1) ?: 1,
+                kind = if (match.groupValues[3] == "warning") {
+                    Diagnostic.Kind.Warning
+                } else {
+                    Diagnostic.Kind.Error
+                },
+                message = match.groupValues[4].trim(),
+            )
+        }
     }
 }

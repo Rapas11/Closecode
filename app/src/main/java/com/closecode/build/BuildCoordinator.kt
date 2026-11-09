@@ -43,6 +43,7 @@ object BuildCoordinator {
             BuildEngine(
                 ToolchainHolder.store(app),
                 BuildCache(File(app.cacheDir, "build-cache")),
+                AndroidNetworkGate(app),
             )
         }
 
@@ -102,6 +103,11 @@ object BuildCoordinator {
                 buildType = buildType,
                 useGradle = useGradle,
                 gradle = setup.gradle,
+                setupCommand = if (useGradle) {
+                    "closecode setup --gradle"
+                } else {
+                    "closecode setup --all"
+                },
             )
             val summary = BuildReport.summary(outcome)
             last = Last(project.id, project.slug, project.name, outcome, summary)

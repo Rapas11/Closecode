@@ -17,7 +17,11 @@ data class GradleToolchain(
     val aapt2: File?,
     val aapt2Env: Map<String, String>,
     val distributionVersion: String,
+    /** What the project's wrapper asks for, even when the installed Gradle is the fallback. */
+    val wrapperVersion: String? = null,
     val native: NativeToolchain? = null,
+    /** The key used to post-sign a release APK that Gradle left unsigned. */
+    val signer: SigningIdentity? = null,
     /** Set when the project has not pinned an NDK version and the installed one should be used. */
     val ndkVersionOverride: String? = null,
 )
@@ -34,6 +38,8 @@ data class GradleRunResult(
     val code: Int,
     val timedOut: Boolean = false,
     val cancelled: Boolean = false,
+    val durationMs: Long = 0L,
+    val logPath: String? = null,
 )
 
 object GradlePlan {
@@ -44,6 +50,7 @@ object GradlePlan {
         buildType: String,
         task: String,
         initScript: File,
+        options: GradleBuildOptions = GradleBuildOptions(),
     ): GradleInvocation {
         val shell = if (File("/system/bin/sh").isFile) "/system/bin/sh" else "/bin/sh"
         val command = mutableListOf(
@@ -59,13 +66,14 @@ object GradlePlan {
             "--no-daemon",
             "--stacktrace",
             "-Dorg.gradle.java.home=${toolchain.javaHome.absolutePath}",
-            "-Dorg.gradle.jvmargs=-Xmx1536m -Dfile.encoding=UTF-8",
+            "-Dorg.gradle.jvmargs=${options.jvmArgs()}",
             "-Psdk.dir=${toolchain.sdkRoot.absolutePath}",
             "-Pandroid.suppressUnsupportedCompileSdk=35",
         )
         toolchain.aapt2?.let {
             command += "-Pandroid.aapt2FromMavenOverride=${it.absolutePath}"
         }
+        command += options.gradleProperties()
         command += task
         val path = buildList {
             toolchain.native?.let { add(it.bin.absolutePath) }
@@ -163,7 +171,7 @@ object GradlePlan {
 object GradleRunner {
 
     private const val MAX_OUTPUT_CHARS = 64_000
-    private const val TIMEOUT_MS = 30 * 60 * 1000L
+    private const val TIMEOUT_MS = 90 * 60 * 1000L
 
     fun run(
         projectDir: File,
@@ -171,6 +179,7 @@ object GradleRunner {
         toolchain: GradleToolchain,
         onLog: (String) -> Unit = {},
         cancelled: () -> Boolean = { false },
+        options: GradleBuildOptions = GradleBuildOptions.forProject(projectDir),
     ): GradleRunResult = execute(
         projectDir = projectDir,
         buildType = buildType,
@@ -179,6 +188,7 @@ object GradleRunner {
         onLog = onLog,
         cancelled = cancelled,
         findApk = true,
+        options = options,
     )
 
     /** Runs any Gradle task without expecting an APK: test, lint, check or a bundle. */
@@ -188,6 +198,7 @@ object GradleRunner {
         toolchain: GradleToolchain,
         onLog: (String) -> Unit = {},
         cancelled: () -> Boolean = { false },
+        options: GradleBuildOptions = GradleBuildOptions.forProject(projectDir),
     ): GradleRunResult = execute(
         projectDir = projectDir,
         buildType = "debug",
@@ -196,6 +207,7 @@ object GradleRunner {
         onLog = onLog,
         cancelled = cancelled,
         findApk = false,
+        options = options,
     )
 
     private fun execute(
@@ -206,6 +218,7 @@ object GradleRunner {
         onLog: (String) -> Unit,
         cancelled: () -> Boolean,
         findApk: Boolean,
+        options: GradleBuildOptions,
     ): GradleRunResult {
         val initScript = File(toolchain.gradleHome, "init/closecode.gradle")
         initScript.parentFile?.mkdirs()
@@ -219,6 +232,7 @@ object GradleRunner {
             buildType,
             task,
             initScript,
+            options,
         )
         val output = StringBuilder()
         val builder = ProcessBuilder(invocation.command)
@@ -257,13 +271,12 @@ object GradleRunner {
             while (process.isAlive) {
                 if (cancelled()) {
                     wasCancelled = true
-                    process.destroy()
-                    if (!process.waitFor(5, TimeUnit.SECONDS)) process.destroyForcibly()
+                    ProcessTree.terminate(process)
                     break
                 }
                 if (System.currentTimeMillis() - started > TIMEOUT_MS) {
                     timedOut = true
-                    process.destroyForcibly()
+                    ProcessTree.terminate(process)
                     break
                 }
                 Thread.sleep(500)
@@ -272,12 +285,18 @@ object GradleRunner {
         } catch (error: InterruptedException) {
             Thread.currentThread().interrupt()
             wasCancelled = true
-            process.destroyForcibly()
+            ProcessTree.terminate(process)
         } finally {
             reader.join(5_000)
         }
+        val durationMs = System.currentTimeMillis() - started
         val text = synchronized(output) { output.toString() }
         val code = runCatching { process.exitValue() }.getOrDefault(-1)
+        val log = runCatching {
+            val dir = File(projectDir, "build/logs")
+            dir.mkdirs()
+            File(dir, "build.log").apply { writeText(text) }
+        }.getOrNull()
         return GradleRunResult(
             apk = if (findApk && code == 0 && !timedOut && !wasCancelled) {
                 GradlePlan.findApk(projectDir, buildType)
@@ -288,6 +307,8 @@ object GradleRunner {
             code = code,
             timedOut = timedOut,
             cancelled = wasCancelled,
+            durationMs = durationMs,
+            logPath = log?.absolutePath,
         )
     }
 

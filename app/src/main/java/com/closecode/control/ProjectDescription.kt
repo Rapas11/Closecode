@@ -160,13 +160,18 @@ internal object ProjectDescription {
         add("commands", JsonObject().apply {
             addProperty("build", "closecode build [--release] [--gradle]")
             addProperty("run", "closecode run — build, install, launch, then wait for the app")
+            addProperty("signing", "closecode signing status|generate|import|select|delete")
             addProperty("install", "closecode install")
             addProperty("launch", "closecode launch")
             addProperty("app", "closecode app — installed/foreground state and screen size")
             addProperty("stop", "closecode stop — press Home and stop the app")
             addProperty("restart", "closecode restart — stop, launch, wait for the app")
             addProperty("ui", "closecode ui dump|tap|wait|assert|scroll — inspect and drive the screen")
-            addProperty("clean", "closecode clean — delete the project build folder")
+            addProperty(
+                "clean",
+                "closecode clean [--gradle-caches|--sdk] — delete the project build folder, " +
+                    "Gradle dependency caches, or the downloaded SDK",
+            )
             addProperty("logcat", "closecode logcat")
             addProperty("export", "closecode export")
             addProperty("screenshot", "closecode screenshot")

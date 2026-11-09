@@ -88,6 +88,10 @@ object BuildSetupFactory {
                 }
             }
             val gradleStore = GradleToolsStore(context)
+            val wrapperVersion = GradleWrapper.version(project.directory)
+            val knownWrapper = wrapperVersion
+                ?.takeIf { gradleStore.manifest.forVersion(it) != null }
+            val gradleVersion = knownWrapper ?: gradleStore.manifest.distribution.version
             val nativeStore = NativeToolsStore(context)
             val native = nativeStore.toolchain()
             val nativeMissing = if (nativeUsage.usesNative) nativeStore.missing() else emptyList()
@@ -98,7 +102,7 @@ object BuildSetupFactory {
             val requiredBuildTools = platformStore.requiredBuildToolsVersion(agpVersion)
             val gradleBuildTools = platformStore.bestBuildTools(requiredBuildTools)
             val gradleMissing = buildList {
-                if (!gradleStore.isReady()) add("Gradle tools")
+                if (!gradleStore.isReady(gradleVersion)) add("Gradle tools")
                 if (gradlePlatform == null) add("Android $compileSdk platform")
                 if (gradleBuildTools == null) {
                     add("build-tools $requiredBuildTools (or newer)")
@@ -109,7 +113,7 @@ object BuildSetupFactory {
             val gradle = if (gradleMissing.isEmpty()) {
                 GradleToolchain(
                     javaHome = gradleStore.javaHome,
-                    gradle = gradleStore.gradle,
+                    gradle = gradleStore.gradleFor(gradleVersion),
                     gradleHome = gradleStore.gradleHome,
                     sdkRoot = platformStore.rootDir(),
                     platformDir = platformStore.platformDir(compileSdk),
@@ -117,8 +121,10 @@ object BuildSetupFactory {
                     buildToolsVersion = gradleBuildTools.first,
                     aapt2 = aapt2,
                     aapt2Env = gradleAapt2Env,
-                    distributionVersion = gradleStore.manifest.distribution.version,
+                    distributionVersion = gradleVersion,
+                    wrapperVersion = wrapperVersion,
                     native = native,
+                    signer = signer?.let { SigningIdentity(it.key, it.chain) },
                     ndkVersionOverride = native
                         ?.takeIf { nativeUsage.requestedNdkVersion == null }
                         ?.ndkVersion,

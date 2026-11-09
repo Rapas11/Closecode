@@ -32,7 +32,10 @@ object DeviceTools {
         waitMs: Long = 0,
     ): JsonObject {
         val apk = if (argument.isNullOrBlank()) {
-            File(project, DEFAULT_APK).takeIf { it.isFile }
+            val custom = File(project, DEFAULT_APK).takeIf { it.isFile }
+            custom ?: com.closecode.build.GradlePlan.findAnyApk(project)
+                ?: com.closecode.build.GradlePlan.findApk(project, "debug")
+                ?: com.closecode.build.GradlePlan.findApk(project, "release")
         } else {
             resolve(project, argument)?.takeIf { it.isFile }
         } ?: return error("No APK to install. Build the project first or pass an APK path.")

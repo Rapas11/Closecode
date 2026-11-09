@@ -32,9 +32,11 @@ object OpenCodeAgentMd {
         - `closecode describe` — the project's facts (package, SDK levels, sources, toolchain).
         - `closecode check` — the static checks, no build.
         - `closecode build` — a debug APK with the phone's engine; add `--release` for release.
-        - `closecode clean` — delete the project's build output.
+        - `closecode clean [--gradle-caches|--sdk]` — delete build output, Gradle dependency
+          caches, or the downloaded SDK.
         - `closecode run` — build, install, launch, and wait until the app is in front.
         - `closecode install`, `closecode launch` — put the APK on this phone, then open it.
+        - `closecode signing status|generate|import` — the key used for release APKs.
         - `closecode app`, `closecode stop`, `closecode restart` — inspect, stop or relaunch it.
         - `closecode ui dump` — the current screen as JSON; `closecode ui tap --text TEXT`,
           `ui wait`, `ui assert` and `ui scroll` drive and check it.
@@ -52,9 +54,9 @@ object OpenCodeAgentMd {
         - `closecode tool aapt2|d8|r8|kotlinc` — one toolchain tool at a time.
 
         The rules:
-        - Never run `./gradlew`; use the commands above. The custom engine is the default;
-          `--gradle` is only for projects it cannot handle, and only when Full Gradle is
-          installed in CloseCode settings.
+        - Never run `./gradlew`; use the commands above. `closecode build` selects Full Gradle
+          automatically when it is installed, and says `needsSetup` with the exact
+          `closecode setup --gradle` command when a project needs Gradle but it is missing.
         - When a build, check or the app's logcat shows an error, read it, fix the sources, and
           run the command again yourself until it passes. Do that without asking.
         - Test the running app with `closecode run`, then `ui dump` and `ui assert`. Fix what

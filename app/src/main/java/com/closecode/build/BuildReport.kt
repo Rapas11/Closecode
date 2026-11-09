@@ -18,6 +18,7 @@ object BuildReport {
             is BuildState.RequiresSetup -> {
                 addProperty("state", "setup")
                 addProperty("step", state.step.label)
+                state.command?.let { addProperty("command", it) }
             }
             is BuildState.Blocked -> {
                 addProperty("state", "blocked")
@@ -29,6 +30,9 @@ object BuildReport {
                 addProperty("message", state.message)
                 add("diagnostics", diagnostics(state.diagnostics))
                 add("times", times(state.times))
+                state.exitCode?.let { addProperty("exitCode", it) }
+                state.durationMs?.let { addProperty("durationMs", it) }
+                state.logPath?.let { addProperty("logPath", it) }
             }
             is BuildState.Succeeded -> {
                 addProperty("state", "succeeded")
@@ -53,15 +57,22 @@ object BuildReport {
             is BuildOutcome.NeedsSetup -> {
                 addProperty("state", "setup")
                 add("warnings", findings(outcome.warnings))
+                outcome.command?.let { addProperty("command", it) }
             }
             is BuildOutcome.CompileFailed -> {
                 addProperty("state", "failed")
                 add("diagnostics", diagnostics(outcome.diagnostics))
+                outcome.exitCode?.let { addProperty("exitCode", it) }
+                outcome.durationMs?.let { addProperty("durationMs", it) }
+                outcome.logPath?.let { addProperty("logPath", it) }
             }
             is BuildOutcome.Failed -> {
                 addProperty("state", "failed")
                 addProperty("message", outcome.message)
                 add("diagnostics", diagnostics(outcome.diagnostics))
+                outcome.exitCode?.let { addProperty("exitCode", it) }
+                outcome.durationMs?.let { addProperty("durationMs", it) }
+                outcome.logPath?.let { addProperty("logPath", it) }
             }
             is BuildOutcome.Built -> {
                 addProperty("state", "succeeded")
@@ -116,8 +127,10 @@ object BuildReport {
                 add(JsonObject().apply {
                     addProperty("path", diagnostic.path)
                     addProperty("line", diagnostic.line)
+                    addProperty("column", diagnostic.column)
                     addProperty("kind", diagnostic.kind.name.lowercase())
                     addProperty("message", diagnostic.message)
+                    diagnostic.code?.let { addProperty("code", it) }
                 })
             }
         }
