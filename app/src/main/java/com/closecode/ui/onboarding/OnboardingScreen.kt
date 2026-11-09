@@ -1,7 +1,9 @@
 package com.closecode.ui.onboarding
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -25,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,15 +39,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.closecode.ai.OpenCodeBinary
 import com.closecode.ai.OpenCodeRuntime
 import com.closecode.build.ToolchainDownloadService
 import com.closecode.build.ToolchainHolder
 import com.closecode.build.ToolchainState
+import com.closecode.device.CloseCodeAccessibilityService
 import com.closecode.tools.ShellToolsManifest
 import com.closecode.tools.ShellToolsStore
 import com.closecode.ui.background.PageBackground
@@ -59,8 +66,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * First launch: three optional, one-time downloads. Every step can be skipped, and the setup
- * can be left at any point; the same downloads remain available in Settings > Setup guide.
+ * First launch: three optional, one-time downloads and an optional accessibility permission.
+ * Every step can be skipped, and the setup can be left at any point; the same downloads remain
+ * available in Settings > Setup guide.
  */
 @Composable
 fun OnboardingScreen(onDone: () -> Unit) {
@@ -97,6 +105,21 @@ fun OnboardingScreen(onDone: () -> Unit) {
     var aiStage by remember { mutableStateOf("") }
     var aiError by remember { mutableStateOf<String?>(null) }
     var aiSkipped by remember { mutableStateOf(false) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var accessibilityReady by remember {
+        mutableStateOf(CloseCodeAccessibilityService.connected())
+    }
+    var accessibilitySkipped by remember { mutableStateOf(false) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                accessibilityReady = CloseCodeAccessibilityService.connected()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     var buildSkipped by remember { mutableStateOf(false) }
     val buildBusy = buildState is ToolchainState.Downloading ||
@@ -169,6 +192,16 @@ fun OnboardingScreen(onDone: () -> Unit) {
             aiReady = result.isSuccess
             aiError = result.exceptionOrNull()?.message
             if (result.isSuccess) aiStage = "Ready"
+        }
+    }
+
+    fun openAccessibilitySettings() {
+        accessibilitySkipped = false
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
         }
     }
 
@@ -474,6 +507,53 @@ fun OnboardingScreen(onDone: () -> Unit) {
                 }
             }
 
+            Spacer(Modifier.height(14.dp))
+
+            SetupStep(
+                number = 4,
+                title = "Agent control",
+                description = "Optional accessibility permission for inspecting and tapping other apps.",
+                ready = accessibilityReady,
+                skipped = accessibilitySkipped,
+                status = when {
+                    accessibilityReady -> "Ready"
+                    accessibilitySkipped -> "Skipped"
+                    else -> "Optional"
+                },
+                onSkip = { accessibilitySkipped = true },
+            ) {
+                if (accessibilityReady) {
+                    Text(
+                        text = "Accessibility is on. The agent can inspect and control apps.",
+                        color = c.mock.green,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                } else {
+                    Text(
+                        text = "Enable CloseCode under Settings > Accessibility to let the " +
+                            "agent read the screen and tap other apps. This is optional.",
+                        color = c.text,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontFamily = Sans,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    PrimaryButton(
+                        label = "Open accessibility settings",
+                        onClick = { openAccessibilitySettings() },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextLink(
+                        label = "Check again",
+                        onClick = {
+                            accessibilityReady = CloseCodeAccessibilityService.connected()
+                        },
+                        color = c.link,
+                    )
+                }
+            }
+
             Spacer(Modifier.height(26.dp))
             PrimaryButton(
                 label = "Finish setup",
@@ -572,6 +652,8 @@ private fun WelcomePanel(onStart: () -> Unit, onSkip: () -> Unit) {
         WelcomeLine("2", "Shell tools", "Git, Python, Node and the usual terminal commands.")
         Spacer(Modifier.height(14.dp))
         WelcomeLine("3", "OpenCode AI", "Chat with an AI that works inside the project.")
+        Spacer(Modifier.height(14.dp))
+        WelcomeLine("4", "Agent control", "Optional access to inspect and tap other apps.")
     }
     Spacer(Modifier.height(28.dp))
     PrimaryButton(label = "Get started", onClick = onStart)

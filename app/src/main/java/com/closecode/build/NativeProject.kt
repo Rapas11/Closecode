@@ -44,9 +44,6 @@ object NativeProject {
                             ?.groupValues
                             ?.get(1)
                 }
-                if (Regex("\\bndk\\s*\\{").containsMatchIn(code)) {
-                    reasons += NativeReason("the ndk block", Place(file, index + 1))
-                }
             }
         }
         val sourceRoot = File(projectDir, "app/src/main")

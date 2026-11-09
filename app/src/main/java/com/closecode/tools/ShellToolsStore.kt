@@ -108,6 +108,7 @@ class ShellToolsStore(
             prefix.patch(temp)
             ensureLink(File(temp, "bin/sh"), "/system/bin/sh")
             ensureLink(File(temp, "bin/env"), "/system/bin/env")
+            ensureShellAliases(temp)
             if (!File(temp, "bin/sh").exists()) {
                 throw IOException("Could not create the shell entry point.")
             }
@@ -171,6 +172,21 @@ class ShellToolsStore(
             // A device that refuses symlinks still gets a working executable copy.
             val source = File(target)
             if (source.isFile) source.copyTo(file, overwrite = true)
+        }
+    }
+
+    private fun ensureShellAliases(root: File) {
+        ensureLink(File(root, "bin/python"), File(root, "bin/python3").absolutePath)
+        ensureLink(File(root, "bin/pip3"), File(root, "bin/pip").absolutePath)
+        val npm = File(root, "bin/npm")
+        val npx = File(root, "bin/npx")
+        if (!npx.exists() && Files.isSymbolicLink(npx.toPath())) npx.delete()
+        if (!npx.exists() && npm.exists()) {
+            npx.writeText(
+                "#!/system/bin/sh\n" +
+                    "exec '${npm.absolutePath}' exec -- \"\$@\"\n",
+            )
+            npx.setExecutable(true, false)
         }
     }
 

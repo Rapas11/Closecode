@@ -101,6 +101,28 @@ class GradleReaderTest {
     }
 
     @Test
+    fun anAbiFilterBlockIsUnderstood() {
+        val appText = """
+            plugins { id("com.android.application") }
+            android {
+                namespace = "com.a.b"
+                compileSdk = 35
+                defaultConfig {
+                    applicationId = "com.a.b"
+                    ndk { abiFilters += listOf("arm64-v8a") }
+                }
+            }
+        """.trimIndent()
+        val facts = GradleReader.factsFrom(
+            rootText = null,
+            appText = appText,
+            settingsText = null,
+            catalogText = null,
+        )
+        assertTrue(facts.unsupported.toString(), facts.unsupported.none { it.what.contains("ndk") })
+    }
+
+    @Test
     fun aGroovyOnlyProjectIsNamedAsSuch() {
         val facts = GradleReader.factsFrom(
             rootText = null,

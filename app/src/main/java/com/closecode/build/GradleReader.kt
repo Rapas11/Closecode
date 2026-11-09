@@ -234,6 +234,7 @@ object GradleReader {
     private val androidBlocks = setOf(
         "defaultConfig", "buildTypes", "compileOptions", "composeOptions",
         "composeCompiler", "buildFeatures", "kotlinOptions", "lint", "packaging", "testOptions",
+        "ndk",
     )
 
     /**
@@ -245,6 +246,9 @@ object GradleReader {
         "defaultConfig", "compileOptions", "composeOptions", "buildFeatures",
         "kotlinOptions", "lint", "packaging",
     )
+
+    /** Nested blocks that are understood but do not require a native toolchain. */
+    private val nestedAllowedBlocks = setOf("ndk")
 
     /** Keys that name a tool or feature the build does not run yet, wherever they appear. */
     private val flaggedKeys = setOf(
@@ -304,7 +308,7 @@ object GradleReader {
                 } else if (opener != null) {
                     val parent = parents.lastOrNull()
                     val unknown = parent == "android" && opener.groupValues[1] !in androidBlocks ||
-                        parent in nestedKnownBlocks
+                        parent in nestedKnownBlocks && opener.groupValues[1] !in nestedAllowedBlocks
                     if (unknown) {
                         unsupported += UnsupportedBit(
                             "The ${opener.groupValues[1]} block",

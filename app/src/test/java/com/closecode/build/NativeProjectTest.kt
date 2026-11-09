@@ -53,6 +53,17 @@ class NativeProjectTest {
     }
 
     @Test
+    fun anAbiFilterIsNotNativeSource() {
+        val gradle = appBuild()
+        gradle.writeText(
+            gradle.readText() +
+                "\nandroid { defaultConfig { ndk { abiFilters += listOf(\"arm64-v8a\") } } }\n",
+        )
+        val usage = NativeProject.detect(tmp.root)
+        assertFalse(usage.usesNative)
+    }
+
+    @Test
     fun prebuiltJniLibrariesAreNotNativeSources() {
         appBuild()
         File(tmp.root, "app/src/main/jniLibs/arm64-v8a").mkdirs()

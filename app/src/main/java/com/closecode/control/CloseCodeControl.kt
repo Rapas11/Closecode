@@ -1071,16 +1071,42 @@ object CloseCodeControl {
 internal fun controlCommandScript(basePath: String): String = """
     #!/system/bin/sh
     BASE='$basePath'
-    TOKEN=${'$'}(cat "${'$'}BASE/control.token" 2>/dev/null)
-    PORT=${'$'}(cat "${'$'}BASE/control.port" 2>/dev/null)
-    if [ -z "${'$'}TOKEN" ] || [ -z "${'$'}PORT" ]; then
-      echo "closecode: open CloseCode once, then try again." >&2
-      exit 1
-    fi
-    if [ ! -x /system/bin/nc ]; then
-      echo "closecode: this phone has no nc." >&2
-      exit 1
-    fi
+    help() {
+      case "${'$'}{1:-}" in
+        build|b) echo "usage: closecode build [--gradle] [--release]" ;;
+        run|r) echo "usage: closecode run [--gradle] [--release]" ;;
+        clean) echo "usage: closecode clean" ;;
+        status|s) echo "usage: closecode status" ;;
+        cancel|c) echo "usage: closecode cancel" ;;
+        ping|p) echo "usage: closecode ping" ;;
+        install|i) echo "usage: closecode install [apk-or-package]" ;;
+        launch|l) echo "usage: closecode launch [package]" ;;
+        logcat|log) echo "usage: closecode logcat [package] [lines]" ;;
+        export|x) echo "usage: closecode export [name]" ;;
+        screenshot|shot) echo "usage: closecode screenshot [name]" ;;
+        input|in) echo "usage: closecode input tap|x|y|text|key|swipe|back|home|recents ..." ;;
+        accessibility|a) echo "usage: closecode accessibility" ;;
+        describe|d) echo "usage: closecode describe" ;;
+        tool|t) echo "usage: closecode tool aapt2|d8|r8|kotlinc [args...]" ;;
+        tools) echo "usage: closecode tools [status|install|remove]" ;;
+        gradle|g) echo "usage: closecode gradle <task> [--gradle]" ;;
+        check|chk) echo "usage: closecode check" ;;
+        github|gh) echo "usage: closecode github push|pull [--force]" ;;
+        app|app-status) echo "usage: closecode app [package]" ;;
+        stop) echo "usage: closecode stop [package]" ;;
+        restart) echo "usage: closecode restart [package]" ;;
+        ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
+        *)
+          echo "usage: closecode <command> [args...]"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools gradle check github run app stop restart ui clean"
+          echo "Run 'closecode help <command>' for details."
+          ;;
+      esac
+    }
+    case "${'$'}{1:-}" in
+      help) help "${'$'}{2:-}"; exit 0 ;;
+      --help|-h) help; exit 0 ;;
+    esac
     CMD="${'$'}{1:-status}"
     case "${'$'}CMD" in
       b|build) CMD=build ;;
@@ -1109,8 +1135,21 @@ internal fun controlCommandScript(basePath: String): String = """
     esac
     case "${'$'}CMD" in
       build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|gradle|check|github|run|app|stop|restart|ui|clean) ;;
-      *) echo "usage: closecode build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|gradle|check|github|run|app|stop|restart|ui|clean" >&2; exit 2 ;;
+      *) help >&2; exit 2 ;;
     esac
+    case "${'$'}{2:-}" in
+      help|--help|-h) help "${'$'}CMD"; exit 0 ;;
+    esac
+    TOKEN=${'$'}(cat "${'$'}BASE/control.token" 2>/dev/null)
+    PORT=${'$'}(cat "${'$'}BASE/control.port" 2>/dev/null)
+    if [ -z "${'$'}TOKEN" ] || [ -z "${'$'}PORT" ]; then
+      echo "closecode: open CloseCode once, then try again." >&2
+      exit 1
+    fi
+    if [ ! -x /system/bin/nc ]; then
+      echo "closecode: this phone has no nc." >&2
+      exit 1
+    fi
     [ ${'$'}# -gt 0 ] && shift
     CWD=${'$'}(pwd -P 2>/dev/null || pwd)
     escape() { printf '%s' "${'$'}1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
