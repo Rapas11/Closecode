@@ -448,7 +448,7 @@ fun SettingsRow(
     }
 }
 
-private fun rowIcon(name: String): String = when (name) {
+internal fun rowIcon(name: String): String = when (name) {
     "Default project location" -> "folder"
     "Open last project" -> "play"
     "Auto-save" -> "check"
@@ -457,11 +457,18 @@ private fun rowIcon(name: String): String = when (name) {
     "Font size" -> "code"
     "Word wrap" -> "menu"
     "Show line numbers" -> "check"
+    "Auto indent" -> "menu"
     "Auto close brackets" -> "code"
+    "Bracket guides" -> "braces"
+    "Rainbow brackets" -> "braces"
+    "Sora editor" -> "bolt"
     "Tab size" -> "layers"
     "Suggestions" -> "flask"
     "Show problems" -> "alert"
     "Format on save" -> "code"
+    "Auto import" -> "down"
+    "Parameter hints" -> "info"
+    "Quick fixes" -> "wrench"
     "Kotlin" -> "code"
     "TypeScript" -> "code"
     "HTML and CSS" -> "code"
@@ -504,11 +511,18 @@ private fun rowTint(name: String, c: com.closecode.ui.theme.CcColors): Color = w
     "Font size" -> c.purple
     "Word wrap" -> c.blue
     "Show line numbers" -> c.teal
+    "Auto indent" -> c.blue
     "Auto close brackets" -> c.purple
+    "Bracket guides" -> c.purple
+    "Rainbow brackets" -> c.orange
+    "Sora editor" -> c.purple
     "Tab size" -> c.blue
     "Suggestions" -> c.yellow
     "Show problems" -> c.orange
     "Format on save" -> c.purple
+    "Auto import" -> c.green
+    "Parameter hints" -> c.teal
+    "Quick fixes" -> c.amber
     "Kotlin" -> c.purple
     "TypeScript" -> c.blue
     "HTML and CSS" -> c.orange

@@ -11,9 +11,9 @@ plugins {
 // The build number is raised for every APK handed to the user. The More sheet, every log
 // and every report print it beside the version name and the short commit, so whichever
 // APK is installed says which one it is. ("unknown" only when git is not reachable.)
-val closecodeBuild = 65
+val closecodeBuild = 66
 // The last number in the user-facing version is the passing test count at build time.
-val closecodeTests = 1507
+val closecodeTests = 1508
 val closecodeGitCommit: String = runCatching {
     providers.exec { commandLine("git", "rev-parse", "--short", "HEAD") }
         .standardOutput.asText.get().trim()

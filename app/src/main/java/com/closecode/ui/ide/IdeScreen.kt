@@ -2229,7 +2229,6 @@ internal fun IdeScreen(
             explorerOpen = open
             if (open) dismissKeyboard()
         },
-        keyboardVisible = imeOpen,
         sidebar = {
             Row(Modifier.fillMaxHeight()) {
                 IdeRail(

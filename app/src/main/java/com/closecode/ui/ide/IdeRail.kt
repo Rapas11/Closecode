@@ -75,7 +75,7 @@ internal val IdeRailTools = listOf(
 private val SidebarWidth = 300.dp
 
 /** How far in from the left edge a pull open may start. A region of the screen, not a tolerance. */
-internal val DrawerEdgeBand = 40.dp
+internal val DrawerEdgeBand = 45.dp
 
 /**
  * Whether a gesture belongs to the sidebar. Closed, only a rightward, mostly horizontal drag that
@@ -98,14 +98,15 @@ internal fun shouldClaimSidebarSwipe(
 }
 
 /**
- * The editor card sits over the rail + panel. The sidebar is one surface: it never opens on its
- * own, and it only opens from a right swipe that begins in [DrawerEdgeBand].
+ * The workspace card sits over the rail + panel. The sidebar is one surface: it never opens on its
+ * own, and it only opens from a right swipe that begins in [DrawerEdgeBand]. The gesture belongs
+ * to the card rather than to the code view, so it also works over Terminal, AI, Preview, and
+ * other panels — including while their keyboard is open.
  */
 @Composable
 internal fun IdeWorkspace(
     sidebarOpen: Boolean,
     onSidebarOpenChange: (Boolean) -> Unit,
-    keyboardVisible: Boolean,
     sidebar: @Composable () -> Unit,
     overlays: @Composable BoxScope.() -> Unit = {},
     content: @Composable BoxScope.() -> Unit,
@@ -143,8 +144,9 @@ internal fun IdeWorkspace(
                     shadowElevation = 24f * progress
                 }
                 .background(c.mock.page)
-                .pointerInput(sidebarOpen, keyboardVisible) {
-                    if (keyboardVisible) return@pointerInput
+                .pointerInput(sidebarOpen) {
+                    // No keyboard gate here: pulling from the edge is navigation, and the
+                    // terminal and AI panels usually have the keyboard open while using them.
                     awaitEachGesture {
                         // The Initial pass sees every touch before the editor does, but only
                         // takes the ones that are the sidebar swipe; everything else falls

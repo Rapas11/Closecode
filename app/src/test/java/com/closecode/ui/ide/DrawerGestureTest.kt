@@ -16,36 +16,36 @@ class DrawerGestureTest {
 
     @Test
     fun onlyARightwardPullFromTheEdgeOpensAClosedDrawer() {
-        assertTrue(shouldClaimSidebarSwipe(10f, 40f, 40f, 2f, 18f, sidebarOpen = false))
-        assertTrue(shouldClaimSidebarSwipe(40f, 40f, 18f, 0f, 18f, sidebarOpen = false))
+        assertTrue(shouldClaimSidebarSwipe(10f, 45f, 40f, 2f, 18f, sidebarOpen = false))
+        assertTrue(shouldClaimSidebarSwipe(45f, 45f, 18f, 0f, 18f, sidebarOpen = false))
 
         // A drag that starts clear of the edge belongs to the content underneath.
-        assertFalse(shouldClaimSidebarSwipe(300f, 40f, 40f, 2f, 18f, sidebarOpen = false))
+        assertFalse(shouldClaimSidebarSwipe(300f, 45f, 40f, 2f, 18f, sidebarOpen = false))
 
         // A nudge that never leaves the band is a mis-tap on the side of the phone.
-        assertFalse(shouldClaimSidebarSwipe(10f, 40f, 4f, 0f, 18f, sidebarOpen = false))
+        assertFalse(shouldClaimSidebarSwipe(10f, 45f, 4f, 0f, 18f, sidebarOpen = false))
 
         // Leftward never opens — that is the drawer closing, or a scroll back to the start.
-        assertFalse(shouldClaimSidebarSwipe(10f, 40f, -40f, 0f, 18f, sidebarOpen = false))
+        assertFalse(shouldClaimSidebarSwipe(10f, 45f, -40f, 0f, 18f, sidebarOpen = false))
     }
 
     @Test
     fun verticalAndDiagonalDragsStayWithTheContent() {
-        assertFalse(shouldClaimSidebarSwipe(10f, 40f, 40f, 30f, 18f, sidebarOpen = false))
-        assertFalse(shouldClaimSidebarSwipe(10f, 40f, 40f, 40f, 18f, sidebarOpen = false))
+        assertFalse(shouldClaimSidebarSwipe(10f, 45f, 40f, 30f, 18f, sidebarOpen = false))
+        assertFalse(shouldClaimSidebarSwipe(10f, 45f, 40f, 40f, 18f, sidebarOpen = false))
     }
 
     @Test
     fun anOpenDrawerCanBeDraggedClosedFromAnywhere() {
-        assertTrue(shouldClaimSidebarSwipe(300f, 40f, -40f, 0f, 18f, sidebarOpen = true))
-        assertTrue(shouldClaimSidebarSwipe(300f, 40f, 40f, 0f, 18f, sidebarOpen = true))
-        assertFalse(shouldClaimSidebarSwipe(300f, 40f, -4f, 0f, 18f, sidebarOpen = true))
+        assertTrue(shouldClaimSidebarSwipe(300f, 45f, -40f, 0f, 18f, sidebarOpen = true))
+        assertTrue(shouldClaimSidebarSwipe(300f, 45f, 40f, 0f, 18f, sidebarOpen = true))
+        assertFalse(shouldClaimSidebarSwipe(300f, 45f, -4f, 0f, 18f, sidebarOpen = true))
     }
 
     @Test
     fun theEdgeBandIsNarrowEnoughToLeaveTheRestOfTheScreenAlone() {
         // Narrow enough not to steal ordinary scrolls, wide enough that a pull aimed at the
         // edge does not have to be aimed precisely.
-        assertEquals(40f, DrawerEdgeBand.value, 0f)
+        assertEquals(45f, DrawerEdgeBand.value, 0f)
     }
 }
