@@ -75,7 +75,7 @@ internal val IdeRailTools = listOf(
 private val SidebarWidth = 300.dp
 
 /** How far in from the left edge a pull open may start. A region of the screen, not a tolerance. */
-internal val DrawerEdgeBand = 20.dp
+internal val DrawerEdgeBand = 40.dp
 
 /**
  * Whether a gesture belongs to the sidebar. Closed, only a rightward, mostly horizontal drag that
