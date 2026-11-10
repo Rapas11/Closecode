@@ -19,6 +19,8 @@ object ProjectCheck {
         val message: String,
         val file: String? = null,
         val line: Int? = null,
+        /** A custom-engine limit: a Full Gradle build does not need to report it. */
+        val engineOnly: Boolean = false,
     ) {
         /** "app/build.gradle.kts:12", or "" when the finding has no place. */
         val where: String
@@ -52,6 +54,8 @@ object ProjectCheck {
         val cacheModules: Set<String> = emptySet(),
         /** Compile platforms the phone can actually link against. Empty means the old default. */
         val installedCompileSdks: Set<Int> = emptySet(),
+        /** True when the optional NDK and CMake have been installed. */
+        val nativeToolsReady: Boolean = false,
     )
 
     const val INVALID_PACKAGE_MESSAGE =
@@ -94,9 +98,15 @@ object ProjectCheck {
     fun packageProblem(name: String, file: String? = null, line: Int? = null): Finding? =
         if (isValidPackage(name)) null else Finding(Severity.Error, INVALID_PACKAGE_MESSAGE, file, line)
 
-    fun check(projectDir: File, slug: String, input: Input = Input()): Report {
+    fun check(
+        projectDir: File,
+        slug: String,
+        input: Input = Input(),
+        gradle: Boolean = false,
+    ): Report {
         val findings = mutableListOf<Finding>()
         val facts = GradleReader.read(projectDir)
+        val native = NativeProject.detect(projectDir, facts)
 
         // 1. The manifest: valid XML, and one screen Android can open.
         val manifestFile = File(projectDir, "app/src/main/AndroidManifest.xml")
@@ -220,104 +230,128 @@ object ProjectCheck {
             )
         }
 
-        // 5. The toolchain versions the build supports.
-        val bomDeclared = facts.composeBom != null
-        val usesCompose = facts.composeBom != null || facts.composeCompiler != null ||
-            facts.libraries.any { it.module.startsWith("androidx.compose") }
-        if (facts.hasAppBuildFile) {
-            val hasKotlinSources = File(projectDir, "app/src/main").walkTopDown()
-                .any { it.isFile && it.extension == "kt" }
-            val usesKotlin = hasKotlinSources || facts.kotlinVersion != null ||
-                facts.plugins.any { it.id.startsWith("org.jetbrains.kotlin") } ||
-                facts.libraries.any { it.module.startsWith("org.jetbrains.kotlin") }
-            if (usesKotlin) {
-                if (facts.kotlinVersion == null) {
-                    findings += Finding(
+        if (!gradle) {
+            // 5. The toolchain versions the build supports.
+            val bomDeclared = facts.composeBom != null
+            val usesCompose = facts.composeBom != null || facts.composeCompiler != null ||
+                facts.libraries.any { it.module.startsWith("androidx.compose") }
+            if (facts.hasAppBuildFile) {
+                val hasKotlinSources = File(projectDir, "app/src/main").walkTopDown()
+                    .any { it.isFile && it.extension == "kt" }
+                val usesKotlin = hasKotlinSources || facts.kotlinVersion != null ||
+                    facts.plugins.any { it.id.startsWith("org.jetbrains.kotlin") } ||
+                    facts.libraries.any { it.module.startsWith("org.jetbrains.kotlin") }
+                if (usesKotlin) {
+                    if (facts.kotlinVersion == null) {
+                        findings += engineFinding(
+                            Severity.Error,
+                            "The Kotlin version could not be found in the build files.",
+                            facts.kotlinPlace?.file ?: "build.gradle.kts",
+                            facts.kotlinPlace?.line,
+                        )
+                    } else if (facts.kotlinVersion != ProjectPins.KOTLIN) {
+                        findings += engineFinding(
+                            Severity.Error,
+                            "Kotlin ${facts.kotlinVersion} is not supported yet. This phone builds " +
+                                "with Kotlin ${ProjectPins.KOTLIN}.",
+                            facts.kotlinPlace?.file,
+                            facts.kotlinPlace?.line,
+                        )
+                    }
+                }
+                if (usesCompose && facts.composeCompiler == null) {
+                    findings += engineFinding(
                         Severity.Error,
-                        "The Kotlin version could not be found in the build files.",
-                        facts.kotlinPlace?.file ?: "build.gradle.kts",
-                        facts.kotlinPlace?.line,
+                        "The Compose compiler version is not set. Add composeOptions { " +
+                            "kotlinCompilerExtensionVersion = \"${ProjectPins.COMPOSE_COMPILER}\" } " +
+                            "to app/build.gradle.kts.",
+                        "app/build.gradle.kts",
                     )
-                } else if (facts.kotlinVersion != ProjectPins.KOTLIN) {
-                    findings += Finding(
+                } else if (!facts.composeCompilerFromPlugin && facts.composeCompiler != null &&
+                    facts.composeCompiler != ProjectPins.COMPOSE_COMPILER
+                ) {
+                    findings += engineFinding(
                         Severity.Error,
-                        "Kotlin ${facts.kotlinVersion} is not supported yet. This phone builds " +
-                            "with Kotlin ${ProjectPins.KOTLIN}.",
-                        facts.kotlinPlace?.file,
-                        facts.kotlinPlace?.line,
+                        "The Compose compiler ${facts.composeCompiler} is not supported yet. " +
+                            "This phone builds with Compose compiler ${ProjectPins.COMPOSE_COMPILER}.",
+                        facts.composeCompilerPlace?.file,
+                        facts.composeCompilerPlace?.line,
+                    )
+                }
+                if (facts.composeBom != null && facts.composeBom != ProjectPins.COMPOSE_BOM) {
+                    findings += engineFinding(
+                        Severity.Error,
+                        "Compose BOM ${facts.composeBom} is not supported yet. This phone builds " +
+                            "with Compose BOM ${ProjectPins.COMPOSE_BOM}.",
+                        facts.composeBomPlace?.file,
+                        facts.composeBomPlace?.line,
                     )
                 }
             }
-            if (usesCompose && facts.composeCompiler == null) {
-                findings += Finding(
+
+            // 6. Plugins.
+            for (plugin in facts.plugins) {
+                if (plugin.id !in ProjectPins.supportedPlugins) {
+                    findings += engineFinding(
+                        Severity.Error,
+                        "Plugin ${plugin.id} is not supported yet.",
+                        plugin.place.file,
+                        plugin.place.line,
+                    )
+                }
+            }
+
+            // 7. Libraries: pinned, or already in the library cache. The Compose BOM itself is
+            //    covered by the version rule above, so a wrong BOM is reported once.
+            for (library in facts.libraries) {
+                if (library.module == "androidx.compose:compose-bom") continue
+                if (!ProjectPins.librarySupported(
+                        library.module,
+                        library.version,
+                        bomDeclared,
+                        input.cacheModules,
+                    )
+                ) {
+                    findings += engineFinding(
+                        Severity.Error,
+                        "Library ${library.module} is not supported yet.",
+                        library.place.file,
+                        library.place.line,
+                    )
+                }
+            }
+
+            // 8. Whatever else the build files declare, named with its file and line.
+            for (bit in facts.unsupported) {
+                if (NativeProject.isNativeBit(bit.what) &&
+                    (native.usesNative || NativeProject.isOptionalConfig(bit.what))
+                ) {
+                    continue
+                }
+                findings += engineFinding(
                     Severity.Error,
-                    "The Compose compiler version is not set. Add composeOptions { " +
-                        "kotlinCompilerExtensionVersion = \"${ProjectPins.COMPOSE_COMPILER}\" } " +
-                        "to app/build.gradle.kts.",
-                    "app/build.gradle.kts",
-                )
-            } else if (facts.composeCompiler != null && facts.composeCompiler != ProjectPins.COMPOSE_COMPILER) {
-                findings += Finding(
-                    Severity.Error,
-                    "The Compose compiler ${facts.composeCompiler} is not supported yet. " +
-                        "This phone builds with Compose compiler ${ProjectPins.COMPOSE_COMPILER}.",
-                    facts.composeCompilerPlace?.file,
-                    facts.composeCompilerPlace?.line,
+                    "${bit.what} is not supported yet.",
+                    bit.place.file,
+                    bit.place.line,
                 )
             }
-            if (facts.composeBom != null && facts.composeBom != ProjectPins.COMPOSE_BOM) {
-                findings += Finding(
+            if (native.usesNative) {
+                val first = native.reasons.firstOrNull()
+                val next = if (input.nativeToolsReady) {
+                    "Use the Full Gradle build: closecode build --gradle."
+                } else {
+                    "Install Full Gradle and Native tools in Settings, then build with --gradle."
+                }
+                findings += engineFinding(
                     Severity.Error,
-                    "Compose BOM ${facts.composeBom} is not supported yet. This phone builds " +
-                        "with Compose BOM ${ProjectPins.COMPOSE_BOM}.",
-                    facts.composeBomPlace?.file,
-                    facts.composeBomPlace?.line,
+                    "This project uses C/C++ code. $next",
+                    first?.place?.file,
+                    first?.place?.line,
                 )
             }
-        }
 
-        // 6. Plugins.
-        for (plugin in facts.plugins) {
-            if (plugin.id !in ProjectPins.supportedPlugins) {
-                findings += Finding(
-                    Severity.Error,
-                    "Plugin ${plugin.id} is not supported yet.",
-                    plugin.place.file,
-                    plugin.place.line,
-                )
-            }
-        }
 
-        // 7. Libraries: pinned, or already in the library cache. The Compose BOM itself is
-        //    covered by the version rule above, so a wrong BOM is reported once.
-        for (library in facts.libraries) {
-            if (library.module == "androidx.compose:compose-bom") continue
-            if (!ProjectPins.librarySupported(
-                    library.module,
-                    library.version,
-                    bomDeclared,
-                    input.cacheModules,
-                )
-            ) {
-                findings += Finding(
-                    Severity.Error,
-                    "Library ${library.module} is not supported yet.",
-                    library.place.file,
-                    library.place.line,
-                )
-            }
         }
-
-        // 8. Whatever else the build files declare, named with its file and line.
-        for (bit in facts.unsupported) {
-            findings += Finding(
-                Severity.Error,
-                "${bit.what} is not supported yet.",
-                bit.place.file,
-                bit.place.line,
-            )
-        }
-
         // 9. Sources.
         val sourceRoot = File(projectDir, "app/src/main")
         val hasSources = sourceRoot.walkTopDown()
@@ -332,13 +366,32 @@ object ProjectCheck {
 
         // 10. Free storage: a build needs room for classes, dex and the APK.
         val free = input.freeBytes
-        if (free != null && free < ProjectPins.FREE_SPACE_FLOOR_BYTES) {
-            findings += Finding(Severity.Error, "Not enough free storage to build.")
+        val floor = if (gradle) {
+            ProjectPins.GRADLE_FREE_SPACE_FLOOR_BYTES
+        } else {
+            ProjectPins.FREE_SPACE_FLOOR_BYTES
+        }
+        if (free != null && free < floor) {
+            val needed = floor / (1024 * 1024)
+            val have = free / (1024 * 1024)
+            findings += Finding(
+                Severity.Error,
+                "Not enough free storage to build: $have MB free, $needed MB needed. " +
+                    "Run closecode clean --gradle-caches or closecode clean --sdk.",
+            )
         }
 
         return Report(findings)
     }
+
+    private fun engineFinding(
+        severity: Severity,
+        message: String,
+        file: String? = null,
+        line: Int? = null,
+    ): Finding = Finding(severity, message, file, line, engineOnly = true)
 }
+
 
 /**
  * A small XML scanner for AndroidManifest.xml: enough to tell a manifest that parses

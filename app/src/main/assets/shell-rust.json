@@ -1,0 +1,6 @@
+{
+  "version": "1",
+  "repo": "https://packages.termux.dev/apt/termux-main",
+  "roots": ["rust"],
+  "required": ["bin/rustc", "bin/cargo"]
+}

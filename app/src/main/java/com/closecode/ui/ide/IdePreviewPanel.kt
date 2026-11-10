@@ -679,7 +679,7 @@ internal fun IdePreviewPanel(
 
     Column(
         modifier
-            .fillMaxSize().background(c.bg)) {
+            .fillMaxSize().background(c.mock.page)) {
         val route = previewRoute(
             webEntry = webEntry,
             projectRootPresent = projectRoot != null,
@@ -1023,7 +1023,7 @@ private fun ColumnScope.WebPreview(
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .height(2.dp)
-                    .background(c.accent),
+                    .background(c.mock.accent),
             )
         }
         if (pageError != null) {
@@ -1035,7 +1035,7 @@ private fun ColumnScope.WebPreview(
             ) {
                 Text(
                     text = pageError.orEmpty(),
-                    color = c.text,
+                    color = c.mock.text,
                     fontSize = 13.sp,
                     fontFamily = Sans,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center,
@@ -1116,7 +1116,7 @@ private fun StaticPreview(
 
     Column(
         Modifier
-            .fillMaxSize().background(c.bg)) {
+            .fillMaxSize().background(c.mock.page)) {
         if (fileName.isBlank()) {
             PreviewMessage("Open a file to preview it.")
             return@StaticPreview
@@ -1139,7 +1139,7 @@ private fun StaticPreview(
                                 .aspectRatio(
                                     bmp.width.toFloat() / bmp.height.toFloat().coerceAtLeast(1f),
                                 )
-                                .drawBehind { checkerboard(c.bg, c.panel) },
+                                .drawBehind { checkerboard(c.mock.page, c.mock.panel) },
                         ) {
                             Image(
                                 bitmap = bmp,
@@ -1187,8 +1187,8 @@ private fun PreviewToolbar(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(c.panel)
-            .border(1.dp, c.ln, RoundedCornerShape(0.dp)),
+            .background(c.mock.panel)
+            .border(1.dp, c.mock.divider, RoundedCornerShape(0.dp)),
     ) {
         Row(
             Modifier
@@ -1218,12 +1218,12 @@ private fun PreviewAction(
     Box(
         Modifier
             .size(34.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(17.dp))
             .clickable(onClick = onClick)
             .semantics { contentDescription = label },
         contentAlignment = Alignment.Center,
     ) {
-        CcIcon(icon, c.mu, 17.dp)
+        CcIcon(icon, c.mock.muted, 17.dp)
     }
 }
 
@@ -1239,8 +1239,8 @@ private fun PreviewLoadingBar() {
     val c = LocalPageColors.current
     LinearProgressIndicator(
         modifier = Modifier.fillMaxWidth().height(2.dp),
-        color = c.ac,
-        trackColor = c.ln,
+        color = c.mock.accent,
+        trackColor = c.mock.divider,
     )
 }
 
@@ -1250,7 +1250,7 @@ private fun PreviewMessage(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
             text = text,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 13.sp,
             fontFamily = Mono,
             modifier = Modifier.padding(24.dp),
@@ -1269,7 +1269,7 @@ private fun ColumnScope.PrettyPreview(source: String, isJson: Boolean, plain: Bo
     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(12.dp)) {
         Text(
             text = formatted.orEmpty(),
-            color = c.tx,
+            color = c.mock.text,
             fontSize = 13.sp,
             fontFamily = Mono,
         )
@@ -1293,7 +1293,7 @@ private fun ColumnScope.MarkdownPreview(source: String) {
             when (block) {
                 is MarkdownBlock.Heading -> Text(
                     text = block.text,
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = (20 - block.level * 2).coerceAtLeast(13).sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Bold,
@@ -1315,10 +1315,10 @@ private fun ColumnScope.MarkdownPreview(source: String) {
                 }
 
                 is MarkdownBlock.Bullet -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("•", color = c.mu, fontSize = 13.sp, fontFamily = Mono)
+                    Text("•", color = c.mock.muted, fontSize = 13.sp, fontFamily = Mono)
                     Text(
                         text = block.text,
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                     )
@@ -1326,7 +1326,7 @@ private fun ColumnScope.MarkdownPreview(source: String) {
 
                 is MarkdownBlock.Paragraph -> Text(
                     text = block.text,
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 14.sp,
                     fontFamily = Sans,
                 )
@@ -1336,7 +1336,7 @@ private fun ColumnScope.MarkdownPreview(source: String) {
                         .fillMaxWidth()
                         .padding(vertical = 6.dp)
                         .clip(RoundedCornerShape(1.dp))
-                        .background(c.ln)
+                        .background(c.mock.divider)
                         .height(1.dp),
                 )
             }
@@ -1361,7 +1361,7 @@ private fun ColumnScope.CsvPreview(source: String) {
                 for (cell in row) {
                     Text(
                         text = cell,
-                        color = if (rowIndex == 0) c.tx else c.mu,
+                        color = if (rowIndex == 0) c.mock.text else c.mock.muted,
                         fontSize = 13.sp,
                         fontFamily = Mono,
                         fontWeight = if (rowIndex == 0) FontWeight.Bold else FontWeight.Normal,
@@ -1372,7 +1372,7 @@ private fun ColumnScope.CsvPreview(source: String) {
                 }
             }
             if (rowIndex == 0) {
-                Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(c.ln))
+                Box(Modifier.fillMaxWidth().padding(vertical = 4.dp).height(1.dp).background(c.mock.divider))
             }
         }
     }
@@ -1710,7 +1710,7 @@ private fun WebToolbar(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(c.panel)
+            .background(c.mock.panel)
             .padding(8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1727,14 +1727,14 @@ private fun WebToolbar(
                     Modifier
                         .size(7.dp)
                         .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(c.success),
+                        .background(c.mock.green),
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
                     text = buildAnnotatedString {
                         pushStyle(
                             androidx.compose.ui.text.SpanStyle(
-                                color = c.text,
+                                color = c.mock.text,
                                 fontSize = 12.sp,
                             ),
                         )
@@ -1803,8 +1803,8 @@ private fun DeviceRow(device: PreviewDevice, onDevice: (PreviewDevice) -> Unit) 
     Row(
         Modifier
             .fillMaxWidth()
-            .background(c.panel)
-            .border(1.dp, c.divider, RoundedCornerShape(0.dp))
+            .background(c.mock.panel)
+            .border(1.dp, c.mock.divider, RoundedCornerShape(0.dp))
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1812,41 +1812,27 @@ private fun DeviceRow(device: PreviewDevice, onDevice: (PreviewDevice) -> Unit) 
             val on = option == device
             Box(
                 Modifier
-                    .height(26.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (on) c.popupSelected else androidx.compose.ui.graphics.Color.Transparent)
+                    .height(28.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        when {
+                            on -> c.mock.accent
+                            else -> c.mock.field
+                        },
+                    )
                     .clickable { onDevice(option) }
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    CcIcon(
-                        when (option) {
-                            PreviewDevice.Phone -> CcIcons.Phone
-                            PreviewDevice.Tablet -> CcIcons.Tablet
-                            PreviewDevice.Desktop -> CcIcons.Monitor
-                        },
-                        if (on) c.text else c.textMuted,
-                        13.dp,
-                    )
-                    Spacer(Modifier.width(5.dp))
-                    Text(
-                        text = option.label,
-                        color = if (on) c.text else c.textMuted,
-                        fontSize = 11.sp,
-                        fontFamily = Sans,
-                        fontWeight = if (on) FontWeight.Medium else FontWeight.Normal,
-                    )
-                }
+                Text(
+                    text = option.label,
+                    color = if (on) c.mock.onAccent else c.mock.text2,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                )
             }
         }
-        Spacer(Modifier.weight(1f))
-        Text(
-            text = device.size,
-            color = c.textFaint,
-            fontSize = 11.sp,
-            fontFamily = Mono,
-        )
     }
 }
 
@@ -1858,8 +1844,8 @@ private fun ConsoleBar(errorCount: Int, open: Boolean, onToggle: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .height(40.dp)
-            .background(c.panel)
-            .border(1.dp, c.divider, RoundedCornerShape(0.dp))
+            .background(c.mock.panel)
+            .border(1.dp, c.mock.divider, RoundedCornerShape(0.dp))
             .clickable(onClick = onToggle)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1868,7 +1854,7 @@ private fun ConsoleBar(errorCount: Int, open: Boolean, onToggle: () -> Unit) {
         Spacer(Modifier.width(8.dp))
         Text(
             text = "Console",
-            color = c.text,
+            color = c.mock.text,
             fontSize = 12.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
@@ -1925,7 +1911,7 @@ private fun ConsolePanel(
             .fillMaxWidth()
             .height(panelH)
             .background(c.fieldBg)
-            .border(1.dp, c.divider, RoundedCornerShape(0.dp)),
+            .border(1.dp, c.mock.divider, RoundedCornerShape(0.dp)),
     ) {
         // The drag handle resizes between a readable minimum and a usable maximum; dragged
         // past the minimum it closes instead, which is the swipe-down gesture for free.
@@ -1950,7 +1936,7 @@ private fun ConsolePanel(
                     .width(40.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(c.divider),
+                    .background(c.mock.divider),
             )
         }
         Row(
@@ -2048,7 +2034,7 @@ private fun ConsoleFilterChip(
             text = if (count != null && count > 0) "$label $count" else label,
             color = when {
                 error && (count ?: 0) > 0 -> c.error
-                selected -> c.text
+                selected -> c.mock.text
                 else -> c.textMuted
             },
             fontSize = 11.sp,
@@ -2061,23 +2047,22 @@ private fun ConsoleFilterChip(
 @Composable
 private fun ConsoleRow(line: ConsoleLine, onOpenFile: (String, Int) -> Unit) {
     val c = LocalPageColors.current
-    // Console-only colors, stated here because they belong to no shared surface: a dark red
-    // wash for errors, a dark amber one for warnings, plain text for logs.
+    // The washes use the theme's own tint tokens, so the row reads the same on light as on dark.
     val bg = when (line.level) {
-        ConsoleLevel.Error -> Color(0xFF1D1215)
-        ConsoleLevel.Warning -> Color(0xFF1D1A10)
+        ConsoleLevel.Error -> c.mock.dangerBg
+        ConsoleLevel.Warning -> c.mock.warningBg
         ConsoleLevel.Log -> androidx.compose.ui.graphics.Color.Transparent
     }
     val fg = when (line.level) {
-        ConsoleLevel.Error -> Color(0xFFF2A0A0)
-        ConsoleLevel.Warning -> c.warning
-        ConsoleLevel.Log -> c.popupText
+        ConsoleLevel.Error -> c.mock.danger
+        ConsoleLevel.Warning -> c.mock.warning
+        ConsoleLevel.Log -> c.mock.text2
     }
     Column(
         Modifier
             .fillMaxWidth()
             .background(bg)
-            .border(1.dp, Color(0xFF12161F), RoundedCornerShape(0.dp))
+            .border(1.dp, c.mock.border, RoundedCornerShape(0.dp))
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Text(

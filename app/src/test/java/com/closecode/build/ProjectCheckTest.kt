@@ -182,6 +182,67 @@ class ProjectCheckTest {
         )
     }
 
+    @Test
+    fun theGradleCheckSuppressesEngineOnlyCompatibilityFindings() {
+        template()
+        val gradle = File(tmp.root, "app/build.gradle.kts")
+        gradle.writeText(gradle.readText().replace("2024.04.01", "2024.09.00"))
+        val custom = ProjectCheck.check(tmp.root, "biz", ProjectFixtures.templateInput())
+        assertTrue(custom.errors.any { it.engineOnly })
+        val real = ProjectCheck.check(
+            tmp.root,
+            "biz",
+            ProjectFixtures.templateInput(),
+            gradle = true,
+        )
+        assertFalse(real.errors.any { it.engineOnly })
+        assertFalse(real.errors.any { "com.foo:bar is not supported" in it.message })
+    }
+
+    @Test
+    fun aGradleBuildNeedsThreeGigabytes() {
+        template()
+        val report = ProjectCheck.check(
+            tmp.root,
+            "biz",
+            ProjectFixtures.templateInput(freeBytes = 1L * 1024 * 1024 * 1024),
+            gradle = true,
+        )
+        assertTrue(report.errors.any { "Not enough free storage" in it.message })
+    }
+
+    // -- native projects ------------------------------------------------------------
+
+    @Test
+    fun nativeSourcesAreReportedOnceAsAProjectForFullGradle() {
+        template()
+        val gradle = File(tmp.root, "app/build.gradle.kts")
+        gradle.writeText(
+            gradle.readText() + "\nandroid { externalNativeBuild { cmake { path = " +
+                "file(\"src/main/CMakeLists.txt\") } } }\n",
+        )
+        File(tmp.root, "app/src/main/CMakeLists.txt").writeText(
+            "cmake_minimum_required(VERSION 3.22.1)\n",
+        )
+        val report = report()
+        assertTrue(report.errors.any { "uses C/C++ code" in it.message })
+        assertTrue(report.errors.any { "Native tools" in it.message })
+        assertFalse(report.errors.any { "externalNativeBuild is not supported" in it.message })
+    }
+
+    @Test
+    fun installedNativeToolsPointAtTheGradleBuild() {
+        template()
+        File(tmp.root, "app/src/main/CMakeLists.txt").writeText(
+            "cmake_minimum_required(VERSION 3.22.1)\n",
+        )
+        val input = ProjectFixtures.templateInput().copy(nativeToolsReady = true)
+        val report = ProjectCheck.check(tmp.root, "biz", input)
+        val finding = report.errors.first { "uses C/C++ code" in it.message }
+        assertTrue("--gradle" in finding.message)
+        assertFalse("Install Full Gradle" in finding.message)
+    }
+
     // -- the toolchain versions -----------------------------------------------------
 
     @Test
@@ -370,12 +431,12 @@ class ProjectCheckTest {
         template()
         assertTrue(
             report(freeBytes = 100L * 1024 * 1024).errors.any {
-                it.message == "Not enough free storage to build."
+                "Not enough free storage to build" in it.message
             },
         )
         assertTrue(
             report(freeBytes = 2L * 1024 * 1024 * 1024).errors.none {
-                it.message == "Not enough free storage to build."
+                "Not enough free storage to build" in it.message
             },
         )
     }
@@ -411,8 +472,10 @@ class ProjectCheckTest {
         assertTrue(
             report.errors.any { "Kotlin 2.0.21 is not supported yet" in it.message },
         )
+        // The Compose plugin ties the compiler to the Kotlin version; the Kotlin rule
+        // already names 2.0.21, so it is not reported a second time as a Compose error.
         assertTrue(
-            report.errors.any { "The Compose compiler 2.0.21 is not supported yet" in it.message },
+            report.errors.none { "The Compose compiler 2.0.21 is not supported yet" in it.message },
         )
     }
 }

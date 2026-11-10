@@ -25,6 +25,7 @@ internal object BuildLock {
 class BuildEngine(
     private val toolchain: ToolchainStore,
     private val cache: BuildCache? = null,
+    private val network: NetworkGate? = null,
 ) {
     private val _state = MutableStateFlow<BuildState>(BuildState.Idle)
     val state: StateFlow<BuildState> = _state
@@ -43,10 +44,25 @@ class BuildEngine(
         tools: BuildTools? = null,
         onLog: (String) -> Unit = {},
         cacheEnabled: Boolean = true,
+        buildType: String = "debug",
+        useGradle: Boolean = false,
+        gradle: GradleToolchain? = null,
+        setupCommand: String? = null,
     ): BuildOutcome {
         cancelled = false
         return BuildLock.mutex.withLock {
-            buildLocked(projectDir, projectId, checkInput, tools, onLog, cacheEnabled)
+            buildLocked(
+                projectDir,
+                projectId,
+                checkInput,
+                tools,
+                onLog,
+                cacheEnabled,
+                buildType,
+                useGradle,
+                gradle,
+                setupCommand,
+            )
         }
     }
 
@@ -57,16 +73,38 @@ class BuildEngine(
         tools: BuildTools?,
         onLog: (String) -> Unit,
         cacheEnabled: Boolean,
+        buildType: String,
+        useGradle: Boolean,
+        gradle: GradleToolchain?,
+        setupCommand: String?,
     ): BuildOutcome = withContext(Dispatchers.IO) {
+        val type = if (buildType == "release") "release" else "debug"
+        if (useGradle) {
+            // Toolchain first: a missing Gradle is the one blocker worth reporting before
+            // dozens of custom-engine findings that do not apply to a real Gradle build.
+            if (gradle == null) {
+                _state.value = BuildState.RequiresSetup(Step.CheckProject, setupCommand)
+                return@withContext BuildOutcome.NeedsSetup(command = setupCommand)
+            }
+            _state.value = BuildState.Running(Step.CheckProject, 0f)
+            val report = ProjectCheck.check(projectDir, projectId, checkInput, gradle = true)
+            if (!report.ok) {
+                _state.value = BuildState.Blocked(report.findings)
+                return@withContext BuildOutcome.Blocked(report.findings)
+            }
+            return@withContext buildWithGradle(projectDir, type, onLog, gradle)
+        }
+        // The custom engine cannot start at all without its packs, so that answer comes
+        // before the project check: install first, then talk about the project.
+        if (tools == null || !toolchain.isReady()) {
+            _state.value = BuildState.RequiresSetup(Step.CheckProject, setupCommand)
+            return@withContext BuildOutcome.NeedsSetup(command = setupCommand)
+        }
         _state.value = BuildState.Running(Step.CheckProject, 0f)
         val report = ProjectCheck.check(projectDir, projectId, checkInput)
         if (!report.ok) {
             _state.value = BuildState.Blocked(report.findings)
             return@withContext BuildOutcome.Blocked(report.findings)
-        }
-        if (tools == null || !toolchain.isReady()) {
-            _state.value = BuildState.RequiresSetup(Step.CheckProject)
-            return@withContext BuildOutcome.NeedsSetup(report.warnings)
         }
         val facts = GradleReader.read(projectDir)
         val manifestText = runCatching {
@@ -89,6 +127,7 @@ class BuildEngine(
             useCompose = facts.composeBom != null ||
                 facts.composeCompiler != null ||
                 facts.libraries.any { it.module.startsWith("androidx.compose") },
+            buildType = type,
         )
         val cacheKey = if (cacheEnabled && cache != null) {
             runCatching { cache.key(projectDir, config, tools!!) }.getOrNull()
@@ -98,7 +137,7 @@ class BuildEngine(
         if (cacheKey != null) {
             val hit = cache?.lookup(projectId, cacheKey)
             if (hit != null) {
-                val output = File(projectDir, "build/outputs/apk/debug/app-debug.apk")
+                val output = File(projectDir, "build/outputs/apk/$type/app-$type.apk")
                 runCatching {
                     output.parentFile?.mkdirs()
                     hit.copyTo(output, overwrite = true)
@@ -163,8 +202,128 @@ class BuildEngine(
         }
     }
 
+    private fun buildWithGradle(
+        projectDir: File,
+        buildType: String,
+        onLog: (String) -> Unit,
+        gradle: GradleToolchain?,
+    ): BuildOutcome {
+        val manifest = File(projectDir, "app/src/main/AndroidManifest.xml")
+        if (!manifest.isFile) {
+            val message = "Missing app/src/main/AndroidManifest.xml."
+            _state.value = BuildState.Failed(Step.CheckProject, message)
+            return BuildOutcome.Failed(message)
+        }
+        val buildFile = File(projectDir, "app/build.gradle.kts").takeIf { it.isFile }
+            ?: File(projectDir, "app/build.gradle").takeIf { it.isFile }
+        if (buildFile == null) {
+            val message = "Missing app/build.gradle.kts."
+            _state.value = BuildState.Failed(Step.CheckProject, message)
+            return BuildOutcome.Failed(message)
+        }
+        if (gradle == null) {
+            _state.value = BuildState.RequiresSetup(Step.CheckProject)
+            return BuildOutcome.NeedsSetup(command = "closecode setup --gradle")
+        }
+        _state.value = BuildState.Running(Step.CheckProject, 0f)
+        onLog("Full Gradle ${gradle.distributionVersion} · ${GradlePlan.taskFor(buildType)}")
+        _state.value = BuildState.Running(Step.CompileCode, 0.5f)
+        val started = System.currentTimeMillis()
+        var attempt = 1
+        var result = GradleRunner.run(
+            projectDir = projectDir,
+            buildType = buildType,
+            toolchain = gradle,
+            onLog = onLog,
+            cancelled = { cancelled },
+        )
+        while (attempt < 3 && !cancelled && !result.cancelled && !result.timedOut &&
+            result.code != 0 && NETWORK_FAILURE.containsMatchIn(result.output)
+        ) {
+            onLog("Network hiccup during dependency resolution; retrying in ${attempt * 2}s…")
+            Thread.sleep(attempt * 2_000L)
+            attempt++
+            result = GradleRunner.run(
+                projectDir = projectDir,
+                buildType = buildType,
+                toolchain = gradle,
+                onLog = onLog,
+                cancelled = { cancelled },
+            )
+        }
+        val seconds = ((System.currentTimeMillis() - started) / 1000).coerceAtLeast(0)
+        if (result.cancelled) {
+            _state.value = BuildState.Cancelled(emptyList())
+            return BuildOutcome.Cancelled
+        }
+        var apk = result.apk
+        if (apk != null && buildType == "release") {
+            val signer = gradle.signer
+            if (signer == null) {
+                val message = "The release APK was built but no signing key is available."
+                _state.value = BuildState.Failed(Step.Sign, message)
+                return BuildOutcome.Failed(message)
+            }
+            _state.value = BuildState.Running(Step.Sign, 0.9f)
+            onLog("Signing ${apk.name} on the phone…")
+            apk = try {
+                ApkPostSigner.sign(
+                    apk,
+                    signer,
+                    GradleReader.read(projectDir).minSdk ?: 29,
+                )
+            } catch (error: Throwable) {
+                val message = "Signing the release APK failed: " +
+                    (error.message ?: error.javaClass.simpleName)
+                _state.value = BuildState.Failed(Step.Sign, message)
+                return BuildOutcome.Failed(message)
+            }
+        }
+        if (apk != null) {
+            _state.value = BuildState.Succeeded(apk, seconds, apk.length())
+            return BuildOutcome.Built(apk, apk.length(), seconds)
+        }
+        var message = if (result.code == 0 && !result.timedOut) {
+            "Gradle finished but produced no APK."
+        } else {
+            GradleRunner.failureMessage(result)
+        }
+        val offline = network != null && !network.isWifi() && !network.mobileAllowed()
+        if (offline && NETWORK_FAILURE.containsMatchIn(result.output)) {
+            message += " Gradle needed the network and mobile data is disabled for downloads. " +
+                "Connect Wi-Fi, or allow mobile data under Settings → Build & Toolchain."
+        }
+        val diagnostics = GradleDiagnostics.parse(result.output)
+        _state.value = BuildState.Failed(
+            Step.CompileCode,
+            message,
+            diagnostics,
+            emptyList(),
+            result.code,
+            result.durationMs,
+            result.logPath,
+        )
+        return if (diagnostics.any { it.kind == CompileDriver.Diagnostic.Kind.Error }) {
+            BuildOutcome.CompileFailed(
+                diagnostics,
+                result.code,
+                result.durationMs,
+                result.logPath,
+            )
+        } else {
+            BuildOutcome.Failed(message, diagnostics, result.code, result.durationMs, result.logPath)
+        }
+    }
+
     private fun progress(step: Step): Float =
         (step.ordinal + 0.5f) / Step.entries.size
+
+    private companion object {
+        val NETWORK_FAILURE = Regex(
+            "(?i)could not (resolve|get)|unknown host|connect timed out|" +
+                "network is unreachable|offline mode",
+        )
+    }
 }
 
 /** Build steps in panel order. Install and open is drawn only for Run. */
@@ -183,13 +342,16 @@ enum class Step(val label: String) {
 sealed interface BuildState {
     data object Idle : BuildState
     data class Running(val step: Step, val progress: Float) : BuildState
-    data class RequiresSetup(val step: Step) : BuildState
+    data class RequiresSetup(val step: Step, val command: String? = null) : BuildState
     data class Blocked(val findings: List<ProjectCheck.Finding>) : BuildState
     data class Failed(
         val step: Step,
         val message: String,
         val diagnostics: List<CompileDriver.Diagnostic> = emptyList(),
         val times: List<BuildChain.StepTime> = emptyList(),
+        val exitCode: Int? = null,
+        val durationMs: Long? = null,
+        val logPath: String? = null,
     ) : BuildState
     data class Succeeded(
         val apk: File,
@@ -204,11 +366,22 @@ sealed interface BuildState {
 sealed interface BuildOutcome {
     /** The project check stopped the build: every finding, errors first, ready to list. */
     data class Blocked(val findings: List<ProjectCheck.Finding>) : BuildOutcome
-    data class NeedsSetup(val warnings: List<ProjectCheck.Finding> = emptyList()) : BuildOutcome
-    data class CompileFailed(val diagnostics: List<CompileDriver.Diagnostic>) : BuildOutcome
+    data class NeedsSetup(
+        val warnings: List<ProjectCheck.Finding> = emptyList(),
+        val command: String? = null,
+    ) : BuildOutcome
+    data class CompileFailed(
+        val diagnostics: List<CompileDriver.Diagnostic>,
+        val exitCode: Int? = null,
+        val durationMs: Long? = null,
+        val logPath: String? = null,
+    ) : BuildOutcome
     data class Failed(
         val message: String,
         val diagnostics: List<CompileDriver.Diagnostic> = emptyList(),
+        val exitCode: Int? = null,
+        val durationMs: Long? = null,
+        val logPath: String? = null,
     ) : BuildOutcome
     data class Built(
         val apk: File,

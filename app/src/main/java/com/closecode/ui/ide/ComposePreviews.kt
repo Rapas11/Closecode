@@ -487,8 +487,8 @@ internal fun ColumnScope.ScreensPanel(
     Row(
         Modifier
             .fillMaxWidth()
-            .background(c.panel)
-            .border(1.dp, c.divider, RoundedCornerShape(0.dp))
+            .background(c.mock.panel)
+            .border(1.dp, c.mock.divider, RoundedCornerShape(0.dp))
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -505,7 +505,7 @@ internal fun ColumnScope.ScreensPanel(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CcIcon(CcIcons.Phone, c.textMuted, 13.dp)
                     Spacer(Modifier.width(6.dp))
-                    Text(text = device, color = c.text, fontSize = 12.sp, fontFamily = Sans)
+                    Text(text = device, color = c.mock.text, fontSize = 12.sp, fontFamily = Sans)
                     Spacer(Modifier.width(4.dp))
                     CcIcon(CcIcons.Down, c.textMuted, 12.dp)
                 }
@@ -544,7 +544,7 @@ internal fun ColumnScope.ScreensPanel(
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = if (darkCards) "Dark" else "Light",
-                    color = c.text,
+                    color = c.mock.text,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                 )
@@ -555,7 +555,7 @@ internal fun ColumnScope.ScreensPanel(
             Modifier
                 .size(7.dp)
                 .clip(androidx.compose.foundation.shape.CircleShape)
-                .background(c.success),
+                .background(c.mock.green),
         )
         Spacer(Modifier.width(6.dp))
         Text(text = ago, color = c.textMuted, fontSize = 11.sp, fontFamily = Sans)
@@ -833,7 +833,7 @@ private fun ColumnScope.NoPreviews(onCopy: () -> Unit) {
     ) {
         Text(
             text = "No previews found",
-            color = c.text,
+            color = c.mock.text,
             fontSize = 15.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Medium,
@@ -857,7 +857,7 @@ private fun ColumnScope.NoPreviews(onCopy: () -> Unit) {
         ) {
             Text(
                 text = "@Preview\n@Composable\nfun HomeScreen() {\n    Text(\"Hello\")\n}",
-                color = c.text,
+                color = c.mock.text,
                 fontSize = 12.sp,
                 fontFamily = Mono,
             )
@@ -930,7 +930,7 @@ private fun ScreenCardView(
                             androidx.compose.ui.graphics.Color.White
                         },
                     )
-                    .border(3.dp, Color(0xFF232938), RoundedCornerShape(16.dp))
+                    .border(3.dp, c.mock.divider, RoundedCornerShape(16.dp))
                     .combinedClickable(onClick = onTap, onLongClick = onLongPress)
                     .padding(12.dp),
                 contentAlignment = Alignment.TopCenter,
@@ -975,7 +975,7 @@ private fun ScreenCardView(
                     ) {
                         Text(
                             text = "Go to error",
-                            color = c.text,
+                            color = c.mock.text,
                             fontSize = 11.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.Medium,
@@ -1056,7 +1056,7 @@ private fun ScreenCardView(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = preview.function,
-                    color = c.text,
+                    color = c.mock.text,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     maxLines = 1,
@@ -1071,7 +1071,7 @@ private fun ScreenCardView(
                 } else if (reason != null) {
                     CcIcon(CcIcons.Warning, c.warnPillTx, 12.dp)
                 } else {
-                    CcIcon(CcIcons.Check, c.success, 12.dp)
+                    CcIcon(CcIcons.Check, c.mock.green, 12.dp)
                 }
             }
             // A real picture says so; the sketch keeps the label that keeps it honest. A
@@ -1217,7 +1217,7 @@ private fun ColumnScope.FullScreenPreview(
             }
             Text(
                 text = preview.function,
-                color = c.text,
+                color = c.mock.text,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Medium,
@@ -1240,7 +1240,7 @@ private fun ColumnScope.FullScreenPreview(
                     Modifier
                         .size(5.dp)
                         .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(if (index == position - 1) c.accent else c.divider),
+                        .background(if (index == position - 1) c.mock.accent else c.mock.divider),
                 )
             }
         }

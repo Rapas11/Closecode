@@ -4,12 +4,13 @@ import androidx.compose.material3.Typography
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.closecode.R
 
 /**
- * Code font. JetBrains Mono 12 sp with a line height of exactly 20 dp: the gutter, underlines,
+ * Code font. JetBrains Mono 11.5 sp with a line height of exactly 21 dp: the gutter, underlines,
  * pills and the lightbulb are all positioned against that number, so it must not drift.
  */
 val Mono = FontFamily(
@@ -18,14 +19,22 @@ val Mono = FontFamily(
     Font(R.font.jetbrains_mono_bold, FontWeight.Bold),
 )
 
+@OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
+private fun inter(weight: Int) = Font(
+    R.font.inter_variable,
+    weight = FontWeight(weight),
+    variationSettings = FontVariation.Settings(FontVariation.weight(weight)),
+)
+
 /**
- * UI font. Manrope 14 sp base, line height 1.45, weights 400 / 600 / 700.
+ * UI font. Inter 14 sp base, line height 1.4, weights 400 / 500 / 600 / 700 / 800.
  */
 val Sans = FontFamily(
-    Font(R.font.manrope_regular, FontWeight.Normal),
-    Font(R.font.manrope_medium, FontWeight.Medium),
-    Font(R.font.manrope_semibold, FontWeight.SemiBold),
-    Font(R.font.manrope_bold, FontWeight.Bold),
+    inter(400),
+    inter(500),
+    inter(600),
+    inter(700),
+    inter(800),
 )
 
 /**
@@ -38,11 +47,15 @@ val Symbol = FontFamily(
     Font(R.font.jetbrains_mono_bold, FontWeight.Bold),
 )
 
-/** Spec section 3: code line height is fixed at 20 dp and drives all editor geometry. */
-val CodeLineHeight = 20.sp
+/** The code editor's font, as chosen in Appearance. Both choices are real families. */
+fun codeFontFamily(name: String): FontFamily =
+    if (name == "System") FontFamily.Monospace else Mono
+
+/** Spec section 3: code line height is fixed at 21 dp and drives all editor geometry. */
+val CodeLineHeight = 21.sp
 
 /** Spec section 3: UI base size, with line height 1.45. */
-val UiBaseLineHeight = (14 * 1.45).sp
+val UiBaseLineHeight = (14 * 1.4).sp
 
 val AppTypography = Typography(
     bodyLarge = TextStyle(

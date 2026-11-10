@@ -19,6 +19,10 @@ import java.security.MessageDigest
 class ShellToolsStore(
     private val context: Context,
     private val manifest: ShellToolsManifest,
+    private val prefixName: String = "u",
+    private val homeName: String = "hh",
+    private val label: String = "Shell tools",
+    private val cachePrefix: String = "shell-tools",
 ) {
     data class Progress(
         val stage: String,
@@ -30,8 +34,8 @@ class ShellToolsStore(
 
     data class Result(val ok: Boolean, val error: String? = null)
 
-    val directory: File get() = ShellToolsRepo.workingPrefix(context.dataDir)
-    val home: File get() = ShellToolsRepo.workingHome(context.dataDir)
+    val directory: File get() = ShellToolsRepo.workingPrefix(context.dataDir, prefixName)
+    val home: File get() = ShellToolsRepo.workingHome(context.dataDir, homeName)
 
     fun isReady(): Boolean =
         manifest.roots.isNotEmpty() &&
@@ -54,13 +58,13 @@ class ShellToolsStore(
 
     fun install(progress: (Progress) -> Unit): Result = synchronized(lock) {
         if (manifest.repo.isBlank() || manifest.roots.isEmpty()) {
-            return Result(false, "The shell-tools manifest is missing.")
+            return Result(false, "The $label manifest is missing.")
         }
         val architecture = ShellToolsRepo.architecture(Build.SUPPORTED_ABIS.toList())
             ?: return Result(false, "This phone's ABI has no Termux packages.")
-        val temp = File(context.dataDir, "file/u.tmp")
+        val temp = File(context.dataDir, "file/$prefixName.tmp")
         deleteTree(temp)
-        val indexFile = File(context.cacheDir, "shell-tools-Packages")
+        val indexFile = File(context.cacheDir, "$cachePrefix-Packages")
         try {
             progress(Progress("index", 0, 0, null, "Reading the package index..."))
             download(
@@ -77,7 +81,7 @@ class ShellToolsStore(
                 progress(
                     Progress("download", done, total, packageFile.name, packageFile.name),
                 )
-                val deb = File(context.cacheDir, "shell-tools-${packageFile.name}.deb")
+                val deb = File(context.cacheDir, "$cachePrefix-${packageFile.name}.deb")
                 try {
                     download(
                         ShellToolsRepo.packageUrl(manifest.repo, packageFile.fileName),
@@ -99,23 +103,24 @@ class ShellToolsStore(
                 progress(Progress("unpack", done, total, packageFile.name, packageFile.name))
             }
 
-            val prefix = TermuxPrefix(context.packageName)
+            val prefix = TermuxPrefix(context.packageName, prefixName, homeName)
             progress(Progress("relocate", done, total, null, "Relocating the Termux prefix..."))
             prefix.patch(temp)
             ensureLink(File(temp, "bin/sh"), "/system/bin/sh")
             ensureLink(File(temp, "bin/env"), "/system/bin/env")
+            ensureShellAliases(temp)
             if (!File(temp, "bin/sh").exists()) {
                 throw IOException("Could not create the shell entry point.")
             }
             val missing = manifest.required.filter { !File(temp, it).exists() }
             if (missing.isNotEmpty()) {
-                throw IOException("The shell tools are missing ${missing.joinToString()}.")
+                throw IOException("The $label are missing ${missing.joinToString()}.")
             }
             File(temp, "tmp").mkdirs()
             home.mkdirs()
             File(temp, ".installed").writeText(
                 buildString {
-                    appendLine("# CloseCode shell tools ${manifest.version} · $architecture")
+                    appendLine("# CloseCode $label ${manifest.version} · $architecture")
                     packages.forEach { appendLine(it.name) }
                 },
             )
@@ -125,12 +130,12 @@ class ShellToolsStore(
                 temp.copyRecursively(directory, overwrite = true)
                 deleteTree(temp)
             }
-            DebugLog.crumb("TOOLS", "shell tools installed · ${packages.size} packages")
-            progress(Progress("done", total, total, null, "Shell tools installed."))
+            DebugLog.crumb("TOOLS", "$label installed · ${packages.size} packages")
+            progress(Progress("done", total, total, null, "$label installed."))
             Result(true)
         } catch (error: Throwable) {
             deleteTree(temp)
-            DebugLog.crumb("TOOLS", "shell tools failed: ${error.message ?: error.javaClass.simpleName}")
+            DebugLog.crumb("TOOLS", "$label failed: ${error.message ?: error.javaClass.simpleName}")
             Result(false, error.message ?: error.javaClass.simpleName)
         } finally {
             indexFile.delete()
@@ -140,7 +145,7 @@ class ShellToolsStore(
     fun remove(): Boolean = synchronized(lock) {
         deleteTree(directory)
         deleteTree(home)
-        DebugLog.crumb("TOOLS", "shell tools removed")
+        DebugLog.crumb("TOOLS", "$label removed")
         !directory.exists() && !home.exists()
     }
 
@@ -167,6 +172,21 @@ class ShellToolsStore(
             // A device that refuses symlinks still gets a working executable copy.
             val source = File(target)
             if (source.isFile) source.copyTo(file, overwrite = true)
+        }
+    }
+
+    private fun ensureShellAliases(root: File) {
+        ensureLink(File(root, "bin/python"), File(root, "bin/python3").absolutePath)
+        ensureLink(File(root, "bin/pip3"), File(root, "bin/pip").absolutePath)
+        val npm = File(root, "bin/npm")
+        val npx = File(root, "bin/npx")
+        if (!npx.exists() && Files.isSymbolicLink(npx.toPath())) npx.delete()
+        if (!npx.exists() && npm.exists()) {
+            npx.writeText(
+                "#!/system/bin/sh\n" +
+                    "exec '${npm.absolutePath}' exec -- \"\$@\"\n",
+            )
+            npx.setExecutable(true, false)
         }
     }
 

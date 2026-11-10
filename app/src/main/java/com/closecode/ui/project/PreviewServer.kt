@@ -19,7 +19,11 @@ import java.util.concurrent.Executors
  * itself is a WebView reload driven by the IDE's save counter; the server only has to serve fresh
  * bytes when asked.
  */
-class PreviewServer(private val root: File) {
+class PreviewServer(
+    private val root: File,
+    private val host: String = "127.0.0.1",
+    private val requestedPort: Int = 0,
+) {
     private var serverSocket: ServerSocket? = null
     private var pool: ExecutorService? = null
     private var acceptThread: Thread? = null
@@ -30,7 +34,7 @@ class PreviewServer(private val root: File) {
     @Synchronized
     fun start(): Int {
         serverSocket?.let { if (!it.isClosed) return it.localPort }
-        val socket = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        val socket = ServerSocket(requestedPort, 50, InetAddress.getByName(host))
         val workers = Executors.newCachedThreadPool { runnable ->
             Thread(runnable, "closecode-preview").apply { isDaemon = true }
         }
@@ -62,7 +66,7 @@ class PreviewServer(private val root: File) {
         acceptThread = null
     }
 
-    fun baseUrl(): String = "http://127.0.0.1:$port"
+    fun baseUrl(): String = "http://${if (host == "0.0.0.0") "127.0.0.1" else host}:$port"
 
     private fun handle(socket: Socket) {
         socket.soTimeout = 5_000

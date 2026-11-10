@@ -1,5 +1,6 @@
 package com.closecode.device
 
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,6 +12,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -23,9 +25,17 @@ object DeviceTools {
 
     private const val DEFAULT_APK = "build/outputs/apk/debug/app-debug.apk"
 
-    fun install(context: Context, project: File, argument: String?): JsonObject {
+    fun install(
+        context: Context,
+        project: File,
+        argument: String?,
+        waitMs: Long = 0,
+    ): JsonObject {
         val apk = if (argument.isNullOrBlank()) {
-            File(project, DEFAULT_APK).takeIf { it.isFile }
+            val custom = File(project, DEFAULT_APK).takeIf { it.isFile }
+            custom ?: com.closecode.build.GradlePlan.findAnyApk(project)
+                ?: com.closecode.build.GradlePlan.findApk(project, "debug")
+                ?: com.closecode.build.GradlePlan.findApk(project, "release")
         } else {
             resolve(project, argument)?.takeIf { it.isFile }
         } ?: return error("No APK to install. Build the project first or pass an APK path.")
@@ -34,17 +44,34 @@ object DeviceTools {
                 .apply { addProperty("needsPermission", true) }
         }
         val packageName = packageNameOfApk(context, apk)
+        val before = packageName?.let { packageStamp(context, it) }
         return runCatching {
             val session = InstallHelper.install(context, apk, packageName.orEmpty())
             if (session < 0) {
                 error("Allow CloseCode to install apps in Settings, then try again.")
                     .apply { addProperty("needsPermission", true) }
             } else {
+                val installed = if (waitMs > 0 && packageName != null) {
+                    waitForInstall(context, packageName, before, waitMs)
+                } else {
+                    false
+                }
                 ok().apply {
                     addProperty("session", session)
                     addProperty("apk", apk.absolutePath)
                     addProperty("package", packageName.orEmpty())
-                    addProperty("note", "Android is showing its install confirmation.")
+                    if (installed) {
+                        addProperty("installed", true)
+                    } else if (waitMs > 0) {
+                        addProperty("needsUser", true)
+                        addProperty(
+                            "note",
+                            "Android is still showing its install confirmation. " +
+                                "Ask the user to confirm, then run closecode app.",
+                        )
+                    } else {
+                        addProperty("note", "Android is showing its install confirmation.")
+                    }
                 }
             }
         }.getOrElse { error(it.message ?: it.javaClass.simpleName) }
@@ -64,6 +91,249 @@ object DeviceTools {
                 addProperty("activity", intent.component?.flattenToShortString().orEmpty())
             }
         }.getOrElse { error("Android did not open $packageName: ${it.message ?: it.javaClass.simpleName}") }
+    }
+
+    fun packageName(project: File?, argument: String?): String? =
+        argument?.takeIf { it.isNotBlank() } ?: project?.let { packageNameOfProject(it) }
+
+    fun appStatus(context: Context, project: File?, packageArgument: String?): JsonObject {
+        val packageName = packageName(project, packageArgument)
+        val service = CloseCodeAccessibilityService.current()
+        val snapshot = service?.snapshot()
+        return ok().apply {
+            addProperty("package", packageName.orEmpty())
+            if (packageName != null) {
+                addProperty("installed", InstallHelper.isInstalled(context, packageName))
+            }
+            addProperty("accessibility", service != null)
+            if (snapshot != null) {
+                addProperty("foreground", snapshot.packageName)
+                addProperty("activity", snapshot.activity)
+                addProperty("width", snapshot.width)
+                addProperty("height", snapshot.height)
+                addProperty("nodes", snapshot.nodes.size)
+                addProperty("truncated", snapshot.truncated)
+            }
+        }
+    }
+
+    fun waitForForeground(
+        project: File?,
+        packageArgument: String?,
+        timeoutMs: Long,
+    ): JsonObject {
+        val packageName = packageName(project, packageArgument)
+            ?: return error("No package name. Open a built app or pass one to wait for.")
+        val service = CloseCodeAccessibilityService.current()
+            ?: return error("Enable CloseCode in Settings > Accessibility, then try again.")
+                .apply { addProperty("needsAccessibility", true) }
+        val deadline = System.currentTimeMillis() + timeoutMs.coerceIn(1_000, 120_000)
+        var foreground = service.foregroundPackage()
+        while (System.currentTimeMillis() < deadline) {
+            foreground = service.foregroundPackage()
+            if (foreground == packageName) {
+                val snapshot = service.snapshot()
+                return ok().apply {
+                    addProperty("package", packageName)
+                    addProperty("foreground", foreground)
+                    addProperty("activity", snapshot.activity)
+                }
+            }
+            Thread.sleep(250)
+        }
+        return error("$packageName did not come to the foreground.")
+            .apply {
+                addProperty("package", packageName)
+                addProperty("foreground", foreground.orEmpty())
+            }
+    }
+
+    fun stop(context: Context, project: File?, packageArgument: String?): JsonObject {
+        val packageName = packageName(project, packageArgument)
+            ?: return error("No package name. Open a built app or pass one to stop.")
+        val service = CloseCodeAccessibilityService.current()
+        val home = service?.key("home") == true
+        val killed = runCatching {
+            context.getSystemService(ActivityManager::class.java)
+                ?.killBackgroundProcesses(packageName)
+            true
+        }.getOrDefault(false)
+        return ok().apply {
+            addProperty("package", packageName)
+            addProperty("home", home)
+            addProperty("killed", killed)
+            if (!home) {
+                addProperty(
+                    "note",
+                    "The app was sent to the background. Enable accessibility to press Home first.",
+                )
+            }
+        }
+    }
+
+    fun ui(arguments: List<String>): JsonObject {
+        val service = CloseCodeAccessibilityService.current()
+            ?: return error("Enable CloseCode in Settings > Accessibility, then try again.")
+                .apply { addProperty("needsAccessibility", true) }
+        val action = arguments.firstOrNull()?.lowercase(Locale.US) ?: "dump"
+        val rest = arguments.drop(1)
+        AutomationStatus.begin("ui $action")
+        return try {
+            when (action) {
+            "dump", "tree" -> {
+                val limit = optionInt(rest, "--limit") ?: 500
+                val snapshot = service.snapshot(limit)
+                ok().apply {
+                    addProperty("action", "dump")
+                    add("snapshot", snapshotJson(snapshot))
+                }
+            }
+            "tap" -> {
+                val selector = UiSelector.parse(rest)
+                    ?: return error("Use: ui tap --text TEXT|--id ID|--desc DESC [--index N]")
+                val node = service.find(selector)
+                    ?: return error("No visible node matched.")
+                        .apply { addProperty("foreground", service.foregroundPackage().orEmpty()) }
+                val done = runBlocking { service.tap(selector) }
+                if (done) {
+                    ok().apply {
+                        addProperty("action", "tap")
+                        add("node", nodeJson(service.describe(node)))
+                    }
+                } else {
+                    error("Tap was refused.")
+                }
+            }
+            "wait" -> {
+                var timeoutMs = 5_000L
+                var gone = false
+                val selectorArgs = ArrayList<String>()
+                var index = 0
+                while (index < rest.size) {
+                    when (rest[index].lowercase(Locale.US)) {
+                        "--timeout" -> {
+                            timeoutMs = rest.getOrNull(index + 1)?.toLongOrNull()
+                                ?: return error("Use: ui wait ... --timeout MILLISECONDS")
+                            index++
+                        }
+                        "--gone", "--absent" -> gone = true
+                        else -> selectorArgs.add(rest[index])
+                    }
+                    index++
+                }
+                val selector = UiSelector.parse(selectorArgs)
+                    ?: return error("Use: ui wait --text TEXT|--id ID|--desc DESC [--gone]")
+                val deadline = System.currentTimeMillis() + timeoutMs.coerceIn(100, 60_000)
+                var matched = false
+                while (System.currentTimeMillis() < deadline) {
+                    val present = service.snapshot().find(selector) != null
+                    if (present != gone) {
+                        matched = true
+                        break
+                    }
+                    runBlocking { delay(150) }
+                }
+                JsonObject().apply {
+                    addProperty("ok", matched)
+                    addProperty("action", "wait")
+                    addProperty("found", !gone && matched)
+                    addProperty("gone", gone && matched)
+                    addProperty("timedOut", !matched)
+                    if (!matched) {
+                        addProperty(
+                            "error",
+                            if (gone) "The node was still visible." else "The node was not found.",
+                        )
+                    }
+                    addProperty("foreground", service.foregroundPackage().orEmpty())
+                }
+            }
+            "assert" -> {
+                val selector = UiSelector.parse(rest)
+                    ?: return error("Use: ui assert --text TEXT|--id ID|--desc DESC")
+                val node = service.snapshot().find(selector)
+                if (node == null) {
+                    error("No visible node matched.")
+                        .apply {
+                            addProperty("action", "assert")
+                            addProperty("found", false)
+                            addProperty("foreground", service.foregroundPackage().orEmpty())
+                        }
+                } else {
+                    ok().apply {
+                        addProperty("action", "assert")
+                        addProperty("found", true)
+                        add("node", nodeJson(node))
+                    }
+                }
+            }
+            "type", "text" -> {
+                val text = rest.joinToString(" ")
+                if (text.isEmpty()) return error("Use: ui type --text TEXT or ui type TEXT")
+                val value = if (text.startsWith("--text=")) text.removePrefix("--text=") else text
+                if (service.text(value)) {
+                    ok().apply {
+                        addProperty("action", "type")
+                        addProperty("characters", value.length)
+                    }
+                } else {
+                    error("No focused text field accepted the text.")
+                }
+            }
+            "scroll" -> {
+                val direction = rest.firstOrNull()?.lowercase(Locale.US)
+                    ?.takeIf { it == "up" || it == "down" || it == "forward" || it == "back" }
+                    ?: "down"
+                val selectorArgs = if (direction == rest.firstOrNull()?.lowercase(Locale.US)) {
+                    rest.drop(1)
+                } else {
+                    rest
+                }
+                val selector = selectorArgs.takeIf { it.isNotEmpty() }?.let { UiSelector.parse(it) }
+                val done = runBlocking { service.scroll(direction, selector) }
+                if (done) {
+                    ok().apply {
+                        addProperty("action", "scroll")
+                        addProperty("direction", direction)
+                    }
+                } else {
+                    error("There is nothing to scroll.")
+                }
+            }
+            else -> error("Use: ui dump|tap|wait|assert|scroll ...")
+            }
+        } finally {
+            AutomationStatus.end()
+        }
+    }
+
+    private fun snapshotJson(snapshot: UiSnapshot): JsonObject = JsonObject().apply {
+        addProperty("package", snapshot.packageName)
+        addProperty("activity", snapshot.activity)
+        addProperty("width", snapshot.width)
+        addProperty("height", snapshot.height)
+        addProperty("truncated", snapshot.truncated)
+        add("nodes", JsonArray().apply { snapshot.nodes.forEach { add(nodeJson(it)) } })
+    }
+
+    private fun nodeJson(node: UiNode): JsonObject = JsonObject().apply {
+        addProperty("text", if (node.password) "[redacted]" else node.text)
+        addProperty("description", if (node.password) "" else node.description)
+        addProperty("id", node.id)
+        addProperty("class", node.className)
+        add("bounds", JsonArray().apply { node.bounds.forEach { add(it) } })
+        addProperty("clickable", node.clickable)
+        addProperty("enabled", node.enabled)
+        addProperty("focused", node.focused)
+        addProperty("scrollable", node.scrollable)
+        addProperty("visible", node.visible)
+        addProperty("password", node.password)
+        addProperty("depth", node.depth)
+    }
+
+    private fun optionInt(arguments: List<String>, name: String): Int? {
+        val index = arguments.indexOf(name)
+        return if (index >= 0) arguments.getOrNull(index + 1)?.toIntOrNull() else null
     }
 
     fun logcat(project: File?, packageArgument: String?, limit: Int): JsonObject {
@@ -126,7 +396,9 @@ object DeviceTools {
         val service = CloseCodeAccessibilityService.current()
             ?: return error("Enable CloseCode in Settings > Accessibility, then try again.")
                 .apply { addProperty("needsAccessibility", true) }
-        return when (action) {
+        AutomationStatus.begin("input $action")
+        return try {
+            when (action) {
             "tap" -> {
                 val x = arguments.getOrNull(1)?.toFloatOrNull()
                 val y = arguments.getOrNull(2)?.toFloatOrNull()
@@ -150,6 +422,16 @@ object DeviceTools {
                 val done = runBlocking { service.swipe(x1, y1, x2, y2, duration) }
                 if (done) ok().apply { addProperty("action", action) } else error("Swipe was refused.")
             }
+            "longpress", "long-press" -> {
+                val x = arguments.getOrNull(1)?.toFloatOrNull()
+                val y = arguments.getOrNull(2)?.toFloatOrNull()
+                if (x == null || y == null || !x.isFinite() || !y.isFinite()) {
+                    return error("Use: input longpress X Y")
+                }
+                val done = runBlocking { service.longPress(x, y) }
+                if (done) ok().apply { addProperty("action", "longpress") }
+                else error("Long press was refused.")
+            }
             "text" -> {
                 val text = arguments.drop(1).joinToString(" ")
                 if (text.isEmpty()) return error("Use: input text TEXT")
@@ -162,8 +444,37 @@ object DeviceTools {
                 if (service.key(key)) ok().apply { addProperty("action", action); addProperty("key", key) }
                 else error("Android refused the $key key.")
             }
-            else -> error("Use: input tap|swipe|text|key ...")
+            else -> error("Use: input tap|swipe|longpress|text|key ...")
+            }
+        } finally {
+            AutomationStatus.end()
         }
+    }
+    private fun packageStamp(context: Context, packageName: String): Long? = runCatching {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            context.packageManager.getPackageInfo(
+                packageName,
+                PackageManager.PackageInfoFlags.of(0),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(packageName, 0)
+        }.lastUpdateTime
+    }.getOrNull()
+
+    private fun waitForInstall(
+        context: Context,
+        packageName: String,
+        before: Long?,
+        timeoutMs: Long,
+    ): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs.coerceIn(1_000, 120_000)
+        while (System.currentTimeMillis() < deadline) {
+            val after = packageStamp(context, packageName)
+            if (after != null && (before == null || after > before)) return true
+            Thread.sleep(400)
+        }
+        return false
     }
 
     private fun packageNameOfProject(project: File): String? {

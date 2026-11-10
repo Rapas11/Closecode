@@ -238,6 +238,25 @@ class TerminalTest {
     }
 
     @Test
+    fun closingTheLastShellLeavesAFreshShellOne() {
+        val sessions = TerminalSessions()
+        sessions.close(1)
+        assertEquals(1, sessions.sessions.size)
+        assertEquals(1, sessions.activeId)
+        assertEquals(1, sessions.active().number)
+        assertTrue(sessions.active().lines.isEmpty())
+    }
+
+    @Test
+    fun aRenamedShellKeepsOnlyTwentyFourCharacters() {
+        val sessions = TerminalSessions()
+        sessions.rename(1, "  a-very-long-shell-name-that-will-not-fit  ")
+        assertEquals(24, sessions.active().customName?.length)
+        sessions.rename(1, "   ")
+        assertNull(sessions.active().customName)
+    }
+
+    @Test
     fun shellNoiseRewritesToShortPlainErrors() {
         assertEquals(
             "sh: Ping: command not found",

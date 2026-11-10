@@ -72,8 +72,8 @@ fun CommandPalette(
                 // Spec 5: width min(480, 92% of the screen).
                 .width(480.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(14.dp))
+                .background(c.mock.panel)
+                .border(1.dp, c.mock.divider, RoundedCornerShape(14.dp))
                 .clickable(enabled = false) {}
                 .padding(bottom = 8.dp),
         ) {
@@ -85,7 +85,7 @@ fun CommandPalette(
                 if (query.isEmpty()) {
                     Text(
                         text = "Type a command or file name…",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                     )
@@ -95,11 +95,11 @@ fun CommandPalette(
                     onValueChange = onQueryChange,
                     singleLine = true,
                     textStyle = androidx.compose.ui.text.TextStyle(
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 15.sp,
                         fontFamily = Sans,
                     ),
-                    cursorBrush = SolidColor(c.ac),
+                    cursorBrush = SolidColor(c.mock.accent),
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.None,
                         autoCorrect = false,
@@ -112,7 +112,7 @@ fun CommandPalette(
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(c.ln))
+            Box(Modifier.fillMaxWidth().height(1.dp).background(c.mock.divider))
             Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
                 matched.forEach { command ->
                     val isSel = commands.indexOf(command) == selected
@@ -128,7 +128,7 @@ fun CommandPalette(
                     ) {
                         Text(
                             text = command.label,
-                            color = if (isSel) c.ac else c.tx,
+                            color = if (isSel) c.mock.accent else c.mock.text,
                             fontSize = 15.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.Medium,
@@ -138,7 +138,7 @@ fun CommandPalette(
                         if (!command.shortcut.isNullOrBlank()) {
                             Text(
                                 text = command.shortcut,
-                                color = c.mu,
+                                color = c.mock.muted,
                                 fontSize = 12.sp,
                                 fontFamily = Mono,
                             )
@@ -148,7 +148,7 @@ fun CommandPalette(
                 if (matched.isEmpty()) {
                     Text(
                         text = "No matching commands",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                         modifier = Modifier.padding(14.dp),

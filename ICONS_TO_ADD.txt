@@ -1,0 +1,18 @@
+New icon names needed by these files (add to the CcIcon name -> SVG path table).
+All are 24x24, stroke 1.9, round caps and joins, no fill. Paths:
+
+chevron-down  M6 9l6 6 6-6
+chevron-up    M6 15l6-6 6 6
+more-vertical three circles (cx=12, cy=5 / 12 / 19, r=1.4, filled)
+search        circle cx=11 cy=11 r=6.5  +  M16 16l5 5
+last          M6 5v14M10 12h10M16 8l4 4-4 4
+replace       M4 7h11l-3-3M20 17H9l3 3
+replace-all   M4 6h9l-3-3M20 14H11l3 3M4 12h4M4 18h4
+select-all    rect x=4 y=4 w=16 h=16 rx=3, dashed (stroke-dasharray 3 3)
+copy          rect x=9 y=9 w=11 h=11 rx=2.5  +  M5 15V6a2 2 0 012-2h8
+paste         rect x=5 y=5 w=14 h=16 rx=2.5  +  rect x=9 y=3 w=6 h=4 rx=1.5
+cut           circle cx=6 cy=17 r=3, circle cx=18 cy=17 r=3, M8 15L19 4M16 15L5 4
+check         M5 12l5 5 9-10
+x             M6 6l12 12M18 6L6 18
+pencil, eraser: reuse the ones the app already has; if missing, draw simple 24x24 line icons in the same style.
+Check which of these already exist first. Only add the missing ones.

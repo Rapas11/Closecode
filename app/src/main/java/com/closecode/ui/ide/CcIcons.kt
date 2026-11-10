@@ -34,7 +34,7 @@ private fun material(name: String, vararg paths: String): ImageVector =
     }.build()
 
 /** Brand marks that Material does not carry stay as stroked outlines. */
-private fun strokeIcon(name: String, path: String): ImageVector =
+private fun strokeIcon(name: String, path: String, strokeWidth: Float = 2f): ImageVector =
     ImageVector.Builder(
         name = name,
         defaultWidth = 24.dp,
@@ -44,13 +44,18 @@ private fun strokeIcon(name: String, path: String): ImageVector =
     ).addPath(
         pathData = addPathNodes(path),
         stroke = SolidColor(Color.Black),
-        strokeLineWidth = 2f,
+        strokeLineWidth = strokeWidth,
         strokeLineCap = StrokeCap.Round,
         strokeLineJoin = StrokeJoin.Round,
     ).build()
 
 object CcIcons {
     val Logo = strokeIcon("logo", "M8 8l-4 4 4 4M16 8l4 4-4 4")
+    val Sparkle = material(
+        "sparkle",
+        "M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9z" +
+            "M19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9z",
+    )
     val Drawer = material("drawer", "M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z")
     val Save = material(
         "save",
@@ -83,6 +88,16 @@ object CcIcons {
             "1.65-1.35 3-3 3zm-5.55-8h-2.9v3H8l4 4 4-4h-2.55z",
     )
     val Check = material("check", "M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z")
+
+    val Flag = material("flag", "M14.4 6L14 4H5v17h2v-7h5.6l.4 2h7V6z")
+
+    val Logs = material(
+        "logs",
+        "M4 10.5c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5z" +
+            "m0 6c-.83 0-1.5.67-1.5 1.5s.67 1.5 1.5 1.5 1.5-.67 1.5-1.5-.67-1.5-1.5-1.5z" +
+            "m0-12c-.83 0-1.5.67-1.5 1.5S4.17 7.5 5 7.5 6.5 6.83 6.5 6 5.83 4.5 5 4.5z" +
+            "m4 11h14v-2H9v2zm0 4h14v-2H9v2zm0-10h14V7.5H9v2z",
+    )
     val Clock = material(
         "clock",
         "M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 " +
@@ -200,6 +215,22 @@ object CcIcons {
         "M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 " +
             "19 17.59 13.41 12z",
     )
+    val Visibility = material(
+        "visibility",
+        "M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6" +
+            "-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 " +
+            "0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z",
+    )
+    val VisibilityOff = material(
+        "visibility-off",
+        "M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43" +
+            "-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 " +
+            "12 7zM2 4.27l2.28 2.28.46.46C3.08 8.3 1.78 10.02 1 12c1.73 4.39 6 7.5 11 7.5 " +
+            "1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 " +
+            "1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c" +
+            "-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 " +
+            "3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z",
+    )
     val Search = material(
         "search",
         "M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 " +
@@ -243,6 +274,24 @@ object CcIcons {
         "M20 4H4C2.89 4 2 4.9 2 6v12c0 1.1.89 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.91-2-2-2z" +
             "M20 18H4V8h16v10zM18 17h-6v-2h6v2zM7.5 17l-1.41-1.41L8.67 13l-2.59-2.59L7.5 9l4 4" +
             "-4 4z",
+    )
+    val Term = strokeIcon("term", "M5 8l5 4-5 4M13 17h6", 1.9f)
+    val Log = strokeIcon("log", "M4 6h16M4 12h16M4 18h10", 1.9f)
+    val Preview = strokeIcon(
+        "preview",
+        "M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM10 9v6l5-3z",
+        1.9f,
+    )
+    val RailSliders = strokeIcon(
+        "sliders",
+        "M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4",
+        1.9f,
+    )
+    val Wrench = strokeIcon(
+        "wrench",
+        "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94" +
+            "l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
+        1.9f,
     )
     val Code = material(
         "code",
@@ -314,6 +363,18 @@ object CcIcons {
         "sliders",
         "M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4" +
             "v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z",
+    )
+    val Settings = material(
+        "settings",
+        "M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61" +
+            "l-1.92-3.32c-.12-.22-.37-.31-.59-.22l-2.39.96c-.5-.38-1.04-.7-1.63-.94l-.36-2.54" +
+            "c-.04-.23-.24-.41-.48-.41h-3.84c-.24 0-.44.18-.48.41l-.36 2.54c-.59.24-1.13.57-1.63.94" +
+            "l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.07.47.12.61l2.03 1.58c-.04.3-.07.62-.07.94" +
+            "s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.31.59.22l2.39-.96" +
+            "c.5.38 1.04.7 1.63.94l.36 2.54c.05.23.24.41.48.41h3.84c.24 0 .44-.18.48-.41l.36-2.54" +
+            "c.59-.24 1.13-.57 1.63-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.21.07-.47-.12-.61" +
+            "l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6" +
+            "-1.62 3.6-3.6 3.6z",
     )
 }
 

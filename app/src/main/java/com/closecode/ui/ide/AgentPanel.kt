@@ -65,20 +65,20 @@ fun AgentPanel(projectName: String, modifier: Modifier = Modifier) {
     Column(
         modifier
             .fillMaxSize()
-            .background(c.bg)
+            .background(c.mock.page)
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
                 .height(42.dp)
-                .background(c.panel)
+                .background(c.mock.panel)
                 .padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(text = "✻", color = c.ac, fontSize = 13.sp, fontFamily = Mono)
+            Text(text = "✻", color = c.mock.accent, fontSize = 13.sp, fontFamily = Mono)
             Text(
                 text = "Terminal agent",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 13.sp,
                 fontFamily = Mono,
                 fontWeight = FontWeight.Bold,
@@ -86,7 +86,7 @@ fun AgentPanel(projectName: String, modifier: Modifier = Modifier) {
             )
             Text(
                 text = " ~/$projectName",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 13.sp,
                 fontFamily = Mono,
             )
@@ -112,14 +112,14 @@ fun AgentPanel(projectName: String, modifier: Modifier = Modifier) {
         Column(
             Modifier
                 .fillMaxWidth()
-                .background(c.panel)
+                .background(c.mock.panel)
                 .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp)
         ) {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(AgentChips) { chip ->
                     Box(
                         Modifier
-                            .border(1.dp, c.ln, RoundedCornerShape(50))
+                            .border(1.dp, c.mock.divider, RoundedCornerShape(50))
                             .clickable {
                                 lines.add(AgentLine.User(chip))
                                 if (chip.startsWith("fix")) {
@@ -161,7 +161,7 @@ fun AgentPanel(projectName: String, modifier: Modifier = Modifier) {
                     ) {
                         Text(
                             text = chip,
-                            color = c.mu,
+                            color = c.mock.muted,
                             fontSize = 12.sp,
                             fontFamily = Mono,
                         )
@@ -175,16 +175,16 @@ fun AgentPanel(projectName: String, modifier: Modifier = Modifier) {
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
                     .background(c.panel2)
-                    .border(1.dp, c.ln, RoundedCornerShape(12.dp))
+                    .border(1.dp, c.mock.divider, RoundedCornerShape(12.dp))
                     .padding(horizontal = 12.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(text = ">", color = c.ac, fontSize = 13.sp, fontFamily = Mono, fontWeight = FontWeight.Bold)
+                Text(text = ">", color = c.mock.accent, fontSize = 13.sp, fontFamily = Mono, fontWeight = FontWeight.Bold)
                 Box(Modifier.weight(1f).padding(start = 8.dp)) {
                     if (input.isEmpty()) {
                         Text(
                             text = "Ask for a change, or type /help",
-                            color = c.mu,
+                            color = c.mock.muted,
                             fontSize = 13.sp,
                             fontFamily = Mono,
                         )
@@ -194,11 +194,11 @@ fun AgentPanel(projectName: String, modifier: Modifier = Modifier) {
                         onValueChange = { input = it },
                         singleLine = true,
                         textStyle = LocalTextStyle.current.copy(
-                            color = c.tx,
+                            color = c.mock.text,
                             fontSize = 13.sp,
                             fontFamily = Mono,
                         ),
-                        cursorBrush = SolidColor(c.ac),
+                        cursorBrush = SolidColor(c.mock.accent),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -218,12 +218,12 @@ fun AgentPanel(projectName: String, modifier: Modifier = Modifier) {
                                 input = ""
                             }
                         }
-                        .background(c.ac, RoundedCornerShape(8.dp))
+                        .background(c.mock.accent, RoundedCornerShape(8.dp))
                         .padding(horizontal = 12.dp, vertical = 5.dp)
                 ) {
                     Text(
                         text = "↵",
-                        color = c.bg,
+                        color = c.mock.page,
                         fontSize = 13.sp,
                         fontFamily = Mono,
                         fontWeight = FontWeight.Bold,
@@ -239,7 +239,7 @@ fun AgentPanel(projectName: String, modifier: Modifier = Modifier) {
             ) {
                 Text(
                     text = AgentModes[mode],
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Mono,
                     modifier = Modifier.clickable { mode = (mode + 1) % AgentModes.size },
@@ -247,7 +247,7 @@ fun AgentPanel(projectName: String, modifier: Modifier = Modifier) {
                 Box(Modifier.weight(1f))
                 Text(
                     text = "$tokens tokens · $${"%.2f".format(tokens * 0.000009)}",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Mono,
                 )
@@ -269,17 +269,17 @@ private fun AgentRow(item: AgentLine) {
         is AgentLine.User -> Row(Modifier.padding(top = 12.dp)) {
             Text(
                 text = "> ${item.text}",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 13.5.sp,
                 fontFamily = Mono,
             )
         }
 
         is AgentLine.Answer -> Row(Modifier.padding(top = 8.dp)) {
-            Text(text = "● ", color = c.ac, fontSize = 13.5.sp, fontFamily = Mono)
+            Text(text = "● ", color = c.mock.accent, fontSize = 13.5.sp, fontFamily = Mono)
             Text(
                 text = item.text,
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 13.5.sp,
                 fontFamily = Mono,
             )
@@ -287,7 +287,7 @@ private fun AgentRow(item: AgentLine) {
 
         is AgentLine.Note -> Text(
             text = item.text,
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 13.5.sp,
             fontFamily = Mono,
             lineHeight = 21.6.sp,
@@ -298,14 +298,14 @@ private fun AgentRow(item: AgentLine) {
             Text(text = "● ", color = c.string, fontSize = 13.5.sp, fontFamily = Mono)
             Text(
                 text = item.name,
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 13.5.sp,
                 fontFamily = Mono,
                 fontWeight = FontWeight.Bold,
             )
             Text(
                 text = "(${item.arg})",
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 13.5.sp,
                 fontFamily = Mono,
             )
@@ -313,7 +313,7 @@ private fun AgentRow(item: AgentLine) {
 
         is AgentLine.ToolResult -> Text(
             text = "⎿  ${item.text}",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 13.5.sp,
             fontFamily = Mono,
             modifier = Modifier.padding(start = 2.dp),
@@ -324,13 +324,13 @@ private fun AgentRow(item: AgentLine) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = if (done) "☒" else "☐",
-                        color = if (done) c.string else c.mu,
+                        color = if (done) c.string else c.mock.muted,
                         fontSize = 13.5.sp,
                         fontFamily = Mono,
                     )
                     Text(
                         text = label,
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 13.5.sp,
                         fontFamily = Mono,
                         textDecoration = if (done) TextDecoration.LineThrough else null,
@@ -343,12 +343,12 @@ private fun AgentRow(item: AgentLine) {
             Modifier
                 .padding(start = 42.dp, top = 6.dp, bottom = 6.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .border(1.dp, c.ln, RoundedCornerShape(8.dp))
+                .border(1.dp, c.mock.divider, RoundedCornerShape(8.dp))
         ) {
             item.rows.forEach { (marker, text) ->
                 val bg = when (marker) {
                     '+' -> c.string.copy(alpha = 0.14f)
-                    '-' -> c.red.copy(alpha = 0.14f)
+                    '-' -> c.mock.danger.copy(alpha = 0.14f)
                     else -> Color.Transparent
                 }
                 Row(
@@ -360,7 +360,7 @@ private fun AgentRow(item: AgentLine) {
                 ) {
                     Text(
                         text = "$marker $text",
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 12.5.sp,
                         lineHeight = 18.sp,
                         fontFamily = Mono,
@@ -375,12 +375,12 @@ private fun AgentRow(item: AgentLine) {
                 .padding(top = 8.dp)
                 .clip(RoundedCornerShape(10.dp))
                 .background(c.panel2)
-                .border(1.dp, c.ac, RoundedCornerShape(10.dp))
+                .border(1.dp, c.mock.accent, RoundedCornerShape(10.dp))
                 .padding(12.dp)
         ) {
             Text(
                 text = item.title,
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 13.5.sp,
                 fontFamily = Mono,
                 fontWeight = FontWeight.Bold,
@@ -396,7 +396,7 @@ private fun AgentRow(item: AgentLine) {
                 ) {
                     Text(
                         text = "${index + 1}. $option",
-                        color = if (index == 0) c.ac else c.tx,
+                        color = if (index == 0) c.mock.accent else c.mock.text,
                         fontSize = 13.5.sp,
                         fontFamily = Mono,
                         fontWeight = if (index == 0) FontWeight.Bold else FontWeight.Normal,

@@ -1,108 +1,82 @@
 package com.closecode.ui.onboarding
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.closecode.tools.ShellToolsManifest
-import com.closecode.tools.ShellToolsStore
+import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import com.closecode.ai.OpenCodeBinary
+import com.closecode.ai.OpenCodeRuntime
 import com.closecode.build.ToolchainDownloadService
 import com.closecode.build.ToolchainHolder
 import com.closecode.build.ToolchainState
-import com.closecode.ai.OpenCodeBinary
-import com.closecode.ai.OpenCodeRuntime
-import com.closecode.ui.icons.CcIcon
-import com.closecode.ui.theme.CcTheme
-import com.closecode.ui.theme.CcType
-import com.closecode.ui.theme.tint
+import com.closecode.device.CloseCodeAccessibilityService
+import com.closecode.tools.ShellToolsManifest
+import com.closecode.tools.ShellToolsStore
+import com.closecode.ui.background.PageBackground
+import com.closecode.ui.components.OutlineButton
+import com.closecode.ui.components.PrimaryButton
+import com.closecode.ui.components.ScreenCard
+import com.closecode.ui.components.TextLink
+import com.closecode.ui.theme.LocalPageColors
+import com.closecode.ui.theme.Sans
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.util.Locale
-
-/** One row of screen 06. Every field comes from a real download. */
-private sealed interface StepState {
-    data object Ready : StepState
-    data object Waiting : StepState
-    data class Downloading(
-        val percent: Float,
-        val speedText: String,
-        val etaText: String,
-        val sizeText: String,
-        val paused: Boolean = false,
-    ) : StepState
-
-    data class Failed(val message: String) : StepState
-    data object Skipped : StepState
-}
-
-private data class SetupStepUi(
-    val id: String,
-    val icon: String,
-    val tint: Color,
-    val title: String,
-    val subtitle: String,
-    val required: Boolean,
-    val state: StepState,
-    val primaryLabel: String? = null,
-    val onPrimary: (() -> Unit)? = null,
-    val onSkip: (() -> Unit)? = null,
-    val onRetry: (() -> Unit)? = null,
-    val onMobileData: (() -> Unit)? = null,
-)
 
 /**
- * Screen 06 — First-time setup.
- *
- * The one-time downloads the app really performs: build tools (required), shell tools and
- * the OpenCode runtime (both optional). Finish is enabled once every required step is
- * Ready. The same screen is reachable later from Settings.
+ * First launch: three optional, one-time downloads and an optional accessibility permission.
+ * Every step can be skipped, and the setup can be left at any point; the same downloads remain
+ * available in Settings > Setup guide.
  */
 @Composable
 fun OnboardingScreen(onDone: () -> Unit) {
-    val c = CcTheme.colors
+    val c = LocalPageColors.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    var showWelcome by rememberSaveable { mutableStateOf(true) }
+    var focusStep by rememberSaveable { mutableStateOf<Int?>(null) }
 
     val toolchainStore = remember(context) { ToolchainHolder.store(context) }
     val buildState by toolchainStore.state.collectAsState()
@@ -132,9 +106,27 @@ fun OnboardingScreen(onDone: () -> Unit) {
     var aiError by remember { mutableStateOf<String?>(null) }
     var aiSkipped by remember { mutableStateOf(false) }
 
-    var buildSkipped by remember { mutableStateOf(false) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var accessibilityReady by remember {
+        mutableStateOf(CloseCodeAccessibilityService.connected())
+    }
+    var accessibilitySkipped by remember { mutableStateOf(false) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                accessibilityReady = CloseCodeAccessibilityService.connected()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
-    val buildDownloading = buildState as? ToolchainState.Downloading
+    var buildSkipped by remember { mutableStateOf(false) }
+    val buildBusy = buildState is ToolchainState.Downloading ||
+        buildState is ToolchainState.Verifying ||
+        buildState is ToolchainState.Checking
+    val setupBusy = buildBusy || shellBusy || aiBusy
+
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { }
@@ -203,454 +195,700 @@ fun OnboardingScreen(onDone: () -> Unit) {
         }
     }
 
-    val buildSpeed = rememberSpeed(
-        doneBytes = buildDownloading?.doneBytes ?: 0L,
-        totalBytes = buildDownloading?.totalBytes ?: 0L,
-        active = buildDownloading != null,
-    )
+    fun openAccessibilitySettings() {
+        accessibilitySkipped = false
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        }
+    }
 
-    val steps = listOf(
-        SetupStepUi(
-            id = "build",
-            icon = "check",
-            tint = if (buildReady) c.green else c.amber,
-            title = "Build tools",
-            subtitle = "Kotlin, Java, dex and the signer. After this, builds work offline.",
-            required = true,
-            state = when (val state = buildState) {
-                is ToolchainState.Downloading -> StepState.Downloading(
-                    percent = if (state.totalBytes > 0) {
-                        state.doneBytes.toFloat() / state.totalBytes
-                    } else {
-                        0f
-                    },
-                    speedText = buildSpeed.speedText,
-                    etaText = buildSpeed.etaText,
-                    sizeText = "${formatMb(state.doneBytes)} of ${formatMb(state.totalBytes)}",
-                )
-                ToolchainState.WaitingForWifi -> StepState.Waiting
-                is ToolchainState.Failed -> StepState.Failed(state.message)
-                is ToolchainState.Verifying, ToolchainState.Checking -> StepState.Downloading(
-                    percent = 0f,
-                    speedText = "",
-                    etaText = "",
-                    sizeText = "Checking the files already on the phone…",
-                )
-                ToolchainState.Ready -> StepState.Ready
-                ToolchainState.NotStarted -> if (buildReady) StepState.Ready else StepState.Skipped
-            },
-            primaryLabel = when {
-                buildReady -> null
-                buildState is ToolchainState.Downloading -> "Pause"
-                buildState is ToolchainState.Verifying || buildState is ToolchainState.Checking -> null
-                toolchainStore.needsUpdate() -> "Update build tools"
-                else -> "Download build tools"
-            },
-            onPrimary = {
-                if (buildState is ToolchainState.Downloading) {
-                    ToolchainDownloadService.send(context, ToolchainDownloadService.ACTION_PAUSE)
-                } else {
-                    startBuildTools()
-                }
-            },
-            onRetry = {
-                if (buildState is ToolchainState.Failed) startBuildTools()
-                else Unit
-            },
-            onMobileData = {
-                if (buildState is ToolchainState.WaitingForWifi) {
-                    toolchainStore.setMobileAllowed(true)
-                }
-            },
-        ),
-        SetupStepUi(
-            id = "shell",
-            icon = "term",
-            tint = c.blue,
-            title = "Shell tools",
-            subtitle = "Git, Python, Node, curl, zip and jq in the terminal. Optional.",
-            required = false,
-            state = when {
-                shellReady -> StepState.Ready
-                shellSkipped -> StepState.Skipped
-                shellBusy -> {
-                    val p = shellProgress
-                    StepState.Downloading(
-                        percent = if (p != null && p.totalBytes > 0) {
-                            p.doneBytes.toFloat() / p.totalBytes
-                        } else {
-                            0f
-                        },
-                        speedText = "",
-                        etaText = "",
-                        sizeText = p?.let { "${formatMb(it.doneBytes)} of ${formatMb(it.totalBytes)}" }
-                            ?: "Reading the package index…",
-                    )
-                }
-                shellError != null -> StepState.Failed(shellError.orEmpty())
-                else -> StepState.Skipped
-            },
-            primaryLabel = when {
-                shellReady || shellBusy || shellSkipped -> null
-                shellError != null -> "Retry"
-                else -> "Download shell tools"
-            },
-            onPrimary = { installShellTools() },
-            onRetry = { installShellTools() },
-            onSkip = if (shellReady) null else ({ shellSkipped = true }),
-        ),
-        SetupStepUi(
-            id = "ai",
-            icon = "bolt",
-            tint = c.accent,
-            title = "OpenCode AI",
-            subtitle = "The OpenCode program and the Linux libraries it runs through. Optional.",
-            required = false,
-            state = when {
-                aiReady -> StepState.Ready
-                aiSkipped -> StepState.Skipped
-                aiBusy -> StepState.Downloading(
-                    percent = aiProgress,
-                    speedText = "",
-                    etaText = "",
-                    sizeText = aiStage,
-                )
-                arch == null -> StepState.Failed("This phone's CPU is not one OpenCode runs on.")
-                aiError != null -> StepState.Failed(aiError.orEmpty())
-                else -> StepState.Skipped
-            },
-            primaryLabel = when {
-                aiReady || aiBusy || aiSkipped || arch == null -> null
-                aiError != null -> "Retry"
-                else -> "Download AI runtime"
-            },
-            onPrimary = { installAiRuntime() },
-            onRetry = { installAiRuntime() },
-            onSkip = if (aiReady || arch == null) null else ({ aiSkipped = true }),
-        ),
-    )
-
-    val canFinish = steps.filter { it.required }.all { it.state is StepState.Ready }
-
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(c.rail)
-            .statusBarsPadding()
-            .navigationBarsPadding(),
-    ) {
+    Box(Modifier.fillMaxSize()) {
+        PageBackground()
         Column(
             Modifier
                 .fillMaxSize()
+                .systemBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(bottom = 100.dp),
+                .padding(horizontal = 20.dp, vertical = 28.dp),
+            horizontalAlignment = Alignment.Start,
         ) {
-            Column(Modifier.padding(start = 22.dp, top = 30.dp, end = 22.dp, bottom = 20.dp)) {
-                Text(
-                    "CLOSECODE",
-                    style = CcType.caption.copy(
-                        fontSize = 13.sp,
+            if (showWelcome) {
+                WelcomePanel(
+                    onStart = { showWelcome = false },
+                    onSkip = onDone,
+                )
+            } else {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(28.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(c.brightText),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "C",
+                            color = c.mock.page,
+                            fontSize = 15.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                    Spacer(Modifier.size(9.dp))
+                    Text(
+                        text = "Closecode",
+                        color = c.brightText,
+                        fontSize = 18.sp,
+                        fontFamily = Sans,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp,
-                    ),
-                    color = c.accent,
-                )
-                Text(
-                    "Set up your build environment",
-                    modifier = Modifier.padding(top = 10.dp),
-                    style = CcType.setupTitle.copy(lineHeight = 31.sp, letterSpacing = (-0.5).sp),
-                    color = c.text,
-                )
-                Text(
-                    "One-time downloads. You can skip any and add it later in Settings.",
-                    modifier = Modifier.padding(top = 8.dp),
-                    style = CcType.body.copy(
-                        fontSize = 13.5.sp,
-                        fontWeight = FontWeight.Normal,
-                        lineHeight = 20.sp,
-                    ),
-                    color = c.muted,
-                )
+                    )
+                }
+                TextLink(label = "Skip all", onClick = onDone, color = c.textMuted)
             }
 
-            steps.forEach { step -> SetupCard(step) }
-        }
-
-        Box(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .padding(start = 16.dp, end = 16.dp, bottom = 34.dp)
-                .fillMaxWidth()
-                .height(52.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(if (canFinish) c.accent else c.field)
-                .clickable(enabled = canFinish, onClick = onDone),
-            contentAlignment = Alignment.Center,
-        ) {
+            Spacer(Modifier.height(30.dp))
             Text(
-                "Finish setup",
-                style = CcType.body.copy(fontSize = 16.sp, fontWeight = FontWeight.Bold),
-                color = if (canFinish) Color.White else c.faint,
+                text = "Set up your build environment",
+                color = c.brightText,
+                fontSize = 30.sp,
+                lineHeight = 34.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
             )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "One-time downloads. You can skip any and add it later in Settings.",
+                color = c.textMuted,
+                fontSize = 14.sp,
+                lineHeight = 21.sp,
+                fontFamily = Sans,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Start,
+            )
+            Spacer(Modifier.height(26.dp))
+
+            SetupStep(
+                number = 1,
+                title = "Build tools",
+                description = "Kotlin, Java, dex and the signer. After this, builds work offline.",
+                ready = buildReady,
+                skipped = buildSkipped,
+                busy = buildBusy,
+                onFocus = { focusStep = 1 },
+                status = when (val state = buildState) {
+                    is ToolchainState.Downloading -> {
+                        val percent = if (state.totalBytes > 0) {
+                            (state.doneBytes * 100 / state.totalBytes).toInt().coerceIn(0, 100)
+                        } else {
+                            0
+                        }
+                        "Downloading · $percent%"
+                    }
+                    ToolchainState.WaitingForWifi -> "Waiting for Wi-Fi"
+                    is ToolchainState.Failed -> "Needs attention"
+                    is ToolchainState.Verifying, ToolchainState.Checking -> "Checking files"
+                    ToolchainState.Ready -> "Ready"
+                    ToolchainState.NotStarted -> if (buildReady) "Ready" else "Not installed"
+                },
+                onSkip = { buildSkipped = true },
+            ) {
+                when (val state = buildState) {
+                    is ToolchainState.Downloading -> {
+                        Text(
+                            text = "Downloading ${state.index} of ${state.count} · " +
+                                "${state.doneBytes / 1_048_576} MB of " +
+                                "${state.totalBytes / 1_048_576} MB",
+                            color = c.text,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        ProgressBar(
+                            value = if (state.totalBytes > 0) {
+                                state.doneBytes.toFloat() / state.totalBytes
+                            } else {
+                                0f
+                            },
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlineButton(
+                                label = "Pause",
+                                onClick = {
+                                    ToolchainDownloadService.send(
+                                        context,
+                                        ToolchainDownloadService.ACTION_PAUSE,
+                                    )
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                            OutlineButton(
+                                label = "Cancel",
+                                onClick = {
+                                    ToolchainDownloadService.send(
+                                        context,
+                                        ToolchainDownloadService.ACTION_CANCEL,
+                                    )
+                                },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                    ToolchainState.WaitingForWifi -> {
+                        Text(
+                            text = "The download is waiting for Wi-Fi.",
+                            color = c.text,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        PrimaryButton(
+                            label = "Use mobile data",
+                            onClick = { toolchainStore.setMobileAllowed(true) },
+                        )
+                    }
+                    is ToolchainState.Failed -> {
+                        Text(
+                            text = state.message,
+                            color = c.error,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        PrimaryButton(label = "Try again", onClick = { startBuildTools() })
+                    }
+                    is ToolchainState.Verifying, ToolchainState.Checking -> {
+                        Text(
+                            text = "Checking the files already on the phone…",
+                            color = c.textMuted,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                        )
+                    }
+                    else -> {
+                        if (buildReady) {
+                            Text(
+                                text = "Build tools are ready.",
+                                color = c.mock.green,
+                                fontSize = 12.sp,
+                                fontFamily = Sans,
+                            )
+                        } else {
+                            PrimaryButton(
+                                label = if (toolchainStore.needsUpdate()) {
+                                    "Update build tools"
+                                } else {
+                                    "Download build tools"
+                                },
+                                onClick = { startBuildTools() },
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            SetupStep(
+                number = 2,
+                title = "Shell tools",
+                description = "Git, Python, Node, curl, zip and jq",
+                ready = shellReady,
+                skipped = shellSkipped,
+                busy = shellBusy,
+                onFocus = { focusStep = 2 },
+                status = when {
+                    shellReady -> "Ready"
+                    shellBusy -> "Installing"
+                    shellError != null -> "Needs attention"
+                    else -> "Optional"
+                },
+                onSkip = { shellSkipped = true },
+            ) {
+                val progress = shellProgress
+                if (shellBusy) {
+                    Text(
+                        text = progress?.message ?: "Reading the package index…",
+                        color = c.text,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                    if (progress != null && progress.totalBytes > 0) {
+                        Spacer(Modifier.height(8.dp))
+                        ProgressBar(
+                            value = progress.doneBytes.toFloat() / progress.totalBytes,
+                        )
+                    }
+                } else if (shellReady) {
+                    Text(
+                        text = "Shell tools are ready.",
+                        color = c.mock.green,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                } else {
+                    shellError?.let {
+                        Text(
+                            text = it,
+                            color = c.error,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    PrimaryButton(label = "Download shell tools", onClick = { installShellTools() })
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            SetupStep(
+                number = 3,
+                title = "OpenCode AI",
+                description = "Runtime and Linux libraries",
+                ready = aiReady,
+                skipped = aiSkipped,
+                busy = aiBusy,
+                onFocus = { focusStep = 3 },
+                status = when {
+                    aiReady -> "Ready"
+                    aiBusy -> "Downloading"
+                    aiError != null -> "Needs attention"
+                    arch == null -> "Not supported"
+                    else -> "Not installed"
+                },
+                onSkip = { aiSkipped = true },
+            ) {
+                if (aiBusy) {
+                    Text(
+                        text = aiStage,
+                        color = c.text,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ProgressBar(value = aiProgress)
+                } else if (aiReady) {
+                    Text(
+                        text = "The AI runtime is ready.",
+                        color = c.mock.green,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                } else if (arch == null) {
+                    Text(
+                        text = "This phone's CPU is not one OpenCode runs on.",
+                        color = c.error,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                } else {
+                    aiError?.let {
+                        Text(
+                            text = it,
+                            color = c.error,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    PrimaryButton(
+                        label = if (aiError == null) "Download AI runtime" else "Try again",
+                        onClick = { installAiRuntime() },
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            SetupStep(
+                number = 4,
+                title = "Agent control",
+                description = "Optional accessibility permission for inspecting and tapping other apps.",
+                ready = accessibilityReady,
+                skipped = accessibilitySkipped,
+                status = when {
+                    accessibilityReady -> "Ready"
+                    accessibilitySkipped -> "Skipped"
+                    else -> "Optional"
+                },
+                onSkip = { accessibilitySkipped = true },
+            ) {
+                if (accessibilityReady) {
+                    Text(
+                        text = "Accessibility is on. The agent can inspect and control apps.",
+                        color = c.mock.green,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                } else {
+                    Text(
+                        text = "Enable CloseCode under Settings > Accessibility to let the " +
+                            "agent read the screen and tap other apps. This is optional.",
+                        color = c.text,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontFamily = Sans,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    PrimaryButton(
+                        label = "Open accessibility settings",
+                        onClick = { openAccessibilitySettings() },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextLink(
+                        label = "Check again",
+                        onClick = {
+                            accessibilityReady = CloseCodeAccessibilityService.connected()
+                        },
+                        color = c.link,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(26.dp))
+            PrimaryButton(
+                label = "Finish setup",
+                onClick = onDone,
+                enabled = !setupBusy,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = if (setupBusy) {
+                    "Finish setup is available when the active download stops."
+                } else {
+                    "You can return to these downloads from Settings > Setup guide."
+                },
+                color = c.textFaint,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Spacer(Modifier.height(18.dp))
+            }
         }
+    }
+
+    focusStep?.let { step ->
+        FocusPanel(
+            step = step,
+            buildState = buildState,
+            shellProgress = shellProgress,
+            aiProgress = aiProgress,
+            aiStage = aiStage,
+            onDismiss = { focusStep = null },
+        )
     }
 }
 
 @Composable
-private fun SetupCard(step: SetupStepUi) {
-    val c = CcTheme.colors
-    Column(
-        Modifier
-            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(c.panel)
-            .border(1.dp, c.border, RoundedCornerShape(20.dp))
-            .padding(16.dp),
+private fun WelcomePanel(onStart: () -> Unit, onSkip: () -> Unit) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
-                    .size(44.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(step.tint.tint()),
+                    .size(28.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(c.brightText),
                 contentAlignment = Alignment.Center,
             ) {
-                CcIcon(step.icon, step.tint, 22.dp, 1.8f)
-            }
-            Spacer(Modifier.width(13.dp))
-            Column(Modifier.weight(1f)) {
                 Text(
-                    step.title,
-                    style = CcType.itemTitle.copy(fontSize = 15.5.sp, fontWeight = FontWeight.Bold),
-                    color = c.text,
-                )
-                Text(
-                    step.subtitle,
-                    modifier = Modifier.padding(top = 2.dp),
-                    style = CcType.caption.copy(fontSize = 12.5.sp),
-                    color = c.muted,
+                    text = "C",
+                    color = c.mock.page,
+                    fontSize = 15.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Bold,
                 )
             }
-            Spacer(Modifier.width(8.dp))
-            when (val st = step.state) {
-                StepState.Ready -> Text(
-                    "Ready",
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(c.diffAddBg)
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    style = CcType.caption.copy(fontWeight = FontWeight.Bold),
-                    color = c.green,
-                )
-                is StepState.Failed -> Text(
-                    "Failed",
-                    style = CcType.caption.copy(fontWeight = FontWeight.SemiBold),
-                    color = c.red,
-                )
-                StepState.Skipped -> Text(
-                    "Skipped",
-                    style = CcType.caption.copy(fontWeight = FontWeight.SemiBold),
-                    color = c.muted,
-                )
-                else -> Text(
-                    if (step.required) "Required" else "Optional",
-                    style = CcType.caption.copy(fontWeight = FontWeight.SemiBold),
-                    color = c.muted,
-                )
-            }
-        }
-
-        (step.state as? StepState.Failed)?.let {
+            Spacer(Modifier.size(9.dp))
             Text(
-                it.message,
-                modifier = Modifier.padding(top = 8.dp),
-                style = CcType.caption,
-                color = c.red,
+                text = "Closecode",
+                color = c.brightText,
+                fontSize = 18.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
             )
         }
-
-        (step.state as? StepState.Downloading)?.let { d ->
-            val p by animateFloatAsState(
-                d.percent.coerceIn(0f, 1f),
-                tween(200, easing = LinearEasing),
-                label = "dl",
-            )
-            Row(Modifier.padding(top = 14.dp)) {
-                Text(
-                    if (d.paused) {
-                        "Paused ${(d.percent * 100).toInt()}%"
-                    } else {
-                        "Downloading ${(d.percent * 100).toInt()}%"
-                    },
-                    modifier = Modifier.weight(1f),
-                    style = CcType.caption.copy(fontSize = 12.5.sp, fontWeight = FontWeight.Bold),
-                    color = c.accent,
-                )
-                if (!d.paused && d.speedText.isNotBlank()) {
-                    Text(
-                        "${d.speedText} · ${d.etaText}",
-                        style = CcType.caption.copy(fontSize = 12.5.sp),
-                        color = c.muted,
-                    )
-                }
-            }
-            Box(
-                Modifier
-                    .padding(top = 9.dp)
-                    .fillMaxWidth()
-                    .height(7.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(c.rail),
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(p)
-                        .background(c.accent),
-                )
-            }
-            Text(
-                d.sizeText,
-                modifier = Modifier.padding(top = 8.dp),
-                style = CcType.caption,
-                color = c.muted,
-            )
-            Row(
-                Modifier.padding(top = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                if (step.onPrimary != null) {
-                    SetupButton(step.primaryLabel ?: "Pause", Modifier.weight(1f), step.onPrimary)
-                }
-                if (step.onSkip != null) {
-                    SetupButton("Skip for now", Modifier.weight(1f), step.onSkip)
-                }
-            }
-        }
-
-        if (step.state is StepState.Waiting) {
-            Text(
-                "The download is waiting for Wi-Fi.",
-                modifier = Modifier.padding(top = 8.dp),
-                style = CcType.caption,
-                color = c.muted,
-            )
-            Row(
-                Modifier.padding(top = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                step.onMobileData?.let {
-                    SetupButton("Use mobile data", Modifier.weight(1f), it)
-                }
-                step.onSkip?.let {
-                    SetupButton("Skip for now", Modifier.weight(1f), it)
-                }
-            }
-        }
-
-        if (step.state is StepState.Failed) {
-            Row(
-                Modifier.padding(top = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                (step.onRetry ?: step.onPrimary)?.let {
-                    SetupButton("Retry", Modifier.weight(1f), it)
-                }
-                step.onMobileData?.let {
-                    SetupButton("Use mobile data", Modifier.weight(1f), it)
-                }
-                step.onSkip?.let {
-                    SetupButton("Skip for now", Modifier.weight(1f), it)
-                }
-            }
-        }
-
-        // Idle with nothing running and not ready: the one action that starts it.
-        val idle = step.state !is StepState.Downloading &&
-            step.state !is StepState.Failed &&
-            step.state !is StepState.Ready &&
-            step.state !is StepState.Waiting
-        if (idle && (step.onPrimary != null || step.onSkip != null)) {
-            Row(
-                Modifier.padding(top = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(9.dp),
-            ) {
-                step.onPrimary?.let {
-                    SetupButton(step.primaryLabel ?: "Download", Modifier.weight(1f), it)
-                }
-                step.onSkip?.let {
-                    SetupButton("Skip for now", Modifier.weight(1f), it)
-                }
-            }
-        }
+        TextLink(label = "Skip all", onClick = onSkip, color = c.textMuted)
     }
-}
 
-@Composable
-private fun SetupButton(text: String, modifier: Modifier, onClick: () -> Unit) = Box(
-    modifier
-        .height(38.dp)
-        .clip(RoundedCornerShape(12.dp))
-        .background(CcTheme.colors.field)
-        .clickable(onClick = onClick),
-    contentAlignment = Alignment.Center,
-) {
+    Spacer(Modifier.height(54.dp))
     Text(
-        text,
-        style = CcType.small.copy(fontWeight = FontWeight.SemiBold),
-        color = CcTheme.colors.text,
+        text = "Build apps\non your phone",
+        color = c.brightText,
+        fontSize = 36.sp,
+        lineHeight = 40.sp,
+        fontFamily = Sans,
+        fontWeight = FontWeight.Bold,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+    )
+    Spacer(Modifier.height(14.dp))
+    Text(
+        text = "An editor, terminal, build tools and an AI assistant, together in one place. " +
+            "Three optional downloads get the phone ready.",
+        color = c.textMuted,
+        fontSize = 14.sp,
+        lineHeight = 21.sp,
+        fontFamily = Sans,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+    )
+    Spacer(Modifier.height(34.dp))
+    ScreenCard {
+        WelcomeLine("1", "Build tools", "Compile Kotlin and Java apps offline.")
+        Spacer(Modifier.height(14.dp))
+        WelcomeLine("2", "Shell tools", "Git, Python, Node and the usual terminal commands.")
+        Spacer(Modifier.height(14.dp))
+        WelcomeLine("3", "OpenCode AI", "Chat with an AI that works inside the project.")
+        Spacer(Modifier.height(14.dp))
+        WelcomeLine("4", "Agent control", "Optional access to inspect and tap other apps.")
+    }
+    Spacer(Modifier.height(28.dp))
+    PrimaryButton(label = "Get started", onClick = onStart)
+    Spacer(Modifier.height(10.dp))
+    Text(
+        text = "Every download is optional and can be added later from Settings > Setup guide.",
+        color = c.textFaint,
+        fontSize = 12.sp,
+        fontFamily = Sans,
+        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
     )
 }
 
-private data class Speed(val speedText: String, val etaText: String)
-
-/**
- * Bytes per second from successive progress readings, plus the time left. Both are only
- * shown while a real download is moving.
- */
 @Composable
-private fun rememberSpeed(doneBytes: Long, totalBytes: Long, active: Boolean): Speed {
-    var speed by remember { mutableStateOf(0L) }
-    var lastBytes by remember { mutableStateOf(doneBytes) }
-    var lastAt by remember { mutableStateOf(System.currentTimeMillis()) }
-
-    LaunchedEffect(doneBytes, active) {
-        if (!active) {
-            speed = 0
-            lastBytes = doneBytes
-            lastAt = System.currentTimeMillis()
-            return@LaunchedEffect
+private fun WelcomeLine(number: String, title: String, detail: String) {
+    val c = LocalPageColors.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(c.chipBg),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = number,
+                color = c.accent,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+            )
         }
-        val now = System.currentTimeMillis()
-        val dt = now - lastAt
-        if (dt >= 700) {
-            val delta = doneBytes - lastBytes
-            if (delta >= 0) {
-                val instant = delta * 1000 / dt
-                speed = if (speed == 0L) instant else (speed * 2 + instant) / 3
-            }
-            lastBytes = doneBytes
-            lastAt = now
+        Spacer(Modifier.size(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = c.brightText,
+                fontSize = 14.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = detail,
+                color = c.textMuted,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                fontFamily = Sans,
+            )
         }
     }
-
-    if (speed <= 0) return Speed("", "")
-    val speedText = "${formatMb(speed)}/s"
-    val eta = (totalBytes - doneBytes).coerceAtLeast(0) / speed
-    val etaText = if (eta > 0) "${formatSeconds(eta)} left" else ""
-    return Speed(speedText, etaText)
 }
 
-private fun formatMb(bytes: Long): String = when {
-    bytes >= 1_073_741_824 -> String.format(Locale.US, "%.1f GB", bytes / 1_073_741_824.0)
-    bytes >= 1_048_576 -> String.format(Locale.US, "%.1f MB", bytes / 1_048_576.0)
-    bytes >= 1024 -> String.format(Locale.US, "%.0f KB", bytes / 1024.0)
-    else -> "$bytes B"
+@Composable
+private fun FocusPanel(
+    step: Int,
+    buildState: ToolchainState,
+    shellProgress: ShellToolsStore.Progress?,
+    aiProgress: Float,
+    aiStage: String,
+    onDismiss: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    val title = when (step) {
+        1 -> "Build tools"
+        2 -> "Shell tools"
+        else -> "OpenCode AI"
+    }
+    val status = when (step) {
+        1 -> when (buildState) {
+            is ToolchainState.Downloading -> "Downloading build tools"
+            ToolchainState.WaitingForWifi -> "Waiting for Wi-Fi"
+            is ToolchainState.Verifying, ToolchainState.Checking -> "Checking files"
+            else -> "Preparing build tools"
+        }
+        2 -> shellProgress?.message ?: "Installing shell tools"
+        else -> aiStage.ifBlank { "Downloading the AI runtime" }
+    }
+    val progress = when (step) {
+        1 -> {
+            val state = buildState
+            if (state is ToolchainState.Downloading && state.totalBytes > 0) {
+                state.doneBytes.toFloat() / state.totalBytes
+            } else {
+                0f
+            }
+        }
+        2 -> {
+            val p = shellProgress
+            if (p != null && p.totalBytes > 0) p.doneBytes.toFloat() / p.totalBytes else 0f
+        }
+        else -> aiProgress
+    }
+    Dialog(onDismissRequest = onDismiss) {
+        ScreenCard(Modifier.fillMaxWidth()) {
+            Text(
+                text = title,
+                color = c.brightText,
+                fontSize = 17.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = status,
+                color = c.textMuted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+            )
+            Spacer(Modifier.height(12.dp))
+            ProgressBar(progress)
+            Spacer(Modifier.height(14.dp))
+            Text(
+                text = "You can leave this panel open or go back. The download continues " +
+                    "while the phone stays awake.",
+                color = c.textFaint,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                fontFamily = Sans,
+            )
+            Spacer(Modifier.height(14.dp))
+            PrimaryButton(label = "Back to setup", onClick = onDismiss)
+        }
+    }
 }
 
-private fun formatSeconds(seconds: Long): String = when {
-    seconds >= 3600 -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
-    seconds >= 60 -> "${seconds / 60}m ${seconds % 60}s"
-    else -> "${seconds}s"
+@Composable
+private fun SetupStep(
+    number: Int,
+    title: String,
+    description: String,
+    ready: Boolean,
+    skipped: Boolean,
+    status: String,
+    onSkip: () -> Unit,
+    busy: Boolean = false,
+    onFocus: () -> Unit = {},
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val c = LocalPageColors.current
+    ScreenCard(
+        modifier = Modifier.clickable(enabled = busy, onClick = onFocus),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(26.dp)
+                    .clip(CircleShape)
+                    .background(if (ready) c.mock.green else c.chipBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (ready) "✓" else number.toString(),
+                    color = if (ready) c.mock.onAccent else c.textMuted,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+            Spacer(Modifier.size(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = c.brightText,
+                    fontSize = 15.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = status,
+                    color = when {
+                        ready -> c.mock.green
+                        skipped -> c.textFaint
+                        else -> c.textMuted
+                    },
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                )
+            }
+            if (skipped && !ready) {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(9.dp))
+                        .background(c.chipBg)
+                        .padding(horizontal = 8.dp, vertical = 3.dp),
+                ) {
+                    Text(
+                        text = "Skipped",
+                        color = c.textFaint,
+                        fontSize = 11.sp,
+                        fontFamily = Sans,
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = description,
+            color = c.textMuted,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            fontFamily = Sans,
+        )
+        Spacer(Modifier.height(12.dp))
+        content()
+        if (busy) {
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.align(Alignment.CenterHorizontally)) {
+                TextLink(label = "View download", onClick = onFocus, color = c.link)
+            }
+        }
+        if (!ready && !skipped) {
+            Spacer(Modifier.height(8.dp))
+            Box(Modifier.align(Alignment.CenterHorizontally)) {
+                TextLink(label = "Skip for now", onClick = onSkip, color = c.textMuted)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProgressBar(value: Float) {
+    val c = LocalPageColors.current
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(7.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(c.panel2),
+    ) {
+        Box(
+            Modifier
+                .fillMaxWidth(value.coerceIn(0f, 1f))
+                .height(7.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(c.accent),
+        )
+    }
 }

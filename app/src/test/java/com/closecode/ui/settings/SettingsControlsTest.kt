@@ -34,24 +34,18 @@ class SettingsControlsTest {
 
     @Test
     fun everyToggleStillHasSomewhereToSayItsState() {
-        // Word wrap used to be one of the rows with no key behind it: a switch that drew, and said
-        // On or Off, and changed nothing at all. It is wired now, so one fewer row is a placeholder.
         val toggles = sections(SettingsLive())
             .flatMap { section -> section.groups.flatMap { it.rows } }
             .filterIsInstance<Row.Toggle>()
 
-        assertEquals(19, toggles.size)
+        assertEquals(22, toggles.size)
         assertEquals(0, toggles.count { it.key == null })
         assertTrue(toggles.any { it.name == "Word wrap" && it.key == BoolSetting.WORD_WRAP })
-        assertTrue(toggles.any { it.name == "Rainbow brackets" && it.key == BoolSetting.RAINBOW_BRACKETS })
-        assertTrue(toggles.any { it.name == "Frame stats" && it.key == BoolSetting.FRAME_STATS })
-        assertTrue(toggles.any { it.name == "Code folding" && it.key == BoolSetting.CODE_FOLDING })
-        assertTrue(toggles.any { it.name == "Auto import" && it.key == BoolSetting.AUTO_IMPORT })
-        assertTrue(toggles.any { it.name == "Parameter hints" && it.key == BoolSetting.PARAMETER_HINTS })
-        assertTrue(toggles.any { it.name == "Quick fixes" && it.key == BoolSetting.QUICK_FIXES })
-        assertTrue(toggles.any { it.name == "Build cache" && it.key == BoolSetting.BUILD_CACHE })
-        assertTrue(toggles.any { it.name == "Command history" && it.key == BoolSetting.COMMAND_HISTORY })
-        assertTrue(toggles.any { it.name == "Animations" && it.key == BoolSetting.ANIMATIONS })
+        assertTrue(toggles.any { it.name == "Performance overlay" && it.key == BoolSetting.FRAME_STATS })
+        assertTrue(toggles.any { it.name == "Use pipe terminal" && it.key == BoolSetting.USE_PIPE_TERMINAL })
+        assertTrue(toggles.any { it.name == "App lock" && it.key == BoolSetting.APP_LOCK })
+        assertTrue(toggles.any { it.name == "Send usage data" && it.key == BoolSetting.SEND_USAGE_DATA })
+        assertTrue(toggles.any { it.name == "Sora editor" && it.key == BoolSetting.SORA_EDITOR })
         assertEquals("On", toggleStateLabel(true))
         assertEquals("Off", toggleStateLabel(false))
     }

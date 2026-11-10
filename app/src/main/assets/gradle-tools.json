@@ -1,0 +1,117 @@
+{
+  "version": "1",
+  "repo": "https://packages.termux.dev/apt/termux-main",
+  "roots": [
+    "openjdk-17"
+  ],
+  "required": [
+    "lib/jvm/java-17-openjdk/bin/java"
+  ],
+  "distribution": {
+    "version": "8.13",
+    "fileName": "gradle-8.13-bin.zip",
+    "url": "https://services.gradle.org/distributions/gradle-8.13-bin.zip",
+    "sizeBytes": 136983045,
+    "sha256": "20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78"
+  },
+  "distributions": [
+    {
+      "version": "8.13",
+      "fileName": "gradle-8.13-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.13-bin.zip",
+      "sizeBytes": 136983045,
+      "sha256": "20f1b1176237254a6fc204d8434196fa11a4cfb387567519c61556e8710aed78"
+    },
+    {
+      "version": "8.12",
+      "fileName": "gradle-8.12-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.12-bin.zip",
+      "sizeBytes": 136556108,
+      "sha256": "7a00d51fb93147819aab76024feece20b6b84e420694101f276be952e08bef03"
+    },
+    {
+      "version": "8.11.1",
+      "fileName": "gradle-8.11.1-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.11.1-bin.zip",
+      "sizeBytes": 136920070,
+      "sha256": "f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6"
+    },
+    {
+      "version": "8.10.2",
+      "fileName": "gradle-8.10.2-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.10.2-bin.zip",
+      "sizeBytes": 136715430,
+      "sha256": "31c55713e40233a8303827ceb42ca48a47267a0ad4bab9177123121e71524c26"
+    },
+    {
+      "version": "8.9",
+      "fileName": "gradle-8.9-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.9-bin.zip",
+      "sizeBytes": 136114148,
+      "sha256": "d725d707bfabd4dfdc958c624003b3c80accc03f7037b5122c4b1d0ef15cecab"
+    },
+    {
+      "version": "8.7",
+      "fileName": "gradle-8.7-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.7-bin.zip",
+      "sizeBytes": 134184980,
+      "sha256": "544c35d6bd849ae8a5ed0bcea39ba677dc40f49df7d1835561582da2009b961d"
+    },
+    {
+      "version": "8.6",
+      "fileName": "gradle-8.6-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.6-bin.zip",
+      "sizeBytes": 132788867,
+      "sha256": "9631d53cf3e74bfa726893aee1f8994fee4e060c401335946dba2156f440f24c"
+    },
+    {
+      "version": "8.5",
+      "fileName": "gradle-8.5-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.5-bin.zip",
+      "sizeBytes": 132519731,
+      "sha256": "9d926787066a081739e8200858338b4a69e837c3a821a33aca9db09dd4a41026"
+    },
+    {
+      "version": "8.4",
+      "fileName": "gradle-8.4-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.4-bin.zip",
+      "sizeBytes": 130979468,
+      "sha256": "3e1af3ae886920c3ac87f7a91f816c0c7c436f276a6eefdb3da152100fef72ae"
+    },
+    {
+      "version": "8.3",
+      "fileName": "gradle-8.3-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.3-bin.zip",
+      "sizeBytes": 130639305,
+      "sha256": "591855b517fc635b9e04de1d05d5e76ada3f89f5fc76f87978d1b245b4f69225"
+    },
+    {
+      "version": "8.2.1",
+      "fileName": "gradle-8.2.1-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.2.1-bin.zip",
+      "sizeBytes": 128695158,
+      "sha256": "03ec176d388f2aa99defcadc3ac6adf8dd2bce5145a129659537c0874dea5ad1"
+    },
+    {
+      "version": "8.1.1",
+      "fileName": "gradle-8.1.1-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.1.1-bin.zip",
+      "sizeBytes": 124643981,
+      "sha256": "e111cb9948407e26351227dabce49822fb88c37ee72f1d1582a69c68af2e702f"
+    },
+    {
+      "version": "8.0.2",
+      "fileName": "gradle-8.0.2-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-8.0.2-bin.zip",
+      "sizeBytes": 124116070,
+      "sha256": "ff7bf6a86f09b9b2c40bb8f48b25fc19cf2b2664fd1d220cd7ab833ec758d0d7"
+    },
+    {
+      "version": "7.6.4",
+      "fileName": "gradle-7.6.4-bin.zip",
+      "url": "https://services.gradle.org/distributions/gradle-7.6.4-bin.zip",
+      "sizeBytes": 122701480,
+      "sha256": "bed1da33cca0f557ab13691c77f38bb67388119e4794d113e051039b80af9bb1"
+    }
+  ]
+}

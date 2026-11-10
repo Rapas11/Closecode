@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,10 +34,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -71,7 +74,7 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
         style = TextStyle(
             fontFamily = Sans,
             fontSize = 11.sp,
-            fontWeight = FontWeight.ExtraBold,
+            fontWeight = FontWeight.Bold,
             letterSpacing = 0.8.sp,
         ),
         color = c.muted,
@@ -90,10 +93,12 @@ fun PrimaryButton(
     container: Color = LocalCcColors.current.accent,
     height: Dp = 48.dp,
     radius: Dp = 15.dp,
+    contentColor: Color? = null,
 ) {
     val c = LocalCcColors.current
     val source = remember { MutableInteractionSource() }
     val pressed by source.collectIsPressedAsState()
+    val foreground = if (enabled) contentColor ?: Color.White else c.muted
     Row(
         modifier = modifier
             .height(height)
@@ -111,13 +116,13 @@ fun PrimaryButton(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {
-            CcIcon(icon, if (enabled) Color.White else c.muted, 17.dp, 2f)
+            CcIcon(icon, foreground, 17.dp, 2f)
             Spacer(Modifier.width(8.dp))
         }
         OneLine(
             text,
             TextStyle(fontFamily = Sans, fontSize = 15.sp, fontWeight = FontWeight.Bold),
-            if (enabled) Color.White else c.muted,
+            foreground,
         )
     }
 }
@@ -169,7 +174,7 @@ fun SecondaryButton(
         }
         OneLine(
             text,
-            TextStyle(fontFamily = Sans, fontSize = 15.sp, fontWeight = FontWeight.SemiBold),
+            TextStyle(fontFamily = Sans, fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
             color,
         )
     }
@@ -205,7 +210,7 @@ fun CcToggle(
     ) {
         Box(
             Modifier
-                .padding(start = knobX, top = 3.dp)
+                .offset(x = knobX, y = 3.dp)
                 .size(19.dp)
                 .clip(CircleShape)
                 .background(Color.White),
@@ -251,6 +256,7 @@ fun CcTextField(
     error: String? = null,
     leadingIcon: String? = null,
     singleLine: Boolean = true,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
 ) {
     val c = LocalCcColors.current
     var focused by remember { mutableStateOf(false) }
@@ -303,10 +309,12 @@ fun CcTextField(
                     textStyle = TextStyle(
                         fontFamily = if (mono) Mono else Sans,
                         fontSize = 12.5.sp,
-                        color = c.text2,
+                        color = c.text,
                     ),
                     cursorBrush = SolidColor(c.accent),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { focused = it.isFocused },
                 )
             }
         }

@@ -40,8 +40,8 @@ private fun DrawScope.ellipse(
 @Composable
 fun PageBackground(modifier: Modifier = Modifier) {
     val c = LocalPageColors.current
-    val bgArgb = c.bg.toArgb()
-    val lineArgb = c.ln.toArgb()
+    val bgArgb = c.mock.page.toArgb()
+    val lineArgb = c.mock.divider.toArgb()
     val glowArgb = c.glow.toArgb()
 
     Box(modifier.fillMaxSize()) {

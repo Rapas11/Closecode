@@ -43,6 +43,7 @@ object BuildCoordinator {
             BuildEngine(
                 ToolchainHolder.store(app),
                 BuildCache(File(app.cacheDir, "build-cache")),
+                AndroidNetworkGate(app),
             )
         }
 
@@ -63,6 +64,8 @@ object BuildCoordinator {
         onEvent: (JsonObject) -> Unit,
         onLog: (String) -> Unit = {},
         cacheEnabled: Boolean = true,
+        buildType: String = "debug",
+        useGradle: Boolean = false,
     ): BuildOutcome {
         val engine = engine(context, project.id)
         synchronized(this) {
@@ -97,6 +100,14 @@ object BuildCoordinator {
                 tools = setup.tools,
                 onLog = onLog,
                 cacheEnabled = cacheEnabled,
+                buildType = buildType,
+                useGradle = useGradle,
+                gradle = setup.gradle,
+                setupCommand = if (useGradle) {
+                    "closecode setup --gradle"
+                } else {
+                    "closecode setup --all"
+                },
             )
             val summary = BuildReport.summary(outcome)
             last = Last(project.id, project.slug, project.name, outcome, summary)

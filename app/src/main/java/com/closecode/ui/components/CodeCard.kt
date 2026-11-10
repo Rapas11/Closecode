@@ -104,13 +104,13 @@ fun CodeCard(modifier: Modifier = Modifier) {
         modifier
             .widthIn(max = 560.dp)
             .fillMaxWidth()
-            .border(1.dp, c.ln, shape)
-            .background(c.cd, shape)
+            .border(1.dp, c.mock.divider, shape)
+            .background(c.mock.panel, shape)
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .border(1.dp, c.ln, shape)
+                .border(1.dp, c.mock.divider, shape)
                 .padding(start = 14.dp, end = 14.dp, top = 11.dp, bottom = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -119,12 +119,12 @@ fun CodeCard(modifier: Modifier = Modifier) {
                     Modifier
                         .padding(end = 7.dp)
                         .size(10.dp)
-                        .background(c.ln, RoundedCornerShape(5.dp))
+                        .background(c.mock.divider, RoundedCornerShape(5.dp))
                 )
             }
             Text(
                 text = "MainActivity.kt",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 12.sp,
                 fontFamily = Mono,
                 modifier = Modifier.padding(start = 8.dp),
@@ -141,13 +141,13 @@ fun CodeCard(modifier: Modifier = Modifier) {
                 Row(verticalAlignment = Alignment.Bottom) {
                     Text(
                         text = text,
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 13.sp,
                         lineHeight = 23.4.sp,
                         fontFamily = Mono,
                         softWrap = false,
                     )
-                    if (index == CARET_LINE) Caret(c.ac)
+                    if (index == CARET_LINE) Caret(c.mock.accent)
                 }
             }
         }

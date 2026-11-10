@@ -153,6 +153,8 @@ class HtmlSupportTest {
         val found = htmlTagDiagnostics(src)
         assertEquals(1, found.size)
         assertEquals(1, found[0].line)
+        assertEquals(0, found[0].offset)
+        assertEquals("<div".length, found[0].length)
         assertEquals(DiagnosticCodes.HTML_UNCLOSED_TAG, found[0].code)
         assertTrue(found[0].message.contains("div"))
     }

@@ -11,6 +11,46 @@ import org.json.JSONObject
 
 private val ProcessStartedAt = System.currentTimeMillis()
 
+/** The problems count a status line carries ("2 problems"), which the tile renders as the
+ * badge a screenshot numbers the same way. Blank or "Build ok" yields none. */
+fun ProjectRecord.problemBadge(): Int? =
+    status.substringBefore(' ').trim().toIntOrNull()?.takeIf { status.endsWith("problems") }
+
+/** The current git branch of a project, read from its .git folder; null when it has none. */
+fun ProjectRepository.headBranch(slug: String): String? = runCatching {
+    val head = java.io.File(projectDir(slug), ".git/HEAD").takeIf { it.isFile } ?: return null
+    val line = head.readText().trim()
+    if (!line.startsWith("ref: refs/heads/")) return null
+    line.removePrefix("ref: refs/heads/").takeIf { it.isNotBlank() }
+}.getOrNull()
+
+/** The kind of colour a status word needs on screen: red, orange, green or muted. */
+enum class ProjectStatusKind { Ok, Warning, Error, Muted }
+
+private fun ProjectRecord.ageFallback(): String {
+    val days = ((System.currentTimeMillis() - lastOpened) / 86_400_000L).toInt().coerceAtLeast(0)
+    return when (days) {
+        0 -> "today"
+        1 -> "yesterday"
+        else -> "$days days ago"
+    }
+}
+
+/**
+ * The branch and the status word the project rows show. The build flow writes the branch into the
+ * status ("main · Build ok"); a bare old record has no branch, so the row reads .git/HEAD itself.
+ */
+fun ProjectRecord.statusParts(branch: String?): Pair<String, ProjectStatusKind> {
+    val tail = if (branch != null && status.contains(" · ")) status.substringAfter(" · ") else status
+    return when {
+        tail.isBlank() -> ageFallback() to ProjectStatusKind.Muted
+        tail.endsWith(" problems") || tail.endsWith(" problem") -> tail to ProjectStatusKind.Warning
+        tail == "Build ok" -> tail to ProjectStatusKind.Ok
+        tail == "Build failed" -> tail to ProjectStatusKind.Error
+        else -> tail to ProjectStatusKind.Muted
+    }
+}
+
 data class ProjectRecord(
     val id: String,
     val slug: String,
@@ -18,9 +58,14 @@ data class ProjectRecord(
     val tab: TemplateTab,
     val templateIndex: Int,
     val templateName: String,
-    val config: ProjectConfig,
+    val     config: ProjectConfig,
     val createdAt: Long,
     val lastOpened: Long,
+    /**
+     * What the last build of this project ended with, as the row renders it ("main · Build
+     * ok", "main · 2 problems"). Blank until the first build; the rows show the age instead.
+     */
+    val status: String = "",
     /**
      * A project that came from somewhere else (a clone, an import). Its package and
      * settings are read from its own build files and are never rewritten.
@@ -36,6 +81,7 @@ data class ProjectRecord(
         put("config", config.encode())
         put("createdAt", createdAt)
         put("lastOpened", lastOpened)
+        put("status", status)
         put("imported", imported)
     }.toString()
 
@@ -53,6 +99,7 @@ data class ProjectRecord(
                 config = ProjectConfig.decode(json.getString("config")),
                 createdAt = json.getLong("createdAt"),
                 lastOpened = json.getLong("lastOpened"),
+                status = json.optString("status"),
                 imported = json.optBoolean("imported", false),
             )
         }.getOrNull()
@@ -113,6 +160,47 @@ class ProjectRepository(context: Context) {
                 name = cleanName,
                 tab = selection.tab,
                 templateIndex = selection.index,
+                templateName = templateName,
+                config = config,
+                createdAt = now,
+                lastOpened = now,
+            )
+            store.createFile(slug, ProjectStore.METADATA, record.toJson())
+            registry.commit(id)
+            return record
+        } catch (failure: Throwable) {
+            registry.cancel(id)
+            runCatching { store.deleteProject(slug) }
+            throw failure
+        }
+    }
+
+    /**
+     * Creates a project from an explicit file list. Used by `closecode init` for ecosystems
+     * the start-screen templates do not cover, while keeping registration/identity identical.
+     */
+    fun createFromFiles(
+        name: String,
+        tab: TemplateTab,
+        templateName: String,
+        config: ProjectConfig,
+        files: List<ScaffoldFile>,
+        now: Long = System.currentTimeMillis(),
+    ): ProjectRecord {
+        store.ensureRoot()
+        val cleanName = cleanName(name)
+        val id = ProjectIdentity.newId()
+        val slug = uniqueSlug(cleanName, id)
+        val packageName = config.packageName.takeIf { it.isNotBlank() }
+        registry.begin(id, slug, cleanName, packageName)
+        try {
+            files.forEach { file -> store.createFile(slug, file.path, file.content) }
+            val record = ProjectRecord(
+                id = id,
+                slug = slug,
+                name = cleanName,
+                tab = tab,
+                templateIndex = 0,
                 templateName = templateName,
                 config = config,
                 createdAt = now,
@@ -251,6 +339,15 @@ class ProjectRepository(context: Context) {
         return touch(record, now)
     }
 
+    /** What the last build said, as the rows show it ("main · Build ok"). Written only by
+     * the build flow itself, so the record never claims an outcome the app did not see. */
+    fun setStatus(slug: String, status: String): ProjectRecord? {
+        val record = find(slug) ?: return null
+        val updated = record.copy(status = status)
+        store.createFile(record.slug, ProjectStore.METADATA, updated.toJson())
+        return updated
+    }
+
     private fun touch(record: ProjectRecord, now: Long): ProjectRecord {
         val updated = record.copy(lastOpened = now)
         store.createFile(record.slug, ProjectStore.METADATA, updated.toJson())
@@ -311,7 +408,8 @@ class ProjectRepository(context: Context) {
     fun copyPath(slug: String, relative: String, destination: String): String =
         store.copyPath(slug, relative, destination)
 
-    fun tree(slug: String): List<ProjectFile> = store.readTree(slug)
+    fun tree(slug: String, showGenerated: Boolean = false): List<ProjectFile> =
+        store.readTree(slug, showGenerated)
 
     /** The record for a path just created, without walking the tree to rediscover it. */
     fun entryFor(slug: String, relative: String, isFolder: Boolean): ProjectFile =

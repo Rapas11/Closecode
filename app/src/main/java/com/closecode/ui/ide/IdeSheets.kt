@@ -15,14 +15,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -47,6 +50,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -185,8 +189,8 @@ fun IdeBottomSheet(
             Modifier
                 .padding(horizontal = 28.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                .background(c.mock.panel)
+                .border(1.dp, c.mock.divider, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                 // An enabled no-op, not `enabled = false`: a disabled clickable adds no input
                 // handler at all, so taps on the sheet body would fall through to the scrim and
                 // dismiss the sheet the user is reading.
@@ -205,7 +209,7 @@ fun IdeBottomSheet(
                     .width(40.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(c.ln),
+                    .background(c.mock.divider),
             )
             content()
         }
@@ -255,7 +259,7 @@ fun IdeAnchoredSheet(
         Box(
             Modifier
                 .fillMaxSize()
-                .background(c.scrim)
+                .background(c.mock.scrim)
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -280,9 +284,8 @@ fun IdeAnchoredSheet(
                         }
                     },
                 )
-                .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                .clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))
+                .background(c.mock.panel)
                 // An enabled no-op, not `enabled = false`: a disabled clickable adds no input
                 // handler at all, so taps on the sheet body would fall through to the scrim
                 // and dismiss the sheet the user is reading.
@@ -300,7 +303,7 @@ fun IdeAnchoredSheet(
                     .width(40.dp)
                     .height(4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(c.ln),
+                    .background(c.mock.divider),
             )
             content()
         }
@@ -315,6 +318,7 @@ fun IdeAnchoredSheet(
 internal val MoreLabels = listOf(
     "Logcat",
     "Build",
+    "UI inspector",
     "Project settings",
     "Settings",
     "Toggle theme",
@@ -337,7 +341,7 @@ fun IdeMoreSheet(
     IdeAnchoredSheet(onDismiss = onDismiss, barHeight = barHeight) {
         Text(
             text = "MORE",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
@@ -358,14 +362,14 @@ fun IdeMoreSheet(
             ) {
                 Text(
                     text = action.glyph,
-                    color = c.ac,
+                    color = c.mock.accent,
                     fontSize = 14.sp,
                     fontFamily = Mono,
                     modifier = Modifier.size(width = 20.dp, height = 18.dp),
                 )
                 Text(
                     text = action.label,
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 14.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Medium,
@@ -380,17 +384,52 @@ fun IdeMoreSheet(
                     .padding(start = 18.dp, end = 18.dp, top = 6.dp, bottom = 4.dp)
                     .fillMaxWidth()
                     .height(1.dp)
-                    .background(c.ln),
+                    .background(c.mock.divider),
             )
             Text(
                 text = versionLabel,
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 11.sp,
                 fontFamily = Mono,
                 modifier = Modifier.padding(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 6.dp),
             )
         }
     }
+}
+
+/**
+ * The More sheet with its rows wired. Kept out of the screen composable because the screen is
+ * already at the JVM method-size limit and every inline lambda there counts.
+ */
+@Composable
+fun IdeMoreOverlay(
+    open: Boolean,
+    onDismiss: () -> Unit,
+    onLogcat: () -> Unit,
+    onBuild: () -> Unit,
+    onUiInspector: () -> Unit,
+    onProjectSettings: () -> Unit,
+    onSettings: () -> Unit,
+    onToggleTheme: () -> Unit,
+    onDeveloper: () -> Unit,
+    versionLabel: String,
+    barHeight: androidx.compose.ui.unit.Dp,
+) {
+    if (!open) return
+    IdeMoreSheet(
+        actions = listOf(
+            MoreAction("Logcat", "≡", onLogcat),
+            MoreAction("Build", "✓", onBuild),
+            MoreAction("UI inspector", "◇", onUiInspector),
+            MoreAction("Project settings", "▤", onProjectSettings),
+            MoreAction("Settings", "⚙", onSettings),
+            MoreAction("Toggle theme", "◐", onToggleTheme),
+            MoreAction("Developer", "◆", onDeveloper),
+        ),
+        onDismiss = onDismiss,
+        versionLabel = versionLabel,
+        barHeight = barHeight,
+    )
 }
 
 /**
@@ -473,12 +512,12 @@ fun IdeSearchSheet(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            CcIcon(CcIcons.Search, c.mu, 16.dp)
+            CcIcon(CcIcons.Search, c.mock.muted, 16.dp)
             Box(Modifier.weight(1f)) {
                 if (query.isEmpty()) {
                     Text(
                         text = "Find in project…",
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 14.sp,
                         fontFamily = Sans,
                     )
@@ -488,11 +527,11 @@ fun IdeSearchSheet(
                     onValueChange = onQueryChange,
                     singleLine = true,
                     textStyle = androidx.compose.ui.text.TextStyle(
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 14.sp,
                         fontFamily = Sans,
                     ),
-                    cursorBrush = SolidColor(c.ac),
+                    cursorBrush = SolidColor(c.mock.accent),
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.None,
                         autoCorrect = false,
@@ -514,7 +553,7 @@ fun IdeSearchSheet(
                 ) {
                     CcIcon(
                         CcIcons.Sliders,
-                        if (caseSensitive || regex || wholeWord) c.ac else c.mu,
+                        if (caseSensitive || regex || wholeWord) c.mock.accent else c.mock.muted,
                         18.dp,
                     )
                 }
@@ -558,11 +597,11 @@ fun IdeSearchSheet(
                 modifier = Modifier.padding(horizontal = 18.dp),
             )
         }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(c.ln))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(c.mock.divider))
         when {
             query.isBlank() -> Text(
                 text = "Type to search every file in the project.",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 modifier = Modifier.padding(18.dp),
@@ -570,7 +609,7 @@ fun IdeSearchSheet(
 
             hits.isEmpty() -> Text(
                 text = "No matches for \"$query\"",
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 13.sp,
                 fontFamily = Sans,
                 modifier = Modifier.padding(18.dp),
@@ -581,7 +620,7 @@ fun IdeSearchSheet(
                 // and a count badge, with each match line highlighted under it.
                 Text(
                     text = "${hits.size} results in ${hits.map { it.path }.distinct().size} files",
-                    color = c.mu,
+                    color = c.mock.muted,
                     fontSize = 12.sp,
                     fontFamily = Sans,
                     modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
@@ -595,11 +634,11 @@ fun IdeSearchSheet(
                             .padding(horizontal = 18.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        CcIcon(CcIcons.Document, c.mu, 15.dp)
+                        CcIcon(CcIcons.Document, c.mock.muted, 15.dp)
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = first.fileName,
-                            color = c.tx,
+                            color = c.mock.text,
                             fontSize = 13.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.Medium,
@@ -610,7 +649,7 @@ fun IdeSearchSheet(
                         Spacer(Modifier.width(8.dp))
                         Text(
                             text = path.substringBeforeLast('/', ""),
-                            color = c.mu,
+                            color = c.mock.muted,
                             fontSize = 11.sp,
                             fontFamily = Sans,
                             maxLines = 1,
@@ -627,7 +666,7 @@ fun IdeSearchSheet(
                         ) {
                             Text(
                                 text = "${group.size}",
-                                color = c.ac,
+                                color = c.mock.accent,
                                 fontSize = 11.sp,
                                 fontFamily = Sans,
                                 fontWeight = FontWeight.SemiBold,
@@ -644,14 +683,14 @@ fun IdeSearchSheet(
                         ) {
                             Text(
                                 text = "${hit.line}",
-                                color = c.mu,
+                                color = c.mock.muted,
                                 fontSize = 12.sp,
                                 fontFamily = Mono,
                                 modifier = Modifier.width(34.dp),
                             )
                             Text(
                                 text = highlightedMatch(hit.text, mode, c.spec.matchBg, c.spec.matchText),
-                                color = c.tx,
+                                color = c.mock.text,
                                 fontSize = 13.sp,
                                 fontFamily = Mono,
                                 maxLines = 2,
@@ -681,14 +720,14 @@ fun IdeAddBlockSheet(
     IdeBottomSheet(onDismiss = onDismiss) {
         Text(
             text = "statement slot",
-            color = c.mu,
+            color = c.mock.muted,
             fontSize = 11.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.Bold,
             letterSpacing = 1.2.sp,
             modifier = Modifier.padding(start = 18.dp, top = 4.dp, bottom = 6.dp),
         )
-        Box(Modifier.fillMaxWidth().height(1.dp).background(c.ln))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(c.mock.divider))
         Column(Modifier.heightIn(max = 340.dp).verticalScroll(rememberScrollState())) {
             templates.forEach { template ->
                 Row(
@@ -701,7 +740,7 @@ fun IdeAddBlockSheet(
                 ) {
                     Text(
                         text = template.label,
-                        color = c.ac,
+                        color = c.mock.accent,
                         fontSize = 13.sp,
                         fontFamily = Sans,
                         fontWeight = FontWeight.Medium,
@@ -710,7 +749,7 @@ fun IdeAddBlockSheet(
                     )
                     Text(
                         text = template.lines.joinToString(" "),
-                        color = c.tx.copy(alpha = 0.85f),
+                        color = c.mock.text.copy(alpha = 0.85f),
                         fontSize = 12.sp,
                         fontFamily = Mono,
                         maxLines = 1,
@@ -739,6 +778,8 @@ fun IdeNameDialog(
     onDismiss: () -> Unit,
     initial: String = "",
     confirmLabel: String = "Create",
+    horizontalBias: Float = 0f,
+    subtitle: String? = null,
 ) {
     val c = LocalPageColors.current
     // Keyed on the value it starts with: a dialog that swaps one target for another without
@@ -756,17 +797,18 @@ fun IdeNameDialog(
                 indication = null,
                 onClick = onDismiss,
             ),
-        contentAlignment = Alignment.Center,
+        contentAlignment = BiasAlignment(horizontalBias, 0f),
     ) {
         Column(
             Modifier
                 .padding(horizontal = 28.dp)
+                .widthIn(max = 340.dp)
                 // Above the keyboard: a centered dialog on a small screen would otherwise sit
                 // half under it, with the buttons the first thing to go.
                 .imePadding()
                 .clip(RoundedCornerShape(14.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(14.dp))
+                .background(c.mock.panel)
+                .border(1.dp, c.mock.divider, RoundedCornerShape(14.dp))
                 // Enabled no-op: a disabled clickable would let the tap fall through to the scrim
                 // and dismiss the dialog before the field took focus.
                 .clickable(
@@ -778,24 +820,35 @@ fun IdeNameDialog(
         ) {
             Text(
                 text = title,
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 15.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(bottom = 12.dp),
+                modifier = Modifier.padding(bottom = if (subtitle == null) 12.dp else 4.dp),
             )
+            if (subtitle != null) {
+                Text(
+                    text = subtitle,
+                    color = c.mock.muted,
+                    fontSize = 11.5.sp,
+                    fontFamily = Mono,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+            }
             Box(
                 Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(9.dp))
                     .background(c.editor)
-                    .border(1.dp, c.ln, RoundedCornerShape(9.dp))
+                    .border(1.dp, c.mock.divider, RoundedCornerShape(9.dp))
                     .padding(horizontal = 12.dp, vertical = 10.dp),
             ) {
                 if (value.value.isEmpty()) {
                     Text(
                         text = hint,
-                        color = c.mu,
+                        color = c.mock.muted,
                         fontSize = 14.sp,
                         fontFamily = Mono,
                     )
@@ -805,11 +858,11 @@ fun IdeNameDialog(
                     onValueChange = { value.value = it },
                     singleLine = true,
                     textStyle = androidx.compose.ui.text.TextStyle(
-                        color = c.tx,
+                        color = c.mock.text,
                         fontSize = 14.sp,
                         fontFamily = Mono,
                     ),
-                    cursorBrush = SolidColor(c.ac),
+                    cursorBrush = SolidColor(c.mock.accent),
                     keyboardOptions = KeyboardOptions(
                         capitalization = KeyboardCapitalization.None,
                         autoCorrect = false,
@@ -882,8 +935,8 @@ fun IdeConfirmDialog(
             Modifier
                 .padding(horizontal = 28.dp)
                 .clip(RoundedCornerShape(14.dp))
-                .background(c.panel)
-                .border(1.dp, c.ln, RoundedCornerShape(14.dp))
+                .background(c.mock.panel)
+                .border(1.dp, c.mock.divider, RoundedCornerShape(14.dp))
                 .clickable(
                     interactionSource = MutableInteractionSource(),
                     indication = null,
@@ -893,7 +946,7 @@ fun IdeConfirmDialog(
         ) {
             Text(
                 text = title,
-                color = c.tx,
+                color = c.mock.text,
                 fontSize = 15.sp,
                 fontFamily = Sans,
                 fontWeight = FontWeight.Bold,
@@ -901,7 +954,7 @@ fun IdeConfirmDialog(
             )
             Text(
                 text = message,
-                color = c.mu,
+                color = c.mock.muted,
                 fontSize = 13.sp,
                 lineHeight = 19.sp,
                 fontFamily = Sans,
@@ -933,8 +986,8 @@ private fun RowScope.SheetButton(
     val c = LocalPageColors.current
     val resting = when {
         !enabled -> c.panel2
-        destructive -> c.red
-        else -> c.ac
+        destructive -> c.mock.danger
+        else -> c.mock.accent
     }
     Box(
         Modifier
@@ -947,7 +1000,7 @@ private fun RowScope.SheetButton(
     ) {
         Text(
             text = label,
-            color = if (enabled) c.af else c.mu,
+            color = if (enabled) c.mock.onAccent else c.mock.muted,
             fontSize = 13.sp,
             fontFamily = Sans,
             fontWeight = FontWeight.SemiBold,
@@ -973,7 +1026,7 @@ private fun SearchOptionItem(
             ) {
                 Text(
                     text = if (on) "✓" else "",
-                    color = c.ac,
+                    color = c.mock.accent,
                     fontSize = 14.sp,
                     fontFamily = Sans,
                     fontWeight = FontWeight.Bold,
@@ -981,7 +1034,7 @@ private fun SearchOptionItem(
                 )
                 Text(
                     text = label,
-                    color = c.tx,
+                    color = c.mock.text,
                     fontSize = 14.sp,
                     fontFamily = Sans,
                 )
@@ -989,4 +1042,427 @@ private fun SearchOptionItem(
         },
         onClick = onToggle,
     )
+}
+
+/** What a run finished with: the APK it produced, its size and how long the build took. */
+internal data class RunResultInfo(
+    val ok: Boolean,
+    val apkName: String,
+    val sizeMb: Double,
+    val seconds: Long,
+    val message: String = "",
+)
+
+/**
+ * The run sheet (screen 25): what the bottom card's Run button opens before anything runs —
+ * build type, whether the finished app opens itself, and the live build card while it runs with
+ * Stop within reach. Nothing here starts a build silently; the sheet is the one place a run
+ * is chosen, and its buttons are the only doors in and out.
+ */
+@Composable
+internal fun IdeRunSheet(
+    appName: String,
+    buildType: String,
+    onBuildType: (String) -> Unit,
+    openAfterInstall: Boolean,
+    onOpenAfterInstall: (Boolean) -> Unit,
+    building: Boolean,
+    progress: Float,
+    steps: List<BuildStepUi>,
+    canRun: Boolean,
+    onStop: () -> Unit,
+    onRun: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    androidx.activity.compose.BackHandler { onDismiss() }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(c.scrim)
+            .clickable(
+                interactionSource = MutableInteractionSource(),
+                indication = null,
+                onClick = onDismiss,
+            ),
+        contentAlignment = Alignment.BottomCenter,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.82f)
+                .clickable(
+                    interactionSource = MutableInteractionSource(),
+                    indication = null,
+                    onClick = {},
+                )
+                .clip(RoundedCornerShape(topStart = 26.dp, topEnd = 26.dp))
+                .background(c.mock.panel)
+                .navigationBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 26.dp),
+        ) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .width(40.dp)
+                    .height(5.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(c.mock.toggleOff),
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Run $appName",
+                    color = c.mock.text,
+                    fontSize = 20.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Box(
+                    Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable(onClick = onDismiss)
+                        .semantics { contentDescription = "Close" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    CcIcon(CcIcons.Close, c.mock.textSoft, 21.dp)
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            // What a run costs here: this phone is both the builder and the device, so no
+            // cable, no other machine and no emulator enters the picture.
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(c.mock.content)
+                    .clickable(
+                        interactionSource = MutableInteractionSource(),
+                        indication = null,
+                        onClick = {},
+                    )
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                CcIcon(CcIcons.Stack, c.mock.blue, 18.dp)
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = "The app is built and installed on this phone. " +
+                        "You do not need a cable or another device.",
+                    color = c.mock.textSoft,
+                    fontSize = 12.5.sp,
+                    fontFamily = Sans,
+                    lineHeight = 18.sp,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = "BUILD TYPE",
+                color = c.mock.muted,
+                fontSize = 11.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+            )
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(c.mock.rail)
+                    .padding(3.dp),
+            ) {
+                listOf("Debug", "Release").forEach { option ->
+                    val on = option.equals(buildType, ignoreCase = true)
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (on) c.mock.toggleOff else Color.Transparent)
+                            .clickable(enabled = !building) {
+                                if (!on) onBuildType(option)
+                            }
+                            .semantics { contentDescription = "$option build" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = option,
+                            color = if (on) Color.White else c.mock.muted,
+                            fontSize = 13.5.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 2.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "Open app after install",
+                        color = c.mock.text,
+                        fontSize = 14.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.height(1.dp))
+                    Text(
+                        text = "Starts it as soon as it is ready",
+                        color = c.mock.muted,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                }
+                com.closecode.ui.components.DesignSwitch(
+                    checked = openAfterInstall,
+                    onChange = onOpenAfterInstall,
+                )
+            }
+            if (building || steps.any { it.state != StepState.PENDING }) {
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.mock.content)
+                        .clickable(
+                            interactionSource = MutableInteractionSource(),
+                            indication = null,
+                            onClick = {},
+                        )
+                        .padding(14.dp),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (building) "Building…" else "Build",
+                            color = c.mock.text,
+                            fontSize = 13.5.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Text(
+                            text = "${(progress * 100).toInt().coerceIn(0, 100)}%",
+                            color = c.mock.muted,
+                            fontSize = 13.5.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Spacer(Modifier.height(9.dp))
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(c.mock.rail),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(progress.coerceIn(0f, 1f))
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(c.mock.accent),
+                        )
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    steps.forEach { step ->
+                        Row(
+                            Modifier.padding(vertical = 3.5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            when (step.state) {
+                                StepState.DONE -> com.closecode.ui.CcIcon("check", c.mock.green, 15.dp, 2.4f)
+                                StepState.FAILED -> com.closecode.ui.CcIcon("x", c.mock.danger, 15.dp, 2.4f)
+                                StepState.RUNNING -> com.closecode.ui.CcIcon("refresh", c.mock.accent, 15.dp, 2.4f)
+                                StepState.PENDING -> com.closecode.ui.CcIcon("more", c.mock.faint, 15.dp, 2.4f)
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = step.label,
+                                color = when (step.state) {
+                                    StepState.DONE -> c.mock.green
+                                    StepState.RUNNING -> c.mock.accent
+                                    StepState.FAILED -> c.mock.danger
+                                    StepState.PENDING -> c.mock.muted
+                                },
+                                fontSize = 12.5.sp,
+                                fontFamily = Sans,
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .height(50.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.mock.field)
+                        .clickable(enabled = building, onClick = onStop)
+                        .semantics { contentDescription = "Stop building" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = "Stop",
+                        color = if (building) c.mock.text else c.mock.faint,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Box(
+                    Modifier
+                        .weight(2f)
+                        .height(50.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (canRun && !building) c.mock.green else c.mock.field)
+                        .clickable(enabled = canRun && !building, onClick = onRun)
+                        .semantics { contentDescription = "Run" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CcIcon(CcIcons.Play, if (canRun && !building) Color.White else c.mock.muted, 16.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Run",
+                            color = if (canRun && !building) Color.White else c.mock.muted,
+                            fontSize = 15.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The run page (screen 26): what a run launched from the sheet lands on when it finished and
+ * did not open the app itself. The APK's name, size and seconds, then the two doors: open
+ * the installed app, or the build log's output.
+ */
+@Composable
+internal fun IdeRunFinishedPage(
+    result: RunResultInfo,
+    onBack: () -> Unit,
+    onOpenApp: () -> Unit,
+    onOpenLog: () -> Unit,
+) {
+    val c = LocalPageColors.current
+    androidx.activity.compose.BackHandler { onBack() }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(c.mock.page)
+            .statusBarsPadding(),
+    ) {
+        com.closecode.ui.components.ScreenHeader(
+            origin = "Run",
+            title = "Build finished",
+            onBack = onBack,
+        )
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 18.dp, end = 18.dp, top = 26.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                Modifier
+                    .size(72.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(
+                        if (result.ok) c.mock.green.copy(alpha = 0.13f) else c.mock.danger.copy(alpha = 0.13f),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                CcIcon(CcIcons.Check, c.mock.green, 38.dp)
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = if (result.ok) "Built and installed" else "Build failed",
+                color = c.mock.text,
+                fontSize = 21.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = if (result.ok) {
+                    "${result.apkName} · %.1f MB · ${result.seconds} s".format(result.sizeMb)
+                } else {
+                    result.message.ifBlank { "The build did not finish. See the output." }
+                },
+                color = c.mock.muted,
+                fontSize = 13.5.sp,
+                fontFamily = Sans,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Spacer(Modifier.height(22.dp))
+            if (result.ok) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(15.dp))
+                        .background(c.mock.green)
+                        .clickable(onClick = onOpenApp)
+                        .semantics { contentDescription = "Open app" },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CcIcon(CcIcons.Play, c.mock.onGreen, 17.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = "Open app",
+                            color = c.mock.onGreen,
+                            fontSize = 15.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(c.mock.field)
+                    .clickable(onClick = onOpenLog)
+                    .semantics { contentDescription = "Build output" },
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CcIcon(CcIcons.Terminal, c.mock.text, 17.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = "Build output",
+                        color = c.mock.text,
+                        fontSize = 15.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+        }
+    }
 }

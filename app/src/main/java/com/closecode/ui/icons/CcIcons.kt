@@ -39,9 +39,16 @@ object CcIconPaths {
         "undo" to "M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3",
         "redo" to "M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3",
         "save" to "M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2zM17 21v-8H7v8M7 3v5h8",
-        "term" to "M4 17l6-6-6-6M12 19h8",
+        "term" to "M5 8l5 4-5 4M13 17h6",
+        "log" to "M4 6h16M4 12h16M4 18h10",
+        "preview" to "M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM10 9v6l5-3z",
+        "sliders" to "M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4",
+        "wrench" to "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
         "menu" to "M4 6h16M4 12h16M4 18h16",
         "x" to "M18 6L6 18M6 6l12 12",
+        "x2" to "M18 6L6 18M6 6l12 12",
+        "stop" to "M7 7h10v10H7z",
+        "braces" to "M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1",
         "bolt" to "M13 2L3 14h9l-1 8 10-12h-9z",
         "kbd" to "M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zM6 9h.01M10 9h.01M14 9h.01M18 9h.01M7 15h10",
         "code" to "M16 18l6-6-6-6M8 6l-6 6 6 6",
@@ -102,7 +109,7 @@ fun CcIcon(
     strokeWidth: Float = 1.8f,
     modifier: Modifier = Modifier,
 ) {
-    val filled = name == "play"
+    val filled = name == "play" || name == "stop"
     val vector = remember(name, strokeWidth, filled) { ccIconVector(name, strokeWidth, filled) }
     Icon(
         imageVector = vector,

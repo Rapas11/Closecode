@@ -17,9 +17,9 @@ data class ShellToolsManifest(
     val required: List<String>,
 ) {
     companion object {
-        fun load(context: Context): ShellToolsManifest =
+        fun load(context: Context, asset: String = "shell-tools.json"): ShellToolsManifest =
             runCatching {
-                context.assets.open("shell-tools.json").bufferedReader().use { it.readText() }
+                context.assets.open(asset).bufferedReader().use { it.readText() }
             }.mapCatching { parse(it) }.getOrElse { empty() }
 
         fun parse(json: String): ShellToolsManifest {
@@ -58,11 +58,15 @@ object ShellToolsRepo {
     fun packageUrl(repo: String, fileName: String): String =
         "$repo/$fileName"
 
-    fun prefixFor(packageName: String): String = "/data/data/$packageName/file/u"
+    fun prefixFor(packageName: String, prefixName: String = "u"): String =
+        "/data/data/$packageName/file/$prefixName"
 
-    fun homeFor(packageName: String): String = "/data/data/$packageName/file/hh"
+    fun homeFor(packageName: String, homeName: String = "hh"): String =
+        "/data/data/$packageName/file/$homeName"
 
-    fun workingPrefix(dataDir: File): File = File(dataDir, "file/u")
+    fun workingPrefix(dataDir: File, prefixName: String = "u"): File =
+        File(dataDir, "file/$prefixName")
 
-    fun workingHome(dataDir: File): File = File(dataDir, "file/hh")
+    fun workingHome(dataDir: File, homeName: String = "hh"): File =
+        File(dataDir, "file/$homeName")
 }

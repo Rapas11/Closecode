@@ -12,12 +12,16 @@
          screen every time, and Android 12+ needs a one-time allow-this-source toggle
          the app opens settings for but can never flip itself. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
 
     <!-- The one-time build-tools download runs as a foreground service so it survives
          leaving the screen; its notification shows the percent and carries Cancel. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Only for the Back to editor pill over a built app. Android asks once, in the
@@ -104,6 +108,34 @@
             android:name=".build.BuildCancelReceiver"
             android:exported="false" />
 
+        <!-- Optional notification access. The user enables it in system settings. -->
+        <service
+            android:name=".device.CloseCodeNotificationListenerService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- In-app website preview and JavaScript assertions for `closecode preview`. -->
+        <activity
+            android:name=".device.WebPreviewActivity"
+            android:exported="false"
+            android:configChanges="keyboardHidden|orientation|screenSize|screenLayout|uiMode"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+
+        <service
+            android:name=".device.ScreenRecordService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <activity
+            android:name=".device.ScreenRecordActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.Light.Dialog.NoActionBar" />
+
         <!-- Optional screenshot consent flow. The system MediaProjection dialog is the UI. -->
         <activity
             android:name=".device.ScreenshotActivity"
@@ -136,6 +168,19 @@
                 android:value="Back to editor button over a launched app" />
         </service>
 
+        <!-- Setup keeps downloading and unpacking after the screen is left, with a wake lock
+             so the CPU does not sleep halfway through a pack. -->
+        <service
+            android:name=".build.SetupKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- Servers and long-running test/format commands survive app backgrounding. -->
+        <service
+            android:name=".jobs.JobKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- The OpenCode server on the phone. It keeps running while the user is in another
              app, and the notification says what is running, where, and stops it. -->
         <service
@@ -146,6 +191,9 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Running the OpenCode assistant server on the phone" />
         </service>
+        <receiver
+            android:name=".ai.OpenCodeStopReceiver"
+            android:exported="false" />
     </application>
 
 </manifest>

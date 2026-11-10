@@ -2,6 +2,7 @@ package com.closecode.control
 
 import com.closecode.build.BuildSetup
 import com.closecode.build.GradleReader
+import com.closecode.build.NativeProject
 import com.closecode.build.ProjectCheck
 import com.closecode.build.TemplateContract
 import com.google.gson.JsonArray
@@ -30,10 +31,14 @@ internal object ProjectDescription {
         val assetFiles: Int,
         val apk: File?,
         val buildJson: File?,
+        val usesNative: Boolean = false,
+        val nativeReason: String? = null,
+        val requestedNdkVersion: String? = null,
     )
 
     fun read(project: BuildSetup.Project): Facts {
         val facts = GradleReader.read(project.directory)
+        val native = NativeProject.detect(project.directory, facts)
         val manifest = runCatching {
             File(project.directory, "app/src/main/AndroidManifest.xml").readText()
         }.getOrDefault("")
@@ -44,8 +49,10 @@ internal object ProjectDescription {
             .walkTopDown().count { it.isFile }
         val assets = File(project.directory, "app/src/main/assets")
             .walkTopDown().count { it.isFile }
-        val apk = File(project.directory, "build/outputs/apk/debug/app-debug.apk")
-            .takeIf { it.isFile }
+        val apk = listOf(
+            "build/outputs/apk/debug/app-debug.apk",
+            "build/outputs/apk/release/app-release.apk",
+        ).map { File(project.directory, it) }.firstOrNull { it.isFile }
         val buildJson = File(project.directory, "build/build.json").takeIf { it.isFile }
         return Facts(
             packageName = project.savedPackage?.takeIf { it.isNotBlank() }
@@ -65,6 +72,9 @@ internal object ProjectDescription {
             assetFiles = assets,
             apk = apk,
             buildJson = buildJson,
+            usesNative = native.usesNative,
+            nativeReason = native.reasons.firstOrNull()?.what,
+            requestedNdkVersion = native.requestedNdkVersion,
         )
     }
 
@@ -76,6 +86,8 @@ internal object ProjectDescription {
         toolchainReady: Boolean,
         toolchainMissing: List<String>,
         toolchainBytes: Long,
+        gradleReady: Boolean = false,
+        gradleMissing: List<String> = emptyList(),
         last: JsonObject? = null,
     ): JsonObject = JsonObject().apply {
         addProperty("ok", true)
@@ -109,6 +121,19 @@ internal object ProjectDescription {
             addProperty("bytes", toolchainBytes)
             add("missing", JsonArray().apply { toolchainMissing.forEach { add(it) } })
         })
+        add("gradle", JsonObject().apply {
+            addProperty("ready", gradleReady)
+            add("missing", JsonArray().apply { gradleMissing.forEach { add(it) } })
+        })
+        add("native", JsonObject().apply {
+            addProperty("used", facts.usesNative)
+            addProperty("reason", facts.nativeReason)
+            addProperty("requestedNdk", facts.requestedNdkVersion)
+            addProperty("ready", setup.native != null)
+            addProperty("ndk", setup.native?.ndkVersion)
+            addProperty("cmake", setup.native?.cmakeVersion)
+            add("missing", JsonArray().apply { setup.nativeMissing.forEach { add(it) } })
+        })
         val report = ProjectCheck.check(project.directory, project.slug, setup.checkInput)
         add("check", JsonObject().apply {
             addProperty("ok", report.ok)
@@ -133,18 +158,64 @@ internal object ProjectDescription {
         })
         if (last != null) add("lastBuild", last)
         add("commands", JsonObject().apply {
-            addProperty("build", "closecode build")
+            addProperty("build", "closecode build [--release] [--gradle]")
+            addProperty("run", "closecode run — build, install, launch, then wait for the app")
+            addProperty("signing", "closecode signing status|generate|import|select|delete")
+            addProperty(
+                "serve",
+                "closecode serve [--port 3000] [--host 0.0.0.0] — run this project's dev or " +
+                    "static server as a background job; serve status|stop manage it",
+            )
+            addProperty(
+                "preview",
+                "closecode preview [--screenshot] [--dom] [--eval JS] [--test FILE] — build and " +
+                    "serve a static site in the in-app WebView, then run rendered checks",
+            )
+            addProperty("jobs", "closecode jobs list|stop <id>|logs <id>|stop-all")
+            addProperty(
+                "init",
+                "closecode init --template android-compose|web-vite|web-static|" +
+                    "python-fastapi|python-cli|node-express [name] [--install]",
+            )
+            addProperty(
+                "config",
+                "closecode config show|set <key> <value>|unset <key> — pins in .closecode.json",
+            )
+            addProperty("test", "closecode test|lint|format|package|release")
+            addProperty("apps", "closecode apps list|launch|stop|info|install|uninstall|clear")
+            addProperty("intent", "closecode intent open|start|broadcast|share")
+            addProperty("device", "closecode device battery|network|storage|display|volume|brightness|dnd|clipboard|sensors")
+            addProperty("files", "closecode files list|read|write|delete|share|media|uri")
+            addProperty("exec", "closecode exec [--approve] <command...>")
+            addProperty("notifications", "closecode notifications list|dismiss <key>|reply <key> <text>|enable")
+            addProperty("screen", "closecode screen start [--audio] [--path FILE]|stop|status")
+            addProperty("consent", "closecode consent status|grant|revoke <capability> [--package PKG]")
+            addProperty("secrets", "closecode secrets list|set <name> <value>|set <name> --file FILE|delete <name>")
+            addProperty("deploy", "closecode deploy [--preset auto|static|node|python|android] [--dry-run] [--yes]")
+            addProperty("selftest", "closecode selftest [--build] [--keep]")
+            addProperty("testUi", "closecode test-ui script.json")
+            addProperty("audit", "closecode audit tail|egress")
             addProperty("install", "closecode install")
             addProperty("launch", "closecode launch")
+            addProperty("app", "closecode app — installed/foreground state and screen size")
+            addProperty("stop", "closecode stop — press Home and stop the app")
+            addProperty("restart", "closecode restart — stop, launch, wait for the app")
+            addProperty("ui", "closecode ui dump|tap|wait|assert|scroll — inspect and drive the screen")
+            addProperty(
+                "clean",
+                "closecode clean [--gradle-caches|--sdk] — delete the project build folder, " +
+                    "Gradle dependency caches, or the downloaded SDK",
+            )
             addProperty("logcat", "closecode logcat")
             addProperty("export", "closecode export")
             addProperty("screenshot", "closecode screenshot")
             addProperty("tool", "closecode tool aapt2|d8|r8|kotlinc")
             addProperty(
                 "gradle",
-                "closecode gradle assembleDebug|installDebug|launch|test|lint|check — " +
-                    "Gradle names translated to this phone's own builder " +
-                    "(no Gradle daemon on the phone).",
+                "closecode gradle assembleDebug|assembleRelease|bundleRelease|test|lint|" +
+                    "check|tasks — without --gradle these use the phone's own builder or " +
+                    "static checks; add --gradle for real Gradle, including flavours, " +
+                    "R8 and App Bundles.",
             )
             addProperty("check", "closecode check — static project checks, no build")
             addProperty(

@@ -1,0 +1,286 @@
+package com.closecode.control
+
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
+import android.os.PowerManager
+import com.closecode.build.BuildCoordinator
+import com.closecode.build.BuildSetup
+import com.closecode.build.GradleReader
+import com.closecode.build.PlatformStore
+import com.closecode.build.SdkPlatforms
+import com.closecode.build.ToolchainDownloadService
+import com.closecode.device.CloseCodeAccessibilityService
+import com.closecode.tools.GradleToolsStore
+import com.closecode.tools.NativeToolsStore
+import com.closecode.tools.ShellEnvironment
+import com.closecode.tools.ShellToolsManifest
+import com.closecode.tools.ShellToolsStore
+import com.closecode.ui.settings.SharedPreferencesKeyValueStore
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
+import java.io.File
+import java.util.concurrent.TimeUnit
+
+/** Shared shape for `artifact --version` probes used by doctor and toolchain status. */
+internal object ToolProbe {
+    fun run(executable: File, arguments: List<String>, environment: Map<String, String>): String {
+        if (!executable.isFile) return ""
+        return runCatching {
+            val process = ProcessBuilder(listOf(executable.absolutePath) + arguments)
+                .redirectErrorStream(true)
+                .apply { environment().putAll(environment) }
+                .start()
+            val text = process.inputStream.bufferedReader().use { it.readText() }
+            if (!process.waitFor(20, TimeUnit.SECONDS)) process.destroyForcibly()
+            text.trim().lines().firstOrNull().orEmpty()
+        }.getOrElse { it.message ?: it.javaClass.simpleName }
+    }
+}
+
+/** `closecode toolchain status --json`: the real on-disk layout and what is missing. */
+object ToolchainStatusCommand {
+
+    fun run(context: Context): JsonObject {
+        val env = ShellEnvironment.env(context, File(context.filesDir, "tmp"))
+        val paths = ShellEnvironment.paths(context)
+        val gradle = GradleToolsStore(context)
+        val platform = PlatformStore(context, SharedPreferencesKeyValueStore(context))
+        val native = NativeToolsStore(context)
+        val platforms = JsonArray()
+        for (item in SdkPlatforms) {
+            val jar = platform.androidJar(item.api)
+            platforms.add(JsonObject().apply {
+                addProperty("api", item.api)
+                addProperty("path", platform.platformDir(item.api).absolutePath)
+                addProperty("ok", jar != null)
+            })
+        }
+        val buildTools = JsonArray()
+        val buildToolsRoot = File(platform.rootDir(), "build-tools")
+        buildToolsRoot.listFiles()?.filter { it.isDirectory }
+            ?.sortedBy { it.name }
+            ?.forEach { dir ->
+                buildTools.add(JsonObject().apply {
+                    addProperty("version", dir.name)
+                    addProperty("path", dir.absolutePath)
+                    addProperty("shim", File(dir, ".closecode-shim").isFile)
+                    addProperty("ok", File(dir, "aapt2").isFile)
+                })
+            }
+        val missing = JsonArray()
+        if (!gradle.isReady()) missing.add("gradle")
+        if (platforms.none { it.asJsonObject.get("ok")?.asBoolean == true }) missing.add("platform")
+        if (buildTools.none { it.asJsonObject.get("ok")?.asBoolean == true }) missing.add("build-tools")
+        if (!native.ndkReady()) missing.add("ndk")
+        if (!native.cmakeReady()) missing.add("cmake")
+        if (!ShellToolsStore(context, ShellToolsManifest.load(context)).isReady()) missing.add("shell-tools")
+        return JsonObject().apply {
+            addProperty("ok", missing.size() == 0)
+            addProperty("prefix", paths.shellTools.absolutePath)
+            add("jdk", JsonObject().apply {
+                addProperty("path", gradle.javaHome.absolutePath)
+                addProperty("version", ToolProbe.run(gradle.java, listOf("-version"), env))
+                addProperty("ok", File(gradle.javaHome, "bin/java").isFile)
+            })
+            add("gradle", JsonObject().apply {
+                addProperty("home", gradle.distributionDir.absolutePath)
+                addProperty("distribution", gradle.manifest.distribution.version)
+                add("installed", JsonArray().apply {
+                    gradle.installedVersions().sorted().forEach { add(it) }
+                })
+                add("versions", JsonArray().apply {
+                    gradle.manifest.distributions.keys.sorted().forEach { add(it) }
+                })
+                addProperty("ok", gradle.isReady())
+            })
+            addProperty("gradleUserHome", gradle.gradleHome.absolutePath)
+            addProperty("sdkRoot", platform.rootDir().absolutePath)
+            add("platforms", platforms)
+            add("buildTools", buildTools)
+            add("native", JsonObject().apply {
+                addProperty("ndk", native.ndkHome.takeIf { native.ndkReady() }?.absolutePath)
+                addProperty("cmake", native.cmakeHome.takeIf { native.cmakeReady() }?.absolutePath)
+            })
+            add("missing", missing)
+            add("sizes", JsonObject().apply {
+                addProperty("gradleCacheBytes", File(gradle.gradleHome, "caches")
+                    .walkTopDown().filter { it.isFile }.sumOf { it.length() })
+                addProperty("sdkBytes", platform.sizeBytes())
+            })
+        }
+    }
+}
+
+/** `closecode doctor --json`: one place the agent can ask what is wrong and how to fix it. */
+object DoctorCommand {
+
+    fun run(context: Context, project: BuildSetup.Project?): JsonObject {
+        val paths = ShellEnvironment.paths(context)
+        val env = ShellEnvironment.env(context, File(context.filesDir, "tmp"))
+        val gradle = GradleToolsStore(context)
+        val platform = PlatformStore(context, SharedPreferencesKeyValueStore(context))
+        val native = NativeToolsStore(context)
+        val shell = ShellToolsStore(context, ShellToolsManifest.load(context))
+        val checks = JsonArray()
+        val prefix = paths.shellTools
+        fun add(
+            name: String,
+            ok: Boolean,
+            path: File? = null,
+            version: String = "",
+            remedy: String = "",
+            install: String = "",
+        ) {
+            checks.add(JsonObject().apply {
+                addProperty("name", name)
+                addProperty("ok", ok)
+                addProperty("path", path?.absolutePath)
+                addProperty("version", version)
+                addProperty("remedy", remedy)
+                addProperty("installCommand", install)
+            })
+        }
+        add(
+            "shell.prefix",
+            File(prefix, "bin/sh").exists(),
+            prefix,
+            remedy = "Install the shell pack.",
+            install = "closecode setup --web",
+        )
+        add(
+            "shell.path",
+            env["PATH"].orEmpty().contains(File(prefix, "bin").absolutePath),
+            version = env["PATH"].orEmpty(),
+        )
+        add(
+            "shell.ld_library_path",
+            env["LD_LIBRARY_PATH"].orEmpty().contains(File(prefix, "lib").absolutePath),
+            version = env["LD_LIBRARY_PATH"].orEmpty(),
+        )
+        val javaHome = ShellEnvironment.javaHome(paths)
+        add("jdk", javaHome != null, javaHome, install = "closecode setup --gradle")
+        add(
+            "gradle",
+            gradle.isReady(),
+            gradle.gradle,
+            gradle.manifest.distribution.version,
+            remedy = "Install JDK 17 and Gradle 8.13.",
+            install = "closecode setup --gradle",
+        )
+        add(
+            "sdk.platform.35",
+            platform.androidJar(35) != null,
+            platform.platformDir(35),
+            install = "closecode setup --gradle --sdk 35",
+        )
+        val required = platform.requiredBuildToolsVersion(readAgp(project))
+        val buildTools = platform.bestBuildTools(required)
+        add(
+            "sdk.build_tools",
+            buildTools != null,
+            buildTools?.second,
+            buildTools?.first.orEmpty(),
+            remedy = "Install build-tools $required or newer.",
+            install = "closecode setup --gradle",
+        )
+        add("native.ndk", native.ndkReady(), native.ndkHome, install = "closecode setup --native")
+        add("native.cmake", native.cmakeReady(), native.cmakeHome, install = "closecode setup --native")
+        addMeasure("node", File(prefix, "bin/node"), listOf("-v"), env, checks, "closecode setup --web")
+        addMeasure("npm", File(prefix, "bin/npm"), listOf("-v"), env, checks, "closecode setup --web")
+        addMeasure("python", File(prefix, "bin/python3"), listOf("-V"), env, checks, "closecode setup --python")
+        addMeasure("pip", File(prefix, "bin/pip"), listOf("--version"), env, checks, "closecode setup --python")
+        addMeasure("git", File(prefix, "bin/git"), listOf("--version"), env, checks, "closecode setup --web")
+        addMeasure("curl", File(prefix, "bin/curl"), listOf("--version"), env, checks, "closecode setup --web")
+        addMeasure("zip", File(prefix, "bin/zip"), listOf("-v"), env, checks, "closecode setup --web")
+        addMeasure("jq", File(prefix, "bin/jq"), listOf("--version"), env, checks, "closecode setup --web")
+        add("accessibility", CloseCodeAccessibilityService.connected(), remedy = "Run closecode accessibility enable and tap the switch.")
+        add(
+            "notifications",
+            ToolchainDownloadService.notificationsAllowed(context),
+            remedy = "Allow notifications for CloseCode.",
+        )
+        val power = context.getSystemService(PowerManager::class.java)
+        val battery = power?.isIgnoringBatteryOptimizations(context.packageName) == true
+        add("battery", battery, remedy = "Allow CloseCode to run without battery optimisation.")
+        val free = context.filesDir.usableSpace
+        add(
+            "disk",
+            free >= 3L * 1024 * 1024 * 1024,
+            version = free.toString(),
+            remedy = "Free at least 3 GB for Gradle, the SDK and dependency caches.",
+        )
+        add("network", networkAvailable(context), remedy = "Connect to Wi-Fi or allow mobile data.")
+        if (project != null) {
+            val facts = GradleReader.read(project.directory)
+            add(
+                "project.package",
+                (project.savedPackage ?: facts.packageName) != null,
+                project.directory,
+                project.savedPackage ?: facts.packageName.orEmpty(),
+                remedy = "Set namespace in app/build.gradle.kts or use a template.",
+            )
+            val last = BuildCoordinator.last()?.takeIf { it.id == project.id }
+            add(
+                "project.last_build",
+                last != null,
+                project.directory,
+                last?.summary.orEmpty(),
+                remedy = "Run closecode build --gradle.",
+            )
+        }
+        val ok = checks.all { it.asJsonObject.get("ok")?.asBoolean == true }
+        return JsonObject().apply {
+            addProperty("ok", ok)
+            addProperty("build", com.closecode.BuildConfig.VERSION_CODE)
+            add("env", JsonObject().apply {
+                env.toSortedMap().forEach { (key, value) -> addProperty(key, value) }
+            })
+            add("checks", checks)
+            add("toolchain", ToolchainStatusCommand.run(context))
+        }
+    }
+
+    private fun addMeasure(
+        name: String,
+        executable: File,
+        arguments: List<String>,
+        environment: Map<String, String>,
+        checks: JsonArray,
+        install: String,
+    ) {
+        val version = ToolProbe.run(executable, arguments, environment)
+        checks.add(JsonObject().apply {
+            addProperty("name", name)
+            addProperty("ok", executable.isFile && version.isNotBlank() &&
+                !version.contains("not found", ignoreCase = true) &&
+                !version.contains("CANNOT LINK", ignoreCase = true))
+            addProperty("path", executable.absolutePath)
+            addProperty("version", version.take(300))
+            addProperty("remedy", if (executable.isFile) "" else "Install the shell pack.")
+            addProperty("installCommand", install)
+        })
+    }
+
+    private fun readAgp(project: BuildSetup.Project?): String? =
+        project?.let {
+            GradleReader.read(it.directory).plugins
+                .firstOrNull { plugin ->
+                    plugin.id == "com.android.application" || plugin.id == "com.android.library"
+                }
+                ?.version
+        }
+
+    private fun networkAvailable(context: Context): Boolean {
+        val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
+        if (Build.VERSION.SDK_INT >= 23) {
+            val network = manager.activeNetwork ?: return false
+            val caps = manager.getNetworkCapabilities(network) ?: return false
+            return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        }
+        @Suppress("DEPRECATION")
+        return manager.activeNetworkInfo?.isConnected == true
+    }
+}

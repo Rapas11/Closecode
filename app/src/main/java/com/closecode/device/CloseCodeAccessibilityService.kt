@@ -3,6 +3,7 @@ package com.closecode.device
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.graphics.Path
+import android.graphics.Rect
 import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -17,12 +18,25 @@ import kotlinx.coroutines.withTimeout
  */
 class CloseCodeAccessibilityService : AccessibilityService() {
 
+    @Volatile
+    private var lastPackage: String? = null
+
+    @Volatile
+    private var lastActivity: String? = null
+
     override fun onServiceConnected() {
         instance = this
         super.onServiceConnected()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        val packageName = event.packageName?.toString()?.takeIf { it.isNotBlank() }
+        if (packageName != null) lastPackage = packageName
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            event.className?.toString()?.takeIf { it.isNotBlank() }?.let { lastActivity = it }
+        }
+    }
 
     override fun onInterrupt() = Unit
 
@@ -67,6 +81,131 @@ class CloseCodeAccessibilityService : AccessibilityService() {
             else -> return false
         }
         return performGlobalAction(action)
+    }
+
+    fun snapshot(limit: Int = 500): UiSnapshot {
+        val max = limit.coerceIn(1, 2_000)
+        val root = rootInActiveWindow
+            ?: return UiSnapshot(lastPackage.orEmpty(), lastActivity, 0, 0, emptyList(), false)
+        val nodes = ArrayList<UiNode>(max)
+        val truncated = collect(root, 0, max, nodes)
+        val metrics = resources.displayMetrics
+        return UiSnapshot(
+            packageName = root.packageName?.toString() ?: lastPackage.orEmpty(),
+            activity = lastActivity,
+            width = metrics.widthPixels,
+            height = metrics.heightPixels,
+            nodes = nodes,
+            truncated = truncated,
+        )
+    }
+
+    fun find(selector: UiSelector): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        var seen = 0
+        var found: AccessibilityNodeInfo? = null
+        fun visit(node: AccessibilityNodeInfo, depth: Int): Boolean {
+            if (selector.matches(toNode(node, depth))) {
+                if (seen == selector.index.coerceAtLeast(0)) {
+                    found = node
+                    return true
+                }
+                seen++
+            }
+            for (index in 0 until node.childCount) {
+                val child = node.getChild(index) ?: continue
+                if (visit(child, depth + 1)) return true
+            }
+            return false
+        }
+        visit(root, 0)
+        return found
+    }
+
+    suspend fun tap(selector: UiSelector): Boolean {
+        val node = find(selector) ?: return false
+        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (bounds.width() <= 0 || bounds.height() <= 0) return false
+        return tap(bounds.exactCenterX(), bounds.exactCenterY())
+    }
+
+    suspend fun longPress(x: Float, y: Float): Boolean {
+        val path = Path().apply { moveTo(x, y) }
+        return gesture(path, 650)
+    }
+
+    suspend fun scroll(direction: String, selector: UiSelector? = null): Boolean {
+        val node = selector?.let { find(it) } ?: findScrollable(rootInActiveWindow)
+            ?: return false
+        val forward = direction.lowercase(Locale.US) != "up"
+        val action = if (forward) {
+            AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+        } else {
+            AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        }
+        if (node.performAction(action)) return true
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (bounds.width() <= 0 || bounds.height() <= 0) return false
+        val x = bounds.exactCenterX()
+        val startY = bounds.top + bounds.height() * if (forward) 0.8f else 0.2f
+        val endY = bounds.top + bounds.height() * if (forward) 0.2f else 0.8f
+        return swipe(x, startY, x, endY, 350)
+    }
+
+    fun foregroundPackage(): String? =
+        rootInActiveWindow?.packageName?.toString()?.takeIf { it.isNotBlank() }
+            ?: lastPackage?.takeIf { it.isNotBlank() }
+
+    fun describe(node: AccessibilityNodeInfo): UiNode = toNode(node, 0)
+
+    private fun collect(
+        node: AccessibilityNodeInfo,
+        depth: Int,
+        limit: Int,
+        output: MutableList<UiNode>,
+    ): Boolean {
+        if (output.size >= limit) return true
+        output.add(toNode(node, depth))
+        if (output.size >= limit) return true
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            if (collect(child, depth + 1, limit, output)) return true
+        }
+        return false
+    }
+
+    private fun toNode(node: AccessibilityNodeInfo, depth: Int): UiNode {
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        val password = node.isPassword
+        return UiNode(
+            text = if (password) null else node.text?.toString()?.take(500),
+            description = if (password) null else node.contentDescription?.toString()?.take(500),
+            id = node.viewIdResourceName,
+            className = node.className?.toString(),
+            bounds = listOf(bounds.left, bounds.top, bounds.right, bounds.bottom),
+            clickable = node.isClickable,
+            enabled = node.isEnabled,
+            focused = node.isFocused,
+            scrollable = node.isScrollable,
+            visible = node.isVisibleToUser,
+            password = password,
+            depth = depth,
+        )
+    }
+
+    private fun findScrollable(node: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isScrollable && node.isVisibleToUser) return node
+        for (index in 0 until node.childCount) {
+            val child = node.getChild(index) ?: continue
+            val found = findScrollable(child)
+            if (found != null) return found
+        }
+        return null
     }
 
     private suspend fun gesture(path: Path, duration: Long): Boolean {

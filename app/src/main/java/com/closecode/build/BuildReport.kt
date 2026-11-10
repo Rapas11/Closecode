@@ -18,6 +18,7 @@ object BuildReport {
             is BuildState.RequiresSetup -> {
                 addProperty("state", "setup")
                 addProperty("step", state.step.label)
+                state.command?.let { addProperty("command", it) }
             }
             is BuildState.Blocked -> {
                 addProperty("state", "blocked")
@@ -29,6 +30,9 @@ object BuildReport {
                 addProperty("message", state.message)
                 add("diagnostics", diagnostics(state.diagnostics))
                 add("times", times(state.times))
+                state.exitCode?.let { addProperty("exitCode", it) }
+                state.durationMs?.let { addProperty("durationMs", it) }
+                state.logPath?.let { addProperty("logPath", it) }
             }
             is BuildState.Succeeded -> {
                 addProperty("state", "succeeded")
@@ -45,31 +49,63 @@ object BuildReport {
     }
 
     fun outcome(outcome: BuildOutcome): JsonObject = JsonObject().apply {
+        add("artifacts", JsonArray())
+        add("errors", JsonArray())
+        add("warnings", JsonArray())
         when (outcome) {
             is BuildOutcome.Blocked -> {
+                addProperty("ok", false)
                 addProperty("state", "blocked")
                 add("findings", findings(outcome.findings))
+                outcome.findings.filter { it.severity == ProjectCheck.Severity.Error }
+                    .forEach { add("errors", com.google.gson.JsonPrimitive(it.message)) }
             }
             is BuildOutcome.NeedsSetup -> {
+                addProperty("ok", false)
                 addProperty("state", "setup")
                 add("warnings", findings(outcome.warnings))
+                addProperty("code", "needs_setup")
+                outcome.command?.let {
+                    addProperty("command", it)
+                    addProperty("installCommand", it)
+                }
             }
             is BuildOutcome.CompileFailed -> {
+                addProperty("ok", false)
                 addProperty("state", "failed")
+                addProperty("code", "compile_failed")
                 add("diagnostics", diagnostics(outcome.diagnostics))
+                outcome.diagnostics.filter { it.kind == CompileDriver.Diagnostic.Kind.Error }
+                    .forEach { add("errors", com.google.gson.JsonPrimitive(it.message)) }
+                outcome.exitCode?.let { addProperty("exitCode", it) }
+                outcome.durationMs?.let { addProperty("durationMs", it) }
+                outcome.logPath?.let { addProperty("logPath", it) }
             }
             is BuildOutcome.Failed -> {
+                addProperty("ok", false)
                 addProperty("state", "failed")
                 addProperty("message", outcome.message)
+                addProperty("code", "build_failed")
                 add("diagnostics", diagnostics(outcome.diagnostics))
+                add("errors", com.google.gson.JsonPrimitive(outcome.message))
+                outcome.exitCode?.let { addProperty("exitCode", it) }
+                outcome.durationMs?.let { addProperty("durationMs", it) }
+                outcome.logPath?.let { addProperty("logPath", it) }
             }
             is BuildOutcome.Built -> {
+                addProperty("ok", true)
                 addProperty("state", "succeeded")
                 addProperty("apk", outcome.apk.toString())
+                add("artifacts", com.google.gson.JsonPrimitive(outcome.apk.toString()))
                 addProperty("sizeBytes", outcome.sizeBytes)
                 addProperty("seconds", outcome.seconds)
+                addProperty("exitCode", 0)
             }
-            BuildOutcome.Cancelled -> addProperty("state", "cancelled")
+            BuildOutcome.Cancelled -> {
+                addProperty("ok", false)
+                addProperty("state", "cancelled")
+                addProperty("code", "cancelled")
+            }
         }
     }
 
@@ -116,8 +152,10 @@ object BuildReport {
                 add(JsonObject().apply {
                     addProperty("path", diagnostic.path)
                     addProperty("line", diagnostic.line)
+                    addProperty("column", diagnostic.column)
                     addProperty("kind", diagnostic.kind.name.lowercase())
                     addProperty("message", diagnostic.message)
+                    diagnostic.code?.let { addProperty("code", it) }
                 })
             }
         }

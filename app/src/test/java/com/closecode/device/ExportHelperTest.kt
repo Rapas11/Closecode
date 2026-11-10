@@ -23,6 +23,11 @@ class ExportHelperTest {
         File(project, "build/outputs/app.apk").writeText("apk")
         File(project, ".git").mkdirs()
         File(project, ".git/config").writeText("secret")
+        File(project, ".opencode/skill").mkdirs()
+        File(project, ".opencode/skill/SKILL.md").writeText("generated")
+        File(project, "node_modules/pkg").mkdirs()
+        File(project, "node_modules/pkg/index.js").writeText("generated")
+        File(project, "local.properties").writeText("sdk.dir=/opt/android\n")
         val output = File(tmp.root, "exports").apply { mkdirs() }
 
         val zip = ExportHelper.export(project, output)
@@ -31,6 +36,9 @@ class ExportHelperTest {
             assertTrue(archive.getEntry("app/src/main/Main.kt") != null)
             assertTrue(archive.getEntry("build/") == null)
             assertTrue(archive.getEntry(".git/config") == null)
+            assertTrue(archive.getEntry(".opencode/") == null)
+            assertTrue(archive.getEntry("node_modules/") == null)
+            assertTrue(archive.getEntry("local.properties") == null)
         }
     }
 

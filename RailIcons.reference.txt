@@ -1,0 +1,51 @@
+/*
+ * ============================================================================================
+ *  RailIcons.reference.txt  —  REFERENCE for the side rail icons (icons only, nothing else changes)
+ * ============================================================================================
+ *  WHAT TO DO
+ *  - The side rail (the column of round tool buttons) already works. Do NOT change its layout, tile size,
+ *    spacing, selection bar, badges, order, or what each button does.
+ *  - Only change the ICON drawn inside five of the tiles, and add those five icons to our icon table.
+ *  - Draw them exactly like our other icons: 24x24 grid, stroke 1.9, round caps and joins, no fill,
+ *    same size as the other rail icons today.
+ *
+ *  THE FIVE CHANGES
+ *   Tool              old icon                  new icon name   what it looks like
+ *   Terminal          ">_" inside a box         "term"          just the ">_" prompt, no box
+ *   Logcat            list with green dots      "log"           three horizontal lines (the third is shorter)
+ *   Preview           picture / gallery         "preview"       a small window with a play triangle inside
+ *   Project settings  stacked layers            "sliders"       three horizontal slider lines with small knobs
+ *   Developer         bug                       "wrench"        a wrench
+ *
+ *  UNCHANGED: Files (folder), Search (magnifier), GitHub, Problems (warning triangle),
+ *             Settings (gear), the project tile at the top. OpenCode: leave it exactly as it is today.
+ *
+ *  ORDER (already the current order, keep it):
+ *   top:    project tile, Files, Search, GitHub, Terminal, Logcat, Problems, Preview, OpenCode
+ *   bottom: Project settings, Developer, Settings
+ *
+ *  CONNECT
+ *   1. Our icon table (the map of icon name -> SVG path, e.g. CcIconPaths). Add the 5 entries below.
+ *      If an entry with the same name already exists (for example "term"), replace its path with this one.
+ *   2. The code that builds the rail items: change only the icon name of those five tools.
+ *   3. Tint colours: keep the colour each tool already has, except where the table says otherwise.
+ *   4. Make sure nothing else in the app used the old icons through the same names (search for them) and
+ *      that the other screens (for example Logcat and Problems screens) still look right.
+ * ============================================================================================
+ */
+
+// ---- add to our icon table (all paths are for a 24 x 24 grid, drawn as strokes) ----
+val NewRailIconPaths = mapOf(
+    "term"    to "M5 8l5 4-5 4M13 17h6",
+    "log"     to "M4 6h16M4 12h16M4 18h10",
+    "preview" to "M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM10 9v6l5-3z",
+    "sliders" to "M21 4h-7M10 4H3M21 12h-9M8 12H3M21 20h-5M12 20H3M14 2v4M8 10v4M16 18v4",
+    "wrench"  to "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z",
+)
+
+// ---- icon + colour per tool (colours as in the picture; keep ours if they are already these) ----
+//  Terminal          "term"     #60A5FA
+//  Logcat            "log"      #34D399
+//  Preview           "preview"  #A78BFA
+//  Project settings  "sliders"  #C7CBD9
+//  Developer         "wrench"   #2DD4BF

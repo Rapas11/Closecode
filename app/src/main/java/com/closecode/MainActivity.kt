@@ -2,6 +2,7 @@ package com.closecode
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import com.closecode.ui.project.headBranch
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.getValue
@@ -11,23 +12,32 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberCoroutineScope
 import com.closecode.control.CloseCodeControl
 import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
+import com.closecode.debug.DebugReport
 import com.closecode.debug.sharePlainText
 import com.closecode.ui.ide.TerminalSessions
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -38,15 +48,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.closecode.ui.screens.WelcomeScreen
-import com.closecode.ui.toUi
-import com.closecode.ui.ProjectSwitcherSheet
-import com.closecode.ui.StartProjectSheet
-import com.closecode.ui.GitHubCloneScreen
-import com.closecode.ui.model.ProjectConfig
-import com.closecode.ui.model.Templates
-import com.closecode.ui.ide.GitHubSignIn
-import com.closecode.ui.github.TokenStore
+import com.closecode.ui.HeroScreen
 import com.closecode.ui.ProjectSetupScreen
 import com.closecode.ui.git.GitService
 import com.closecode.ui.onboarding.OnboardingScreen
@@ -63,6 +65,7 @@ import com.closecode.ui.settings.SettingsScreen
 import com.closecode.ui.settings.rememberSettingsStore
 import com.closecode.ui.theme.ClosecodeTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -128,6 +131,7 @@ class MainActivity : ComponentActivity() {
             ClosecodeTheme(
                 forceDark = useDark,
                 accent = AccentOptions[settings.accentIndex.coerceIn(0, AccentOptions.lastIndex)],
+                syntaxColors = settings.syntaxColors,
             ) {
                 if (crashText != null) {
                     CrashDialog(
@@ -140,6 +144,8 @@ class MainActivity : ComponentActivity() {
                 }
                 var encoded by rememberSaveable { mutableStateOf("") }
                 var section by rememberSaveable { mutableStateOf("general") }
+                var settingsTab by remember { mutableStateOf<TemplateTab?>(null) }
+                var settingsOpenDetail by remember { mutableStateOf(false) }
                 // Bumped when the GitHub account changes — a sign-in or a disconnect done on
                 // the settings screen. The screens that hold a token read it when this moves,
                 // so they never keep showing an account that is no longer connected.
@@ -147,10 +153,20 @@ class MainActivity : ComponentActivity() {
 
                 val repository = rememberProjectRepository()
                 val firstRunStore = rememberFirstRunStore()
+                val scope = rememberCoroutineScope()
                 val startRoute = remember {
                     if (firstRunStore.isCompleted()) "hero" else "onboarding"
                 }
                 val project = ProjectCodec.decode(encoded)
+                // One .closecode.json per project, so this is a directory read — off the
+                // composition path and onto Dispatchers.IO.
+                var recentCount by remember { mutableIntStateOf(0) }
+                var recentProjects by remember { mutableStateOf<List<ProjectRecord>>(emptyList()) }
+                LaunchedEffect(encoded, repository) {
+                    val projects = withContext(Dispatchers.IO) { repository.listProjects() }
+                    recentCount = projects.size
+                    recentProjects = projects
+                }
 
                 // "Open last project" decides what a launch lands on. The system restores the last
                 // one for us; this is the single place that is allowed to say no, checked once at
@@ -183,9 +199,6 @@ class MainActivity : ComponentActivity() {
                     sessionHolders.getOrPut(project?.id ?: "") { TerminalSessions() }
                 // Set by the IDE as edits land; read when leaving it.
                 var ideDirty by rememberSaveable { mutableStateOf(false) }
-                // Screen 02 is reachable from Welcome (Start a project) and from the
-                // project switcher's two buttons, so it lives above the route stack.
-                var startSheetOpen by rememberSaveable { mutableStateOf(false) }
 
                 // Opening a project lands on the IDE route, unless already there (cloning from
                 // inside swaps the record under the same route, keyed by slug below).
@@ -194,28 +207,11 @@ class MainActivity : ComponentActivity() {
                     if (backStack?.destination?.route != "ide") nav.navigate("ide")
                 }
 
-                // One create path for both entry points (Welcome and the switcher).
-                fun createProject(
-                    name: String,
-                    selection: SelectedTemplate,
-                    config: ProjectConfig,
-                ): String? = runCatching {
-                    val record = repository.create(name, selection, config)
-                    encoded = encodeRecord(record)
-                    if (selection.tab == TemplateTab.Web) {
-                        nav.navigate("ide")
-                    } else {
-                        nav.navigate("project-setup")
-                    }
-                    null
-                }.getOrElse { failure ->
-                    failure.message ?: "Could not create the project."
-                }
-
                 CompositionLocalProvider(
                     LocalSettings provides settings,
                     LocalAnimationsEnabled provides settings.animations,
                 ) {
+                    Box(Modifier.fillMaxSize()) {
                     NavHost(navController = nav, startDestination = startRoute) {
                         composable("onboarding") {
                             OnboardingScreen(
@@ -250,41 +246,45 @@ class MainActivity : ComponentActivity() {
                                     ).show()
                                 }
                             }
-                            // The welcome screen lists the real stores: last three opened first.
-                            var allProjects by remember { mutableStateOf<List<ProjectRecord>>(emptyList()) }
-                            LaunchedEffect(encoded, repository) {
-                                allProjects = withContext(Dispatchers.IO) { repository.listProjects() }
-                            }
-                            val recentUi = remember(allProjects) { allProjects.take(3).map { it.toUi() } }
-                            val totalProjects = allProjects.size
-                            var signInOpen by remember { mutableStateOf(false) }
-                            var cloneOpen by remember { mutableStateOf(false) }
-                            val tokenStore = remember(context) { com.closecode.ui.github.TokenStore(context) }
-                            var githubToken by remember { mutableStateOf(tokenStore.read()) }
-                            com.closecode.ui.screens.WelcomeScreen(
-                                recent = recentUi,
-                                totalProjects = totalProjects,
-                                onStartProject = { startSheetOpen = true },
-                                onGitHub = { cloneOpen = true },
-                                onOpen = { ui ->
-                                    val record = allProjects.firstOrNull { it.id == ui.id }
-                                    if (record != null) openEncoded(encodeRecord(record))
+                                HeroScreen(
+                                    recentProjects = recentProjects,
+                                    tokenEpoch = githubTokenEpoch,
+                                    branchOf = { record -> repository.headBranch(record.slug) },
+                                    onGitHubChanged = { githubTokenEpoch++ },
+                                    onDeleteProject = { record ->
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) { repository.delete(record.slug) }
+                                            recentProjects = withContext(Dispatchers.IO) {
+                                                repository.listProjects()
+                                            }
+                                        }
+                                    },
+                                onProjectCreated = { name, selection, templateName, config ->
+                                    // Scaffold and register first. If setup is interrupted, the
+                                    // project is already in Recents and can be opened again.
+                                    runCatching {
+                                        val record = repository.create(name, selection, config)
+                                        encoded = ProjectCodec.encode(
+                                            Project(
+                                                record.name,
+                                                selection,
+                                                templateName,
+                                                config,
+                                                slug = record.slug,
+                                                id = record.id,
+                                            ),
+                                        )
+                                        nav.navigate("ide")
+                                        null
+                                    }.getOrElse { failure ->
+                                        failure.message ?: "Could not create the project."
+                                    }
                                 },
+                                // A clone already owns its directory and its record, so it carries
+                                // its own slug rather than deriving one from the name.
+                                onProjectCloned = { record -> openEncoded(encodeRecord(record)) },
+                                onOpenProject = { record -> openEncoded(encodeRecord(record)) },
                             )
-                            if (signInOpen) {
-                                GitHubSignIn(
-                                    onSignedIn = { token -> githubToken = token; signInOpen = false },
-                                    onDismiss = { signInOpen = false },
-                                )
-                            }
-                            if (cloneOpen) {
-                                GitHubCloneScreen(
-                                    token = githubToken,
-                                    onToken = { fresh -> tokenStore.write(fresh); githubToken = fresh },
-                                    onDismiss = { cloneOpen = false },
-                                    onCloned = { record -> cloneOpen = false; openEncoded(encodeRecord(record)) },
-                                )
-                            }
                         }
 
                         composable("project-setup") {
@@ -321,6 +321,8 @@ class MainActivity : ComponentActivity() {
                                 onSettingsChange = { settings = settingsStore.write(it) },
                                 onGitHubChanged = { githubTokenEpoch++ },
                                 onOpenSetupGuide = { nav.navigate("onboarding") },
+                                templateTab = settingsTab,
+                                openDetail = settingsOpenDetail,
                             )
                         }
 
@@ -331,17 +333,6 @@ class MainActivity : ComponentActivity() {
                                 // death): back out rather than showing an empty IDE.
                                 LaunchedEffect(Unit) { nav.popBackStack("hero", false) }
                             } else {
-                                var switcherOpen by remember { mutableStateOf(false) }
-                                var switcherProjects by remember {
-                                    mutableStateOf<List<ProjectRecord>>(emptyList())
-                                }
-                                LaunchedEffect(switcherOpen, current.id) {
-                                    if (switcherOpen) {
-                                        switcherProjects = withContext(Dispatchers.IO) {
-                                            repository.listProjects()
-                                        }
-                                    }
-                                }
                                 // Keyed on the project, not on composable identity. Cloning from
                                 // inside the IDE swaps `project` while this route stays put, and
                                 // every per-project holder would otherwise carry the old
@@ -354,9 +345,16 @@ class MainActivity : ComponentActivity() {
                                         slug = current.slug,
                                         repository = repository,
                                         tokenEpoch = githubTokenEpoch,
-                                        onSwitchProject = { switcherOpen = true },
-                                        onOpenSettings = {
+                                        onOpenSettings = { tab ->
                                             section = "general"
+                                            settingsTab = tab
+                                            settingsOpenDetail = false
+                                            nav.navigate("settings")
+                                        },
+                                        onOpenTerminalSettings = {
+                                            section = "terminal"
+                                            settingsTab = null
+                                            settingsOpenDetail = true
                                             nav.navigate("settings")
                                         },
                                         onExit = { nav.popBackStack("hero", false) },
@@ -379,47 +377,41 @@ class MainActivity : ComponentActivity() {
                                                 settings.withOption(OptionSetting.THEME, next),
                                             )
                                         },
-                                    )
-                                }
-                                if (switcherOpen) {
-                                    ProjectSwitcherSheet(
-                                        projects = remember(switcherProjects) {
-                                            switcherProjects.map { it.toUi() }
+                                        projectRecords = recentProjects,
+                                        onOpenProject = { record ->
+                                            encoded = encodeRecord(record)
                                         },
-                                        currentId = current.id,
-                                        onPick = { picked ->
-                                            switcherOpen = false
-                                            switcherProjects.firstOrNull { it.id == picked.id }?.let {
-                                                encoded = encodeRecord(it)
+                                        onNewProject = {
+                                            nav.navigate("hero") {
+                                                popUpTo("ide") { inclusive = true }
                                             }
                                         },
-                                        onNew = {
-                                            switcherOpen = false
-                                            startSheetOpen = true
-                                        },
-                                        onTemplates = {
-                                            switcherOpen = false
-                                            startSheetOpen = true
-                                        },
-                                        onDismiss = { switcherOpen = false },
                                     )
                                 }
                             }
                         }
                     }
-                }
-
-                // Screen 02 sits above the routes: Welcome's button and both switcher
-                // buttons land here.
-                if (startSheetOpen) {
-                    StartProjectSheet(
-                        onDismiss = { startSheetOpen = false },
-                        onCreate = { projectName, selection, config ->
-                            createProject(projectName, selection, config).also { error ->
-                                if (error == null) startSheetOpen = false
+                    if (com.closecode.device.AutomationStatus.active) {
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.errorContainer)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "CloseCode is controlling this device",
+                                modifier = Modifier.fillMaxWidth(0.78f),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            TextButton(onClick = { com.closecode.device.AutomationStatus.stop() }) {
+                                Text("Stop")
                             }
-                        },
-                    )
+                        }
+                    }
+                    }
                 }
 
             }
@@ -473,11 +465,11 @@ private fun CrashDialog(trace: String, onClose: () -> Unit) {
         },
         dismissButton = {
             androidx.compose.foundation.layout.Row {
-                TextButton(
-                    onClick = {
-                        sharePlainText(context, "CloseCode crash report", trace)
-                    },
-                ) { Text("Share") }
+            TextButton(
+                onClick = {
+                    sharePlainText(context, "CloseCode debug report", DebugReport.compose(context))
+                },
+            ) { Text("Share") }
                 TextButton(onClick = onClose) { Text("Dismiss") }
             }
         },

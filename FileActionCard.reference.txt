@@ -1,0 +1,299 @@
+/*
+ * ============================================================================================
+ *  FileActionCard.reference.txt  —  REFERENCE for the Files long-press menu (behaviour fix)
+ * ============================================================================================
+ *  THE PROBLEM TO FIX
+ *  Long-press on a file or folder in the Files panel opens a menu card (New file, New folder, Rename,
+ *  Duplicate, Delete). That card is correct. But when I tap New file / New folder / Rename / Delete, the app
+ *  closes it and opens a SEPARATE dialog on the editor side (the editor slides right when the sidebar is
+ *  open, so that dialog is pushed off the screen and cut off).
+ *
+ *  THE CORRECT BEHAVIOUR
+ *  The SAME card, at the SAME position, changes its content in place:
+ *    Menu          -> the five actions (as today)
+ *    NewFile       -> title "New file", a text field (focused, keyboard opens), [Cancel] [Create]
+ *    NewFolder     -> title "New folder", same form
+ *    Rename        -> title "Rename", the field holds the current name (name part selected, not the
+ *                     extension), [Cancel] [Rename]
+ *    ConfirmDelete -> "Delete <name>?", the path in muted text, a short warning, [Cancel] [Delete] (red)
+ *    Duplicate     -> no form: it runs the existing duplicate and the card closes.
+ *  - [Cancel] returns to the Menu state. Tapping outside the card, or system Back, closes the whole card.
+ *  - Create / Rename / Delete call the SAME functions the app already uses. Keep all existing checks
+ *    (empty name, name already exists, not allowed characters). If a function returns an error text, show it
+ *    in red inside the card and keep the card open. On success the card closes.
+ *  - The card keeps its left/top position. In form states it may be wider (up to 280 dp) but stays fully
+ *    on screen, and when the keyboard opens the card moves up so the field and buttons stay visible.
+ *  - Content changes with a short fade and size animation (no jump).
+ *
+ *  WHY A POPUP: Compose's Popup is its own window. It is not part of the editor card, so the sidebar sliding
+ *  the editor does not move or clip it. NEVER draw this card (or any dialog) inside the editor card.
+ *
+ *  CONNECT
+ *   1. Package name.
+ *   2. Icons: CcIcon(name, size, tint). Use the icon names the current menu already uses for
+ *      New file, New folder, Rename, Duplicate, Delete (placeholders below: plus, folder, pencil, copy, trash).
+ *   3. Colours, shape, text sizes: the values below match the current card in the screenshot. If the app has
+ *      tokens for them (menu card colour, border, red), use the tokens instead.
+ *   4. Callbacks: map them to the functions that already create / rename / duplicate / delete files.
+ *      Each create / rename callback returns null when it worked, or an error text to show.
+ *   5. Where the long press is handled in the Files panel: set `card` there (see the snippet at the bottom)
+ *      and show FileActionCard from the same screen that owns the panel.
+ *   6. Remove the old separate dialogs/forms for these five actions once this works.
+ * ============================================================================================
+ */
+package app.closecode.files   // CONNECT 1
+
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.getBottom
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
+
+// CONNECT 3: values match the current card. Use our tokens if they exist.
+private object FC {
+    val card = Color(0xFF2E3036);  val line = Color(0xFF3A3D44)
+    val text = Color(0xFFF2F3F5);  val muted = Color(0xFF9AA0AE)
+    val red = Color(0xFFF23F42);   val accent = Color(0xFF5865F2)
+    val field = Color(0xFF232428); val button = Color(0xFF3A3D44)
+}
+
+enum class FileCardMode { Menu, NewFile, NewFolder, Rename, ConfirmDelete }
+
+/** What the long press was on. [anchor] = where the finger pressed, in WINDOW pixels. */
+data class FileCardTarget(val path: String, val name: String, val isFolder: Boolean, val anchor: IntOffset)
+
+@Composable
+fun FileActionCard(
+    target: FileCardTarget,
+    // CONNECT 4: each returns null when it worked, or an error text to show in the card.
+    onCreateFile: (target: FileCardTarget, name: String) -> String?,
+    onCreateFolder: (target: FileCardTarget, name: String) -> String?,
+    onRename: (target: FileCardTarget, newName: String) -> String?,
+    onDuplicate: (target: FileCardTarget) -> Unit,
+    onDelete: (target: FileCardTarget) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var mode by remember { mutableStateOf(FileCardMode.Menu) }       // the ONLY state: which content the card shows
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)               // keyboard height (0 when closed)
+    val margin = with(density) { 8.dp.roundToPx() }
+    val positioner = remember(target.anchor, imeBottom) { AnchoredPositionProvider(target.anchor, imeBottom, margin) }
+    val shape = RoundedCornerShape(22.dp)
+
+    Popup(
+        popupPositionProvider = positioner,
+        onDismissRequest = onDismiss,                  // tap outside or system Back closes the whole card
+        properties = PopupProperties(focusable = true), // focusable: the keyboard can open inside the card
+    ) {
+        Box(
+            Modifier.widthIn(min = 188.dp, max = 280.dp)
+                .shadow(16.dp, shape).clip(shape).background(FC.card).border(1.dp, FC.line, shape)
+                .animateContentSize(tween(160)),
+        ) {
+            AnimatedContent(
+                targetState = mode, label = "fileCard",
+                transitionSpec = { (fadeIn(tween(140)) togetherWith fadeOut(tween(90))).using(SizeTransform(clip = false)) },
+            ) { m ->
+                when (m) {
+                    FileCardMode.Menu -> MenuItems(
+                        onNewFile = { mode = FileCardMode.NewFile },
+                        onNewFolder = { mode = FileCardMode.NewFolder },
+                        onRename = { mode = FileCardMode.Rename },
+                        onDuplicate = { onDuplicate(target); onDismiss() },     // no form: run it and close
+                        onDelete = { mode = FileCardMode.ConfirmDelete },
+                    )
+                    FileCardMode.NewFile -> NameForm("New file", "", "Create", { mode = FileCardMode.Menu }) { name ->
+                        onCreateFile(target, name).also { if (it == null) onDismiss() }
+                    }
+                    FileCardMode.NewFolder -> NameForm("New folder", "", "Create", { mode = FileCardMode.Menu }) { name ->
+                        onCreateFolder(target, name).also { if (it == null) onDismiss() }
+                    }
+                    FileCardMode.Rename -> NameForm("Rename", target.name, "Rename", { mode = FileCardMode.Menu }) { name ->
+                        onRename(target, name).also { if (it == null) onDismiss() }
+                    }
+                    FileCardMode.ConfirmDelete -> ConfirmDelete(target, onCancel = { mode = FileCardMode.Menu },
+                        onConfirm = { onDelete(target); onDismiss() })
+                }
+            }
+        }
+    }
+}
+
+/** Puts the card at the pressed point, then keeps it fully on screen and above the keyboard. */
+private class AnchoredPositionProvider(
+    private val anchor: IntOffset, private val imeBottom: Int, private val margin: Int,
+) : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
+                                   layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+        val maxX = (windowSize.width - popupContentSize.width - margin).coerceAtLeast(margin)
+        val maxY = (windowSize.height - imeBottom - popupContentSize.height - margin).coerceAtLeast(margin)
+        return IntOffset(anchor.x.coerceIn(margin, maxX), anchor.y.coerceIn(margin, maxY))
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+//  Menu state: same rows as today. Row height 46, icon 20, text 16 sp. Divider before Delete (red).
+// ---------------------------------------------------------------------------------------------
+@Composable
+private fun MenuItems(onNewFile: () -> Unit, onNewFolder: () -> Unit, onRename: () -> Unit,
+                      onDuplicate: () -> Unit, onDelete: () -> Unit) {
+    Column(Modifier.padding(vertical = 6.dp)) {
+        MenuRow("plus", "New file", FC.text, onNewFile)          // CONNECT 2: icon names
+        MenuRow("folder", "New folder", FC.text, onNewFolder)
+        MenuRow("pencil", "Rename", FC.text, onRename)
+        MenuRow("copy", "Duplicate", FC.text, onDuplicate)
+        Box(Modifier.fillMaxWidth().height(1.dp).background(FC.line))
+        MenuRow("trash", "Delete", FC.red, onDelete)
+    }
+}
+
+@Composable
+private fun MenuRow(icon: String, label: String, color: Color, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().height(46.dp).clickable(onClick = onClick).padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        CcIcon(icon, 20.dp, color)
+        Text(label, fontSize = 16.sp, color = color)
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+//  Form state (New file, New folder, Rename): title, one field, optional red error, two buttons.
+//  [onSubmit] returns null on success (the caller closes the card) or an error text to show.
+// ---------------------------------------------------------------------------------------------
+@Composable
+private fun NameForm(title: String, initial: String, action: String, onCancel: () -> Unit, onSubmit: (String) -> String?) {
+    // For a rename, select only the name part (not the extension), like most file managers.
+    val selectEnd = initial.substringBeforeLast('.', initial).length
+    var value by remember { mutableStateOf(TextFieldValue(initial, TextRange(0, selectEnd))) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }                  // the keyboard opens right away
+    val canSubmit = value.text.isNotBlank()
+    val submit = { if (canSubmit) error = onSubmit(value.text.trim()) }
+
+    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Text(title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = FC.text)
+        Spacer(Modifier.height(12.dp))
+        Box(Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(12.dp)).background(FC.field)
+            .border(1.dp, if (error != null) FC.red else FC.line, RoundedCornerShape(12.dp)).padding(horizontal = 14.dp),
+            contentAlignment = Alignment.CenterStart) {
+            BasicTextField(value, { value = it; error = null }, singleLine = true,
+                textStyle = TextStyle(fontSize = 15.sp, color = FC.text), cursorBrush = SolidColor(FC.accent),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { submit() }),
+                modifier = Modifier.fillMaxWidth().focusRequester(focus))
+        }
+        error?.let { Text(it, fontSize = 12.sp, color = FC.red, modifier = Modifier.padding(top = 6.dp)) }
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            CardButton("Cancel", FC.button, FC.text, true, Modifier.weight(1f), onCancel)
+            CardButton(action, FC.accent, Color.White, canSubmit, Modifier.weight(1f)) { submit() }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+//  Delete confirmation state: same card, same position.
+// ---------------------------------------------------------------------------------------------
+@Composable
+private fun ConfirmDelete(target: FileCardTarget, onCancel: () -> Unit, onConfirm: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+        Text("Delete ${target.name}?", fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = FC.text, maxLines = 2)
+        Spacer(Modifier.height(6.dp))
+        Text(target.path, fontSize = 12.sp, color = FC.muted, maxLines = 2)           // real path
+        Spacer(Modifier.height(6.dp))
+        Text(if (target.isFolder) "This cannot be undone. Everything inside it will be removed." else "This cannot be undone.",
+            fontSize = 13.sp, color = FC.muted)
+        Spacer(Modifier.height(14.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            CardButton("Cancel", FC.button, FC.text, true, Modifier.weight(1f), onCancel)
+            CardButton("Delete", FC.red, Color.White, true, Modifier.weight(1f), onConfirm)
+        }
+    }
+}
+
+@Composable
+private fun CardButton(text: String, bg: Color, fg: Color, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Box(modifier.height(40.dp).alpha(if (enabled) 1f else 0.5f).clip(RoundedCornerShape(20.dp)).background(bg)
+        .clickable(enabled = enabled, onClick = onClick), contentAlignment = Alignment.Center) {
+        Text(text, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = fg)
+    }
+}
+
+/*
+ * ---------------------------------------------------------------------------------------------
+ *  HOW TO WIRE IT (CONNECT 5), inside the Files panel and the screen that owns it:
+ *
+ *  var card by remember { mutableStateOf<FileCardTarget?>(null) }
+ *
+ *  // on every file/folder row: remember the row's window position, then on long press set `card`
+ *  var rowPos by remember { mutableStateOf(Offset.Zero) }
+ *  Row(Modifier
+ *      .onGloballyPositioned { rowPos = it.positionInWindow() }
+ *      .pointerInput(path) {
+ *          detectTapGestures(
+ *              onTap = { ...existing open/expand... },
+ *              onLongPress = { press -> card = FileCardTarget(path, name, isFolder,
+ *                  IntOffset((rowPos.x + press.x).roundToInt(), (rowPos.y + press.y).roundToInt())) },
+ *          )
+ *      }) { ...existing row content... }
+ *
+ *  card?.let { FileActionCard(it, onCreateFile = ..., onCreateFolder = ..., onRename = ...,
+ *                             onDuplicate = ..., onDelete = ..., onDismiss = { card = null }) }
+ *
+ *  Keep our existing gesture/selection code if it already detects the long press; only change what it
+ *  opens. The Popup is its own window, so it can be declared right here in the panel.
+ * ---------------------------------------------------------------------------------------------
+ */

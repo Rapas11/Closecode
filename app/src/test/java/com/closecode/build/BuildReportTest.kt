@@ -54,6 +54,32 @@ class BuildReportTest {
     }
 
     @Test
+    fun aGradleFailureCarriesColumnsExitDurationAndTheLogPath() {
+        val diagnostic = CompileDriver.Diagnostic(
+            path = "app/src/main/Main.kt",
+            line = 12,
+            kind = CompileDriver.Diagnostic.Kind.Error,
+            message = "unresolved reference",
+            column = 8,
+            code = "E0001",
+        )
+        val json = BuildReport.outcome(
+            BuildOutcome.CompileFailed(
+                listOf(diagnostic),
+                exitCode = 1,
+                durationMs = 1234,
+                logPath = "/tmp/build.log",
+            ),
+        )
+        val row = json["diagnostics"].asJsonArray[0].asJsonObject
+        assertEquals(8, row["column"].asInt)
+        assertEquals("E0001", row["code"].asString)
+        assertEquals(1, json["exitCode"].asInt)
+        assertEquals(1234L, json["durationMs"].asLong)
+        assertEquals("/tmp/build.log", json["logPath"].asString)
+    }
+
+    @Test
     fun theNewestBuildLogIsTheOneTheBridgeReads() {
         val dir = File(System.getProperty("java.io.tmpdir"), "closecode-log-${System.nanoTime()}")
         val logs = File(dir, "build/logs").apply { mkdirs() }

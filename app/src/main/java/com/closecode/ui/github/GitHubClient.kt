@@ -73,6 +73,14 @@ class GitHubClient(private val http: HttpTransport = UrlConnectionTransport()) {
             acceptJson(),
             mapOf("client_id" to CLIENT_ID, "scope" to SCOPE),
         )
+        if (resp.code == 404) {
+            throw GitHubException(
+                "GitHub could not start the sign-in: Device Flow is not enabled for this " +
+                    "OAuth app (or the client id is wrong). Enable Device Flow in the app's " +
+                    "GitHub settings, then try again.",
+                404,
+            )
+        }
         val json = bodyOrThrow(resp, "start the sign-in")
         // A 200 can still be a refusal ("device_flow_disabled", "incorrect_client_credentials"):
         // GitHub answers the device-code request with an error body, not an HTTP failure.
@@ -237,7 +245,7 @@ class GitHubClient(private val http: HttpTransport = UrlConnectionTransport()) {
          * grants no access by itself. There is no client secret in this app because Device Flow
          * does not use one.
          */
-        const val CLIENT_ID = "Ov23li4Ajd4dvN9uy8Ch"
+        const val CLIENT_ID = "Ov23liPiFe3gqt5pfjiZ"
 
         const val DEVICE_CODE_URL = "https://github.com/login/device/code"
         const val ACCESS_TOKEN_URL = "https://github.com/login/oauth/access_token"

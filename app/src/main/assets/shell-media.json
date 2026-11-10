@@ -1,0 +1,14 @@
+{
+  "version": "1",
+  "repo": "https://packages.termux.dev/apt/termux-main",
+  "roots": [
+    "ffmpeg",
+    "sqlite",
+    "imagemagick"
+  ],
+  "required": [
+    "bin/ffmpeg",
+    "bin/sqlite3",
+    "bin/magick"
+  ]
+}

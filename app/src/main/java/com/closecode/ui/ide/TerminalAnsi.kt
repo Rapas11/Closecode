@@ -8,6 +8,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.Modifier
 import androidx.compose.material3.Text
@@ -366,7 +367,7 @@ internal fun ansiAnnotated(line: String): AnnotatedString {
                 if (run.style == AnsiStyle.Plain) {
                     append(run.text)
                 } else {
-                    pushStyle(spanStyleFor(run.style, ansi, c.tx, c.bg))
+                    pushStyle(spanStyleFor(run.style, ansi, c.mock.text, c.mock.page))
                     append(run.text)
                     pop()
                 }
@@ -388,6 +389,8 @@ internal fun TerminalLine(
     fontSize: TextUnit? = null,
     fontFamily: FontFamily = Mono,
     color: Color? = null,
+    lineHeight: TextUnit? = null,
+    textAlign: TextAlign? = null,
 ) {
     val c = LocalPageColors.current
     val hasEscapes = remember(line) { line.indexOf(ESC) >= 0 }
@@ -395,10 +398,11 @@ internal fun TerminalLine(
     val size = fontSize ?: 11.5.sp
     Text(
         text = if (hasEscapes) ansiAnnotated(line) else AnnotatedString(line),
-        color = color ?: c.tx,
+        color = color ?: c.mock.text,
         fontSize = size,
         fontFamily = fontFamily,
-        lineHeight = 19.sp,
+        lineHeight = lineHeight ?: 19.sp,
+        textAlign = textAlign,
         // Long lines wrap rather than clip: a clipped path or URL is information lost, while a
         // wrapped one is only taller.
         softWrap = true,

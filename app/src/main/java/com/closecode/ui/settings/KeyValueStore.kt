@@ -22,6 +22,7 @@ interface KeyValueStore {
 
     fun remove(key: String)
     fun clear()
+    fun keys(): Set<String> = emptySet()
 }
 
 /** Private preferences, the same backing store [com.closecode.ui.github.TokenStore] already uses. */
@@ -42,7 +43,12 @@ class SharedPreferencesKeyValueStore(context: Context) : KeyValueStore {
         prefs.edit().putString(key, value).apply()
     }
 
-    override fun getInt(key: String, default: Int): Int = prefs.getInt(key, default)
+    override fun getInt(key: String, default: Int): Int = when (val value = prefs.all[key]) {
+        is Int -> value
+        is Number -> value.toInt()
+        is String -> value.toIntOrNull() ?: default
+        else -> default
+    }
 
     override fun putInt(key: String, value: Int) {
         prefs.edit().putInt(key, value).apply()
@@ -55,6 +61,8 @@ class SharedPreferencesKeyValueStore(context: Context) : KeyValueStore {
     override fun clear() {
         prefs.edit().clear().apply()
     }
+
+    override fun keys(): Set<String> = prefs.all.keys.toSet()
 
     private companion object {
         const val FILENAME = "closecode_settings"
@@ -101,4 +109,6 @@ class InMemoryKeyValueStore(
     override fun clear() {
         values.clear()
     }
+
+    override fun keys(): Set<String> = values.keys.toSet()
 }

@@ -23,7 +23,8 @@ data class SdkPlatform(
 /**
  * The three platforms Closecode can compile against. API 34 is kept because imported projects
  * still name it; 35 is the template default; 36 is the newest platform Google publishes for
- * this SDK line. The zip is unpacked only far enough to keep `android.jar`.
+ * this SDK line. The zip is unpacked in full so the custom engine and Gradle both get
+ * `android.jar`, `data/res`, and the other platform files.
  */
 val SdkPlatforms = listOf(
     SdkPlatform(
@@ -53,9 +54,9 @@ val SdkPlatforms = listOf(
  * Downloads and keeps Android SDK packages under `files/sdk/`.
  *
  * The platform download is the official Google zip, checked against the SHA-1 in the repository
- * index. The build-tools download is AndroidIDE's Android-native 34.0.4 archive; its aapt2 is
- * used when present and the APK's bundled libaapt2.so remains the fallback. Nothing is unpacked
- * into a directory the user can write: every path is derived here.
+ * index. The build-tools download is the AndroidIDE Rv2 Android-native 35.0.1 archive; the
+ * APK's bundled libaapt2.so is preferred, and the downloaded aapt2 is the fallback. Nothing
+ * is unpacked into a directory the user can write: every path is derived here.
  */
 class PlatformStore(
     private val context: Context,
@@ -64,6 +65,18 @@ class PlatformStore(
     private val root: File get() = File(context.filesDir, "sdk")
     private val platforms: File get() = File(root, "platforms")
     private val buildTools: File get() = File(root, "build-tools")
+
+    fun rootDir(): File = root
+
+    fun buildToolsVersion(): String = BUILD_TOOLS_VERSION
+
+    /**
+     * The minimum build-tools AGP asks for. CloseCode ships 35.0.1, which satisfies the
+     * 35.0.0 floor for AGP 8.10-8.13; an AGP 9 project asks for 36.0.0 and is reported
+     * missing instead of being silently built with an older revision.
+     */
+    fun requiredBuildToolsVersion(agpVersion: String?): String =
+        requiredBuildToolsForAgp(agpVersion)
 
     fun licenseAccepted(): Boolean = kv.getBoolean(KEY_LICENSE, false)
 
@@ -85,10 +98,18 @@ class PlatformStore(
         File(dir, "aapt2").takeIf { it.isFile } ?: File(dir, "aapt2.exe").takeIf { it.isFile }
     }
 
-    fun buildToolsDir(): File? {
-        val dir = File(buildTools, BUILD_TOOLS_VERSION)
-        return dir.takeIf { it.isDirectory }
-    }
+    fun buildToolsDir(): File? = buildToolsDir(BUILD_TOOLS_VERSION)
+
+    fun buildToolsDir(version: String): File? =
+        File(buildTools, version).takeIf { it.isDirectory }
+
+    /** The highest installed build-tools at or above [minimum], with its directory name. */
+    fun bestBuildTools(minimum: String): Pair<String, File>? =
+        buildTools.listFiles()
+            ?.filter { it.isDirectory && File(it, "aapt2").isFile }
+            ?.map { it.name to it }
+            ?.filter { (version, _) -> compareVersions(version, minimum) >= 0 }
+            ?.maxByOrNull { (version, _) -> compareVersions(version, "0") }
 
     fun sizeBytes(): Long = listOf(platforms, buildTools)
         .sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
@@ -100,6 +121,7 @@ class PlatformStore(
         if (!licenseAccepted()) {
             throw IOException("Accept the Android SDK license first.")
         }
+        androidJar(api)?.let { return@runCatching it }
         val platform = SdkPlatforms.firstOrNull { it.api == api }
             ?: throw IOException("Android $api is not available.")
         val part = File(context.cacheDir, "sdk-${platform.fileName}.part")
@@ -109,27 +131,40 @@ class PlatformStore(
             part.delete()
             throw IOException("The platform download failed its checksum.")
         }
-        val temp = File(context.cacheDir, "sdk-android-$api")
+        val temp = File(context.cacheDir, "sdk-android-$api.tmp")
         temp.deleteRecursively()
         temp.mkdirs()
+        var jar: File? = null
         ZipFile(part).use { zip ->
-            val entry = zip.entries().asSequence().firstOrNull { candidate ->
-                !candidate.isDirectory &&
-                    (candidate.name == "android.jar" || candidate.name.endsWith("/android.jar"))
-            } ?: throw IOException("The platform archive has no android.jar.")
-            val out = File(temp, "android.jar")
-            zip.getInputStream(entry).use { input -> out.outputStream().use { input.copyTo(it) } }
+            val entries = zip.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (entry.isDirectory) continue
+                val name = entry.name.replace('\\', '/')
+                if (name.isEmpty()) continue
+                val out = File(temp, name).canonicalFile
+                if (!out.path.startsWith(temp.canonicalPath + File.separator)) {
+                    throw IOException("Unsafe path in the platform archive: ${entry.name}")
+                }
+                out.parentFile?.mkdirs()
+                zip.getInputStream(entry).use { input ->
+                    out.outputStream().use { output -> input.copyTo(output) }
+                }
+                if (out.name == "android.jar") jar = out
+            }
         }
+        val source = jar?.parentFile
+            ?: throw IOException("The platform archive has no android.jar.")
         val target = platformDir(api)
         target.deleteRecursively()
-        target.mkdirs()
-        val jar = File(target, "android.jar")
-        if (!File(temp, "android.jar").renameTo(jar)) {
-            File(temp, "android.jar").copyTo(jar, overwrite = true)
+        target.parentFile?.mkdirs()
+        if (!source.renameTo(target)) {
+            source.copyRecursively(target, overwrite = true)
+            source.deleteRecursively()
         }
         temp.deleteRecursively()
         part.delete()
-        jar
+        File(target, "android.jar")
     }
 
     fun removePlatform(api: Int): Boolean {
@@ -140,6 +175,9 @@ class PlatformStore(
     fun installBuildTools(
         onProgress: (done: Long, total: Long) -> Unit = { _, _ -> },
     ): Result<File> = runCatching {
+        buildToolsDir()?.let { dir ->
+            if (File(dir, "aapt2").isFile) return@runCatching dir
+        }
         val part = File(context.cacheDir, "build-tools-$BUILD_TOOLS_VERSION.tar.xz")
         download(BUILD_TOOLS_URL, part, BUILD_TOOLS_SIZE, onProgress)
         if (!sha256(part).equals(BUILD_TOOLS_SHA256, ignoreCase = true)) {
@@ -170,10 +208,16 @@ class PlatformStore(
         target
     }
 
-    fun removeBuildTools(): Boolean {
-        val dir = File(buildTools, BUILD_TOOLS_VERSION)
+    fun removeBuildTools(version: String = BUILD_TOOLS_VERSION): Boolean {
+        val dir = File(buildTools, version)
         return !dir.exists() || dir.deleteRecursively()
     }
+
+    fun removeAllBuildTools(): Boolean =
+        !buildTools.exists() || buildTools.deleteRecursively()
+
+    fun removeAllPlatforms(): Boolean =
+        !platforms.exists() || platforms.deleteRecursively()
 
     private fun download(
         url: String,
@@ -226,14 +270,41 @@ class PlatformStore(
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    private companion object {
-        const val KEY_LICENSE = "sdk_license_accepted"
-        const val BUILD_TOOLS_VERSION = "34.0.4"
-        const val BUILD_TOOLS_URL =
-            "https://github.com/AndroidIDEOfficial/androidide-tools/releases/download/" +
-                "v34.0.4/build-tools-34.0.4-aarch64.tar.xz"
-        const val BUILD_TOOLS_SIZE = 0L
-        const val BUILD_TOOLS_SHA256 =
-            "4bbbdeee608ff8d3a2c1534d0a5270305a02b1f200403a536c75ac84c41e52fa"
+    /** Numeric dotted-version comparison; missing parts count as zero. */
+    private fun compareVersions(left: String, right: String): Int {
+        val a = left.split('.').map { it.toIntOrNull() ?: 0 }
+        val b = right.split('.').map { it.toIntOrNull() ?: 0 }
+        for (index in 0 until maxOf(a.size, b.size)) {
+            val x = a.getOrElse(index) { 0 }
+            val y = b.getOrElse(index) { 0 }
+            if (x != y) return x.compareTo(y)
+        }
+        return 0
     }
+
+    companion object {
+        const val KEY_LICENSE = "sdk_license_accepted"
+        const val BUILD_TOOLS_VERSION = "35.0.1"
+        const val BUILD_TOOLS_URL =
+            "https://github.com/AndroidIDE-Rv2Official/androidide-rv2-tools/releases/" +
+                "download/v35.0.1/rv2ide-buildtools-3501.tar-aarch64.xz"
+        const val BUILD_TOOLS_SIZE = 14_975_324L
+        const val BUILD_TOOLS_SHA256 =
+            "f2af3b2533584827e749806942be127ac523c88b0e795c82b06f9c8bc1a707d2"
+
+        /** AGP compatibility table from checkmehere P0-5; callable without a Context. */
+        fun requiredBuildToolsForAgp(agpVersion: String?): String {
+            val parts = agpVersion.orEmpty().split('.')
+            val major = parts.getOrNull(0)?.toIntOrNull() ?: return BUILD_TOOLS_VERSION
+            val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+            return when {
+                major >= 9 -> "36.0.0"
+                major == 8 && minor >= 10 -> "35.0.0"
+                major == 8 && minor >= 2 -> "34.0.0"
+                major == 8 -> "33.0.2"
+                else -> BUILD_TOOLS_VERSION
+            }
+        }
+    }
+
 }

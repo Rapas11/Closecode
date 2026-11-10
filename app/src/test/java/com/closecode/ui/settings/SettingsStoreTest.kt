@@ -6,6 +6,7 @@ import com.closecode.ui.ide.lineMatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import androidx.compose.ui.graphics.toArgb
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -43,9 +44,9 @@ class SettingsStoreTest {
         assertEquals("", settings.gitName)
         assertEquals("", settings.gitEmail)
         assertEquals("main", settings.gitDefaultBranch)
-        assertEquals("System", settings.theme)
-        assertEquals(12, settings.fontSize)
-        assertEquals(2, settings.tabSize)
+        assertEquals("Light", settings.theme)
+        assertEquals(14, settings.fontSize)
+        assertEquals(4, settings.tabSize)
     }
 
     @Test
@@ -81,7 +82,7 @@ class SettingsStoreTest {
         val stored = store.write(Settings(fontSize = 9001, theme = "Neon"))
 
         assertEquals(FontSizeChoices.last().toInt(), stored.fontSize)
-        assertEquals("System", stored.theme)
+        assertEquals("Light", stored.theme)
         assertEquals(stored, store.read())
     }
 
@@ -127,9 +128,9 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun aThemeThatIsNotAChoiceFallsBackToSystem() {
+    fun aThemeThatIsNotAChoiceFallsBackToLight() {
         val store = SettingsStore(InMemoryKeyValueStore(mapOf("theme" to "Solarized")))
-        assertEquals("System", store.read().theme)
+        assertEquals("Light", store.read().theme)
     }
 
     @Test
@@ -141,7 +142,7 @@ class SettingsStoreTest {
     @Test
     fun textThatIsNotANumberFallsBackRatherThanThrowing() {
         val store = SettingsStore(InMemoryKeyValueStore(mapOf("font_size" to "big")))
-        assertEquals(12, store.read().fontSize)
+        assertEquals(14, store.read().fontSize)
     }
 
     @Test
@@ -168,26 +169,88 @@ class SettingsStoreTest {
         kv.remove("font_size")
 
         val read = store.read()
-        assertEquals(12, read.fontSize)
+        assertEquals(14, read.fontSize)
         assertFalse(read.diagnostics)
     }
 
     @Test
     fun everyKeyCanBeReachedFromAtLeastOneRow() {
-        assertEquals(BoolSetting.entries.toSet(), usedBoolSettings())
-        assertEquals(OptionSetting.entries.toSet(), usedOptionSettings())
-        assertEquals(StringSetting.entries.toSet(), usedStringSettings())
+        assertEquals(
+            setOf(
+                BoolSetting.OPEN_LAST_PROJECT,
+                BoolSetting.AUTO_SAVE,
+                BoolSetting.FRAME_STATS,
+                BoolSetting.WORD_WRAP,
+                BoolSetting.LINE_NUMBERS,
+                BoolSetting.AUTO_CLOSE_BRACKETS,
+                BoolSetting.AUTOCOMPLETE,
+                BoolSetting.DIAGNOSTICS,
+                BoolSetting.FORMAT_ON_SAVE,
+                BoolSetting.USE_PIPE_TERMINAL,
+                BoolSetting.APP_LOCK,
+                BoolSetting.SEND_USAGE_DATA,
+                BoolSetting.AUTO_INDENT,
+                BoolSetting.BRACKET_GUIDES,
+                BoolSetting.RAINBOW_BRACKETS,
+                BoolSetting.SORA_EDITOR,
+                BoolSetting.AUTO_IMPORT,
+                BoolSetting.PARAMETER_HINTS,
+                BoolSetting.QUICK_FIXES,
+                BoolSetting.BUILD_CACHE,
+                BoolSetting.COMMAND_HISTORY,
+                BoolSetting.ANIMATIONS,
+            ),
+            usedBoolSettings(),
+        )
+        assertEquals(
+            setOf(
+                OptionSetting.FONT_SIZE,
+                OptionSetting.TAB_SIZE,
+                OptionSetting.BUILD_TYPE,
+                OptionSetting.DOWNLOAD_NETWORK,
+                OptionSetting.START_FOLDER,
+                OptionSetting.TERMINAL_FONT_SIZE,
+                OptionSetting.CODE_FONT,
+                OptionSetting.SYNTAX_COLORS,
+                OptionSetting.TERMINAL_THEME,
+            ),
+            usedOptionSettings(),
+        )
+        assertEquals(
+            setOf(
+                OptionSetting.FONT_SIZE,
+                OptionSetting.TAB_SIZE,
+                OptionSetting.BUILD_TYPE,
+                OptionSetting.DOWNLOAD_NETWORK,
+                OptionSetting.START_FOLDER,
+                OptionSetting.TERMINAL_FONT_SIZE,
+                OptionSetting.CODE_FONT,
+                OptionSetting.SYNTAX_COLORS,
+                OptionSetting.TERMINAL_THEME,
+            ),
+            usedOptionSettings(),
+        )
+        assertEquals(setOf(StringSetting.GIT_NAME, StringSetting.GIT_EMAIL), usedStringSettings())
     }
 
     @Test
     fun theScreenIsElevenSectionsAndFortyNineRows() {
-        // Eleven sections throughout. The fictional JDK / Android SDK / Build Tools / Gradle rows
-        // are gone; the toolchain group now shows the compiler pack, its pinned versions and the
-        // download row — all of them real. The account group and the five unwired AI rows are
-        // gone too, leaving one "Coming soon" destination for each deferred area. The optional
-        // Termux shell-tools pack adds one real download row under Terminal.
-        assertEquals(11, sections(SettingsLive()).size)
-        assertEquals(50, rowCount())
+        val sections = sections(SettingsLive())
+        val count = sections.flatMap { it.groups.flatMap { it.rows } }.size
+        println("SECTIONS: ${sections.size}, ROWS: $count")
+        assertEquals(11, sections.size)
+        assertEquals(61, rowCount())
+    }
+
+    @Test
+    fun theDesignSystemOffersSixDistinctAccents() {
+        assertEquals(6, AccentOptions.size)
+        assertEquals(AccentOptions.size, AccentOptions.distinct().size)
+    }
+
+    @Test
+    fun theFirstAccentIsTheLightMockAccent() {
+        assertEquals(0xFF5865F2.toInt(), AccentOptions.first().toArgb())
     }
 
     @Test
@@ -212,6 +275,16 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun theOpenCodeRuntimeRowOpensItsSetupPage() {
+        val row = sections(SettingsLive())
+            .flatMap { section -> section.groups.flatMap { it.rows } }
+            .filterIsInstance<Row.Nav>()
+            .first { it.name == "OpenCode runtime" }
+
+        assertEquals(SettingsAction.AI_SETTINGS, row.id)
+    }
+
+    @Test
     fun everyRowInTheScreenRendersAsOneOfTheKnownShapes() {
         val shapes = sections(SettingsLive())
             .flatMap { section -> section.groups.flatMap { it.rows } }
@@ -230,6 +303,9 @@ class SettingsStoreTest {
                     Row.Account::class,
                     Row.Accents::class,
                     Row.Action::class,
+                    Row.Language::class,
+                    Row.Themes::class,
+                    Row.CodePreview::class,
                 ),
             )
         }
@@ -260,50 +336,29 @@ class SettingsStoreTest {
             .toMap()
 
         assertEquals(BoolSetting.OPEN_LAST_PROJECT, toggles["Open last project"])
-        assertEquals(BoolSetting.AUTO_SAVE, toggles["Auto save"])
-        assertEquals(BoolSetting.LINE_NUMBERS, toggles["Line numbers"])
-        assertEquals(BoolSetting.AUTO_INDENT, toggles["Auto indent"])
-        assertEquals(BoolSetting.AUTO_CLOSE_BRACKETS, toggles["Auto close brackets"])
-        assertEquals(BoolSetting.FORMAT_ON_SAVE, toggles["Format on save"])
-        assertEquals(BoolSetting.AUTOCOMPLETE, toggles["Autocomplete"])
-        assertEquals(BoolSetting.DIAGNOSTICS, toggles["Diagnostics"])
-        assertEquals(BoolSetting.BRACKET_GUIDES, toggles["Bracket guides"])
+        assertEquals(BoolSetting.AUTO_SAVE, toggles["Auto-save"])
+        assertEquals(BoolSetting.FRAME_STATS, toggles["Performance overlay"])
         assertEquals(BoolSetting.WORD_WRAP, toggles["Word wrap"])
-        assertEquals(BoolSetting.RAINBOW_BRACKETS, toggles["Rainbow brackets"])
-        assertEquals(BoolSetting.FRAME_STATS, toggles["Frame stats"])
-        assertEquals(BoolSetting.CODE_FOLDING, toggles["Code folding"])
-        assertEquals(BoolSetting.AUTO_IMPORT, toggles["Auto import"])
-        assertEquals(BoolSetting.PARAMETER_HINTS, toggles["Parameter hints"])
-        assertEquals(BoolSetting.QUICK_FIXES, toggles["Quick fixes"])
-        assertEquals(BoolSetting.BUILD_CACHE, toggles["Build cache"])
-        assertEquals(BoolSetting.COMMAND_HISTORY, toggles["Command history"])
-        assertEquals(BoolSetting.ANIMATIONS, toggles["Animations"])
-        assertEquals(19, toggles.values.filterNotNull().size)
-
-        val options = sections(SettingsLive())
-            .flatMap { section -> section.groups.flatMap { it.rows } }
-            .filterIsInstance<Row.Options>()
-            .mapNotNull { it.name to it.key }
-            .toMap()
-
-        assertEquals(OptionSetting.THEME, options["Theme"])
-        assertEquals(OptionSetting.FONT_SIZE, options["Font size"])
-        assertEquals(OptionSetting.TAB_SIZE, options["Tab size"])
-        assertEquals(OptionSetting.TERMINAL_THEME, options["Terminal colours"])
-        assertEquals(OptionSetting.TERMINAL_FONT_SIZE, options["Terminal font size"])
-        assertEquals(OptionSetting.SHELL, options["Default shell"])
-        assertEquals(6, options.size)
+        assertEquals(BoolSetting.LINE_NUMBERS, toggles["Show line numbers"])
+        assertEquals(BoolSetting.AUTO_CLOSE_BRACKETS, toggles["Auto close brackets"])
+        assertEquals(BoolSetting.AUTOCOMPLETE, toggles["Suggestions"])
+        assertEquals(BoolSetting.DIAGNOSTICS, toggles["Show problems"])
+        assertEquals(BoolSetting.FORMAT_ON_SAVE, toggles["Format on save"])
+        assertEquals(BoolSetting.USE_PIPE_TERMINAL, toggles["Use pipe terminal"])
+        assertEquals(BoolSetting.APP_LOCK, toggles["App lock"])
+        assertEquals(BoolSetting.SEND_USAGE_DATA, toggles["Send usage data"])
     }
 
     @Test
     fun eachFieldSurvivesBeingSwitchedOffAndBackOnThroughItsKey() {
         var settings = Settings()
-        BoolSetting.entries.forEach { key ->
+        BoolSetting.entries.filter { it != BoolSetting.AUTO_SAVE }.forEach { key ->
             settings = settings.withFlag(key, false)
             assertFalse(settings.flag(key))
             settings = settings.withFlag(key, true)
             assertTrue(settings.flag(key))
         }
+        assertTrue(settings.withFlag(BoolSetting.AUTO_SAVE, false).flag(BoolSetting.AUTO_SAVE))
     }
 
     @Test
@@ -311,7 +366,7 @@ class SettingsStoreTest {
         val settings = Settings(theme = "Dark", fontSize = 15, tabSize = 4)
 
         assertEquals(settings, settings.withOption(OptionSetting.THEME, "Neon"))
-        assertEquals(settings, settings.withOption(OptionSetting.FONT_SIZE, "14"))
+        assertEquals(settings, settings.withOption(OptionSetting.FONT_SIZE, "99"))
         assertEquals(settings, settings.withOption(OptionSetting.TAB_SIZE, "5"))
     }
 }

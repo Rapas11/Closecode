@@ -48,6 +48,7 @@ class GradleReaderTest {
         assertEquals("com.example", facts.packageName)
         assertEquals("2.0.21", facts.kotlinVersion)
         assertEquals("2.0.21", facts.composeCompiler)
+        assertTrue(facts.composeCompilerFromPlugin)
         assertEquals("2024.09.00", facts.composeBom)
         assertEquals(26, facts.minSdk)
         assertEquals(35, facts.targetSdk)
@@ -98,6 +99,28 @@ class GradleReaderTest {
         assertEquals(5, flavors.place.line)
         val field = facts.unsupported.first { it.what == "buildConfigField" }
         assertEquals(10, field.place.line)
+    }
+
+    @Test
+    fun anAbiFilterBlockIsUnderstood() {
+        val appText = """
+            plugins { id("com.android.application") }
+            android {
+                namespace = "com.a.b"
+                compileSdk = 35
+                defaultConfig {
+                    applicationId = "com.a.b"
+                    ndk { abiFilters += listOf("arm64-v8a") }
+                }
+            }
+        """.trimIndent()
+        val facts = GradleReader.factsFrom(
+            rootText = null,
+            appText = appText,
+            settingsText = null,
+            catalogText = null,
+        )
+        assertTrue(facts.unsupported.toString(), facts.unsupported.none { it.what.contains("ndk") })
     }
 
     @Test

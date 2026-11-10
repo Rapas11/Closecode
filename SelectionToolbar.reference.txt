@@ -1,0 +1,130 @@
+// ============================================================================
+// SelectionToolbar.reference.txt       (REFERENCE ONLY - not compiled)
+// ----------------------------------------------------------------------------
+// Two problems to fix in the Sora editor:
+//   A. On the DARK theme the selected text is NOT visible (light theme is fine).
+//   B. The popup toolbar (Select all / Copy / Paste / Cut) looks old.
+//
+// PART A - selection colour (colour scheme only, no extra drawing code)
+// ----------------------------------------------------------------------------
+// The selection colour in the dark scheme is almost the same as the editor
+// background, so it disappears. Set an OPAQUE-looking purple band for dark.
+//
+//   scheme.setColor(EditorColorScheme.SELECTED_TEXT_BACKGROUND, 0xFF3F3B8F.toInt())  // dark
+//   scheme.setColor(EditorColorScheme.SELECTION_INSERT,        0xFF7B6BF0.toInt())   // caret handle
+//   scheme.setColor(EditorColorScheme.SELECTION_HANDLE,        0xFF7B6BF0.toInt())   // drag handles
+//
+// For LIGHT keep what already works (accent at about 30% over white).
+// RULE: the selection must be clearly visible on both themes, and the text
+// inside it must stay readable (do not change the text colour).
+// Use the user's ACCENT colour for the handles, not a fixed purple.
+// Apply this where the Sora colour scheme is built (SoraColorScheme.kt).
+//
+//
+// PART B - the floating toolbar
+// ----------------------------------------------------------------------------
+// Design: a pill (height 50 dp, fully rounded), background #1E2236, 1 dp border
+// #3A3F7A, soft shadow. Four buttons, each 56 dp wide: icon (19 dp, white) with
+// a tiny label under it (10 sp, #C9CCE0):
+//     Select all | Copy | Paste | Cut
+// It floats ABOVE the start of the selection. If there is no room above (top
+// of the screen), it floats BELOW the selection. It never covers the handles.
+// It hides while the user is dragging a handle or scrolling, and comes back
+// when they stop.
+//
+// There are two ways to build it. Recommended: B1.
+//
+// B1 (recommended): turn off Sora's built-in toolbar and show our own Compose
+//     popup. Sora tells us when the selection changes and where it is.
+//
+//   // 1. Disable the built-in action window
+//   editor.getComponent(EditorTextActionWindow::class.java).isEnabled = false
+//
+//   // 2. Listen to selection changes
+//   editor.subscribeEvent<SelectionChangeEvent> { event, _ ->
+//       onSelectionChanged(
+//           hasSelection = editor.cursor.isSelected,
+//           // anchor = where the selection starts, in SCREEN pixels:
+//           // VERIFY the real API names in 0.24.4 (layout/char offset functions,
+//           // editor.offsetX / offsetY for scroll). Do not guess.
+//           anchor = anchorOfSelectionStart(editor),
+//       )
+//   }
+//
+//   // 3. The four actions are plain Sora calls:
+//   //    Select all -> editor.selectAll()
+//   //    Copy       -> editor.copyText()
+//   //    Paste      -> editor.pasteText()
+//   //    Cut        -> editor.cutText()
+//   // (VERIFY names; they exist on CodeEditor in recent versions.)
+//
+// B2 (fallback): keep Sora's own window and only restyle it (colours, radius,
+//     icons). Less code, less control. Use only if B1 turns out too fragile.
+//
+// ============================================================================
+
+package com.closecode.ui.ide   // <- OUR real package
+
+data class SelectionUi(
+    val visible: Boolean,
+    val anchorX: Int,        // px, screen
+    val anchorY: Int,        // px, screen (top of the selection start line)
+)
+
+@Composable
+fun SelectionToolbar(
+    ui: SelectionUi,
+    onSelectAll: () -> Unit, onCopy: () -> Unit, onPaste: () -> Unit, onCut: () -> Unit,
+) {
+    if (!ui.visible) return
+    // Popup = its own window, so it is never clipped by the editor card.
+    // The position provider keeps the pill inside the screen (clamp left/right)
+    // and flips it below the selection if there is no space above.
+    Popup(
+        popupPositionProvider = remember(ui.anchorX, ui.anchorY) { AnchoredAbove(ui.anchorX, ui.anchorY) },
+        properties = PopupProperties(focusable = false),   // NEVER steal focus: the keyboard must stay
+    ) {
+        Row(
+            Modifier
+                .height(50.dp)
+                .shadow(12.dp, RoundedCornerShape(25.dp))
+                .clip(RoundedCornerShape(25.dp))
+                .background(Color(0xFF1E2236))
+                .border(1.dp, Color(0xFF3A3F7A), RoundedCornerShape(25.dp))
+                .padding(horizontal = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ToolbarAction("select-all", "Select all", onSelectAll)
+            ToolbarAction("copy", "Copy", onCopy)
+            ToolbarAction("paste", "Paste", onPaste)
+            ToolbarAction("cut", "Cut", onCut)
+        }
+    }
+}
+
+@Composable
+private fun ToolbarAction(icon: String, label: String, onClick: () -> Unit) {
+    Column(
+        Modifier.width(56.dp).clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick).padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        CcIcon(icon, 19.dp, Color.White)
+        Text(label, color = Color(0xFFC9CCE0), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+// Position: centred on anchorX, 58 dp above anchorY; clamp to window width;
+// if (y < statusBar + 8 dp) place it BELOW the selection instead.
+// Reuse the clamp logic from AnchoredPositionProvider in docs/file-menu/FileActionCard.reference.txt.
+private class AnchoredAbove(val x: Int, val y: Int) : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
+        layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset {
+        val gap = 12 /* dp->px in real code */
+        var px = x - popupContentSize.width / 2
+        var py = y - popupContentSize.height - gap
+        px = px.coerceIn(8, windowSize.width - popupContentSize.width - 8)
+        if (py < 8) py = y + gap + 24        // no room above: go below
+        return IntOffset(px, py)
+    }
+}

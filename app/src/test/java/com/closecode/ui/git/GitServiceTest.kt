@@ -343,6 +343,38 @@ class GitServiceTest {
     }
 
     @Test
+    fun theExcludeBlockCoversGeneratedFoldersAndSecrets() {
+        val rules = GitService.mergeExcludes("")
+        listOf(".opencode/", "node_modules/", "local.properties", ".env", "*.jks", "*.pem")
+            .forEach { rule -> assertTrue("missing $rule", rules.contains(rule)) }
+    }
+
+    @Test
+    fun updatingTheExcludeBlockKeepsRulesBelowIt() {
+        val first = GitService.mergeExcludes("")
+        val withTail = "$first\n\n# mine\ntail/\n"
+
+        val merged = GitService.mergeExcludes(withTail)
+
+        assertTrue(merged.contains(".opencode/"))
+        assertTrue("user rules below the block survive", merged.contains("# mine\ntail/"))
+        assertEquals(merged, GitService.mergeExcludes(merged))
+    }
+
+    @Test
+    fun stageRefusesGeneratedAndSecretPaths() {
+        val git = GitService(tmp.root)
+        git.init().getOrThrow()
+        write("build/outputs/app.apk", "apk")
+        write("local.properties", "sdk.dir=/opt/android\n")
+        write("main.kt", "fun main() {}\n")
+
+        assertTrue(git.stage(listOf("build/outputs/app.apk")).isFailure)
+        assertTrue(git.stage(listOf("local.properties")).isFailure)
+        assertTrue(git.stage(listOf("main.kt")).isSuccess)
+    }
+
+    @Test
     fun stashClearsTheWorkingTreeAndRestoringPutsItBack() {
         val git = GitService(tmp.root)
         git.init().getOrThrow()

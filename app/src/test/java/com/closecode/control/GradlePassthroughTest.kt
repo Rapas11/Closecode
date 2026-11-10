@@ -7,9 +7,9 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 /**
- * The phone has no Gradle daemon: `closecode gradle` translates Gradle's task names into this
- * phone's own builder and answers unknown names with the supported list. This pins the mapping
- * and the message so an agent never has to guess.
+ * `closecode gradle` translates Gradle's task names into this phone's own builder by default,
+ * and can use the optional downloaded Gradle with --gradle. Unknown names are answered with
+ * the supported list. This pins the mapping and the message so an agent never has to guess.
  */
 class GradlePassthroughTest {
 
@@ -19,25 +19,36 @@ class GradlePassthroughTest {
         listOf(
             "assembleDebug", "installDebug", "launch",
             "test", "testDebugUnitTest", "lint", "lintDebug", "check",
+            "bundleDebug", "bundleRelease", "tasks",
         ).forEach { task -> assertTrue("$task must be supported", task in supported) }
+    }
+
+    @Test
+    fun flavourTasksAreAcceptedForFullGradle() {
+        assertTrue(CloseCodeControl.isSupportedTask("assembleFreeDebug"))
+        assertTrue(CloseCodeControl.isSupportedTask("bundleFreeRelease"))
+        assertTrue(!CloseCodeControl.isSupportedTask("bundle"))
+        assertTrue(!CloseCodeControl.isSupportedTask("assemble"))
     }
 
     @Test
     fun anUnknownTaskIsRejectedWithTheSupportedList() {
         val message = CloseCodeControl.gradleTaskMessage("phaseUpdate")
-        assertTrue(message.contains("no Gradle daemon"))
+        assertTrue(message.contains("--gradle"))
         assertTrue(message.contains("assembleDebug"))
         assertTrue(message.contains("installDebug"))
         assertTrue(message.contains("launch"))
         assertTrue(message.contains("test"))
         assertTrue(message.contains("lint"))
         assertTrue(message.contains("check"))
+        assertTrue(message.contains("bundleRelease"))
+        assertTrue(message.contains("tasks"))
     }
 
     @Test
     fun aMissingTaskIsRejectedWithTheSameList() {
         val message = CloseCodeControl.gradleTaskMessage("")
-        assertTrue(message.contains("no Gradle daemon"))
+        assertTrue(message.contains("--gradle"))
     }
 
     @Test

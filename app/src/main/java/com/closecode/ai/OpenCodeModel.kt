@@ -67,6 +67,10 @@ data class OpenCodeStatus(
     val generation: Int = 0,
     /** The loopback proxy port, or zero when the server is running without one. */
     val proxyPort: Int = 0,
+    /** URL-safe base64 of `opencode:<password>`, handed to the official V2 Web UI once. */
+    val authToken: String = "",
+    /** Standard base64 of `opencode:<password>`, used for the V2 HTTP API. */
+    val basicAuth: String = "",
 )
 
 /** The numbers the app and the server agree on. */
@@ -75,47 +79,82 @@ object OpenCodeDefaults {
     const val PORT: Int = 4098
 
     /**
-     * The pinned OpenCode release the app downloads.
+     * The pinned OpenCode V2 release the app downloads.
      *
-     * 1.18.35 is the latest 1.18.x release and its web page runs in the phone's WebView.
-     * 1.19.4's page crashes on an older WebView before the session view renders, which is
-     * the black page with only the top bar. Do not bump this without opening the page on a
+     * V2 is distributed as npm platform packages, not as the V1 GitHub release archives.
+     * Do not bump this without running the host POC and opening the official page on a
      * real phone.
      */
-    const val VERSION: String = "1.18.35"
+    const val VERSION: String = "2.2.5"
 
-    /** The release tag, which is the version with a v in front. */
+    /** The npm platform package that holds the ARM64 musl program. */
+    const val NPM_PACKAGE: String = "@opencode/cli-linux-arm64-musl"
+
+    /** The pinned npm tarball, whose hash is checked before anything is unpacked. */
+    const val NPM_TARBALL: String =
+        "https://registry.npmjs.org/@opencode/cli-linux-arm64-musl/-/cli-linux-arm64-musl-$VERSION.tgz"
+
+    /** The program inside the npm tarball. */
+    const val NPM_BINARY_PATH: String = "package/bin/opencode"
+
+    /** The SHA-256 of the pinned tarball. */
+    const val NPM_TARBALL_SHA256: String =
+        "ef26ea9a81b8adf4185a47b7d3aa5bb3a2a69bc4297cbdaaff9641881339b594"
+
+    /** The release tag, kept for the historical tests and logs. */
     const val TAG: String = "v$VERSION"
 
     /**
      * The host the server is bound to. Never 0.0.0.0: the page must not be reachable from the
-     * network. The server is unsecured on this loopback, which OpenCode documents as fine for
-     * local use.
+     * network. V2 still requires a password on this loopback, and the app generates one.
      */
     const val HOST: String = "127.0.0.1"
 
     /** The launch line, exactly as it is written into the log. */
     fun launchLine(port: Int = PORT): String =
-        "Launch: opencode web --hostname $HOST --port $port"
+        "Launch: opencode --print-logs serve --hostname $HOST --port $port"
 }
 
 /**
- * The page URL that opens the project in [projectRoot], not OpenCode's home screen.
+ * The fallback page URL when no project session could be opened.
  *
- * OpenCode 1.18.x's own page router reads the directory from the first path segment: it decodes
- * that segment as UTF-8 base64url and then opens a new session in the decoded folder. The route
- * is therefore `/<base64url(directory)>/session`. This is the route the installed page actually
- * understands; `/project-session?directory=...` is not in its router and leaves a blank page.
+ * V2's router has no base64 directory route. The server itself is started with the project as
+ * its working directory, so the official home page is the project-aware fallback. The app
+ * normally opens a real session route instead.
  */
 fun projectPageUrl(baseUrl: String, projectRoot: File): String =
     projectPageUrl(baseUrl, projectRoot.absolutePath)
 
 /** The same URL for a directory already in the form the server reports. */
 fun projectPageUrl(baseUrl: String, directory: String): String {
-    val encoded = Base64.getUrlEncoder()
+    if (baseUrl.isBlank()) return ""
+    return baseUrl.trimEnd('/') + "/"
+}
+
+/**
+ * The `auth_token` the official V2 Web UI reads from its query string.
+ *
+ * It is base64url of `opencode:<password>`, with no padding, exactly as the V2 bundle's
+ * `encode` helper writes it. The UI removes the parameter from the address after boot.
+ */
+internal fun openCodeAuthToken(password: String): String =
+    Base64.getUrlEncoder()
         .withoutPadding()
-        .encodeToString(directory.toByteArray(StandardCharsets.UTF_8))
-    return baseUrl.trimEnd('/') + "/" + encoded + "/session"
+        .encodeToString("opencode:$password".toByteArray(StandardCharsets.UTF_8))
+
+/** The standard Basic-auth value for the V2 HTTP API. */
+internal fun openCodeBasicAuth(password: String): String =
+    Base64.getEncoder()
+        .encodeToString("opencode:$password".toByteArray(StandardCharsets.UTF_8))
+
+/** The password inside a Basic-auth value, or null when it is not the V2 form. */
+internal fun openCodePasswordFromBasicAuth(basicAuth: String): String? {
+    if (basicAuth.isBlank()) return null
+    val decoded = runCatching {
+        String(Base64.getDecoder().decode(basicAuth), StandardCharsets.UTF_8)
+    }.getOrNull() ?: return null
+    if (!decoded.startsWith("opencode:")) return null
+    return decoded.removePrefix("opencode:")
 }
 
 internal fun openCodePagePath(baseUrl: String, pageUrl: String): String? {
@@ -228,19 +267,18 @@ internal fun serverNeedsRestart(processAlive: Boolean, silentForMs: Long): Boole
  */
 fun unsupportedCpuMessage(abis: List<String>): String {
     val reported = abis.filter { it.isNotBlank() }.joinToString(", ").ifBlank { "no ABI" }
-    return "This phone reports $reported. OpenCode needs a 64-bit ARM (arm64-v8a) or " +
-        "Intel (x86_64) CPU."
+    return "This phone reports $reported. CloseCode V2 needs a 64-bit ARM (arm64-v8a) CPU."
 }
 
 /**
- * The version in an OpenCode `/global/health` answer, or null when the server is not healthy.
+ * The version in an OpenCode V2 `/api/info` answer, or null when the server is not healthy.
  *
- * The endpoint is documented as `{ healthy: true, version: string }`. An empty string is a
- * healthy answer with no version in it — still up — which is why this does not return null for
- * it. Parsed with a regex rather than a mapped class because the app only needs these two
- * fields and this runs once a second.
+ * V2 answers with `{ version, pid, urls, paths }`; it has no `healthy` flag. A 200 answer with
+ * a version is healthy. An empty version is still a live server, which is why this returns an
+ * empty string rather than null. Parsed with a regex because this runs once a second and the
+ * app needs one field.
  */
 fun healthyVersion(json: String): String? {
-    if (!Regex("\"healthy\"\\s*:\\s*true").containsMatchIn(json)) return null
-    return Regex("\"version\"\\s*:\\s*\"([^\"]*)\"").find(json)?.groupValues?.get(1).orEmpty()
+    if (Regex("\"healthy\"\\s*:\\s*false").containsMatchIn(json)) return null
+    return Regex("\"version\"\\s*:\\s*\"([^\"]*)\"").find(json)?.groupValues?.get(1)
 }

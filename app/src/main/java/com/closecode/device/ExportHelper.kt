@@ -1,5 +1,6 @@
 package com.closecode.device
 
+import com.closecode.ui.project.GeneratedPaths
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -10,8 +11,6 @@ import java.util.zip.ZipOutputStream
  * toolchain's work. A file is copied as-is, which makes exporting a finished APK one step.
  */
 object ExportHelper {
-
-    private val skippedRoots = setOf("build", ".gradle", ".git")
 
     fun export(source: File, outputDir: File, name: String? = null): File {
         require(source.exists()) { "There is nothing to export at ${source.path}." }
@@ -44,7 +43,7 @@ object ExportHelper {
 
     private fun skipped(file: File, root: File): Boolean {
         val relative = file.relativeTo(root).invariantSeparatorsPath
-        return relative.substringBefore('/') in skippedRoots
+        return GeneratedPaths.isProtectedRelative(relative)
     }
 
     private fun unique(dir: File, name: String): File {
