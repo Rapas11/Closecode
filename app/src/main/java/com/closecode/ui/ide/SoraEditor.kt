@@ -2,6 +2,7 @@ package com.closecode.ui.ide
 
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -108,7 +109,9 @@ import io.github.rosemoe.sora.widget.style.DiagnosticIndicatorStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.roundToInt
 
@@ -184,7 +187,8 @@ internal fun SoraIdeEditorArea(
     var searchTotal by remember { mutableIntStateOf(0) }
     var searchMenuOpen by remember { mutableStateOf(false) }
     var selectionMenuAllowed by remember { mutableStateOf(true) }
-    var scrollTick by remember { mutableIntStateOf(0) }
+    val lastScrollAt = remember { AtomicLong(0L) }
+    val handleHeld = remember { AtomicBoolean(false) }
     var problems by remember { mutableStateOf(ProblemsByLine()) }
     var currentAnalysis by remember { mutableStateOf<KotlinFileAnalysis?>(null) }
     var quickFixLine by remember { mutableStateOf<Int?>(null) }
@@ -307,8 +311,10 @@ internal fun SoraIdeEditorArea(
             }),
             view.subscribeEvent(ScrollEvent::class.java, EventReceiver { event, _ ->
                 viewportTick++
-                selectionMenuAllowed = false
-                scrollTick++
+                if (view.cursor.isSelected) {
+                    lastScrollAt.set(SystemClock.uptimeMillis())
+                    if (selectionMenuAllowed) selectionMenuAllowed = false
+                }
                 val lastLine = (view.text.lineCount - 1).coerceAtLeast(0)
                 scrollByFile[latestActive] = view.firstVisibleLine.coerceIn(0, lastLine) to view.offsetX
                 if (view.text.length > SoraHighlightLimit) {
@@ -322,7 +328,9 @@ internal fun SoraIdeEditorArea(
                 refreshAutoCompleteOpen()
             }),
             view.subscribeEvent(HandleStateChangeEvent::class.java, EventReceiver { event, _ ->
-                selectionMenuAllowed = !event.isHeld
+                handleHeld.set(event.isHeld)
+                lastScrollAt.set(SystemClock.uptimeMillis())
+                if (selectionMenuAllowed) selectionMenuAllowed = false
             }),
             view.subscribeEvent(EditorKeyEvent::class.java, EventReceiver { event, _ ->
                 if (event.action == KeyEvent.ACTION_DOWN &&
@@ -361,9 +369,11 @@ internal fun SoraIdeEditorArea(
         }
     }
 
-    LaunchedEffect(scrollTick) {
-        if (scrollTick == 0) return@LaunchedEffect
-        delay(180)
+    LaunchedEffect(selectionMenuAllowed) {
+        if (selectionMenuAllowed) return@LaunchedEffect
+        while (handleHeld.get() || SystemClock.uptimeMillis() - lastScrollAt.get() < 180L) {
+            delay(30)
+        }
         selectionMenuAllowed = true
     }
 
@@ -1064,7 +1074,6 @@ internal fun SoraIdeEditorArea(
                 selectionMenuAllowed,
                 searchOpen,
                 editorSize,
-                scrollTick,
             ) {
                 if (!hasSelection || !selectionMenuAllowed || searchOpen) {
                     null
