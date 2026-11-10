@@ -1,0 +1,240 @@
+// ============================================================================
+// SettingsPopup.reference.txt          (REFERENCE ONLY - not compiled)
+// ----------------------------------------------------------------------------
+// Purpose : ONE modern popup used for EVERY popup in Settings (code font,
+//           theme choices, confirmations, text input, ...). Replace each old
+//           AlertDialog in Settings with these composables.
+//
+// How to use this file:
+//   - Read it, learn the design (sizes, colours, spacing, behaviour).
+//   - Copy ideas into OUR existing code. Do NOT paste blindly. Use our own
+//     package name, our own colour tokens (LocalSettings / CcColors), and our
+//     own icon function (CcIcon).
+//   - Do not remove any existing setting. Only the popup that opens changes.
+//
+// Rules:
+//   1. Popups are STATELESS: data in, callbacks out.
+//   2. A popup is a Compose Dialog (its own window) - never drawn inside the
+//      editor card or the settings list.
+//   3. Tap outside = dismiss. System Back = dismiss.
+//   4. The old option list, values and what each option does stay the same.
+// ============================================================================
+
+package com.closecode.ui.settings   // <- use OUR real package
+
+// ---------------------------------------------------------------- DESIGN TOKENS
+// If the app already has theme tokens, use those. Values below are the mockup.
+private object PopupTokens {
+    val Scrim        = Color(0xA8040510)   // dark overlay behind the popup (about 66%)
+    val Card         = Color(0xFF171A29)   // popup background
+    val CardBorder   = Color(0xFF2A2E55)   // 1 dp border
+    val Row          = Color(0xFF1C2038)   // unselected option row
+    val RowSelected  = Color(0xFF232853)   // selected option row background
+    val Accent       = Color(0xFF7B6BF0)   // purple (use the user's accent colour!)
+    val TextMain     = Color(0xFFF2F3F7)
+    val TextMuted    = Color(0xFF8A8FA8)
+    val Danger       = Color(0xFFE5484D)   // destructive buttons
+    val CardRadius   = 28.dp
+    val RowRadius    = 18.dp
+    val ButtonHeight = 40.dp
+}
+
+// ------------------------------------------------------------ 1. THE CONTAINER
+// Every settings popup is built on this. Title, optional subtitle, then content,
+// then a row of buttons on the right.
+@Composable
+fun CcPopup(
+    title: String,
+    onDismiss: () -> Unit,
+    subtitle: String? = null,
+    actions: @Composable RowScope.() -> Unit,   // buttons, see CcPopupButton
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        // usePlatformDefaultWidth = false -> we control the width (screen - 36 dp)
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            modifier = Modifier
+                .padding(horizontal = 18.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(PopupTokens.CardRadius))
+                .background(PopupTokens.Card)
+                .border(1.dp, PopupTokens.CardBorder, RoundedCornerShape(PopupTokens.CardRadius))
+                .padding(start = 18.dp, end = 18.dp, top = 22.dp, bottom = 16.dp),
+        ) {
+            Text(title, color = PopupTokens.TextMain, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            if (subtitle != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(subtitle, color = PopupTokens.TextMuted, fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(16.dp))
+            content()                                   // the option rows, a message, or an input
+            Spacer(Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End),
+                verticalAlignment = Alignment.CenterVertically,
+                content = actions,
+            )
+        }
+    }
+}
+
+// ------------------------------------------------------------ 2. CHOICE ROW
+// One option in a list (code font, theme style, ...). The selected one has a
+// purple border, a slightly lighter background and a filled round tick.
+// "preview" is optional small sample text (for fonts: shown IN that font).
+@Composable
+fun CcChoiceRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    preview: String? = null,
+    previewFont: FontFamily? = null,
+) {
+    val shape = RoundedCornerShape(PopupTokens.RowRadius)
+    Row(
+        modifier = Modifier
+            .padding(bottom = 10.dp)
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (selected) PopupTokens.RowSelected else PopupTokens.Row)
+            .border(1.5.dp, if (selected) PopupTokens.Accent else Color.Transparent, shape)
+            .clickable(onClick = onClick)
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, color = PopupTokens.TextMain, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            if (preview != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(preview, color = Color(0xFFA4A9C2), fontSize = 13.sp, fontFamily = previewFont)
+            }
+        }
+        // Round tick: 22 dp circle. Selected = filled accent + white check icon.
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(CircleShape)
+                .background(if (selected) PopupTokens.Accent else Color.Transparent)
+                .border(2.dp, if (selected) PopupTokens.Accent else Color(0xFF3A3F63), CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (selected) CcIcon("check", size = 13.dp, tint = Color.White)   // OUR icon function
+        }
+    }
+}
+
+// ------------------------------------------------------------ 3. BUTTONS
+// Three looks: Ghost (Cancel), Filled (main action), Danger (delete/close).
+enum class PopupButtonStyle { Ghost, Filled, Danger }
+
+@Composable
+fun CcPopupButton(text: String, style: PopupButtonStyle = PopupButtonStyle.Ghost, onClick: () -> Unit) {
+    val bg = when (style) {
+        PopupButtonStyle.Ghost  -> Color(0xFF1F2338)
+        PopupButtonStyle.Filled -> PopupTokens.Accent
+        PopupButtonStyle.Danger -> PopupTokens.Danger
+    }
+    val fg = if (style == PopupButtonStyle.Ghost) Color(0xFFC9CCE0) else Color.White
+    Box(
+        modifier = Modifier
+            .height(PopupTokens.ButtonHeight)
+            .clip(RoundedCornerShape(20.dp))        // fully rounded
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp),
+        contentAlignment = Alignment.Center,
+    ) { Text(text, color = fg, fontSize = 13.5.sp, fontWeight = FontWeight.Bold) }
+}
+
+// ------------------------------------------------------------ 4. EXAMPLE: CHOICE POPUP
+// Code font. Apply the SAME pattern to every "pick one" setting.
+// Picking an option applies it AND closes the popup (like today's behaviour).
+@Composable
+fun CodeFontPopup(current: CodeFont, onPick: (CodeFont) -> Unit, onDismiss: () -> Unit) {
+    CcPopup(
+        title = "Code font",
+        subtitle = "Used in the editor and terminal",
+        onDismiss = onDismiss,
+        actions = { CcPopupButton("Cancel", onClick = onDismiss) },
+    ) {
+        CcChoiceRow("JetBrains Mono", current == CodeFont.JetBrainsMono,
+            { onPick(CodeFont.JetBrainsMono) },
+            preview = "val name = \"Hello\"", previewFont = JetBrainsMonoFamily)
+        CcChoiceRow("System", current == CodeFont.System,
+            { onPick(CodeFont.System) },
+            preview = "val name = \"Hello\"")
+    }
+}
+
+// ------------------------------------------------------------ 5. VARIANT: CONFIRM
+// For "Reset settings", "Clear cache", "Delete ..." etc.
+@Composable
+fun CcConfirmPopup(
+    title: String, message: String, confirmText: String,
+    destructive: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit,
+) {
+    CcPopup(
+        title = title, onDismiss = onDismiss,
+        actions = {
+            CcPopupButton("Cancel", onClick = onDismiss)
+            CcPopupButton(confirmText,
+                if (destructive) PopupButtonStyle.Danger else PopupButtonStyle.Filled,
+                onClick = onConfirm)
+        },
+    ) { Text(message, color = Color(0xFFA4A9C2), fontSize = 13.sp, lineHeight = 19.sp) }
+}
+
+// ------------------------------------------------------------ 6. VARIANT: TEXT INPUT
+// For any setting that asks for a text or number. Rounded field, same look as
+// the search field. The main button is disabled while the value is invalid.
+@Composable
+fun CcInputPopup(
+    title: String, initial: String, hint: String,
+    isValid: (String) -> Boolean, onSave: (String) -> Unit, onDismiss: () -> Unit,
+) {
+    var text by remember { mutableStateOf(initial) }
+    CcPopup(
+        title = title, onDismiss = onDismiss,
+        actions = {
+            CcPopupButton("Cancel", onClick = onDismiss)
+            // Only call onSave when valid; style it as Filled when valid, Ghost when not.
+            CcPopupButton("Save",
+                if (isValid(text)) PopupButtonStyle.Filled else PopupButtonStyle.Ghost,
+                onClick = { if (isValid(text)) onSave(text) })
+        },
+    ) {
+        BasicTextField(
+            value = text, onValueChange = { text = it }, singleLine = true,
+            textStyle = TextStyle(color = PopupTokens.TextMain, fontSize = 14.sp),
+            cursorBrush = SolidColor(PopupTokens.Accent),
+            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+                .background(PopupTokens.Row).padding(horizontal = 16.dp, vertical = 14.dp),
+            decorationBox = { inner ->
+                if (text.isEmpty()) Text(hint, color = PopupTokens.TextMuted, fontSize = 14.sp)
+                inner()
+            },
+        )
+    }
+}
+
+// ---------------------------------------------------------------- HOW TO WIRE IT
+// In the Settings screen, where an old dialog opened, keep ONE state value:
+//
+//     var popup by remember { mutableStateOf<SettingsPopupKind?>(null) }
+//     ...
+//     SettingRow("Code font", value = settings.codeFont.label) { popup = SettingsPopupKind.CodeFont }
+//     ...
+//     when (popup) {
+//         SettingsPopupKind.CodeFont -> CodeFontPopup(settings.codeFont,
+//             onPick = { settings.setCodeFont(it); popup = null }, onDismiss = { popup = null })
+//         // ...every other settings popup follows the same pattern
+//         null -> Unit
+//     }
+//
+// TASK FOR THE DEVELOPER: find EVERY AlertDialog / old dialog used in Settings
+// (all Settings pages) and list them. Convert each to CcPopup or one of the
+// variants. Keep the same options, same values, same behaviour.

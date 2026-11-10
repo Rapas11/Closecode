@@ -1,0 +1,157 @@
+// ============================================================================
+// ShellTabCard.reference.txt           (REFERENCE ONLY - not compiled)
+// ----------------------------------------------------------------------------
+// Feature : LONG-PRESS a shell tab (e.g. "Shell 1") in the Terminal.
+// A small card opens NEXT TO the tab with three items:
+//     Rename shell     (pencil)
+//     Clear output     (eraser)
+//     ---------------  (divider)
+//     Close shell      (red)
+// The SAME card changes in place (no second popup, no new screen):
+//     Rename shell -> the card turns into a small name form (field + Save)
+//     Close shell  -> if the shell is RUNNING a command: the card turns into
+//                     "Close Shell 1?"  [Cancel] [Close shell]
+//                     if the shell is idle: it closes immediately (one tap).
+// Pictures: terminal-v5-shell-menu / terminal-v5-shell-close-confirm.
+//
+// This is the SAME pattern as FileActionCard in
+// docs/file-menu/FileActionCard.reference.txt. Reuse its AnchoredPositionProvider.
+// Read that file first.
+//
+// What each action does (behaviour, no change to the shell engine):
+//   Rename shell : changes only the label shown on the tab. Empty name is
+//                  not allowed (keep the old name). Max 24 characters.
+//   Clear output : clears the visible chat/output list of THAT shell only.
+//                  It does NOT kill the process and does NOT delete history
+//                  files on disk. Cleared output does not come back.
+//   Close shell  : stops the shell process and removes the tab. If it was the
+//                  last shell, a new empty Shell 1 is created (do not leave
+//                  the terminal with zero shells).
+// ============================================================================
+
+package com.closecode.ui.terminal   // <- OUR real package
+
+enum class ShellCardMode { Menu, Rename, ConfirmClose }
+
+@Composable
+fun ShellTabCard(
+    anchor: IntOffset,                 // from the long-pressed tab: positionInWindow + size
+    shellName: String,
+    isRunning: Boolean,                // a command is running right now
+    onRename: (String) -> Unit,
+    onClear: () -> Unit,
+    onClose: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var mode by remember { mutableStateOf(ShellCardMode.Menu) }
+
+    Popup(
+        popupPositionProvider = remember(anchor) { AnchoredPositionProvider(anchor) },  // from FileActionCard
+        onDismissRequest = onDismiss,                                                   // tap outside
+        properties = PopupProperties(focusable = true),   // focusable: Rename needs the keyboard
+    ) {
+        // The card itself: radius 20, #1E2236, border #2F3460, width 210 dp.
+        // AnimatedContent makes the SAME card morph between modes.
+        Column(
+            Modifier.width(210.dp)
+                .shadow(16.dp, RoundedCornerShape(20.dp))
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0xFF1E2236))
+                .border(1.dp, Color(0xFF2F3460), RoundedCornerShape(20.dp)),
+        ) {
+            AnimatedContent(targetState = mode, label = "shellCard") { m ->
+                when (m) {
+                    ShellCardMode.Menu -> Column(Modifier.padding(vertical = 6.dp)) {
+                        CardItem("pencil", "Rename shell") { mode = ShellCardMode.Rename }
+                        CardItem("eraser", "Clear output") { onClear(); onDismiss() }
+                        Divider(color = Color(0xFF2A2E52), modifier = Modifier.padding(horizontal = 14.dp))
+                        CardItem("x", "Close shell", danger = true) {
+                            if (isRunning) mode = ShellCardMode.ConfirmClose   // ask only when busy
+                            else { onClose(); onDismiss() }                    // idle: close at once
+                        }
+                    }
+                    ShellCardMode.Rename -> RenameForm(shellName,
+                        onSave = { onRename(it); onDismiss() }, onCancel = { mode = ShellCardMode.Menu })
+                    ShellCardMode.ConfirmClose -> Column(Modifier.padding(16.dp)) {
+                        Text("Close $shellName?", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                        Text("A command is still running. It will be stopped.",
+                            color = Color(0xFF8A8FA8), fontSize = 12.sp, lineHeight = 17.sp)
+                        Spacer(Modifier.height(14.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            SmallButton("Cancel", false, Modifier.weight(1f)) { mode = ShellCardMode.Menu }
+                            SmallButton("Close shell", true, Modifier.weight(1f), danger = true) { onClose(); onDismiss() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Menu item: 46 dp high, icon 19 dp + label 13.5 sp. Danger = red icon and text (#FF7A7A).
+@Composable
+private fun CardItem(icon: String, label: String, danger: Boolean = false, onClick: () -> Unit) {
+    val c = if (danger) Color(0xFFFF7A7A) else Color(0xFFE3E5F0)
+    Row(Modifier.fillMaxWidth().height(46.dp).clickable(onClick = onClick).padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        CcIcon(icon, 19.dp, if (danger) c else Color(0xFFB7ACFF))
+        Text(label, color = c, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+// Rename: one rounded field (autofocus, keyboard opens) + Save button.
+// Enter key = Save. Save is disabled when the text is blank.
+@Composable
+private fun RenameForm(initial: String, onSave: (String) -> Unit, onCancel: () -> Unit) {
+    var text by remember { mutableStateOf(initial) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    Column(Modifier.padding(14.dp)) {
+        Text("Rename shell", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(10.dp))
+        BasicTextField(text, { text = it.take(24) }, singleLine = true,
+            textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
+            cursorBrush = SolidColor(Color(0xFF7B6BF0)),
+            keyboardActions = KeyboardActions(onDone = { if (text.isNotBlank()) onSave(text.trim()) }),
+            modifier = Modifier.fillMaxWidth().focusRequester(focus).clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF14172A)).padding(horizontal = 12.dp, vertical = 11.dp))
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SmallButton("Cancel", false, Modifier.weight(1f), onClick = onCancel)
+            SmallButton("Save", true, Modifier.weight(1f)) { if (text.isNotBlank()) onSave(text.trim()) }
+        }
+    }
+}
+
+@Composable
+private fun SmallButton(text: String, filled: Boolean, modifier: Modifier, danger: Boolean = false, onClick: () -> Unit) {
+    val bg = when { danger -> Color(0xFFE5484D); filled -> Color(0xFF7B6BF0); else -> Color(0xFF2A2E52) }
+    Box(modifier.height(38.dp).clip(RoundedCornerShape(19.dp)).background(bg).clickable(onClick = onClick),
+        contentAlignment = Alignment.Center) {
+        Text(text, color = Color.White, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+// ---------------------------------------------------------------- WIRING (tab row)
+// On each shell tab:
+//
+//   var pressed by remember { mutableStateOf<Int?>(null) }          // which shell
+//   var tabBounds by remember { mutableStateOf(IntOffset.Zero) }
+//
+//   Modifier
+//     .onGloballyPositioned { tabBounds = it.positionInWindow().round() }
+//     .pointerInput(shell.id) {
+//         detectTapGestures(
+//             onTap = { selectShell(shell.id) },              // normal tap still switches shell
+//             onLongPress = { pressed = shell.id },           // long press opens the card
+//         )
+//     }
+//
+//   if (pressed == shell.id)
+//       ShellTabCard(anchor = tabBounds, shellName = shell.name, isRunning = shell.isRunning,
+//           onRename = { vm.rename(shell.id, it) }, onClear = { vm.clearOutput(shell.id) },
+//           onClose = { vm.closeShell(shell.id) }, onDismiss = { pressed = null })
+//
+// Give a small haptic tick on long press (HapticFeedbackType.LongPress).
+// Do NOT change how tapping, adding or scrolling shell tabs works today.

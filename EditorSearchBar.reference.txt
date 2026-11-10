@@ -1,0 +1,191 @@
+// ============================================================================
+// EditorSearchBar.reference.txt        (REFERENCE ONLY - not compiled)
+// ----------------------------------------------------------------------------
+// Purpose : modern find / replace for the Sora editor.
+//   - Search bar slides in at the TOP when the user taps the search icon next
+//     to the tabs. Nothing else opens it (same as now).
+//   - Left button is a DOWN chevron (it CLOSES the bar; it is not "back").
+//   - Pill field + match counter "3/12" + previous + next + three-dot menu.
+//   - Three-dot menu: Last match / Replace / Replace all.
+//   - "Replace" no longer opens a popup. It slides in a second row under the
+//     search bar: replacement field + [Replace] [All].
+//
+// The SEARCH ENGINE is Sora's own (editor.searcher). Do NOT write your own loop
+// over the text - that is what hangs on big files.
+//
+// VERIFY: exact Sora 0.24.4 method names and constructor arguments below
+// (search / gotoNext / gotoPrevious / replaceCurrentMatch / replaceAll /
+// matchedPositionCount / currentMatchedPositionIndex / stopSearch). Check them
+// in the real library. Do not guess. Names here are the intended shape.
+// ============================================================================
+
+package com.closecode.ui.ide   // <- use OUR real package
+
+// ---------------------------------------------------------------- STATE (stateless UI)
+data class SearchUiState(
+    val open: Boolean = false,
+    val query: String = "",
+    val replaceOpen: Boolean = false,       // second row visible
+    val replacement: String = "",
+    val current: Int = 0,                   // 1-based index of the current match, 0 = none
+    val total: Int = 0,
+    val menuOpen: Boolean = false,
+)
+
+// ---------------------------------------------------------------- CONTROLLER (talks to Sora)
+// One small class that owns the Sora calls. The UI never touches Sora directly.
+class SoraSearchController(private val editor: CodeEditor) {
+
+    /** Start or update a search. Sora highlights every match itself. */
+    fun search(query: String, ignoreCase: Boolean = true): Pair<Int, Int> {
+        if (query.isEmpty()) { editor.searcher.stopSearch(); return 0 to 0 }
+        // VERIFY the SearchOptions constructor in 0.24.4
+        editor.searcher.search(query, EditorSearcher.SearchOptions(ignoreCase, /*useRegex=*/ false))
+        return readCounts()
+    }
+    fun next(): Pair<Int, Int> { editor.searcher.gotoNext(); return readCounts() }
+    fun previous(): Pair<Int, Int> { editor.searcher.gotoPrevious(); return readCounts() }
+
+    /** "Last match" in the menu: jump to the final match in the file. */
+    fun last(): Pair<Int, Int> {
+        // VERIFY: Sora may not have a direct "last". Simple way: gotoPrevious() once
+        // from the first match wraps to the last. Do NOT loop through all matches.
+        editor.searcher.gotoPrevious()
+        return readCounts()
+    }
+    fun replaceCurrent(replacement: String): Pair<Int, Int> {
+        editor.searcher.replaceCurrentMatch(replacement); return readCounts()
+    }
+    fun replaceAll(replacement: String): Pair<Int, Int> {
+        editor.searcher.replaceAll(replacement); return readCounts()   // ONE undo step in Sora
+    }
+    fun close() = editor.searcher.stopSearch()   // removes the highlights
+
+    private fun readCounts(): Pair<Int, Int> {
+        val total = editor.searcher.matchedPositionCount
+        val idx = if (total == 0) 0 else editor.searcher.currentMatchedPositionIndex + 1
+        return idx to total
+    }
+}
+
+// ---------------------------------------------------------------- THE BAR
+// Height 56 dp. Background #14172A with a 1 dp bottom divider (#23274A).
+// Layout (left to right): [v close] [ pill: icon + text + counter ] [^] [v] [dots]
+// IMPORTANT: the pill is the only part that grows (weight 1f, minWidth 0).
+@Composable
+fun EditorSearchBar(
+    state: SearchUiState,
+    onQueryChange: (String) -> Unit,
+    onNext: () -> Unit, onPrevious: () -> Unit,
+    onClose: () -> Unit,
+    onMenuToggle: (Boolean) -> Unit,
+    onLast: () -> Unit, onReplaceRow: () -> Unit, onReplaceAll: () -> Unit,
+    onReplacementChange: (String) -> Unit,
+    onReplaceOne: () -> Unit, onReplaceAllNow: () -> Unit,
+) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(state.open) { if (state.open) focus.requestFocus() }   // keyboard opens on show
+
+    // Back closes the bar BEFORE anything else (even before closing a tab/panel).
+    BackHandler(enabled = state.open, onBack = onClose)
+
+    AnimatedVisibility(
+        visible = state.open,
+        enter = slideInVertically { -it } + fadeIn(),     // slides down from the top
+        exit = slideOutVertically { -it } + fadeOut(),
+    ) {
+        Column(Modifier.fillMaxWidth().background(Color(0xFF14172A))) {
+            Row(
+                Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconBtn("chevron-down", 34.dp, onClose)          // CLOSE (points DOWN)
+                // ---- the pill
+                Row(
+                    Modifier.weight(1f).widthIn(min = 0.dp).height(38.dp)
+                        .clip(RoundedCornerShape(19.dp)).background(Color(0xFF1C2038))
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    CcIcon("search", 16.dp, Color(0xFF8A8FA8))
+                    Spacer(Modifier.width(8.dp))
+                    BasicTextField(
+                        value = state.query, onValueChange = onQueryChange, singleLine = true,
+                        textStyle = TextStyle(color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
+                        cursorBrush = SolidColor(Color(0xFF7B6BF0)),
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { onNext() }),   // Enter = next match
+                        modifier = Modifier.weight(1f).focusRequester(focus),
+                    )
+                    if (state.query.isNotEmpty()) {
+                        // Counter chip: "3/12" or "0" when nothing matches
+                        Text(if (state.total == 0) "0" else "${state.current}/${state.total}",
+                            color = Color(0xFFB7ACFF), fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF2A2E52)).padding(horizontal = 8.dp, vertical = 3.dp))
+                    }
+                }
+                IconBtn("chevron-up", 30.dp, onPrevious)
+                IconBtn("chevron-down", 30.dp, onNext)
+                Box {
+                    IconBtn("more-vertical", 30.dp) { onMenuToggle(true) }
+                    SearchOverflowMenu(state.menuOpen, { onMenuToggle(false) }, onLast, onReplaceRow, onReplaceAll)
+                }
+            }
+            // ---- second row: replace (slides in; no popup)
+            AnimatedVisibility(state.replaceOpen) {
+                Row(
+                    Modifier.fillMaxWidth().height(54.dp).padding(start = 52.dp, end = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Row(
+                        Modifier.weight(1f).height(38.dp).clip(RoundedCornerShape(19.dp))
+                            .background(Color(0xFF1C2038)).padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CcIcon("replace", 16.dp, Color(0xFF8A8FA8)); Spacer(Modifier.width(8.dp))
+                        BasicTextField(state.replacement, onReplacementChange, singleLine = true,
+                            textStyle = TextStyle(color = Color(0xFFC9CCE0), fontSize = 13.sp),
+                            cursorBrush = SolidColor(Color(0xFF7B6BF0)), modifier = Modifier.weight(1f))
+                    }
+                    PillButton("Replace", filled = true, onClick = onReplaceOne)    // current match
+                    PillButton("All", filled = false, onClick = onReplaceAllNow)    // every match
+                }
+            }
+            Divider(color = Color(0xFF23274A))
+        }
+    }
+}
+
+// ---------------------------------------------------------------- THREE-DOT MENU
+// A rounded card (radius 20, #1E2236, 1 dp border #2F3460, shadow), width 196 dp.
+// Items are 46 dp high: purple icon + label. A thin divider after "Last match".
+// Use DropdownMenu with a custom container, or a Popup anchored under the dots.
+@Composable
+private fun SearchOverflowMenu(
+    open: Boolean, onDismiss: () -> Unit,
+    onLast: () -> Unit, onReplace: () -> Unit, onReplaceAll: () -> Unit,
+) {
+    DropdownMenu(
+        expanded = open, onDismissRequest = onDismiss,
+        modifier = Modifier.width(196.dp).clip(RoundedCornerShape(20.dp))
+            .background(Color(0xFF1E2236)).border(1.dp, Color(0xFF2F3460), RoundedCornerShape(20.dp)),
+    ) {
+        MenuItem("last", "Last match") { onDismiss(); onLast() }
+        Divider(color = Color(0xFF2A2E52), modifier = Modifier.padding(horizontal = 14.dp))
+        MenuItem("replace", "Replace") { onDismiss(); onReplace() }          // opens the replace row
+        MenuItem("replace-all", "Replace all") { onDismiss(); onReplaceAll() } // opens the replace row focused on All
+    }
+}
+
+// ---------------------------------------------------------------- BEHAVIOUR RULES
+// - Typing in the field searches immediately (debounce ~150 ms for big files).
+// - Counter updates after every next/previous/replace.
+// - After "Replace all" show a small toast/snackbar: "Replaced N matches".
+// - Closing the bar (chevron or Back): searcher.stopSearch(), clear state.
+// - The editor keeps focus/cursor; keyboard stays usable.
+// - Match colours (set in the Sora colour scheme, NOT by extra drawing code):
+//     MATCHED_TEXT_BACKGROUND = accent at 25% alpha  (all matches)
+//     current match is stronger (accent 55% + 1.5 dp outline) if Sora supports it.
+// - Works the same in dark and light themes.
