@@ -134,43 +134,48 @@ object DoctorCommand {
         val shell = ShellToolsStore(context, ShellToolsManifest.load(context))
         val checks = JsonArray()
         val prefix = paths.shellTools
-        fun add(
+        fun addCheck(
             name: String,
             ok: Boolean,
             path: File? = null,
             version: String = "",
             remedy: String = "",
             install: String = "",
+            required: Boolean = true,
         ) {
             checks.add(JsonObject().apply {
                 addProperty("name", name)
                 addProperty("ok", ok)
+                if (!required) addProperty("optional", true)
                 addProperty("path", path?.absolutePath)
                 addProperty("version", version)
                 addProperty("remedy", remedy)
                 addProperty("installCommand", install)
             })
         }
-        add(
+        addCheck(
             "shell.prefix",
             File(prefix, "bin/sh").exists(),
             prefix,
             remedy = "Install the shell pack.",
             install = "closecode setup --web",
+            required = false,
         )
-        add(
+        addCheck(
             "shell.path",
             env["PATH"].orEmpty().contains(File(prefix, "bin").absolutePath),
             version = env["PATH"].orEmpty(),
+            required = false,
         )
-        add(
+        addCheck(
             "shell.ld_library_path",
             env["LD_LIBRARY_PATH"].orEmpty().contains(File(prefix, "lib").absolutePath),
             version = env["LD_LIBRARY_PATH"].orEmpty(),
+            required = false,
         )
         val javaHome = ShellEnvironment.javaHome(paths)
-        add("jdk", javaHome != null, javaHome, install = "closecode setup --gradle")
-        add(
+        addCheck("jdk", javaHome != null, javaHome, install = "closecode setup --gradle")
+        addCheck(
             "gradle",
             gradle.isReady(),
             gradle.gradle,
@@ -178,7 +183,7 @@ object DoctorCommand {
             remedy = "Install JDK 17 and Gradle 8.13.",
             install = "closecode setup --gradle",
         )
-        add(
+        addCheck(
             "sdk.platform.35",
             platform.androidJar(35) != null,
             platform.platformDir(35),
@@ -186,7 +191,7 @@ object DoctorCommand {
         )
         val required = platform.requiredBuildToolsVersion(readAgp(project))
         val buildTools = platform.bestBuildTools(required)
-        add(
+        addCheck(
             "sdk.build_tools",
             buildTools != null,
             buildTools?.second,
@@ -194,8 +199,37 @@ object DoctorCommand {
             remedy = "Install build-tools $required or newer.",
             install = "closecode setup --gradle",
         )
-        add("native.ndk", native.ndkReady(), native.ndkHome, install = "closecode setup --native")
-        add("native.cmake", native.cmakeReady(), native.cmakeHome, install = "closecode setup --native")
+        // P0-3 / P0-4: AGP checks both before it runs a single task.
+        addCheck(
+            "sdk.platform_tools",
+            platform.platformToolsReady(),
+            platform.platformToolsDir(),
+            PlatformStore.PLATFORM_TOOLS_VERSION,
+            remedy = "AGP refuses to build without the platform-tools package.",
+            install = "closecode setup --gradle",
+        )
+        addCheck(
+            "sdk.licenses",
+            platform.licensesReady(),
+            File(platform.rootDir(), "licenses"),
+            "${PlatformStore.LicenseFiles.size} licence files",
+            remedy = "Accept the Android SDK licence in Settings > SDK Manager.",
+            install = "closecode setup --gradle",
+        )
+        addCheck(
+            "native.ndk",
+            native.ndkReady(),
+            native.ndkHome,
+            install = "closecode setup --native",
+            required = false,
+        )
+        addCheck(
+            "native.cmake",
+            native.cmakeReady(),
+            native.cmakeHome,
+            install = "closecode setup --native",
+            required = false,
+        )
         addMeasure("node", File(prefix, "bin/node"), listOf("-v"), env, checks, "closecode setup --web")
         addMeasure("npm", File(prefix, "bin/npm"), listOf("-v"), env, checks, "closecode setup --web")
         addMeasure("python", File(prefix, "bin/python3"), listOf("-V"), env, checks, "closecode setup --python")
@@ -204,26 +238,39 @@ object DoctorCommand {
         addMeasure("curl", File(prefix, "bin/curl"), listOf("--version"), env, checks, "closecode setup --web")
         addMeasure("zip", File(prefix, "bin/zip"), listOf("-v"), env, checks, "closecode setup --web")
         addMeasure("jq", File(prefix, "bin/jq"), listOf("--version"), env, checks, "closecode setup --web")
-        add("accessibility", CloseCodeAccessibilityService.connected(), remedy = "Run closecode accessibility enable and tap the switch.")
-        add(
+        // The rest are user-environment states, not install gaps: a build does not need them.
+        addCheck(
+            "accessibility",
+            CloseCodeAccessibilityService.connected(),
+            remedy = "Run closecode accessibility enable and tap the switch.",
+            required = false,
+        )
+        addCheck(
             "notifications",
             ToolchainDownloadService.notificationsAllowed(context),
             remedy = "Allow notifications for CloseCode.",
+            required = false,
         )
         val power = context.getSystemService(PowerManager::class.java)
         val battery = power?.isIgnoringBatteryOptimizations(context.packageName) == true
-        add("battery", battery, remedy = "Allow CloseCode to run without battery optimisation.")
+        addCheck(
+            "battery",
+            battery,
+            remedy = "Allow CloseCode to run without battery optimisation.",
+            required = false,
+        )
         val free = context.filesDir.usableSpace
-        add(
+        addCheck(
             "disk",
             free >= 3L * 1024 * 1024 * 1024,
             version = free.toString(),
             remedy = "Free at least 3 GB for Gradle, the SDK and dependency caches.",
+            required = false,
         )
-        add("network", networkAvailable(context), remedy = "Connect to Wi-Fi or allow mobile data.")
+        addCheck("network", networkAvailable(context), remedy = "Connect to Wi-Fi or allow mobile data.", required = false)
         if (project != null) {
             val facts = GradleReader.read(project.directory)
-            add(
+            addCheck(
                 "project.package",
                 (project.savedPackage ?: facts.packageName) != null,
                 project.directory,
@@ -231,15 +278,19 @@ object DoctorCommand {
                 remedy = "Set namespace in app/build.gradle.kts or use a template.",
             )
             val last = BuildCoordinator.last()?.takeIf { it.id == project.id }
-            add(
+            addCheck(
                 "project.last_build",
                 last != null,
                 project.directory,
                 last?.summary.orEmpty(),
                 remedy = "Run closecode build --gradle.",
+                required = false,
             )
         }
-        val ok = checks.all { it.asJsonObject.get("ok")?.asBoolean == true }
+        // Only the checks the build needs decide `ok`; the optional ones are listed apart.
+        val requiredChecks = checks.filter { it.asJsonObject.get("optional") == null }
+        val optionalChecks = checks.filter { it.asJsonObject.get("optional") != null }
+        val ok = requiredChecks.all { it.asJsonObject.get("ok")?.asBoolean == true }
         return JsonObject().apply {
             addProperty("ok", ok)
             addProperty("build", com.closecode.BuildConfig.VERSION_CODE)
@@ -247,6 +298,7 @@ object DoctorCommand {
                 env.toSortedMap().forEach { (key, value) -> addProperty(key, value) }
             })
             add("checks", checks)
+            add("optionalChecks", JsonArray().apply { optionalChecks.forEach { add(it) } })
             add("toolchain", ToolchainStatusCommand.run(context))
         }
     }
@@ -262,6 +314,8 @@ object DoctorCommand {
         val version = ToolProbe.run(executable, arguments, environment)
         checks.add(JsonObject().apply {
             addProperty("name", name)
+            // The shell pack is optional: a Kotlin app builds without it.
+            addProperty("optional", true)
             addProperty("ok", executable.isFile && version.isNotBlank() &&
                 !version.contains("not found", ignoreCase = true) &&
                 !version.contains("CANNOT LINK", ignoreCase = true))

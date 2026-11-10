@@ -196,6 +196,47 @@ class GradlePlanTest {
     }
 
     @Test
+    fun theRootCauseNamesTheCompilerError() {
+        val log = """
+            e: file:///work/Main.kt:9:5: Unresolved reference: nope
+            e: file:///work/Main.kt:12:1: Expecting a top level declaration
+            FAILURE: Build failed with an exception.
+            * What went wrong:
+            Execution failed for task ':app:compileDebugKotlin'.
+            > Compilation error. See log for more details
+            BUILD FAILED in 3s
+        """.trimIndent()
+        val cause = GradleRunner.rootCause(log)
+        assertEquals("file:///work/Main.kt:9:5: Unresolved reference: nope", cause)
+    }
+
+    @Test
+    fun aJavacErrorIsAlsoTheRootCause() {
+        val log = """
+            /work/Main.java:4: error: cannot find symbol
+            FAILURE: Build failed with an exception.
+            * What went wrong:
+            Execution failed for task ':app:compileDebugJavaWithJavac'.
+        """.trimIndent()
+        val cause = GradleRunner.rootCause(log)
+        assertTrue(cause, cause!!.contains("cannot find symbol"))
+    }
+
+    @Test
+    fun withoutACompilerErrorTheFailingTaskIsTheCause() {
+        val log = """
+            FAILURE: Build failed with an exception.
+            * What went wrong:
+            Execution failed for task ':app:processDebugResources'.
+            > AAPT: error: resource style/Theme.App not found
+            * Try:
+            > Run with --stacktrace option to get the stack trace.
+        """.trimIndent()
+        val cause = GradleRunner.rootCause(log)
+        assertEquals("AAPT: error: resource style/Theme.App not found", cause)
+    }
+
+    @Test
     fun theLauncherJarIsPreferredOverTheScript() {
         val toolchain = toolchain()
         assertEquals(

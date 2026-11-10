@@ -210,6 +210,11 @@ object GradlePlan {
 
 object GradleRunner {
 
+    /** A javac-style error line: `path:line: error: message`. */
+    private val COMPILER_ERROR = Regex(
+        "^.+?\\.(?:kt|kts|java):\\d+(?::\\d+)?:\\s*(?:error|Error):\\s*(.+)$",
+    )
+
     private const val MAX_OUTPUT_CHARS = 64_000
     private const val TIMEOUT_MS = 90 * 60 * 1000L
 
@@ -366,16 +371,28 @@ object GradleRunner {
     /**
      * The line Gradle itself calls the root cause.
      *
-     * The tail of a failed Gradle log is the stack trace; the cause is the block between
-     * `* What went wrong:` and `* Try:`, and inside that block the deepest `>` line is the
-     * specific exception. Falls back to the last `Caused by:` line, then to null when the
-     * log is not a Gradle failure report at all (P0-6).
+     * A compiler error is the real cause: `e: file:///work/Main.kt:9:5: Unresolved reference`
+     * names the file, the line and the message. When the log has no compiler error, the cause
+     * is the block between `* What went wrong:` and `* Try:` — the deepest `>` line is the
+     * specific exception. Falls back to the last `Caused by:` line (P0-6).
      */
     fun rootCause(output: String): String? {
+        compilerError(output)?.let { return it }
         val lines = causeBlock(output)
         if (lines.isNotEmpty()) return lines.last()
         return causedBy(output).lastOrNull()
     }
+
+    /** The first compiler error in the log, without its `e:` / `error:` marker. */
+    private fun compilerError(output: String): String? = output.lineSequence()
+        .map { it.trim() }
+        .firstOrNull { line ->
+            line.startsWith("e: ") || line.startsWith("error: ") || COMPILER_ERROR.containsMatchIn(line)
+        }
+        ?.removePrefix("e: ")
+        ?.removePrefix("error: ")
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
 
     /** Every cause Gradle lists, deepest last, ready for the structured diagnostics array. */
     fun causedBy(output: String): List<String> {

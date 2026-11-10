@@ -115,6 +115,24 @@ class GradleToolsStore(
         .filter { it.isFile }
         .sumOf { it.length() }
 
+    /**
+     * Removes the hand-placed workarounds from an earlier test run.
+     *
+     * The report lists them: an init script that forced a valid aapt2
+     * (`init.d/zz-closecode-aapt2-fix.gradle`). P0-2 is fixed in the build itself now, so a
+     * second override in the Gradle home would only fight it. The files live in the app's own
+     * storage, so the app may remove them.
+     */
+    private fun removeStaleWorkarounds() {
+        val initD = File(gradleHome, "init.d")
+        initD.listFiles()?.forEach { file ->
+            if (file.isFile && file.name.startsWith("zz-closecode-")) {
+                DebugLog.crumb("GRADLE", "removed stale workaround ${file.name}")
+                file.delete()
+            }
+        }
+    }
+
     fun installedPackages(): List<String> = termux.installedPackages()
 
     fun install(
@@ -126,6 +144,7 @@ class GradleToolsStore(
         // install attempt, including the early-return "already ready" path, so re-running
         // `closecode setup --gradle` repairs the launcher instead of keeping the broken one.
         GradleLauncher.patch(gradleFor(wanted))
+        removeStaleWorkarounds()
         if (isReady(wanted)) return ShellToolsStore.Result(true)
         if (!termux.isReady()) {
             val result = termux.install(progress)

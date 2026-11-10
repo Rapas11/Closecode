@@ -30,6 +30,33 @@ host with no arm64 phone attached).
 | P1-6 | `closecode accessibility` answers with a structured `needs_accessibility` result (permission, url, remedy) and `accessibility enable` opens the exact service screen. | `control/CloseCodeControl.kt` |
 | P1-7 | `closecode install` returns `code: needs_permission` with `permission`, `url`, `package`, `remedy` and `actions`; `closecode install --open-settings` opens the unknown-apps screen and retries automatically once the grant arrives. | `device/DeviceTools.kt`, `control/CloseCodeControl.kt` |
 
+## Follow-ups found while checking against §9 and §10
+
+- `closecode doctor --json` now checks the two new required packages (`sdk.platform_tools`,
+  `sdk.licenses`) and its `ok` is decided by the required checks only; everything optional
+  (shell pack, NDK, CMake, accessibility, notifications, battery, disk, network) moved to
+  `optionalChecks`.
+- The root-cause line now names the compiler error itself
+  (`file:///…/Main.kt:9:5: Unresolved reference: nope`) instead of the generic
+  "Compilation error. See log for more details".
+- §10 asked for the local workarounds to be removed once the real fixes landed: the installer
+  now deletes the stale `GRADLE_USER_HOME/init.d/zz-closecode-*.gradle` script, and the Gradle
+  launcher is patched properly at unpack time instead of by hand.
+
+## Still open (not part of P0/P1)
+
+The report contains more than P0 and P1. §12 lists two more items that are **not** done:
+
+- **P2-1 — consent can be self-granted.** `closecode consent grant shell` still flips the grant
+  itself. The report wants `{"ok":false,"code":"needs_confent","needsUser":true}`, a user
+  confirmation in the UI, no self-grant for secrets / ui-automation / screen / shell, an audit
+  entry for granted *and* denied attempts, and `closecode consent request <capability>`.
+- **P3 — test gaps.** The commands in the P3 table (`selftest --build`, `init --template
+  android-compose`, `test/lint/format/package/release`, `test-ui`, `secrets`, `deploy --dry-run`,
+  `screen`, `notifications`, `files`, `signing`) are not covered end to end.
+
+The device acceptance run (§9) is also still outstanding — see below.
+
 ## Verified here
 
 - `:app:testDebugUnitTest` — all green.
