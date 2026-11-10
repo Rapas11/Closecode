@@ -182,6 +182,13 @@ internal object ProjectDescription {
                 "closecode config show|set <key> <value>|unset <key> — pins in .closecode.json",
             )
             addProperty("test", "closecode test|lint|format|package|release")
+            addProperty("apps", "closecode apps list|launch|stop|info|install|uninstall|clear")
+            addProperty("intent", "closecode intent open|start|broadcast|share")
+            addProperty("device", "closecode device battery|network|storage|display|volume|brightness|dnd|clipboard|sensors")
+            addProperty("files", "closecode files list|read|write|delete")
+            addProperty("exec", "closecode exec [--approve] <command...>")
+            addProperty("consent", "closecode consent status|grant|revoke <capability>")
+            addProperty("audit", "closecode audit tail")
             addProperty("install", "closecode install")
             addProperty("launch", "closecode launch")
             addProperty("app", "closecode app — installed/foreground state and screen size")

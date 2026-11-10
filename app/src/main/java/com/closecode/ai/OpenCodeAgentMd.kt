@@ -44,6 +44,15 @@ object OpenCodeAgentMd {
         - `closecode config show|set <key> <value>` — pin versions and ports in `.closecode.json`.
         - `closecode run` — build, install, launch, and wait until the app is in front.
         - `closecode install`, `closecode launch` — put the APK on this phone, then open it.
+        - `closecode apps list|launch|stop|info|install|uninstall|clear` — package-targeted app control.
+        - `closecode ui dump|tap|wait|assert|scroll|type --package PKG` — drive any app (defaults to this project).
+        - `closecode intent open|start|broadcast|share` — start activities, deep links, broadcasts and shares.
+        - `closecode device battery|network|storage|display|volume|brightness|dnd|clipboard|sensors`.
+        - `closecode files list|read|write|delete` — the scoped shared folder.
+        - `closecode exec [--cwd DIR] [--timeout MS] [--approve] <command>` — run a shell command with streamed output.
+        - `closecode consent status|grant|revoke <capability>` and `closecode audit tail` — grants and the audit log.
+        - `closecode stop-all` — stop every job and cancel the running build.
+
         - `closecode signing status|generate|import` — the key used for release APKs.
         - `closecode app`, `closecode stop`, `closecode restart` — inspect, stop or relaunch it.
         - `closecode ui dump` — the current screen as JSON; `closecode ui tap --text TEXT`,

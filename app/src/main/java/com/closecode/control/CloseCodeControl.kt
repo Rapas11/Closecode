@@ -22,6 +22,8 @@ import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
 import com.closecode.device.CloseCodeAccessibilityService
 import com.closecode.device.DeviceTools
+import com.closecode.device.control.ConsentStore
+import com.closecode.device.control.DeviceControl
 import com.closecode.jobs.JobManager
 import com.closecode.tools.ShellToolsManifest
 import com.closecode.tools.ShellToolsStore
@@ -191,7 +193,18 @@ object CloseCodeControl {
                 "export" -> send(output, export(context, request))
                 "screenshot" -> send(output, screenshot(context, request))
                 "input" -> send(output, DeviceTools.input(args(request)))
-                "ui" -> send(output, DeviceTools.ui(args(request)))
+                "ui" -> send(output, ui(context, request))
+                "apps" -> send(output, apps(context, request))
+                "intent" -> send(output, intent(context, request))
+                "device" -> send(output, DeviceControl.device(context, args(request)))
+                "files" -> send(output, DeviceControl.files(context, args(request)))
+                "consent" -> send(output, DeviceControl.consent(context, args(request)))
+                "audit" -> send(output, DeviceControl.audit(context, args(request)))
+                "stop-all" -> send(output, DeviceControl.stopAll(context))
+                "exec" -> {
+                    it.soTimeout = 0
+                    runBlocking { exec(context, request, output) }
+                }
                 "app" -> send(output, appStatus(context, request))
                 "stop" -> send(output, stop(context, request))
                 "restart" -> {
@@ -268,6 +281,67 @@ object CloseCodeControl {
                 else -> send(output, error("Unknown command."))
             }
         }
+    }
+
+    private fun ui(context: Context, request: JsonObject): JsonObject {
+        val arguments = args(request)
+        val packageIndex = arguments.indexOf("--package")
+        val packageName = if (packageIndex >= 0) arguments.getOrNull(packageIndex + 1) else {
+            resolveProject(context, string(request, "cwd"), string(request, "project"))?.let {
+                ProjectRepository(context).packageOf(
+                    ProjectRepository(context).find(it.slug) ?: return@let null,
+                )
+            }
+        }
+        DeviceControl.checkUiConsent(context, packageName)?.let { return it }
+        val cleaned = if (packageIndex >= 0) {
+            arguments.filterIndexed { index, _ -> index != packageIndex && index != packageIndex + 1 }
+        } else {
+            arguments
+        }
+        if (packageName != null) {
+            val foreground = com.closecode.device.CloseCodeAccessibilityService.current()
+                ?.foregroundPackage()
+            if (foreground != null && foreground != packageName) {
+                return CommandEnvelope.failed(
+                    "$packageName is not in the foreground (currently ${foreground.ifBlank { "unknown" }}).",
+                    code = "wrong_package",
+                    remedy = "Run closecode apps launch $packageName, wait, then retry.",
+                )
+            }
+        }
+        return DeviceTools.ui(cleaned)
+    }
+
+    private fun apps(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(context, string(request, "cwd"), string(request, "project"))
+        return DeviceControl.apps(context, project?.directory, args(request))
+    }
+
+    private fun intent(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(context, string(request, "cwd"), string(request, "project"))
+        return DeviceControl.intent(context, project?.directory, args(request))
+    }
+
+    private suspend fun exec(context: Context, request: JsonObject, output: OutputStream) {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: run {
+            send(output, error("Run closecode exec from a registered project folder."))
+            return
+        }
+        val settings = ProjectSettings.read(project.directory)
+        val response = withContext(Dispatchers.IO) {
+            DeviceControl.exec(
+                context = context,
+                projectDir = project.directory,
+                settingsEnvironment = settings.env,
+                arguments = args(request),
+            ) { event -> send(output, event) }
+        }
+        send(output, response)
     }
 
     private fun install(context: Context, request: JsonObject): JsonObject {
@@ -1609,12 +1683,20 @@ internal fun controlCommandScript(basePath: String): String = """
         check|chk) echo "usage: closecode check" ;;
         github|gh) echo "usage: closecode github push|pull [--force]" ;;
         app|app-status) echo "usage: closecode app [package]" ;;
+        apps) echo "usage: closecode apps list|launch <pkg>|stop <pkg>|info <pkg>|install <apk>|uninstall <pkg> --yes|clear <pkg>" ;;
+        intent) echo "usage: closecode intent open <uri>|start <pkg/activity>|broadcast <action>|share <file>" ;;
+        device) echo "usage: closecode device battery|network|storage|display|volume [n]|brightness [n]|dnd|clipboard [text]|sensors|orientation|all" ;;
+        files) echo "usage: closecode files list|read|write|delete" ;;
+        exec) echo "usage: closecode exec [--cwd DIR] [--timeout MS] [--approve] <command...>" ;;
+        consent) echo "usage: closecode consent status|grant|revoke <capability>" ;;
+        audit) echo "usage: closecode audit tail [lines]" ;;
+        stop-all) echo "usage: closecode stop-all" ;;
         stop) echo "usage: closecode stop [package]" ;;
         restart) echo "usage: closecode restart [package]" ;;
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing gradle check github run app stop restart ui clean serve preview jobs init config test lint format package release"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing gradle check github run app stop restart ui apps intent device files exec consent audit stop-all clean serve preview jobs init config test lint format package release"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac
@@ -1637,6 +1719,14 @@ internal fun controlCommandScript(basePath: String): String = """
       stop) CMD=stop ;;
       restart) CMD=restart ;;
       ui) CMD=ui ;;
+      apps) CMD=apps ;;
+      intent|int) CMD=intent ;;
+      device|dev) CMD=device ;;
+      files|fs) CMD=files ;;
+      exec|sh) CMD=exec ;;
+      consent|grants) CMD=consent ;;
+      audit) CMD=audit ;;
+      stop-all|stopall) CMD=stop-all ;;
       log|logcat) CMD=logcat ;;
       x|export) CMD=export ;;
       shot|screenshot) CMD=screenshot ;;
@@ -1662,7 +1752,7 @@ internal fun controlCommandScript(basePath: String): String = """
       rel|release) CMD=release ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|gradle|check|github|run|app|stop|restart|ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|stop-all|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
       *) help >&2; exit 2 ;;
     esac
     case "${'$'}{2:-}" in

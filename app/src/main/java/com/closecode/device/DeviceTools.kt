@@ -267,6 +267,19 @@ object DeviceTools {
                     }
                 }
             }
+            "type", "text" -> {
+                val text = rest.joinToString(" ")
+                if (text.isEmpty()) return error("Use: ui type --text TEXT or ui type TEXT")
+                val value = if (text.startsWith("--text=")) text.removePrefix("--text=") else text
+                if (service.text(value)) {
+                    ok().apply {
+                        addProperty("action", "type")
+                        addProperty("characters", value.length)
+                    }
+                } else {
+                    error("No focused text field accepted the text.")
+                }
+            }
             "scroll" -> {
                 val direction = rest.firstOrNull()?.lowercase(Locale.US)
                     ?.takeIf { it == "up" || it == "down" || it == "forward" || it == "back" }
@@ -304,8 +317,8 @@ object DeviceTools {
     }
 
     private fun nodeJson(node: UiNode): JsonObject = JsonObject().apply {
-        addProperty("text", node.text)
-        addProperty("description", node.description)
+        addProperty("text", if (node.password) "[redacted]" else node.text)
+        addProperty("description", if (node.password) "" else node.description)
         addProperty("id", node.id)
         addProperty("class", node.className)
         add("bounds", JsonArray().apply { node.bounds.forEach { add(it) } })
