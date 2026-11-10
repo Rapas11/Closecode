@@ -30,11 +30,14 @@ class ProjectZipTest {
         return root
     }
 
+    /** Zip entry names always use `/`; relativize accordingly so the test is OS-independent. */
+    private fun names(): List<String> = ProjectZip.collectFiles(root)
+        .map { it.relativeTo(root).path.replace('\\', '/') }
+
     @Test
     fun collectKeepsSourcesAndSkipsBuildOutput() {
         writeProject()
-        val files = ProjectZip.collectFiles(root)
-            .map { it.relativeTo(root).path }
+        val files = names()
 
         assertTrue("app/src/main/java/Main.kt" in files)
         assertTrue("app/src/main/java/Hello.java" in files)
@@ -54,7 +57,7 @@ class ProjectZipTest {
         File(root, "local.properties").writeText("sdk.dir=/opt/android\n")
         File(root, ".env").writeText("TOKEN=x\n")
 
-        val files = ProjectZip.collectFiles(root).map { it.relativeTo(root).path }
+        val files = names()
 
         assertFalse(files.any { it.startsWith(".opencode") })
         assertFalse(files.any { it.startsWith("node_modules") })

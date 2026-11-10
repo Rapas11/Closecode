@@ -11,7 +11,23 @@ import java.io.File
 internal object ConfigCommand {
 
     fun run(projectDir: File, arguments: List<String>): JsonObject {
-        val action = arguments.firstOrNull()?.lowercase() ?: "show"
+        // P1-2: flags are not positionals. `config show --json` used to look up a setting
+        // literally named "--json"; now flags are removed before the action is read.
+        val unknown = arguments.firstOrNull {
+            it.startsWith("--") && it != "--json"
+        }
+        if (unknown != null) {
+            return CommandEnvelope.failed(
+                "unknown option '$unknown'",
+                code = "unknown_option",
+                remedy = "Run closecode config show --json to see the accepted fields.",
+            )
+        }
+        val cleaned = arguments.filterNot { it == "--json" }
+        return run(projectDir, cleaned, cleaned.firstOrNull()?.lowercase() ?: "show")
+    }
+
+    private fun run(projectDir: File, arguments: List<String>, action: String): JsonObject {
         return when (action) {
             "show", "get", "json" -> show(projectDir, arguments.drop(1).firstOrNull())
             "set", "pin" -> {

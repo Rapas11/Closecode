@@ -40,4 +40,13 @@ class SetupCommandTest {
         assertTrue(SetupCommand.parse(listOf("--web")).wantsWeb)
         assertTrue(SetupCommand.parse(listOf("--python")).wantsWeb)
     }
+
+    @Test
+    fun removalNamesThePackagesTheInstallerNowShips() {
+        assertEquals("platform-tools", SetupCommand.parse(listOf("--remove", "platform-tools")).remove)
+        assertEquals("licenses", SetupCommand.parse(listOf("--remove=licenses")).remove)
+        val usage = SetupCommand.usage()
+        assertTrue(usage.contains("platform-tools"))
+        assertTrue(usage.contains("licenses"))
+    }
 }

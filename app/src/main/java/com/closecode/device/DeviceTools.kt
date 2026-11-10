@@ -4,13 +4,16 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import com.closecode.build.GradleReader
 import com.closecode.build.InstallHelper
 import com.closecode.build.LogcatReader
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.io.File
+import java.security.MessageDigest
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -30,6 +33,7 @@ object DeviceTools {
         project: File,
         argument: String?,
         waitMs: Long = 0,
+        openSettings: Boolean = false,
     ): JsonObject {
         val apk = if (argument.isNullOrBlank()) {
             val custom = File(project, DEFAULT_APK).takeIf { it.isFile }
@@ -39,17 +43,47 @@ object DeviceTools {
         } else {
             resolve(project, argument)?.takeIf { it.isFile }
         } ?: return error("No APK to install. Build the project first or pass an APK path.")
-        if (!context.packageManager.canRequestPackageInstalls()) {
-            return error("Allow CloseCode to install apps in Settings, then try again.")
-                .apply { addProperty("needsPermission", true) }
-        }
         val packageName = packageNameOfApk(context, apk)
+
+        // P0-7 / P1-7: a package signed with a different key can never be updated in place.
+        // Detect it before opening a session, and hand back the exact recovery commands.
+        val apkCertificates = certificatesOf(context, apk = apk)
+        val installedCertificates = packageName
+            ?.let { certificatesOf(context, packageName = it) }
+            .orEmpty()
+        if (packageName != null && installedCertificates.isNotEmpty() &&
+            apkCertificates.isNotEmpty() &&
+            installedCertificates.none { it in apkCertificates }
+        ) {
+            return signatureMismatch(
+                context = context,
+                packageName = packageName,
+                installed = installedCertificates,
+                incoming = apkCertificates,
+            )
+        }
+
+        if (!context.packageManager.canRequestPackageInstalls()) {
+            if (openSettings) {
+                openInstallSettings(context)
+                // The user is now on the exact system screen. If they grant it while we wait,
+                // continue the install instead of making them run the command again.
+                val deadline = System.currentTimeMillis() + 60_000
+                while (!context.packageManager.canRequestPackageInstalls() &&
+                    System.currentTimeMillis() < deadline
+                ) {
+                    Thread.sleep(500)
+                }
+            }
+            if (!context.packageManager.canRequestPackageInstalls()) {
+                return permissionNeeded(context, openedSettings = openSettings)
+            }
+        }
         val before = packageName?.let { packageStamp(context, it) }
         return runCatching {
             val session = InstallHelper.install(context, apk, packageName.orEmpty())
             if (session < 0) {
-                error("Allow CloseCode to install apps in Settings, then try again.")
-                    .apply { addProperty("needsPermission", true) }
+                permissionNeeded(context, openedSettings = false)
             } else {
                 val installed = if (waitMs > 0 && packageName != null) {
                     waitForInstall(context, packageName, before, waitMs)
@@ -60,6 +94,9 @@ object DeviceTools {
                     addProperty("session", session)
                     addProperty("apk", apk.absolutePath)
                     addProperty("package", packageName.orEmpty())
+                    if (apkCertificates.isNotEmpty()) {
+                        addProperty("signature", apkCertificates.first())
+                    }
                     if (installed) {
                         addProperty("installed", true)
                     } else if (waitMs > 0) {
@@ -475,6 +512,126 @@ object DeviceTools {
             Thread.sleep(400)
         }
         return false
+    }
+
+    /**
+     * SHA-256 of every signing certificate, for either an installed package or an APK on disk.
+     * The same digest both engines' post-signing produces, so the comparison is exact.
+     */
+    private fun certificatesOf(
+        context: Context,
+        packageName: String? = null,
+        apk: File? = null,
+    ): List<String> = runCatching {
+        val flag = PackageManager.GET_SIGNING_CERTIFICATES
+        val info = when {
+            apk != null -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageArchiveInfo(
+                    apk.absolutePath,
+                    PackageManager.PackageInfoFlags.of(flag.toLong()),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageArchiveInfo(apk.absolutePath, flag)
+            }
+            packageName != null -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                context.packageManager.getPackageInfo(
+                    packageName,
+                    PackageManager.PackageInfoFlags.of(flag.toLong()),
+                )
+            } else {
+                @Suppress("DEPRECATION")
+                context.packageManager.getPackageInfo(packageName, flag)
+            }
+            else -> null
+        } ?: return@runCatching emptyList()
+        val signing = info.signingInfo ?: return@runCatching emptyList()
+        val signers = if (signing.hasMultipleSigners()) {
+            signing.apkContentsSigners
+        } else {
+            signing.signingCertificateHistory
+        }
+        signers.orEmpty().mapNotNull { certificate ->
+            runCatching {
+                MessageDigest.getInstance("SHA-256")
+                    .digest(certificate.toByteArray())
+                    .joinToString("") { "%02x".format(it) }
+            }.getOrNull()
+        }
+    }.getOrDefault(emptyList())
+
+    /** P0-7: an in-place update can never cross signing keys; say so before Android does. */
+    private fun signatureMismatch(
+        context: Context,
+        packageName: String,
+        installed: List<String>,
+        incoming: List<String>,
+    ): JsonObject = JsonObject().apply {
+        addProperty("ok", false)
+        addProperty("code", "signature_mismatch")
+        addProperty("needsUser", true)
+        addProperty("package", packageName)
+        addProperty(
+            "error",
+            "$packageName is installed with a different signing key, so Android will not " +
+                "update it in place.",
+        )
+        addProperty(
+            "remedy",
+            "Uninstall the existing app (its data will be lost) or rebuild with the same " +
+                "signing key.",
+        )
+        add("actions", JsonArray().apply {
+            add("closecode apps uninstall $packageName")
+            add("closecode signing select <key>")
+        })
+        addProperty("installedSha256", installed.firstOrNull().orEmpty())
+        addProperty("apkSha256", incoming.firstOrNull().orEmpty())
+    }
+
+    /** P1-7: the permission is actionable — name it, link the screen, and give the command. */
+    private fun permissionNeeded(context: Context, openedSettings: Boolean): JsonObject =
+        JsonObject().apply {
+            addProperty("ok", false)
+            addProperty("code", "needs_permission")
+            addProperty("needsUser", true)
+            addProperty("needsPermission", true)
+            addProperty("permission", "REQUEST_INSTALL_PACKAGES")
+            addProperty("url", "android.settings.MANAGE_UNKNOWN_APP_SOURCES")
+            addProperty("package", context.packageName)
+            addProperty(
+                "error",
+                "Allow CloseCode to install apps in Settings, then try again.",
+            )
+            addProperty(
+                "remedy",
+                "Allow CloseCode to install unknown apps, then run closecode install again.",
+            )
+            add("actions", JsonArray().apply {
+                add("closecode install --open-settings")
+                add("closecode install")
+            })
+            if (openedSettings) addProperty("openedSettings", true)
+        }
+
+    /** Opens the exact "install unknown apps" screen for CloseCode, with a details fallback. */
+    private fun openInstallSettings(context: Context): Boolean {
+        val uri = Uri.parse("package:${context.packageName}")
+        val direct = runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, uri)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            true
+        }.getOrDefault(false)
+        if (direct) return true
+        return runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, uri)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            true
+        }.getOrDefault(false)
     }
 
     private fun packageNameOfProject(project: File): String? {

@@ -4,6 +4,7 @@ import com.closecode.tools.NativeToolchain
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -20,6 +21,10 @@ class GradlePlanTest {
         val gradle = File(root, "gradle/bin/gradle").apply {
             parentFile.mkdirs()
             writeText("#!/bin/sh\n")
+        }
+        File(root, "gradle/lib").mkdirs()
+        File(root, "gradle/lib/gradle-launcher-8.13.jar").apply {
+            writeText("launcher")
         }
         val aapt2 = File(root, "aapt2").apply { writeText("aapt2") }
         return GradleToolchain(
@@ -52,13 +57,27 @@ class GradlePlanTest {
         assertTrue(invocation.command.contains("--project-dir"))
         assertTrue(invocation.command.contains(project.absolutePath))
         assertTrue(invocation.command.contains("assembleDebug"))
+        // P0-1: the launcher jar is the main class; the bin/gradle script is not involved.
+        assertEquals(
+            File(toolchain.javaHome, "bin/java").absolutePath,
+            invocation.command.first(),
+        )
+        assertTrue(invocation.command.contains("org.gradle.launcher.GradleMain"))
+        assertTrue(invocation.command.contains("-Xmx512m"))
+        assertFalse(invocation.command.any { it == toolchain.gradle.absolutePath })
         assertTrue(invocation.command.contains("-Psdk.dir=${toolchain.sdkRoot.absolutePath}"))
         assertTrue(invocation.command.any { it.startsWith("-Pandroid.aapt2FromMavenOverride=") })
         assertEquals(project, invocation.workingDir)
         assertEquals(toolchain.sdkRoot.absolutePath, invocation.environment["ANDROID_HOME"])
         assertEquals(toolchain.gradleHome.absolutePath, invocation.environment["GRADLE_USER_HOME"])
-        assertTrue(invocation.environment.getValue("PATH").contains("java/bin"))
-        assertEquals("${toolchain.javaHome}/lib:/native", invocation.environment["LD_LIBRARY_PATH"])
+        assertTrue(
+            invocation.environment.getValue("PATH")
+                .contains(File(toolchain.javaHome, "bin").absolutePath),
+        )
+        assertEquals(
+            File(toolchain.javaHome, "lib").absolutePath + ":/native",
+            invocation.environment["LD_LIBRARY_PATH"],
+        )
     }
 
     @Test
@@ -144,16 +163,52 @@ class GradlePlanTest {
     }
 
     @Test
-    fun aFailedRunReportsItsLastLines() {
+    fun aFailedRunReportsTheRootCauseNotTheTail() {
         val message = GradleRunner.failureMessage(
             GradleRunResult(
                 apk = null,
-                output = "one\ntwo\n\nFAILURE: Build failed with an exception.\n",
+                output = """
+                    FAILURE: Build failed with an exception.
+
+                    * What went wrong:
+                    Execution failed for task ':app:compileDebugKotlin'.
+                    > Compilation error. See log for more details
+                    > e: file:///work/Main.kt:9:5: Unresolved reference: nope
+
+                    * Try:
+                    > Run with --stacktrace option to get the stack trace.
+                    BUILD FAILED in 3s
+                """.trimIndent(),
                 code = 1,
             ),
         )
         assertTrue(message.contains("exit 1"))
-        assertTrue(message.contains("FAILURE"))
+        assertTrue(message, message.contains("Unresolved reference: nope"))
+        assertFalse(message, message.contains("--stacktrace"))
+    }
+
+    @Test
+    fun aGradleLogWithoutACauseBlockStillReportsTheExitCode() {
+        val message = GradleRunner.failureMessage(
+            GradleRunResult(apk = null, output = "one\ntwo\n", code = 1),
+        )
+        assertEquals("Gradle failed (exit 1).", message)
+    }
+
+    @Test
+    fun theLauncherJarIsPreferredOverTheScript() {
+        val toolchain = toolchain()
+        assertEquals(
+            File(tmp.root, "toolchain/gradle/lib/gradle-launcher-8.13.jar"),
+            GradlePlan.launcherJar(toolchain),
+        )
+        val missing = toolchain.copy(
+            gradle = File(tmp.root, "other/bin/gradle").apply {
+                parentFile.mkdirs()
+                writeText("#!/bin/sh\n")
+            },
+        )
+        assertNull(GradlePlan.launcherJar(missing))
     }
 
     @Test

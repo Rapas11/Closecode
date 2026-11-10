@@ -5,10 +5,11 @@ import com.android.apksig.ApkVerifier
 import java.io.File
 
 /**
- * Gradle's assembleRelease produces an unsigned APK on a project with no signingConfig.
- * CloseCode's keys live in the Android Keystore or encrypted app storage, so they cannot be
- * handed to Gradle as files. Sign after the fact, with the same apksig implementation the
- * custom chain uses, and verify before replacing the artifact.
+ * Gradle's assembleRelease produces an unsigned APK on a project with no signingConfig, and its
+ * debug APK is signed with a different key than CloseCode's custom engine. CloseCode's keys live
+ * in the Android Keystore or encrypted app storage, so they cannot be handed to Gradle as files.
+ * Sign after the fact, with the same apksig implementation the custom chain uses, so an APK from
+ * either engine has the same certificate (P0-7), and verify before replacing the artifact.
  */
 object ApkPostSigner {
 
@@ -31,7 +32,7 @@ object ApkPostSigner {
             .verify()
         if (!verification.isVerified) {
             temp.delete()
-            error("The release APK was signed but did not verify.")
+            error("The APK was signed but did not verify.")
         }
         if (!temp.renameTo(apk)) {
             temp.copyTo(apk, overwrite = true)

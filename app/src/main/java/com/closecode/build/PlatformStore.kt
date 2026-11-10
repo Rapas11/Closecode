@@ -65,8 +65,21 @@ class PlatformStore(
     private val root: File get() = File(context.filesDir, "sdk")
     private val platforms: File get() = File(root, "platforms")
     private val buildTools: File get() = File(root, "build-tools")
+    private val licenses: File get() = File(root, "licenses")
 
     fun rootDir(): File = root
+
+    fun platformToolsDir(): File = File(root, "platform-tools")
+
+    /**
+     * AGP validates platform-tools even for a pure Kotlin assembleDebug, and its own SDK
+     * loader refuses to continue when the package is absent (P0-3). The archive contains
+     * `platform-tools/` itself, `source.properties` and `package.xml`.
+     */
+    fun platformToolsReady(): Boolean {
+        val dir = platformToolsDir()
+        return File(dir, "adb").isFile && File(dir, "source.properties").isFile
+    }
 
     fun buildToolsVersion(): String = BUILD_TOOLS_VERSION
 
@@ -80,9 +93,27 @@ class PlatformStore(
 
     fun licenseAccepted(): Boolean = kv.getBoolean(KEY_LICENSE, false)
 
+    /**
+     * Records the user's acceptance and writes the files AGP actually looks for. The flag
+     * alone is not enough: without `<sdkRoot>/licenses/android-sdk-license` every package
+     * check fails (P0-4).
+     */
     fun acceptLicense() {
         kv.putBoolean(KEY_LICENSE, true)
+        runCatching { installLicenses() }
     }
+
+    /** Writes the accepted license hashes; idempotent and safe to call on every setup. */
+    fun installLicenses(): List<File> {
+        licenses.mkdirs()
+        return LicenseFiles.map { (name, hashes) ->
+            File(licenses, name).apply {
+                writeText(hashes.joinToString("\n", postfix = "\n"))
+            }
+        }
+    }
+
+    fun licensesReady(): Boolean = LicenseFiles.keys.all { File(licenses, it).isFile }
 
     fun installedPlatforms(): List<Int> = SdkPlatforms
         .filter { androidJar(it.api) != null }
@@ -111,7 +142,7 @@ class PlatformStore(
             ?.filter { (version, _) -> compareVersions(version, minimum) >= 0 }
             ?.maxByOrNull { (version, _) -> compareVersions(version, "0") }
 
-    fun sizeBytes(): Long = listOf(platforms, buildTools)
+    fun sizeBytes(): Long = listOf(platforms, buildTools, platformToolsDir())
         .sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
 
     fun installPlatform(
@@ -164,6 +195,7 @@ class PlatformStore(
         }
         temp.deleteRecursively()
         part.delete()
+        if (licenseAccepted()) installLicenses()
         File(target, "android.jar")
     }
 
@@ -178,7 +210,7 @@ class PlatformStore(
         buildToolsDir()?.let { dir ->
             if (File(dir, "aapt2").isFile) return@runCatching dir
         }
-        val part = File(context.cacheDir, "build-tools-$BUILD_TOOLS_VERSION.tar.xz")
+        val part = File(context.cacheDir, "build-tools-$BUILD_TOOLS_VERSION.tar.xz.part")
         download(BUILD_TOOLS_URL, part, BUILD_TOOLS_SIZE, onProgress)
         if (!sha256(part).equals(BUILD_TOOLS_SHA256, ignoreCase = true)) {
             part.delete()
@@ -205,6 +237,7 @@ class PlatformStore(
         if (buildToolsAapt2() == null) {
             throw IOException("The build-tools archive has no aapt2.")
         }
+        if (licenseAccepted()) installLicenses()
         target
     }
 
@@ -213,12 +246,67 @@ class PlatformStore(
         return !dir.exists() || dir.deleteRecursively()
     }
 
+    fun installPlatformTools(
+        onProgress: (done: Long, total: Long) -> Unit = { _, _ -> },
+    ): Result<File> = runCatching {
+        if (!licenseAccepted()) {
+            throw IOException("Accept the Android SDK license first.")
+        }
+        if (platformToolsReady()) {
+            installLicenses()
+            return@runCatching platformToolsDir()
+        }
+        val part = File(context.cacheDir, "$PLATFORM_TOOLS_FILE.part")
+        download(PLATFORM_TOOLS_URL, part, PLATFORM_TOOLS_SIZE, onProgress)
+        if (!sha256(part).equals(PLATFORM_TOOLS_SHA256, ignoreCase = true)) {
+            part.delete()
+            throw IOException("The platform-tools download failed its checksum.")
+        }
+        val temp = File(context.cacheDir, "platform-tools.tmp")
+        temp.deleteRecursively()
+        temp.mkdirs()
+        XZInputStream(part.inputStream().buffered()).use { tar ->
+            TarExtractor("", temp).extract(tar)
+        }
+        val extracted = temp.walkTopDown()
+            .firstOrNull { it.isDirectory && File(it, "source.properties").isFile }
+            ?: temp.listFiles()?.firstOrNull { it.isDirectory }
+            ?: throw IOException("The platform-tools archive has no source.properties.")
+        val target = platformToolsDir()
+        target.deleteRecursively()
+        target.parentFile?.mkdirs()
+        if (!extracted.renameTo(target)) {
+            extracted.copyRecursively(target, overwrite = true)
+            extracted.deleteRecursively()
+        }
+        temp.deleteRecursively()
+        part.delete()
+        if (!platformToolsReady()) {
+            throw IOException("The platform-tools archive has no adb.")
+        }
+        installLicenses()
+        target
+    }
+
+    fun removePlatformTools(): Boolean {
+        val dir = platformToolsDir()
+        return !dir.exists() || dir.deleteRecursively()
+    }
+
+    fun removeAllLicenses(): Boolean =
+        !licenses.exists() || licenses.deleteRecursively()
+
     fun removeAllBuildTools(): Boolean =
         !buildTools.exists() || buildTools.deleteRecursively()
 
     fun removeAllPlatforms(): Boolean =
         !platforms.exists() || platforms.deleteRecursively()
 
+    /**
+     * Resumable download: bytes already in the `.part` file are a Range request, a server that
+     * ignores the range restarts instead of appending garbage, and the result is checked against
+     * the pinned size before it can be promoted.
+     */
     private fun download(
         url: String,
         target: File,
@@ -226,20 +314,37 @@ class PlatformStore(
         onProgress: (Long, Long) -> Unit,
     ) {
         target.parentFile?.mkdirs()
+        var done = if (target.isFile) target.length() else 0L
+        if (expectedSize > 0 && done > expectedSize) {
+            target.delete()
+            done = 0L
+        }
+        if (expectedSize > 0 && done == expectedSize && done > 0L) return
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             connectTimeout = 30_000
             readTimeout = 120_000
+            if (done > 0L) setRequestProperty("Range", "bytes=$done-")
             setRequestProperty("User-Agent", "CloseCode/${android.os.Build.VERSION.SDK_INT}")
         }
         try {
             val code = connection.responseCode
-            if (code !in 200..299) throw IOException("The package server returned HTTP $code.")
-            val total = connection.contentLengthLong.takeIf { it > 0 } ?: expectedSize
-            target.outputStream().use { output ->
+            if (done > 0L && code != HttpURLConnection.HTTP_PARTIAL) {
+                // The server ignored the resume: start over rather than append the whole file.
+                target.delete()
+                done = 0L
+                if (code != HttpURLConnection.HTTP_OK && code !in 200..299) {
+                    throw IOException("The package server returned HTTP $code.")
+                }
+            } else if (code !in 200..299) {
+                throw IOException("The package server returned HTTP $code.")
+            }
+            val remaining = connection.contentLengthLong.takeIf { it > 0 }
+            val total = if (remaining != null) done + remaining else expectedSize
+            java.io.RandomAccessFile(target, "rw").use { output ->
+                output.seek(done)
                 connection.inputStream.use { input ->
                     val buffer = ByteArray(64 * 1024)
-                    var done = 0L
                     while (true) {
                         val count = input.read(buffer)
                         if (count < 0) break
@@ -248,6 +353,9 @@ class PlatformStore(
                         onProgress(done, total)
                     }
                 }
+            }
+            if (expectedSize > 0 && done != expectedSize) {
+                throw IOException("Short download: $done of $expectedSize bytes.")
             }
         } finally {
             connection.disconnect()
@@ -291,6 +399,34 @@ class PlatformStore(
         const val BUILD_TOOLS_SIZE = 14_975_324L
         const val BUILD_TOOLS_SHA256 =
             "f2af3b2533584827e749806942be127ac523c88b0e795c82b06f9c8bc1a707d2"
+
+        /** P0-3: AGP validates platform-tools even when the build does not use adb. */
+        const val PLATFORM_TOOLS_VERSION = "34.0.4"
+        const val PLATFORM_TOOLS_FILE = "platform-tools-$PLATFORM_TOOLS_VERSION-aarch64.tar.xz"
+        const val PLATFORM_TOOLS_URL =
+            "https://github.com/AndroidIDEOfficial/androidide-tools/releases/" +
+                "download/v$PLATFORM_TOOLS_VERSION/$PLATFORM_TOOLS_FILE"
+        const val PLATFORM_TOOLS_SIZE = 4_354_052L
+        const val PLATFORM_TOOLS_SHA256 =
+            "08b5b5c9899201081586f8f8682882784458ff67e6421cef65b1d6a0da877236"
+
+        /** P0-4: the exact hashes AGP's package checks look for, keyed by license file. */
+        val LicenseFiles: Map<String, List<String>> = linkedMapOf(
+            "android-sdk-license" to listOf(
+                "8933bad161af4178b1185d1a37fbf41ea5269c55",
+                "d56f5187479451eabf01fb78af6dfcb131a6481e",
+                "24333f8a63b6825ea9c5514f83c2829b004d1fee",
+            ),
+            "android-sdk-preview-license" to listOf(
+                "84831b9409646a918e30573bab4c9c91346d8abd",
+            ),
+            "android-sdk-arm-dbt-license" to listOf(
+                "859f317696f67ef3d7f30a50a5560e7834b43903",
+            ),
+            "android-googletv-license" to listOf(
+                "601085b94cd77f0b54ff86406957099ebe79c4d6",
+            ),
+        )
 
         /** AGP compatibility table from checkmehere P0-5; callable without a Context. */
         fun requiredBuildToolsForAgp(agpVersion: String?): String {

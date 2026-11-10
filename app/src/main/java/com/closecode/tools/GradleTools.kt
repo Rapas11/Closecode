@@ -2,6 +2,7 @@ package com.closecode.tools
 
 import android.content.Context
 import android.os.Build
+import com.closecode.build.GradleLauncher
 import com.closecode.build.matchesSha256
 import com.closecode.debug.DebugLog
 import com.google.gson.JsonParser
@@ -121,6 +122,10 @@ class GradleToolsStore(
         version: String? = null,
     ): ShellToolsStore.Result {
         val wanted = version?.takeIf { it.isNotBlank() } ?: manifest.distribution.version
+        // A distribution installed before the xargs fix is still on disk. Patch it on every
+        // install attempt, including the early-return "already ready" path, so re-running
+        // `closecode setup --gradle` repairs the launcher instead of keeping the broken one.
+        GradleLauncher.patch(gradleFor(wanted))
         if (isReady(wanted)) return ShellToolsStore.Result(true)
         if (!termux.isReady()) {
             val result = termux.install(progress)
@@ -173,6 +178,7 @@ class GradleToolsStore(
             if (!executable.isFile) throw IOException("The Gradle archive has no bin/gradle.")
             File(extracted, "bin").listFiles()?.forEach { it.setExecutable(true, false) }
             executable.setExecutable(true, false)
+            GradleLauncher.patch(executable)
             File(extracted, INSTALLED).writeText(
                 "${distribution.version}\n${distribution.sha256}\n",
             )

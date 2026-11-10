@@ -24,6 +24,8 @@ import java.util.concurrent.TimeUnit
  */
 object SetupCommand {
 
+    private const val MAX_SELF_TEST_CHARS = 8_000
+
     private data class LanguagePack(
         val id: String,
         val asset: String,
@@ -148,7 +150,7 @@ object SetupCommand {
                closecode setup --rust
                closecode setup --dart|--php|--ruby|--deno|--bun
                closecode setup --all
-               closecode setup --remove gradle|sdk|native|web|python
+               closecode setup --remove gradle|sdk|platform-tools|licenses|native|web|python
         Options: --json --yes --wifi-only
     """.trimIndent()
 
@@ -216,6 +218,9 @@ object SetupCommand {
             components.add("gradle")
             components.add("platform-$sdk")
             components.add("build-tools-$requestedBuildTools")
+            // P0-3: AGP validates the platform-tools package before it runs any task.
+            components.add("platform-tools")
+            components.add("licenses")
         } else {
             if (options.sdk != null) components.add("platform-${options.sdk}")
             if (options.buildTools != null) components.add("build-tools-$requestedBuildTools")
@@ -269,6 +274,34 @@ object SetupCommand {
                 addProperty("component", "build-tools-$requestedBuildTools")
                 addProperty("ok", platform.buildToolsDir(requestedBuildTools) != null ||
                     platform.bestBuildTools(requestedBuildTools) != null)
+            })
+        }
+
+        if (options.wantsGradle) {
+            // P0-3: a separately-versioned package; the archive already contains platform-tools/.
+            emit(event("download").apply {
+                addProperty("component", "platform-tools")
+                addProperty("received", 0L)
+                addProperty("total", PlatformStore.PLATFORM_TOOLS_SIZE)
+            })
+            val result = platform.installPlatformTools { done, total ->
+                emit(event("download").apply {
+                    addProperty("component", "platform-tools")
+                    addProperty("received", done)
+                    addProperty("total", total)
+                })
+            }
+            result.exceptionOrNull()?.let { throw it }
+            // P0-4: acceptLicense() wrote these, but re-assert after every install so a
+            // removed licenses/ folder is repaired by re-running setup.
+            platform.installLicenses()
+            emit(event("verify").apply {
+                addProperty("component", "platform-tools")
+                addProperty("ok", platform.platformToolsReady())
+            })
+            emit(event("verify").apply {
+                addProperty("component", "licenses")
+                addProperty("ok", platform.licensesReady())
             })
         }
 
@@ -420,6 +453,15 @@ object SetupCommand {
             platform.buildToolsAapt2()?.let { aapt2 ->
                 tests.add(selfTest("aapt2", aapt2, listOf("version"), context))
             }
+            // P0-3: prove the package is usable, not merely present.
+            tests.add(
+                selfTest(
+                    "platform-tools",
+                    File(platform.platformToolsDir(), "adb"),
+                    listOf("version"),
+                    context,
+                ),
+            )
         }
         languageStores.forEach { (id, store) ->
             languagePacks.first { it.id == id }.checks.forEach { (name, arguments) ->
@@ -447,6 +489,10 @@ object SetupCommand {
                 "uv" to File(prefix, "bin/uv"),
             )) {
                 if (command.isFile) tests.add(selfTest(name, command, listOf("--version"), context))
+            }
+            // P1-1: the real proof is a virtual environment that ends up with a working pip.
+            File(prefix, "bin/python3").takeIf { it.isFile }?.let { python ->
+                tests.add(venvSelfTest(python, context))
             }
         }
         emit(event("selftest").apply { add("checks", tests) })
@@ -504,6 +550,8 @@ object SetupCommand {
         val removed = when (what) {
             "gradle", "jdk" -> GradleToolsStore(context).remove()
             "sdk" -> platform.removeAllPlatforms() && platform.removeAllBuildTools()
+            "platform-tools", "adb" -> platform.removePlatformTools()
+            "licenses" -> platform.removeAllLicenses()
             "build-tools", "buildtools" -> platform.removeAllBuildTools()
             "native", "ndk", "cmake" -> NativeToolsStore(context).remove()
             "web", "python", "shell", "shell-tools" ->
@@ -580,6 +628,11 @@ object SetupCommand {
         }
     }
 
+    /**
+     * A real self-test (P1-5): exit code 0 *and* output that names the tool's version. The old
+     * check only looked for a non-empty line, so a launcher that printed
+     * `Could not find or load main class "-Xmx64m"` was reported as ok:true.
+     */
     private fun selfTest(
         name: String,
         executable: File,
@@ -587,24 +640,139 @@ object SetupCommand {
         context: Context,
     ): JsonObject {
         val environment = ShellEnvironment.env(context, File(context.filesDir, "tmp"))
-        val output = runCatching {
+        val text = StringBuilder()
+        var finished = false
+        var code = -1
+        val failure = runCatching {
             val process = ProcessBuilder(listOf(executable.absolutePath) + arguments)
                 .redirectErrorStream(true)
                 .apply { environment().putAll(environment) }
                 .start()
-            val text = process.inputStream.bufferedReader().use { it.readText() }
-            if (!process.waitFor(20, TimeUnit.SECONDS)) process.destroyForcibly()
-            text.trim().lines().firstOrNull().orEmpty()
-        }.getOrElse { it.message ?: it.javaClass.simpleName }
-        val ok = executable.isFile && output.isNotBlank() &&
-            !output.contains("not found", ignoreCase = true) &&
-            !output.contains("CANNOT LINK", ignoreCase = true)
+            val reader = Thread {
+                runCatching {
+                    process.inputStream.bufferedReader().forEachLine { line ->
+                        synchronized(text) {
+                            if (text.length < MAX_SELF_TEST_CHARS) text.appendLine(line)
+                        }
+                    }
+                }
+            }.apply {
+                isDaemon = true
+                start()
+            }
+            finished = process.waitFor(20, TimeUnit.SECONDS)
+            if (!finished) process.destroyForcibly()
+            reader.join(2_000)
+            code = runCatching { process.exitValue() }.getOrDefault(1)
+        }.exceptionOrNull()
+        val output = synchronized(text) { text.toString().trim() }
+        val firstLine = output.lineSequence().firstOrNull().orEmpty().take(300)
+        val broken = output.contains("Error:") ||
+            output.contains("CANNOT LINK", ignoreCase = true) ||
+            output.contains("not found", ignoreCase = true) ||
+            output.contains("Could not find or load main class", ignoreCase = true)
+        val ok = executable.isFile && failure == null && finished && code == 0 &&
+            output.isNotBlank() && !broken && versionLooksRight(name, output)
         return JsonObject().apply {
             addProperty("name", name)
             addProperty("ok", ok)
             addProperty("path", executable.absolutePath)
-            addProperty("version", output.take(300))
+            addProperty("exitCode", code)
+            addProperty("version", firstLine)
+            if (!ok) {
+                addProperty(
+                    "error",
+                    failure?.message ?: when {
+                        !executable.isFile -> "The file is missing."
+                        !finished -> "The check did not finish in 20 seconds."
+                        code != 0 -> "Exit code $code."
+                        broken -> firstLine.ifBlank { "The tool printed an error." }
+                        else -> "The version output was not recognised."
+                    },
+                )
+            }
         }
+    }
+
+    /**
+     * P1-1: the self-test that matters for Python is a virtual environment that ends up with
+     * a working pip — `python3 -m venv DIR && DIR/bin/pip -V`. A python that only answers
+     * `--version` is not enough.
+     */
+    private fun venvSelfTest(python: File, context: Context): JsonObject {
+        val directory = File(context.filesDir, "tmp/closecode-venv-check")
+        directory.deleteRecursively()
+        val environment = ShellEnvironment.env(context, File(context.filesDir, "tmp"))
+        val created = runCatching {
+            val process = ProcessBuilder(
+                listOf(python.absolutePath, "-m", "venv", directory.absolutePath),
+            )
+                .redirectErrorStream(true)
+                .apply { environment().putAll(environment) }
+                .start()
+            val text = process.inputStream.bufferedReader().use { it.readText() }
+            val finished = process.waitFor(120, TimeUnit.SECONDS)
+            if (!finished) process.destroyForcibly()
+            (finished to text)
+        }.getOrElse { error ->
+            return JsonObject().apply {
+                addProperty("name", "venv")
+                addProperty("ok", false)
+                addProperty("error", error.message ?: "The virtual environment could not be created.")
+            }
+        }
+        val pip = File(directory, "bin/pip")
+        val pipVersion = if (pip.isFile) {
+            runCatching {
+                val process = ProcessBuilder(listOf(pip.absolutePath, "-V"))
+                    .redirectErrorStream(true)
+                    .apply { environment().putAll(environment) }
+                    .start()
+                val text = process.inputStream.bufferedReader().use { it.readText() }
+                process.waitFor(30, TimeUnit.SECONDS)
+                text.trim()
+            }.getOrDefault("")
+        } else {
+            ""
+        }
+        val ok = created.first && pip.isFile && Regex("pip \\d+").containsMatchIn(pipVersion)
+        return JsonObject().apply {
+            addProperty("name", "venv")
+            addProperty("ok", ok)
+            addProperty("path", directory.absolutePath)
+            addProperty("version", pipVersion.take(300))
+            if (!ok) {
+                addProperty(
+                    "error",
+                    if (!created.first) {
+                        created.second.trim().take(300).ifBlank { "python3 -m venv failed." }
+                    } else {
+                        "The virtual environment was created but has no working pip."
+                    },
+                )
+                addProperty(
+                    "remedy",
+                    "Re-run closecode setup --python; the installer puts a verified pip wheel " +
+                        "into ensurepip.",
+                )
+            }
+        }
+    }
+
+    private fun versionLooksRight(name: String, output: String): Boolean = when (name) {
+        "java" -> Regex("(openjdk|java) version \\\"?\\d+").containsMatchIn(output)
+        "gradle" -> Regex("Gradle \\d+\\.\\d+").containsMatchIn(output)
+        "aapt2" -> output.contains("Android Asset Packaging", ignoreCase = true)
+        "platform-tools" -> output.contains("Android Debug Bridge", ignoreCase = true)
+        "python" -> Regex("Python \\d+\\.\\d+").containsMatchIn(output)
+        "pip" -> Regex("pip \\d+").containsMatchIn(output)
+        "node" -> Regex("v\\d+\\.\\d+").containsMatchIn(output)
+        "npm" -> Regex("\\d+\\.\\d+").containsMatchIn(output)
+        "uv" -> Regex("uv \\d+").containsMatchIn(output)
+        "ffmpeg" -> Regex("ffmpeg version", RegexOption.IGNORE_CASE).containsMatchIn(output)
+        "sqlite3" -> Regex("\\d+\\.\\d+\\.\\d+").containsMatchIn(output)
+        "magick" -> Regex("ImageMagick", RegexOption.IGNORE_CASE).containsMatchIn(output)
+        else -> output.isNotBlank()
     }
 
     private fun event(name: String): JsonObject = JsonObject().apply {

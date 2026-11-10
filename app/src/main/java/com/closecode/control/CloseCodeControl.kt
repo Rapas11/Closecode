@@ -188,7 +188,12 @@ object CloseCodeControl {
                 "ping" -> send(output, ping())
                 "status" -> send(output, status(context, request))
                 "cancel" -> send(output, cancel())
-                "install" -> send(output, install(context, request))
+                "install" -> {
+                    it.soTimeout = 0
+                    val json = install(context, request)
+                    send(output, json)
+                    finish(output, ok(json))
+                }
                 "launch" -> send(output, launch(context, request))
                 "logcat" -> send(output, logcat(context, request))
                 "export" -> send(output, export(context, request))
@@ -204,7 +209,13 @@ object CloseCodeControl {
                 "device" -> send(output, DeviceControl.device(context, args(request)))
                 "files" -> send(output, DeviceControl.files(context, args(request)))
                 "consent" -> send(output, DeviceControl.consent(context, args(request)))
-                "audit" -> send(output, DeviceControl.audit(context, args(request)))
+                "audit" -> send(
+                    output,
+                    DeviceControl.audit(
+                        context,
+                        args(request).filterNot { it.startsWith("--") },
+                    ),
+                )
                 "notifications" -> send(output, DeviceControl.notifications(context, args(request)))
                 "screen" -> {
                     it.soTimeout = 0
@@ -252,11 +263,12 @@ object CloseCodeControl {
                 )
                 "build" -> {
                     it.soTimeout = 0
-                    runBlocking { build(context, request, output) }
+                    val run = runBlocking { build(context, request, output) }
+                    finish(output, run?.outcome is BuildOutcome.Built)
                 }
                 "run" -> {
                     it.soTimeout = 0
-                    runBlocking { run(context, request, output) }
+                    finish(output, runBlocking { run(context, request, output) })
                 }
                 "clean" -> send(output, clean(context, request))
                 "serve" -> {
@@ -281,17 +293,22 @@ object CloseCodeControl {
                 "config" -> send(output, config(context, request))
                 "test", "lint", "format", "package", "release" -> {
                     it.soTimeout = 0
-                    runBlocking {
-                        ecosystem(context, request, output, string(request, "command").orEmpty())
-                    }
+                    finish(
+                        output,
+                        runBlocking {
+                            ecosystem(context, request, output, string(request, "command").orEmpty())
+                        },
+                    )
                 }
                 "gradle" -> {
                     it.soTimeout = 0
-                    runBlocking { gradle(context, request, output) }
+                    finish(output, runBlocking { gradle(context, request, output) })
                 }
                 "check" -> {
                     it.soTimeout = 0
-                    runBlocking { send(output, staticCheck(context, request, "check")) }
+                    val json = runBlocking { staticCheck(context, request, "check") }
+                    send(output, json)
+                    finish(output, ok(json))
                 }
                 "github" -> {
                     it.soTimeout = 0
@@ -369,12 +386,20 @@ object CloseCodeControl {
     }
 
     private fun install(context: Context, request: JsonObject): JsonObject {
+        val arguments = args(request)
+        val openSettings = arguments.any { it == "--open-settings" }
+        val path = arguments.firstOrNull { !it.startsWith("--") }
         val project = resolveProject(
             context,
             cwd = string(request, "cwd"),
             slug = string(request, "project"),
         ) ?: return error("Run closecode from a registered project folder.")
-        return DeviceTools.install(context, project.directory, args(request).firstOrNull())
+        return DeviceTools.install(
+            context,
+            project.directory,
+            path,
+            openSettings = openSettings,
+        )
     }
 
     private fun launch(context: Context, request: JsonObject): JsonObject {
@@ -497,6 +522,7 @@ object CloseCodeControl {
             string(request, "cwd"),
         ) { event -> send(output, event) }
         send(output, response)
+        finish(output, ok(response))
     }
 
     private fun tool(context: Context, request: JsonObject, output: OutputStream) {
@@ -536,11 +562,38 @@ object CloseCodeControl {
         synchronized(output) {
             runCatching {
                 output.write(text.toByteArray(StandardCharsets.UTF_8))
-                output.write("__CLOSECODE_TOOL_EXIT__${code}__\n".toByteArray(StandardCharsets.UTF_8))
+                output.write(
+                    ("__CLOSECODE_EXIT__" + code + "__\n").toByteArray(StandardCharsets.UTF_8),
+                )
                 output.flush()
                 true
             }.getOrDefault(false)
         }
+
+    /**
+     * P0-5: the shell wrapper reads this last line and exits with the code. Until now only
+     * `closecode tool` carried an exit status, so a failed build printed ok:false and still
+     * returned 0 — every agent and CI wrapper treated it as success.
+     */
+    private fun finish(output: OutputStream, ok: Boolean) {
+        finish(output, if (ok) 0 else 1)
+    }
+
+    private fun finish(output: OutputStream, code: Int) {
+        synchronized(output) {
+            runCatching {
+                output.write(
+                    ("__CLOSECODE_EXIT__" + code + "__\n").toByteArray(StandardCharsets.UTF_8),
+                )
+                output.flush()
+            }
+        }
+    }
+
+    /** The envelope's own verdict; a missing `ok` on an error-shaped reply counts as failure. */
+    private fun ok(json: JsonObject): Boolean =
+        json.get("ok")?.takeIf { !it.isJsonNull }?.asBoolean
+            ?: !json.has("error")
 
     private fun tools(context: Context, request: JsonObject, output: OutputStream) {
         val store = ShellToolsStore(context, ShellToolsManifest.load(context))
@@ -553,6 +606,7 @@ object CloseCodeControl {
                     if (!removed) addProperty("error", "Could not remove the shell tools.")
                     else addProperty("removed", true)
                 })
+                finish(output, removed)
             }
             "install" -> {
                 val result = store.install { progress ->
@@ -576,8 +630,12 @@ object CloseCodeControl {
                 } else {
                     send(output, error(result.error ?: "The shell tools did not install."))
                 }
+                finish(output, result.ok)
             }
-            else -> send(output, error("usage: closecode tools status|install|remove"))
+            else -> {
+                send(output, error("usage: closecode tools status|install|remove"))
+                finish(output, false)
+            }
         }
     }
 
@@ -611,6 +669,9 @@ object CloseCodeControl {
                 addProperty("enabled", false)
                 addProperty("action", action)
                 addProperty("needsUser", true)
+                addProperty("code", "needs_accessibility")
+                addProperty("permission", "BIND_ACCESSIBILITY_SERVICE")
+                addProperty("url", "android.settings.ACCESSIBILITY_SETTINGS")
                 addProperty("remedy", "Run closecode accessibility enable, then enable CloseCode.")
             }
         }
@@ -637,8 +698,11 @@ object CloseCodeControl {
             addProperty("enabled", false)
             addProperty("needsUser", true)
             addProperty("action", "enable")
+            addProperty("code", "needs_accessibility")
+            addProperty("permission", "BIND_ACCESSIBILITY_SERVICE")
             addProperty("url", "android.settings.ACCESSIBILITY_SETTINGS")
             addProperty("component", component)
+            addProperty("openedSettings", opened)
             if (!opened) addProperty("error", "Android did not open accessibility settings.")
             else addProperty("note", "Enable CloseCode under Settings > Accessibility, then retry.")
         }
@@ -779,10 +843,18 @@ object CloseCodeControl {
                 useGradle = useGradle,
             )
             send(output, JsonObject().apply {
-                addProperty("ok", true)
+                val ok = outcome is BuildOutcome.Built
+                addProperty("ok", ok)
                 addProperty("event", "done")
                 addProperty("summary", BuildReport.summary(outcome))
                 add("result", BuildReport.outcome(outcome))
+                if (!ok) {
+                    val result = BuildReport.outcome(outcome)
+                    result.get("message")?.takeIf { !it.isJsonNull }?.asString
+                        ?.let { addProperty("message", it) }
+                    result.get("logPath")?.takeIf { !it.isJsonNull }?.asString
+                        ?.let { addProperty("logPath", it) }
+                }
                 add("logTail", com.google.gson.JsonArray().apply {
                     BuildReport.tail(resolved.directory, 20).forEach { add(it) }
                 })
@@ -868,7 +940,9 @@ object CloseCodeControl {
             cwd = string(request, "cwd"),
             slug = string(request, "project"),
         )
-        return DeviceTools.appStatus(context, project?.directory, args(request).firstOrNull())
+        // P1-2: `--json` is a flag, never a package name.
+        val packageName = args(request).firstOrNull { !it.startsWith("--") }
+        return DeviceTools.appStatus(context, project?.directory, packageName)
     }
 
     private fun stop(context: Context, request: JsonObject): JsonObject {
@@ -903,12 +977,12 @@ object CloseCodeControl {
         send(output, DeviceTools.waitForForeground(project?.directory, argument, 15_000))
     }
 
-    private suspend fun run(context: Context, request: JsonObject, output: OutputStream) {
-        val run = build(context, request, output) ?: return
+    private suspend fun run(context: Context, request: JsonObject, output: OutputStream): Boolean {
+        val run = build(context, request, output) ?: return false
         val built = run.outcome as? BuildOutcome.Built
         if (built == null) {
             send(output, error("The build did not succeed, so nothing was installed."))
-            return
+            return false
         }
         val install = DeviceTools.install(
             context,
@@ -917,12 +991,14 @@ object CloseCodeControl {
             waitMs = 60_000,
         )
         send(output, install)
-        if (install.get("ok")?.asBoolean != true) return
-        if (install.get("needsUser")?.asBoolean == true) return
+        if (install.get("ok")?.asBoolean != true) return false
+        if (install.get("needsUser")?.asBoolean == true) return false
         val launch = DeviceTools.launch(context, run.project.directory, null)
         send(output, launch)
-        if (launch.get("ok")?.asBoolean != true) return
-        send(output, DeviceTools.waitForForeground(run.project.directory, null, 15_000))
+        if (launch.get("ok")?.asBoolean != true) return false
+        val foreground = DeviceTools.waitForForeground(run.project.directory, null, 15_000)
+        send(output, foreground)
+        return ok(foreground)
     }
 
     /**
@@ -935,7 +1011,7 @@ object CloseCodeControl {
         context: Context,
         request: JsonObject,
         output: OutputStream,
-    ) {
+    ): Boolean {
         val arguments = args(request)
         val useGradle = arguments.any {
             it == "--gradle" || it == "--full-gradle" || it == "--real"
@@ -945,49 +1021,45 @@ object CloseCodeControl {
         }
         if (task == null) {
             send(output, error(gradleTaskMessage("")))
-            return
+            return false
         }
         if (!isSupportedTask(task)) {
             send(output, error(gradleTaskMessage(task)))
-            return
+            return false
         }
         if (task == "assembleDebug" || task == "assembleRelease") {
-            build(context, request, output)
-            return
+            return build(context, request, output)?.outcome is BuildOutcome.Built
         }
         if (task in setOf("test", "testDebugUnitTest", "lint", "lintDebug", "check")) {
             if (useGradle) {
-                fullGradle(context, request, output, task)
-            } else {
-                send(output, staticCheck(context, request, task))
+                return fullGradle(context, request, output, task)
             }
-            return
+            val json = staticCheck(context, request, task)
+            send(output, json)
+            return ok(json)
         }
         if (task in setOf("bundleDebug", "bundleRelease", "tasks") ||
             task.startsWith("assemble") || task.startsWith("bundle")
         ) {
             if (useGradle) {
-                fullGradle(context, request, output, task)
-            } else {
-                send(output, error(
-                    "closecode: gradle '$task' needs the full Gradle engine. " +
-                        "Add --gradle to use it.",
-                ))
+                return fullGradle(context, request, output, task)
             }
-            return
+            send(output, error(
+                "closecode: gradle '$task' needs the full Gradle engine. " +
+                    "Add --gradle to use it.",
+            ))
+            return false
         }
-        val run = build(context, request, output) ?: return
+        val run = build(context, request, output) ?: return false
         val built = run.outcome as? BuildOutcome.Built
         if (built == null) {
             send(output, error("The build did not succeed, so nothing was installed."))
-            return
+            return false
         }
         if (task == "installDebug" || task == "installRelease") {
-            send(
-                output,
-                DeviceTools.install(context, run.project.directory, built.apk.absolutePath),
-            )
-            return
+            val json = DeviceTools.install(context, run.project.directory, built.apk.absolutePath)
+            send(output, json)
+            return ok(json)
         }
         val installed = DeviceTools.install(
             context,
@@ -996,9 +1068,11 @@ object CloseCodeControl {
         )
         if (installed.get("ok")?.asBoolean != true) {
             send(output, installed)
-            return
+            return false
         }
-        send(output, DeviceTools.launch(context, run.project.directory, null))
+        val launched = DeviceTools.launch(context, run.project.directory, null)
+        send(output, launched)
+        return ok(launched)
     }
 
     /**
@@ -1011,7 +1085,7 @@ object CloseCodeControl {
         request: JsonObject,
         output: OutputStream,
         task: String,
-    ) {
+    ): Boolean {
         val project = resolveProject(
             context,
             cwd = string(request, "cwd"),
@@ -1019,17 +1093,17 @@ object CloseCodeControl {
         )
         if (project == null) {
             send(output, error("Run closecode from a registered project folder."))
-            return
+            return false
         }
         if (BuildCoordinator.active() != null) {
             send(output, error("A build is already running."))
-            return
+            return false
         }
         val setup = try {
             BuildSetupFactory.create(context, project)
         } catch (error: Throwable) {
             send(output, error(error.message ?: error.javaClass.simpleName))
-            return
+            return false
         }
         val gradle = setup.gradle
         if (gradle == null) {
@@ -1041,7 +1115,7 @@ object CloseCodeControl {
                     setup.gradleMissing.forEach { add(it) }
                 })
             })
-            return
+            return false
         }
         send(output, JsonObject().apply {
             addProperty("ok", true)
@@ -1075,16 +1149,18 @@ object CloseCodeControl {
         }
         if (result.cancelled) {
             send(output, error("Gradle task cancelled."))
-            return
+            return false
         }
         if (result.timedOut || result.code != 0) {
             val diagnostics = GradleDiagnostics.parse(result.output)
+            val cause = GradleRunner.rootCause(result.output)
             val failure = if (diagnostics.any { it.kind == CompileDriver.Diagnostic.Kind.Error }) {
                 BuildOutcome.CompileFailed(
                     diagnostics,
                     result.code,
                     result.durationMs,
                     result.logPath,
+                    message = cause ?: "",
                 )
             } else {
                 BuildOutcome.Failed(
@@ -1099,8 +1175,10 @@ object CloseCodeControl {
                 addProperty("ok", false)
                 addProperty("error", BuildReport.summary(failure))
                 addProperty("task", task)
+                cause?.let { addProperty("message", it) }
+                result.logPath?.let { addProperty("logPath", it) }
             })
-            return
+            return false
         }
         val bundle = if (task.startsWith("bundle")) {
             GradlePlan.findBundle(project.directory)
@@ -1134,6 +1212,7 @@ object CloseCodeControl {
                 addProperty("bytes", apk.length())
             }
         })
+        return true
     }
 
     /** `closecode check`: the project's static checks, without building. */
@@ -1401,7 +1480,7 @@ object CloseCodeControl {
         request: JsonObject,
         output: OutputStream,
         task: String,
-    ) {
+    ): Boolean {
         val project = resolveProject(
             context,
             cwd = string(request, "cwd"),
@@ -1409,7 +1488,7 @@ object CloseCodeControl {
         )
         if (project == null) {
             send(output, error("Run closecode from a registered project folder."))
-            return
+            return false
         }
         val settings = ProjectSettings.read(project.directory)
         val detection = ProjectTypeDetector.detect(project.directory, settings)
@@ -1431,15 +1510,14 @@ object CloseCodeControl {
                                 code = "no_formatter",
                                 remedy = "Add Spotless or ktlint to the build, then retry.",
                             ))
-                            return
+                            return false
                         }
                     }
                 }
                 "package", "release" -> "assembleRelease"
                 else -> task
             }
-            fullGradle(context, request, output, gradleTask)
-            return
+            return fullGradle(context, request, output, gradleTask)
         }
         if (task == "clean" && detection.primary == ProjectTypeDetector.UNKNOWN) {
             send(output, CommandEnvelope.failed(
@@ -1447,7 +1525,7 @@ object CloseCodeControl {
                 code = "unknown_type",
                 remedy = "Set a type with closecode config set type <type>, then retry.",
             ))
-            return
+            return false
         }
         val result = runCatching {
             EcosystemCommand.run(
@@ -1467,6 +1545,7 @@ object CloseCodeControl {
             )
         }
         send(output, result.json)
+        return result.exitCode == 0 && ok(result.json)
     }
 
     private fun status(context: Context, request: JsonObject): JsonObject {
@@ -1819,23 +1898,42 @@ internal fun controlCommandScript(basePath: String): String = """
     done
     REQUEST="{\"token\":\"${'$'}(escape "${'$'}TOKEN")\",\"command\":\"${'$'}CMD\",\"cwd\":\"${'$'}(escape "${'$'}CWD")\",\"args\":[${'$'}ARGS]}"
     OUT="${'$'}BASE/control.out.${'$'}${'$'}"
-    if printf '%s\n' "${'$'}REQUEST" | /system/bin/nc 127.0.0.1 "${'$'}PORT" > "${'$'}OUT" 2>/dev/null; then
-      if [ "${'$'}CMD" = "tool" ]; then
-        CODE=${'$'}(tail -n 1 "${'$'}OUT" 2>/dev/null)
-        case "${'$'}CODE" in
-          __CLOSECODE_TOOL_EXIT__*__)
-            sed '${'$'}d' "${'$'}OUT"
-            CODE=${'$'}(printf '%s\n' "${'$'}CODE" | sed 's/^__CLOSECODE_TOOL_EXIT__//; s/__${'$'}//')
-            rm -f "${'$'}OUT"
-            exit "${'$'}CODE"
+    REQ="${'$'}BASE/control.req.${'$'}${'$'}"
+    FIFO="${'$'}BASE/control.fifo.${'$'}${'$'}"
+    CODE=""
+    if mkfifo "${'$'}FIFO" 2>/dev/null; then
+      # P1-4: print every line the app sends as it arrives, so `setup --gradle` shows
+      # progress instead of one dump at the end. The exit marker is captured, not printed.
+      printf '%s\n' "${'$'}REQUEST" > "${'$'}REQ"
+      /system/bin/nc 127.0.0.1 "${'$'}PORT" < "${'$'}REQ" > "${'$'}FIFO" 2>/dev/null &
+      NC_PID=${'$'}!
+      while IFS= read -r LINE; do
+        case "${'$'}LINE" in
+          __CLOSECODE_EXIT__*__|__CLOSECODE_TOOL_EXIT__*__)
+            CODE=${'$'}(printf '%s\n' "${'$'}LINE" | sed 's/^__CLOSECODE_TOOL_EXIT__//; s/^__CLOSECODE_EXIT__//; s/__${'$'}//')
             ;;
           *)
-            cat "${'$'}OUT"
-            rm -f "${'$'}OUT"
-            exit 1
+            printf '%s\n' "${'$'}LINE"
             ;;
         esac
+      done < "${'$'}FIFO"
+      wait "${'$'}NC_PID" 2>/dev/null
+      STATUS=${'$'}?
+      rm -f "${'$'}REQ" "${'$'}FIFO"
+      if [ "${'$'}STATUS" -ne 0 ] && [ -z "${'$'}CODE" ]; then
+        echo "closecode: the app did not answer." >&2
+        exit 1
       fi
+    elif printf '%s\n' "${'$'}REQUEST" | /system/bin/nc 127.0.0.1 "${'$'}PORT" > "${'$'}OUT" 2>/dev/null; then
+      LAST=${'$'}(tail -n 1 "${'$'}OUT" 2>/dev/null)
+      case "${'$'}LAST" in
+        __CLOSECODE_EXIT__*__|__CLOSECODE_TOOL_EXIT__*__)
+          sed '${'$'}d' "${'$'}OUT"
+          CODE=${'$'}(printf '%s\n' "${'$'}LAST" | sed 's/^__CLOSECODE_TOOL_EXIT__//; s/^__CLOSECODE_EXIT__//; s/__${'$'}//')
+          rm -f "${'$'}OUT"
+          exit "${'$'}CODE"
+          ;;
+      esac
       cat "${'$'}OUT"
       rm -f "${'$'}OUT"
     else
@@ -1843,4 +1941,8 @@ internal fun controlCommandScript(basePath: String): String = """
       echo "closecode: the app did not answer." >&2
       exit 1
     fi
+    if [ -n "${'$'}CODE" ]; then
+      exit "${'$'}CODE"
+    fi
+    exit 0
 """.trimIndent() + "\n"

@@ -130,6 +130,15 @@ class ShellToolsStore(
                 temp.copyRecursively(directory, overwrite = true)
                 deleteTree(temp)
             }
+            // P1-1: Termux's python ships an empty ensurepip bundle, so `python3 -m venv`
+            // cannot install pip. The installer puts the pinned wheel there itself.
+            if (PythonPackRepair.needsRepair(directory)) {
+                progress(Progress("download", 0, PythonPackRepair.PIP_SIZE, "pip", "pip wheel"))
+                val repaired = PythonPackRepair.repair(context, directory) { done, total ->
+                    progress(Progress("download", done, total, "pip", "pip wheel"))
+                }
+                repaired.exceptionOrNull()?.let { throw it }
+            }
             DebugLog.crumb("TOOLS", "$label installed · ${packages.size} packages")
             progress(Progress("done", total, total, null, "$label installed."))
             Result(true)

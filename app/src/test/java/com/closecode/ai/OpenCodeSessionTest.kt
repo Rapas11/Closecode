@@ -96,10 +96,14 @@ class OpenCodeSessionTest {
     @Test
     fun theCreateBodyCarriesTheCanonicalLocation() {
         val body = OpenCodeSessions.createSessionBody(directory)
+        val parsed = org.json.JSONObject(body)
 
         assertTrue(body.contains("\"location\""))
-        assertTrue(body.contains(java.io.File(directory).canonicalPath))
-        assertTrue(body.contains("\"title\":\"CloseCode\""))
+        assertEquals(
+            java.io.File(directory).canonicalPath,
+            parsed.getJSONObject("location").getString("directory"),
+        )
+        assertEquals("CloseCode", parsed.getString("title"))
     }
 
     @Test

@@ -44,6 +44,28 @@ data class GradleRunResult(
 
 object GradlePlan {
 
+    /**
+     * The `gradle-launcher-*.jar` that holds `org.gradle.launcher.GradleMain`.
+     *
+     * Running the `bin/gradle` shell script on Android is the P0-1 defect: the script feeds its
+     * JVM options through `xargs` to strip quotes, and toybox's xargs keeps them, so
+     * `"-Xmx64m"` becomes the main class. Launching the same entry point directly removes the
+     * dependency on xargs and on shell quoting. Null means the distribution has no launcher jar
+     * (or a layout we do not know), and the caller falls back to the script.
+     */
+    fun launcherJar(toolchain: GradleToolchain): File? {
+        val distribution = toolchain.gradle.parentFile?.parentFile ?: return null
+        val lib = File(distribution, "lib")
+        val candidates = lib.listFiles()
+            ?.filter { it.isFile && it.name.startsWith("gradle-launcher-") && it.extension == "jar" }
+            .orEmpty()
+        if (candidates.isEmpty()) return null
+        val exact = candidates.firstOrNull {
+            it.name == "gradle-launcher-${toolchain.distributionVersion}.jar"
+        }
+        return exact ?: candidates.maxByOrNull { it.name }
+    }
+
     fun build(
         toolchain: GradleToolchain,
         projectDir: File,
@@ -52,10 +74,28 @@ object GradlePlan {
         initScript: File,
         options: GradleBuildOptions = GradleBuildOptions(),
     ): GradleInvocation {
-        val shell = if (File("/system/bin/sh").isFile) "/system/bin/sh" else "/bin/sh"
-        val command = mutableListOf(
-            shell,
-            toolchain.gradle.absolutePath,
+        val launcher = launcherJar(toolchain)
+        val command = if (launcher != null) {
+            // Exactly the invocation verified by hand on the phone: no shell, no xargs, no
+            // -javaagent line. The JVM options are separate argv entries, so nothing can
+            // reinterpret a quote.
+            mutableListOf(
+                File(toolchain.javaHome, "bin/java").absolutePath,
+                // The client JVM only parses arguments and forks the build; Gradle's own
+                // launcher gives it 64 MB. The build heap is set separately through
+                // -Dorg.gradle.jvmargs (sized to the phone's RAM).
+                "-Xmx512m",
+                "-Dfile.encoding=UTF-8",
+                "-Dorg.gradle.appname=gradle",
+                "-classpath",
+                launcher.absolutePath,
+                "org.gradle.launcher.GradleMain",
+            )
+        } else {
+            val shell = if (File("/system/bin/sh").isFile) "/system/bin/sh" else "/bin/sh"
+            mutableListOf(shell, toolchain.gradle.absolutePath)
+        }
+        command += mutableListOf(
             "--project-dir",
             projectDir.absolutePath,
             "--gradle-user-home",
@@ -315,16 +355,54 @@ object GradleRunner {
     fun failureMessage(result: GradleRunResult): String {
         if (result.cancelled) return "Build cancelled."
         if (result.timedOut) return "Gradle did not finish in time."
-        val tail = result.output.lines()
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-            .takeLast(6)
-            .joinToString(" ")
-            .take(500)
-        return if (tail.isEmpty()) {
+        val cause = rootCause(result.output)
+        return if (cause == null) {
             "Gradle failed (exit ${result.code})."
         } else {
-            "Gradle failed (exit ${result.code}): $tail"
+            "Gradle failed (exit ${result.code}): $cause"
         }
+    }
+
+    /**
+     * The line Gradle itself calls the root cause.
+     *
+     * The tail of a failed Gradle log is the stack trace; the cause is the block between
+     * `* What went wrong:` and `* Try:`, and inside that block the deepest `>` line is the
+     * specific exception. Falls back to the last `Caused by:` line, then to null when the
+     * log is not a Gradle failure report at all (P0-6).
+     */
+    fun rootCause(output: String): String? {
+        val lines = causeBlock(output)
+        if (lines.isNotEmpty()) return lines.last()
+        return causedBy(output).lastOrNull()
+    }
+
+    /** Every cause Gradle lists, deepest last, ready for the structured diagnostics array. */
+    fun causedBy(output: String): List<String> {
+        val block = causeBlock(output)
+        val explicit = output.lineSequence()
+            .map { it.trim() }
+            .filter { it.startsWith("Caused by:") }
+            .map { it.removePrefix("Caused by:").trim() }
+            .filter { it.isNotEmpty() }
+            .toList()
+        if (explicit.isNotEmpty()) return explicit
+        return block.toList()
+    }
+
+    private fun causeBlock(output: String): List<String> {
+        val marker = "* What went wrong:"
+        val start = output.indexOf(marker)
+        if (start < 0) return emptyList()
+        var block = output.substring(start + marker.length)
+        val end = listOf("* Try:", "BUILD FAILED", "* Exception is:")
+            .map { block.indexOf(it) }
+            .filter { it > 0 }
+            .minOrNull()
+        if (end != null) block = block.substring(0, end)
+        return block.lineSequence()
+            .map { it.trim().removePrefix(">").trim() }
+            .filter { it.isNotEmpty() }
+            .toList()
     }
 }

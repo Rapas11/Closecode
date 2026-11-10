@@ -257,26 +257,34 @@ class BuildEngine(
             return BuildOutcome.Cancelled
         }
         var apk = result.apk
-        if (apk != null && buildType == "release") {
+        // P0-7: Full Gradle signs a debug APK with its own ~/.android/debug.keystore, while the
+        // custom engine uses CloseCode's key. Installing one over the other then fails with
+        // INSTALL_FAILED_UPDATE_INCOMPATIBLE. Re-sign every Gradle artifact with the selected
+        // CloseCode key so both engines produce the same certificate; a release APK that Gradle
+        // left unsigned becomes installable through the same step.
+        if (apk != null) {
             val signer = gradle.signer
             if (signer == null) {
-                val message = "The release APK was built but no signing key is available."
-                _state.value = BuildState.Failed(Step.Sign, message)
-                return BuildOutcome.Failed(message)
-            }
-            _state.value = BuildState.Running(Step.Sign, 0.9f)
-            onLog("Signing ${apk.name} on the phone…")
-            apk = try {
-                ApkPostSigner.sign(
-                    apk,
-                    signer,
-                    GradleReader.read(projectDir).minSdk ?: 29,
-                )
-            } catch (error: Throwable) {
-                val message = "Signing the release APK failed: " +
-                    (error.message ?: error.javaClass.simpleName)
-                _state.value = BuildState.Failed(Step.Sign, message)
-                return BuildOutcome.Failed(message)
+                if (buildType == "release") {
+                    val message = "The release APK was built but no signing key is available."
+                    _state.value = BuildState.Failed(Step.Sign, message)
+                    return BuildOutcome.Failed(message)
+                }
+            } else {
+                _state.value = BuildState.Running(Step.Sign, 0.9f)
+                onLog("Signing ${apk.name} with the CloseCode key…")
+                apk = try {
+                    ApkPostSigner.sign(
+                        apk,
+                        signer,
+                        GradleReader.read(projectDir).minSdk ?: 29,
+                    )
+                } catch (error: Throwable) {
+                    val message = "Signing the APK failed: " +
+                        (error.message ?: error.javaClass.simpleName)
+                    _state.value = BuildState.Failed(Step.Sign, message)
+                    return BuildOutcome.Failed(message)
+                }
             }
         }
         if (apk != null) {
@@ -309,6 +317,7 @@ class BuildEngine(
                 result.code,
                 result.durationMs,
                 result.logPath,
+                message,
             )
         } else {
             BuildOutcome.Failed(message, diagnostics, result.code, result.durationMs, result.logPath)
@@ -375,6 +384,8 @@ sealed interface BuildOutcome {
         val exitCode: Int? = null,
         val durationMs: Long? = null,
         val logPath: String? = null,
+        /** The root-cause line, not the stack tail (P0-6). */
+        val message: String = "",
     ) : BuildOutcome
     data class Failed(
         val message: String,

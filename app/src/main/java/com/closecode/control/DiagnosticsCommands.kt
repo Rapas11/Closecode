@@ -70,12 +70,20 @@ object ToolchainStatusCommand {
                 })
             }
         val missing = JsonArray()
+        if (!File(gradle.javaHome, "bin/java").isFile) missing.add("jdk")
         if (!gradle.isReady()) missing.add("gradle")
         if (platforms.none { it.asJsonObject.get("ok")?.asBoolean == true }) missing.add("platform")
         if (buildTools.none { it.asJsonObject.get("ok")?.asBoolean == true }) missing.add("build-tools")
-        if (!native.ndkReady()) missing.add("ndk")
-        if (!native.cmakeReady()) missing.add("cmake")
-        if (!ShellToolsStore(context, ShellToolsManifest.load(context)).isReady()) missing.add("shell-tools")
+        if (!platform.platformToolsReady()) missing.add("platform-tools")
+        if (!platform.licensesReady()) missing.add("licenses")
+        // P1-3: NDK, CMake and the shell pack are optional. A Kotlin-only app builds fine
+        // without them, so their absence must not turn `ok` false.
+        val optionalMissing = JsonArray()
+        if (!native.ndkReady()) optionalMissing.add("ndk")
+        if (!native.cmakeReady()) optionalMissing.add("cmake")
+        if (!ShellToolsStore(context, ShellToolsManifest.load(context)).isReady()) {
+            optionalMissing.add("shell-tools")
+        }
         return JsonObject().apply {
             addProperty("ok", missing.size() == 0)
             addProperty("prefix", paths.shellTools.absolutePath)
@@ -104,6 +112,7 @@ object ToolchainStatusCommand {
                 addProperty("cmake", native.cmakeHome.takeIf { native.cmakeReady() }?.absolutePath)
             })
             add("missing", missing)
+            add("optionalMissing", optionalMissing)
             add("sizes", JsonObject().apply {
                 addProperty("gradleCacheBytes", File(gradle.gradleHome, "caches")
                     .walkTopDown().filter { it.isFile }.sumOf { it.length() })

@@ -56,7 +56,11 @@ object BuildSetupFactory {
             val bundledAapt2 = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
                 .takeIf { it.isFile }
             val downloadedAapt2 = platformStore.buildToolsAapt2()
-            val aapt2 = selectAapt2(bundledAapt2, downloadedAapt2)
+            val aapt2 = selectAapt2(
+                bundledAapt2,
+                downloadedAapt2,
+                File(context.filesDir, "toolchain"),
+            )
             val androidJar = platformStore.androidJar(compileSdk) ?: store.jar("android-jar")
             val stdlib = store.jar("kotlin-stdlib")
             val signer = runCatching { SigningStore(context).identity() }.getOrNull()
@@ -118,6 +122,9 @@ object BuildSetupFactory {
                         else "build-tools $requiredBuildTools (or newer)",
                     )
                 }
+                // AGP checks both even for a Kotlin-only assembleDebug (P0-3, P0-4).
+                if (!platformStore.platformToolsReady()) add("platform-tools")
+                if (!platformStore.licensesReady()) add("Android SDK licenses")
                 if (aapt2 == null) add("aapt2")
                 if (nativeUsage.usesNative && native == null) add("Native tools")
             }
@@ -192,4 +199,28 @@ object BuildSetupFactory {
         }
 }
 
-internal fun selectAapt2(bundled: File?, downloaded: File?): File? = bundled ?: downloaded
+/**
+ * P0-2: AGP's `Aapt2FromMaven.create` rejects an override whose file name is not exactly
+ * `aapt2`. The APK ships `libaapt2.so`, so handing that path to Gradle fails before a single
+ * task runs even though the binary is a working aapt2. Prefer the downloaded build-tools
+ * `aapt2`; otherwise copy the bundled one to a writable, correctly named file once and reuse it.
+ */
+internal fun selectAapt2(
+    bundled: File?,
+    downloaded: File?,
+    stagingDir: File? = null,
+): File? {
+    if (downloaded != null && downloaded.isFile && downloaded.name == "aapt2") return downloaded
+    if (bundled == null || !bundled.isFile) return downloaded?.takeIf { it.isFile }
+    // Already named correctly (a test or a future pack); nothing to copy.
+    if (bundled.name == "aapt2") return bundled
+    val directory = stagingDir ?: bundled.parentFile ?: return null
+    if (!directory.isDirectory && !directory.mkdirs()) return null
+    val destination = File(directory, "aapt2")
+    if (destination.isFile && destination.length() == bundled.length()) return destination
+    return runCatching {
+        bundled.copyTo(destination, overwrite = true)
+        destination.setExecutable(true, false)
+        destination
+    }.getOrNull()
+}

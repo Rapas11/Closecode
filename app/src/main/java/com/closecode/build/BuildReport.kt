@@ -74,6 +74,7 @@ object BuildReport {
                 addProperty("ok", false)
                 addProperty("state", "failed")
                 addProperty("code", "compile_failed")
+                if (outcome.message.isNotBlank()) addProperty("message", outcome.message)
                 add("diagnostics", diagnostics(outcome.diagnostics))
                 outcome.diagnostics.filter { it.kind == CompileDriver.Diagnostic.Kind.Error }
                     .forEach { add("errors", com.google.gson.JsonPrimitive(it.message)) }
@@ -113,7 +114,9 @@ object BuildReport {
         is BuildOutcome.Built ->
             "Built ${outcome.apk.name} in ${outcome.seconds} s (${outcome.sizeBytes} bytes)."
         is BuildOutcome.CompileFailed ->
-            "Compilation failed with ${outcome.diagnostics.size} diagnostic(s)."
+            outcome.message.ifBlank {
+                "Compilation failed with ${outcome.diagnostics.size} diagnostic(s)."
+            }
         is BuildOutcome.Failed -> "Build failed: ${outcome.message}"
         is BuildOutcome.Blocked ->
             "The project cannot be built yet: ${outcome.findings.count { it.severity == ProjectCheck.Severity.Error }} error(s)."

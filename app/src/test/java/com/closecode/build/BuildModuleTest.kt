@@ -272,11 +272,15 @@ class BuildModuleTest {
     }
 
     @Test
-    fun theBundledAapt2IsPreferredOverTheOlderDownload() {
-        val bundled = File(tmp.root, "libaapt2.so")
-        val downloaded = File(tmp.root, "aapt2")
-        assertEquals(bundled, selectAapt2(bundled, downloaded))
+    fun theDownloadedAapt2IsUsedAndTheBundledOneIsRenamed() {
+        val bundled = File(tmp.root, "libaapt2.so").apply { writeText("bundled") }
+        val downloaded = File(tmp.root, "aapt2").apply { writeText("downloaded") }
+        assertEquals(downloaded, selectAapt2(bundled, downloaded))
         assertEquals(downloaded, selectAapt2(null, downloaded))
+        val staging = tmp.newFolder("staging")
+        val copied = selectAapt2(bundled, null, staging)
+        assertEquals(File(staging, "aapt2"), copied)
+        assertTrue(copied != null && copied.isFile)
         assertNull(selectAapt2(null, null))
     }
 

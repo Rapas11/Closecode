@@ -252,12 +252,15 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
     }
     val scope = rememberCoroutineScope()
     var license by remember { mutableStateOf(store.licenseAccepted()) }
+    var licenseFiles by remember { mutableStateOf(store.licensesReady()) }
     var installed by remember { mutableStateOf(store.installedPlatforms().toSet()) }
     var buildTools by remember { mutableStateOf(store.buildToolsAapt2() != null) }
+    var platformTools by remember { mutableStateOf(store.platformToolsReady()) }
     var busy by remember { mutableStateOf<String?>(null) }
     var progress by remember { mutableStateOf<Pair<Long, Long>?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
     var pendingInstall by remember { mutableStateOf<Int?>(null) }
+    var pendingTools by remember { mutableStateOf(false) }
 
     fun install(api: Int) {
         busy = "Android $api"
@@ -294,6 +297,25 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
         }
     }
 
+    /** P0-3: the same downloader the CLI uses, with the same pinned archive and checksum. */
+    fun installPlatformTools() {
+        busy = "Platform tools"
+        progress = null
+        message = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                store.installPlatformTools { done, total ->
+                    scope.launch { progress = done to total }
+                }
+            }
+            platformTools = store.platformToolsReady()
+            licenseFiles = store.licensesReady()
+            busy = null
+            progress = null
+            message = result.exceptionOrNull()?.message ?: "Platform tools installed."
+        }
+    }
+
     SettingsPageScaffold(title = "SDK Manager", onBack = onBack) {
         Text(
             "Platforms are downloaded from Google. Build tools come from AndroidIDE; the " +
@@ -314,6 +336,11 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
                 PageAction("Accept Android SDK License") {
                     store.acceptLicense()
                     license = true
+                    licenseFiles = store.licensesReady()
+                    if (pendingTools) {
+                        pendingTools = false
+                        installPlatformTools()
+                    }
                     pendingInstall?.let { api ->
                         pendingInstall = null
                         install(api)
@@ -381,6 +408,66 @@ internal fun SdkManagerPage(onBack: () -> Unit) {
             } else {
                 PageAction(if (busy == "Build tools") "Installing…" else "Install build tools") {
                     if (busy == null) installTools()
+                }
+            }
+        }
+        PageCard {
+            Text(
+                "Platform tools 34.0.4",
+                color = c.mock.text,
+                fontSize = 14.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                if (platformTools) "Installed · adb available"
+                else "Not installed · Gradle needs this package",
+                color = c.mock.muted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+            )
+            if (platformTools) {
+                PageAction("Remove", danger = true) {
+                    if (store.removePlatformTools()) platformTools = false
+                }
+            } else {
+                PageAction(
+                    if (busy == "Platform tools") "Installing…" else "Install platform tools",
+                ) {
+                    if (busy != null) return@PageAction
+                    if (!license) pendingTools = true else installPlatformTools()
+                }
+            }
+        }
+        PageCard {
+            Text(
+                "SDK licenses",
+                color = c.mock.text,
+                fontSize = 14.sp,
+                fontFamily = Sans,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                if (licenseFiles) "Written · android-sdk-license and previews"
+                else "Not written · a Gradle build will fail",
+                color = c.mock.muted,
+                fontSize = 12.sp,
+                fontFamily = Sans,
+            )
+            if (licenseFiles) {
+                PageAction("Remove", danger = true) {
+                    store.removeAllLicenses()
+                    licenseFiles = false
+                }
+            } else {
+                PageAction("Write license files") {
+                    store.acceptLicense()
+                    license = true
+                    licenseFiles = store.licensesReady()
+                    if (pendingTools) {
+                        pendingTools = false
+                        installPlatformTools()
+                    }
                 }
             }
         }
