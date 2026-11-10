@@ -40,10 +40,25 @@ internal object UiScript {
         val defaultPackage = projectDir?.let {
             DeviceTools.packageName(it, null)
         }
+        if (steps.size() > MAX_STEPS) {
+            return CommandEnvelope.failed(
+                "The script has ${steps.size()} steps; the limit is $MAX_STEPS.",
+                code = "script_too_large",
+                remedy = "Split the script into smaller scenarios.",
+            )
+        }
         val results = JsonArray()
         var failed = false
         var index = 0
+        val startedAt = System.currentTimeMillis()
+        var previousKey: String? = null
+        var repeats = 0
         for (element in steps) {
+            if (System.currentTimeMillis() - startedAt > MAX_RUNTIME_MS) {
+                failed = true
+                results.add(failure(index, "timeout", "The script exceeded its time budget."))
+                break
+            }
             val step = runCatching { element.asJsonObject }.getOrNull()
             if (step == null) {
                 failed = true
@@ -54,6 +69,18 @@ internal object UiScript {
             }
             val action = step.string("action") ?: step.string("do") ?: ""
             val packageName = step.string("package") ?: defaultPackage
+            val stepKey = "$action|${step.string("package")}|${selector(step)}|${step.string("text")}|${step.string("key")}"
+            if (stepKey == previousKey) {
+                repeats++
+                if (repeats >= LOOP_LIMIT) {
+                    failed = true
+                    results.add(failure(index, action, "Loop detected: the same step repeated $LOOP_LIMIT times."))
+                    break
+                }
+            } else {
+                previousKey = stepKey
+                repeats = 1
+            }
             val gate = DeviceControl.checkUiConsent(context, packageName)
             val result = gate ?: execute(context, projectDir, action, step, packageName)
             val ok = result.get("ok")?.asBoolean == true
@@ -67,6 +94,7 @@ internal object UiScript {
                 failed = true
                 if (!keepGoing) break
             }
+            if (action.lowercase() !in setOf("sleep", "wait-ms")) Thread.sleep(STEP_DELAY_MS)
             index++
         }
         val envelope = CommandEnvelope.of(
@@ -81,6 +109,11 @@ internal object UiScript {
         envelope.addProperty("script", file.absolutePath)
         return envelope
     }
+
+    private const val MAX_STEPS = 500
+    private const val LOOP_LIMIT = 8
+    private const val STEP_DELAY_MS = 75L
+    private const val MAX_RUNTIME_MS = 30 * 60 * 1000L
 
     private fun execute(
         context: Context,

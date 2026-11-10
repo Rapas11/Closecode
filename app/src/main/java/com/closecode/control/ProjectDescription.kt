@@ -194,7 +194,7 @@ internal object ProjectDescription {
             addProperty("deploy", "closecode deploy [--preset auto|static|node|python|android] [--dry-run] [--yes]")
             addProperty("selftest", "closecode selftest [--build] [--keep]")
             addProperty("testUi", "closecode test-ui script.json")
-            addProperty("audit", "closecode audit tail")
+            addProperty("audit", "closecode audit tail|egress")
             addProperty("install", "closecode install")
             addProperty("launch", "closecode launch")
             addProperty("app", "closecode app — installed/foreground state and screen size")

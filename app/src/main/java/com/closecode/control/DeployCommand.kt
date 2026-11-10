@@ -194,6 +194,13 @@ internal object DeployCommand {
         command += "${source.absolutePath}/"
         command += "$user@$host:$target"
         val result = execute(context, projectDir, command, timeout = 600_000)
+        AuditLog(context).record(
+            "egress deploy",
+            host,
+            listOf(user, path, source.absolutePath, if (dryRun) "dry-run" else "live"),
+            result.code == 0,
+            null,
+        )
         return envelope(result, dryRun, source, host, path)
     }
 
@@ -223,6 +230,13 @@ internal object DeployCommand {
         val destination = if (path.endsWith("/") || File(path).extension.isEmpty()) "$path/${file.name}" else path
         command += "$user@$host:$destination"
         val result = execute(context, projectDir, command, timeout = 300_000)
+        AuditLog(context).record(
+            "egress deploy",
+            host,
+            listOf(user, path, file.absolutePath),
+            result.code == 0,
+            null,
+        )
         return envelope(result, false, file, host, path)
     }
 

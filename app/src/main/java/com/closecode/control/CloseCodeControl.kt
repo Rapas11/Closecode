@@ -269,7 +269,10 @@ object CloseCodeControl {
                 }
                 "jobs" -> send(output, jobs(context, request))
                 "secrets" -> send(output, SecretsCommand.run(context, args(request)))
-                "selftest" -> send(output, SelftestCommand.run(context, args(request)))
+                "selftest" -> {
+                    it.soTimeout = 0
+                    runBlocking { send(output, SelftestCommand.run(context, args(request))) }
+                }
                 "deploy" -> {
                     it.soTimeout = 0
                     send(output, deploy(context, request))
@@ -1722,7 +1725,7 @@ internal fun controlCommandScript(basePath: String): String = """
         files) echo "usage: closecode files list|read|write|delete|share|media|uri" ;;
         exec) echo "usage: closecode exec [--cwd DIR] [--timeout MS] [--approve] <command...>" ;;
         consent) echo "usage: closecode consent status|grant|revoke <capability> [--package PKG]" ;;
-        audit) echo "usage: closecode audit tail [lines]" ;;
+        audit) echo "usage: closecode audit tail [lines]|egress [lines]" ;;
         notifications|notify) echo "usage: closecode notifications list|dismiss <key>|reply <key> <text>|enable" ;;
         screen) echo "usage: closecode screen start [--audio] [--path FILE]|stop|status" ;;
         stop-all) echo "usage: closecode stop-all" ;;

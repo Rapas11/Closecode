@@ -493,7 +493,16 @@ internal object DeviceControl {
                     addProperty("bytes", file.length())
                 }
             }
-            "share", "publish", "media-save" -> shareToMediaStore(context, root, rest)
+            "share", "publish", "media-save" -> {
+                if (!arguments.contains("--yes")) {
+                    return CommandEnvelope.failed(
+                        "Publishing a file to shared storage needs confirmation.",
+                        code = "needs_confirmation",
+                        remedy = "Re-run with --yes after checking the file.",
+                    )
+                }
+                shareToMediaStore(context, root, rest)
+            }
             "media", "media-list" -> listMediaStore(context, rest)
             "uri", "media-read" -> readMediaStore(context, rest)
             "delete", "rm" -> {
@@ -516,6 +525,15 @@ internal object DeviceControl {
             )
         }
         AuditLog(context).record("files $action", null, rest, result.ok(), result.get("error")?.asString)
+        if (action in setOf("share", "publish", "media-save") && result.ok()) {
+            AuditLog(context).record(
+                "egress files share",
+                null,
+                listOf(rest.firstOrNull().orEmpty()),
+                true,
+                null,
+            )
+        }
         return result
     }
 
@@ -824,12 +842,24 @@ internal object DeviceControl {
 
     fun audit(context: Context, arguments: List<String>): JsonObject {
         val action = arguments.firstOrNull()?.lowercase(Locale.US) ?: "tail"
-        if (action != "tail" && action != "list") {
-            return CommandEnvelope.failed("usage: closecode audit tail [lines]", code = "usage")
+        if (action !in setOf("tail", "list", "egress")) {
+            return CommandEnvelope.failed("usage: closecode audit tail [lines]|egress [lines]", code = "usage")
         }
         val lines = arguments.getOrNull(1)?.toIntOrNull() ?: 50
+        val entries = AuditLog(context).tail(lines)
+        val filtered = if (action == "egress") {
+            JsonArray().apply {
+                entries.forEach { entry ->
+                    val name = entry.takeIf { it.isJsonObject }
+                        ?.asJsonObject?.get("action")?.takeIf { it.isJsonPrimitive }?.asString
+                    if (name?.startsWith("egress ") == true) add(entry)
+                }
+            }
+        } else {
+            entries
+        }
         return CommandEnvelope.of(ok = true).apply {
-            add("entries", AuditLog(context).tail(lines))
+            add("entries", filtered)
         }
     }
 

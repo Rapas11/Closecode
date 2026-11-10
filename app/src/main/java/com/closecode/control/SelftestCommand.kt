@@ -1,6 +1,10 @@
 package com.closecode.control
 
 import android.content.Context
+import com.closecode.build.BuildCoordinator
+import com.closecode.build.BuildReport
+import com.closecode.build.BuildSetup
+import com.closecode.build.BuildSetupFactory
 import com.closecode.build.ProjectTypeDetector
 import com.closecode.tools.ShellEnvironment
 import com.closecode.ui.project.ProjectRepository
@@ -26,7 +30,7 @@ internal object SelftestCommand {
         Case("node-express", listOf("package.json", "server.js"), ProjectTypeDetector.NPM),
     )
 
-    fun run(context: Context, arguments: List<String>): JsonObject {
+    suspend fun run(context: Context, arguments: List<String>): JsonObject {
         val repository = ProjectRepository(context)
         val keep = arguments.contains("--keep")
         val build = arguments.contains("--build") || arguments.contains("--full")
@@ -82,20 +86,17 @@ internal object SelftestCommand {
         }
     }
 
-    private fun buildCheck(context: Context, directory: File, template: String): JsonObject {
+    private suspend fun buildCheck(context: Context, directory: File, template: String): JsonObject {
+        if (template == "android-compose") return buildAndroid(context, directory, template)
         val command = when (template) {
             "web-vite" -> listOf("npm", "run", "build")
             "node-express" -> listOf("node", "--check", "server.js")
             "python-fastapi", "python-cli" -> listOf("python3", "-m", "compileall", "-q", ".")
-            "android-compose" -> null
             else -> null
         }
         if (command == null) {
             return check("$template-build", true, "no build step for this template").apply {
                 addProperty("skipped", true)
-                if (template == "android-compose") {
-                    addProperty("note", "Build Android templates with closecode build on the phone.")
-                }
             }
         }
         val builder = ProcessBuilder(command)
@@ -116,6 +117,48 @@ internal object SelftestCommand {
             ).apply { addProperty("exitCode", code) }
         }.getOrElse {
             check("$template-build", false, "could not start ${command.first()}: ${it.message}")
+        }
+    }
+
+    private suspend fun buildAndroid(
+        context: Context,
+        directory: File,
+        template: String,
+    ): JsonObject {
+        if (BuildCoordinator.active() != null) {
+            return check("$template-build", false, "another build is already running")
+        }
+        val project = BuildSetup.Project(
+            slug = "selftest-android",
+            name = "Selftest Android",
+            directory = directory,
+            id = "selftest-android-${System.nanoTime()}",
+        )
+        return runCatching {
+            val setup = BuildSetupFactory.create(context, project)
+            val outcome = BuildCoordinator.build(
+                context = context,
+                project = project,
+                setup = setup,
+                onEvent = {},
+                onLog = {},
+                buildType = "debug",
+                useGradle = setup.gradle != null,
+            )
+            val report = BuildReport.outcome(outcome)
+            check(
+                "$template-build",
+                report.get("ok")?.asBoolean == true,
+                BuildReport.summary(outcome),
+            ).apply { add("build", report) }
+        }.getOrElse {
+            check(
+                "$template-build",
+                false,
+                "could not start the Android build: ${it.message}",
+            ).apply {
+                addProperty("remedy", "Run closecode setup --gradle, then run closecode selftest --build.")
+            }
         }
     }
 

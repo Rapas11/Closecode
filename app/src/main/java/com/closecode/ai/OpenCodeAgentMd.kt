@@ -58,7 +58,8 @@ object OpenCodeAgentMd {
           notification listener; `enable` opens the system settings screen.
         - `closecode screen start [--audio] [--path FILE]|stop|status` — screen recording.
         - `closecode consent status|grant|revoke <capability> [--package PKG]` and
-          `closecode audit tail` — grants, per-app grants, and the audit log.
+          `closecode audit tail|egress` — grants, per-app grants, the audit log, and outbound
+          deploy/share transfers.
         - `closecode secrets list|set <name> <value>|set <name> --file FILE|delete <name>` — the
           encrypted deployment vault; values are never printed.
         - `closecode deploy [--preset auto|static|node|python|android] [--dry-run] [--yes]` —
