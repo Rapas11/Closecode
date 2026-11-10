@@ -188,6 +188,7 @@ internal object ProjectDescription {
             addProperty("files", "closecode files list|read|write|delete")
             addProperty("exec", "closecode exec [--approve] <command...>")
             addProperty("consent", "closecode consent status|grant|revoke <capability>")
+            addProperty("testUi", "closecode test-ui script.json")
             addProperty("audit", "closecode audit tail")
             addProperty("install", "closecode install")
             addProperty("launch", "closecode launch")

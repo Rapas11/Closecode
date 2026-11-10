@@ -59,6 +59,7 @@ object OpenCodeSkill {
         - `closecode exec [--cwd DIR] [--timeout MS] [--approve] <command>` — run a shell command with streamed output.
         - `closecode consent status|grant|revoke <capability>` and `closecode audit tail` — grants and the audit log.
         - `closecode stop-all` — stop every job and cancel the running build.
+        - `closecode test-ui script.json` — run a multi-app step script (launch → wait → tap → assert).
 
         - `closecode signing status|generate|import` — the key used for release APKs.
         - `closecode launch` — open the installed app on this phone.

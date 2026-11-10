@@ -24,6 +24,7 @@ import com.closecode.device.CloseCodeAccessibilityService
 import com.closecode.device.DeviceTools
 import com.closecode.device.control.ConsentStore
 import com.closecode.device.control.DeviceControl
+import com.closecode.device.control.UiScript
 import com.closecode.jobs.JobManager
 import com.closecode.tools.ShellToolsManifest
 import com.closecode.tools.ShellToolsStore
@@ -195,6 +196,10 @@ object CloseCodeControl {
                 "input" -> send(output, DeviceTools.input(args(request)))
                 "ui" -> send(output, ui(context, request))
                 "apps" -> send(output, apps(context, request))
+                "test-ui" -> {
+                    it.soTimeout = 0
+                    runBlocking { send(output, testUi(context, request)) }
+                }
                 "intent" -> send(output, intent(context, request))
                 "device" -> send(output, DeviceControl.device(context, args(request)))
                 "files" -> send(output, DeviceControl.files(context, args(request)))
@@ -311,6 +316,11 @@ object CloseCodeControl {
             }
         }
         return DeviceTools.ui(cleaned)
+    }
+
+    private fun testUi(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(context, string(request, "cwd"), string(request, "project"))
+        return UiScript.run(context, project?.directory, args(request))
     }
 
     private fun apps(context: Context, request: JsonObject): JsonObject {
@@ -1691,12 +1701,13 @@ internal fun controlCommandScript(basePath: String): String = """
         consent) echo "usage: closecode consent status|grant|revoke <capability>" ;;
         audit) echo "usage: closecode audit tail [lines]" ;;
         stop-all) echo "usage: closecode stop-all" ;;
+        test-ui) echo "usage: closecode test-ui <script.json> [--keep-going]" ;;
         stop) echo "usage: closecode stop [package]" ;;
         restart) echo "usage: closecode restart [package]" ;;
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing gradle check github run app stop restart ui apps intent device files exec consent audit stop-all clean serve preview jobs init config test lint format package release"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing gradle check github run app stop restart ui apps intent device files exec consent audit stop-all test-ui clean serve preview jobs init config test lint format package release"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac
@@ -1727,6 +1738,7 @@ internal fun controlCommandScript(basePath: String): String = """
       consent|grants) CMD=consent ;;
       audit) CMD=audit ;;
       stop-all|stopall) CMD=stop-all ;;
+      test-ui|testui) CMD=test-ui ;;
       log|logcat) CMD=logcat ;;
       x|export) CMD=export ;;
       shot|screenshot) CMD=screenshot ;;
@@ -1752,7 +1764,7 @@ internal fun controlCommandScript(basePath: String): String = """
       rel|release) CMD=release ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|stop-all|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
       *) help >&2; exit 2 ;;
     esac
     case "${'$'}{2:-}" in
