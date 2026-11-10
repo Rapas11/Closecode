@@ -667,12 +667,9 @@ object SetupCommand {
         }.exceptionOrNull()
         val output = synchronized(text) { text.toString().trim() }
         val firstLine = output.lineSequence().firstOrNull().orEmpty().take(300)
-        val broken = output.contains("Error:") ||
-            output.contains("CANNOT LINK", ignoreCase = true) ||
-            output.contains("not found", ignoreCase = true) ||
-            output.contains("Could not find or load main class", ignoreCase = true)
+        val broken = SelfTestRules.looksBroken(output)
         val ok = executable.isFile && failure == null && finished && code == 0 &&
-            output.isNotBlank() && !broken && versionLooksRight(name, output)
+            output.isNotBlank() && !broken && SelfTestRules.versionLooksRight(name, output)
         return JsonObject().apply {
             addProperty("name", name)
             addProperty("ok", ok)
@@ -757,22 +754,6 @@ object SetupCommand {
                 )
             }
         }
-    }
-
-    private fun versionLooksRight(name: String, output: String): Boolean = when (name) {
-        "java" -> Regex("(openjdk|java) version \\\"?\\d+").containsMatchIn(output)
-        "gradle" -> Regex("Gradle \\d+\\.\\d+").containsMatchIn(output)
-        "aapt2" -> output.contains("Android Asset Packaging", ignoreCase = true)
-        "platform-tools" -> output.contains("Android Debug Bridge", ignoreCase = true)
-        "python" -> Regex("Python \\d+\\.\\d+").containsMatchIn(output)
-        "pip" -> Regex("pip \\d+").containsMatchIn(output)
-        "node" -> Regex("v\\d+\\.\\d+").containsMatchIn(output)
-        "npm" -> Regex("\\d+\\.\\d+").containsMatchIn(output)
-        "uv" -> Regex("uv \\d+").containsMatchIn(output)
-        "ffmpeg" -> Regex("ffmpeg version", RegexOption.IGNORE_CASE).containsMatchIn(output)
-        "sqlite3" -> Regex("\\d+\\.\\d+\\.\\d+").containsMatchIn(output)
-        "magick" -> Regex("ImageMagick", RegexOption.IGNORE_CASE).containsMatchIn(output)
-        else -> output.isNotBlank()
     }
 
     private fun event(name: String): JsonObject = JsonObject().apply {

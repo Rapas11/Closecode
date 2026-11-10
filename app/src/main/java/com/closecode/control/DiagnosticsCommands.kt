@@ -290,7 +290,7 @@ object DoctorCommand {
         // Only the checks the build needs decide `ok`; the optional ones are listed apart.
         val requiredChecks = checks.filter { it.asJsonObject.get("optional") == null }
         val optionalChecks = checks.filter { it.asJsonObject.get("optional") != null }
-        val ok = requiredChecks.all { it.asJsonObject.get("ok")?.asBoolean == true }
+        val ok = DiagnosticRules.overallOk(checks.map { it.asJsonObject })
         return JsonObject().apply {
             addProperty("ok", ok)
             addProperty("build", com.closecode.BuildConfig.VERSION_CODE)

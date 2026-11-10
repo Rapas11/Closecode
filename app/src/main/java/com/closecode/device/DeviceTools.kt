@@ -10,6 +10,7 @@ import android.provider.Settings
 import com.closecode.build.GradleReader
 import com.closecode.build.InstallHelper
 import com.closecode.build.LogcatReader
+import com.closecode.device.control.InstallChecks
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.io.File
@@ -53,10 +54,9 @@ object DeviceTools {
             .orEmpty()
         if (packageName != null && installedCertificates.isNotEmpty() &&
             apkCertificates.isNotEmpty() &&
-            installedCertificates.none { it in apkCertificates }
+            !InstallChecks.certificatesMatch(installedCertificates, apkCertificates)
         ) {
-            return signatureMismatch(
-                context = context,
+            return InstallChecks.signatureMismatch(
                 packageName = packageName,
                 installed = installedCertificates,
                 incoming = apkCertificates,
@@ -76,14 +76,14 @@ object DeviceTools {
                 }
             }
             if (!context.packageManager.canRequestPackageInstalls()) {
-                return permissionNeeded(context, openedSettings = openSettings)
+                return InstallChecks.permissionNeeded(context.packageName, openSettings)
             }
         }
         val before = packageName?.let { packageStamp(context, it) }
         return runCatching {
             val session = InstallHelper.install(context, apk, packageName.orEmpty())
             if (session < 0) {
-                permissionNeeded(context, openedSettings = false)
+                InstallChecks.permissionNeeded(context.packageName, openedSettings = false)
             } else {
                 val installed = if (waitMs > 0 && packageName != null) {
                     waitForInstall(context, packageName, before, waitMs)
@@ -559,60 +559,6 @@ object DeviceTools {
             }.getOrNull()
         }
     }.getOrDefault(emptyList())
-
-    /** P0-7: an in-place update can never cross signing keys; say so before Android does. */
-    private fun signatureMismatch(
-        context: Context,
-        packageName: String,
-        installed: List<String>,
-        incoming: List<String>,
-    ): JsonObject = JsonObject().apply {
-        addProperty("ok", false)
-        addProperty("code", "signature_mismatch")
-        addProperty("needsUser", true)
-        addProperty("package", packageName)
-        addProperty(
-            "error",
-            "$packageName is installed with a different signing key, so Android will not " +
-                "update it in place.",
-        )
-        addProperty(
-            "remedy",
-            "Uninstall the existing app (its data will be lost) or rebuild with the same " +
-                "signing key.",
-        )
-        add("actions", JsonArray().apply {
-            add("closecode apps uninstall $packageName")
-            add("closecode signing select <key>")
-        })
-        addProperty("installedSha256", installed.firstOrNull().orEmpty())
-        addProperty("apkSha256", incoming.firstOrNull().orEmpty())
-    }
-
-    /** P1-7: the permission is actionable — name it, link the screen, and give the command. */
-    private fun permissionNeeded(context: Context, openedSettings: Boolean): JsonObject =
-        JsonObject().apply {
-            addProperty("ok", false)
-            addProperty("code", "needs_permission")
-            addProperty("needsUser", true)
-            addProperty("needsPermission", true)
-            addProperty("permission", "REQUEST_INSTALL_PACKAGES")
-            addProperty("url", "android.settings.MANAGE_UNKNOWN_APP_SOURCES")
-            addProperty("package", context.packageName)
-            addProperty(
-                "error",
-                "Allow CloseCode to install apps in Settings, then try again.",
-            )
-            addProperty(
-                "remedy",
-                "Allow CloseCode to install unknown apps, then run closecode install again.",
-            )
-            add("actions", JsonArray().apply {
-                add("closecode install --open-settings")
-                add("closecode install")
-            })
-            if (openedSettings) addProperty("openedSettings", true)
-        }
 
     /** Opens the exact "install unknown apps" screen for CloseCode, with a details fallback. */
     private fun openInstallSettings(context: Context): Boolean {
