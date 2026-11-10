@@ -29,6 +29,9 @@ object SetupCommand {
         val web: Boolean = false,
         val python: Boolean = false,
         val native: Boolean = false,
+        val media: Boolean = false,
+        val go: Boolean = false,
+        val rust: Boolean = false,
         val all: Boolean = false,
         val sdk: Int? = null,
         val buildTools: String? = null,
@@ -42,9 +45,12 @@ object SetupCommand {
         val wantsGradle: Boolean get() = gradle || all
         val wantsWeb: Boolean get() = web || python || all
         val wantsNative: Boolean get() = native || ndk || cmake || all
+        val wantsMedia: Boolean get() = media
+        val wantsGo: Boolean get() = go
+        val wantsRust: Boolean get() = rust
         val valid: Boolean
-            get() = wantsGradle || wantsWeb || wantsNative || sdk != null ||
-                buildTools != null || !remove.isNullOrBlank()
+            get() = wantsGradle || wantsWeb || wantsNative || wantsMedia || wantsGo || wantsRust ||
+                sdk != null || buildTools != null || !remove.isNullOrBlank()
     }
 
     fun parse(arguments: List<String>): Options {
@@ -56,6 +62,9 @@ object SetupCommand {
                 "--web", "web" -> options = options.copy(web = true)
                 "--python", "python" -> options = options.copy(python = true)
                 "--native", "native" -> options = options.copy(native = true)
+                "--media", "media", "--ffmpeg" -> options = options.copy(media = true)
+                "--go", "go", "--golang" -> options = options.copy(go = true)
+                "--rust", "rust", "--cargo" -> options = options.copy(rust = true)
                 "--all", "all" -> options = options.copy(all = true)
                 "--yes", "-y" -> options = options.copy(yes = true)
                 "--wifi-only", "wifi", "--wifi" -> options = options.copy(wifiOnly = true)
@@ -110,6 +119,9 @@ object SetupCommand {
                closecode setup --web
                closecode setup --python
                closecode setup --native
+               closecode setup --media
+               closecode setup --go
+               closecode setup --rust
                closecode setup --all
                closecode setup --remove gradle|sdk|native|web|python
         Options: --json --yes --wifi-only
@@ -150,6 +162,30 @@ object SetupCommand {
         platform.acceptLicense()
         val gradle = GradleToolsStore(context)
         val shellTools = ShellToolsStore(context, ShellToolsManifest.load(context))
+        val mediaTools = ShellToolsStore(
+            context,
+            ShellToolsManifest.load(context, "shell-media.json"),
+            prefixName = "m",
+            homeName = "hm",
+            label = "Media tools",
+            cachePrefix = "media-tools",
+        )
+        val goTools = ShellToolsStore(
+            context,
+            ShellToolsManifest.load(context, "shell-go.json"),
+            prefixName = "go",
+            homeName = "hgo",
+            label = "Go tools",
+            cachePrefix = "go-tools",
+        )
+        val rustTools = ShellToolsStore(
+            context,
+            ShellToolsManifest.load(context, "shell-rust.json"),
+            prefixName = "rs",
+            homeName = "hrs",
+            label = "Rust tools",
+            cachePrefix = "rust-tools",
+        )
         val native = NativeToolsStore(context)
         val sdk = options.sdk ?: 35
         val requestedBuildTools = options.buildTools ?: platform.buildToolsVersion()
@@ -164,6 +200,9 @@ object SetupCommand {
             if (options.buildTools != null) components.add("build-tools-$requestedBuildTools")
         }
         if (options.wantsWeb) components.add("web-python")
+        if (options.wantsMedia) components.add("media-tools")
+        if (options.wantsGo) components.add("go-tools")
+        if (options.wantsRust) components.add("rust-tools")
         if (options.wantsNative) {
             if (options.cmake || options.native || options.all) components.add("cmake")
             if (options.ndk || options.native || options.all) components.add("ndk")
@@ -284,6 +323,55 @@ object SetupCommand {
             })
         }
 
+        if (options.wantsMedia) {
+            var lastBytes = 0L
+            var lastAt = System.currentTimeMillis()
+            val result = mediaTools.install { progress ->
+                val now = System.currentTimeMillis()
+                val speed = if (now > lastAt) {
+                    ((progress.doneBytes - lastBytes) * 1000L / (now - lastAt)).coerceAtLeast(0)
+                } else {
+                    0L
+                }
+                if (now - lastAt >= 500 || progress.stage == "done") {
+                    lastBytes = progress.doneBytes
+                    lastAt = now
+                }
+                emit(event("download").apply {
+                    addProperty("component", "media-tools")
+                    addProperty("stage", progress.stage)
+                    addProperty("received", progress.doneBytes)
+                    addProperty("total", progress.totalBytes)
+                    addProperty("bytesPerSec", speed)
+                    progress.packageName?.let { addProperty("package", it) }
+                    addProperty("message", progress.message)
+                })
+            }
+            if (!result.ok) throw IllegalStateException(result.error ?: "The media tools did not install.")
+            emit(event("verify").apply {
+                addProperty("component", "media-tools")
+                addProperty("ok", mediaTools.isReady())
+            })
+        }
+
+        if (options.wantsGo) {
+            val result = installPack(context, goTools, "go-tools", emit)
+            if (!result.ok) throw IllegalStateException(result.error ?: "The Go tools did not install.")
+            emit(event("verify").apply {
+                addProperty("component", "go-tools")
+                addProperty("ok", goTools.isReady())
+            })
+        }
+
+        if (options.wantsRust) {
+            val result = installPack(context, rustTools, "rust-tools", emit)
+            if (!result.ok) throw IllegalStateException(result.error ?: "The Rust tools did not install.")
+            emit(event("verify").apply {
+                addProperty("component", "rust-tools")
+                addProperty("ok", rustTools.isReady())
+            })
+        }
+
         if (options.wantsNative) {
             var lastBytes = 0L
             var lastAt = System.currentTimeMillis()
@@ -322,6 +410,28 @@ object SetupCommand {
                 tests.add(selfTest("aapt2", aapt2, listOf("version"), context))
             }
         }
+        if (options.wantsGo) {
+            val go = File(goTools.directory, "bin/go")
+            if (go.isFile) tests.add(selfTest("go", go, listOf("version"), context))
+        }
+        if (options.wantsRust) {
+            for ((name, command) in listOf(
+                "rustc" to File(rustTools.directory, "bin/rustc"),
+                "cargo" to File(rustTools.directory, "bin/cargo"),
+            )) {
+                if (command.isFile) tests.add(selfTest(name, command, listOf("--version"), context))
+            }
+        }
+        if (options.wantsMedia) {
+            val prefix = mediaTools.directory
+            for ((name, command) in listOf(
+                "ffmpeg" to File(prefix, "bin/ffmpeg"),
+                "sqlite3" to File(prefix, "bin/sqlite3"),
+                "magick" to File(prefix, "bin/magick"),
+            )) {
+                if (command.isFile) tests.add(selfTest(name, command, listOf("-version"), context))
+            }
+        }
         if (options.wantsWeb) {
             val prefix = shellTools.directory
             for ((name, command) in listOf(
@@ -353,6 +463,37 @@ object SetupCommand {
         return response
     }
 
+    private fun installPack(
+        context: Context,
+        store: ShellToolsStore,
+        component: String,
+        emit: (JsonObject) -> Unit,
+    ): ShellToolsStore.Result {
+        var lastBytes = 0L
+        var lastAt = System.currentTimeMillis()
+        return store.install { progress ->
+            val now = System.currentTimeMillis()
+            val speed = if (now > lastAt) {
+                ((progress.doneBytes - lastBytes) * 1000L / (now - lastAt)).coerceAtLeast(0)
+            } else {
+                0L
+            }
+            if (now - lastAt >= 500 || progress.stage == "done") {
+                lastBytes = progress.doneBytes
+                lastAt = now
+            }
+            emit(event("download").apply {
+                addProperty("component", component)
+                addProperty("stage", progress.stage)
+                addProperty("received", progress.doneBytes)
+                addProperty("total", progress.totalBytes)
+                addProperty("bytesPerSec", speed)
+                progress.packageName?.let { addProperty("package", it) }
+                addProperty("message", progress.message)
+            })
+        }
+    }
+
     private fun remove(context: Context, what: String, emit: (JsonObject) -> Unit): JsonObject {
         val platform = PlatformStore(context, SharedPreferencesKeyValueStore(context))
         val removed = when (what) {
@@ -362,6 +503,30 @@ object SetupCommand {
             "native", "ndk", "cmake" -> NativeToolsStore(context).remove()
             "web", "python", "shell", "shell-tools" ->
                 ShellToolsStore(context, ShellToolsManifest.load(context)).remove()
+            "media", "ffmpeg", "media-tools" -> ShellToolsStore(
+                context,
+                ShellToolsManifest.load(context, "shell-media.json"),
+                prefixName = "m",
+                homeName = "hm",
+                label = "Media tools",
+                cachePrefix = "media-tools",
+            ).remove()
+            "go", "golang", "go-tools" -> ShellToolsStore(
+                context,
+                ShellToolsManifest.load(context, "shell-go.json"),
+                prefixName = "go",
+                homeName = "hgo",
+                label = "Go tools",
+                cachePrefix = "go-tools",
+            ).remove()
+            "rust", "cargo", "rust-tools" -> ShellToolsStore(
+                context,
+                ShellToolsManifest.load(context, "shell-rust.json"),
+                prefixName = "rs",
+                homeName = "hrs",
+                label = "Rust tools",
+                cachePrefix = "rust-tools",
+            ).remove()
             else -> return error("Unknown component '$what'. ${usage()}", "setup")
         }
         emit(event("done").apply {

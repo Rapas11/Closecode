@@ -17,6 +17,37 @@ class ConsentStore(context: Context) {
         return kv.getBoolean("consent.$clean", clean in DEFAULT_GRANTED)
     }
 
+    /** A grant for one package, falling back to the global capability. */
+    fun isGrantedFor(capability: String, scope: String?): Boolean {
+        if (isGranted(capability)) return true
+        val clean = normalize(capability) ?: return false
+        val key = scope?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        return kv.getBoolean("consent.$clean.scope.$key", false)
+    }
+
+    fun grantFor(capability: String, scope: String): Boolean {
+        val clean = normalize(capability) ?: return false
+        val key = scope.trim().takeIf { it.isNotEmpty() } ?: return false
+        kv.putBoolean("consent.$clean.scope.$key", true)
+        return true
+    }
+
+    fun revokeFor(capability: String, scope: String): Boolean {
+        val clean = normalize(capability) ?: return false
+        val key = scope.trim().takeIf { it.isNotEmpty() } ?: return false
+        kv.putBoolean("consent.$clean.scope.$key", false)
+        return true
+    }
+
+    fun scopedGrants(): Map<String, Set<String>> {
+        val prefixes = CAPABILITIES.associateWith { "consent.$it.scope." }
+        return prefixes.mapValues { (_, prefix) ->
+            kv.keys().filter { it.startsWith(prefix) && kv.getBoolean(it, false) }
+                .map { it.removePrefix(prefix) }
+                .toSet()
+        }
+    }
+
     fun grant(capability: String): Boolean {
         val clean = normalize(capability) ?: return false
         kv.putBoolean("consent.$clean", true)
@@ -50,7 +81,7 @@ class ConsentStore(context: Context) {
             "screen", "screenshot" -> "screen"
             "file", "files", "storage" -> "files"
             "shell", "exec", "pty" -> "shell"
-            "notification", "notifications" -> "notifications"
+            "notification", "notifications", "notify" -> "notifications"
             "secret", "secrets", "vault" -> "secrets"
             "build", "install", "network" -> raw.trim().lowercase()
             else -> null

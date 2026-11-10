@@ -168,14 +168,14 @@ internal object ProjectDescription {
             )
             addProperty(
                 "preview",
-                "closecode preview [--screenshot] [--dom] — build and serve a static site, then " +
-                    "open it",
+                "closecode preview [--screenshot] [--dom] [--eval JS] [--test FILE] — build and " +
+                    "serve a static site in the in-app WebView, then run rendered checks",
             )
             addProperty("jobs", "closecode jobs list|stop <id>|logs <id>|stop-all")
             addProperty(
                 "init",
                 "closecode init --template android-compose|web-vite|web-static|" +
-                    "python-fastapi|python-cli|node-express [name]",
+                    "python-fastapi|python-cli|node-express [name] [--install]",
             )
             addProperty(
                 "config",
@@ -185,9 +185,14 @@ internal object ProjectDescription {
             addProperty("apps", "closecode apps list|launch|stop|info|install|uninstall|clear")
             addProperty("intent", "closecode intent open|start|broadcast|share")
             addProperty("device", "closecode device battery|network|storage|display|volume|brightness|dnd|clipboard|sensors")
-            addProperty("files", "closecode files list|read|write|delete")
+            addProperty("files", "closecode files list|read|write|delete|share|media|uri")
             addProperty("exec", "closecode exec [--approve] <command...>")
-            addProperty("consent", "closecode consent status|grant|revoke <capability>")
+            addProperty("notifications", "closecode notifications list|dismiss <key>|reply <key> <text>|enable")
+            addProperty("screen", "closecode screen start [--audio] [--path FILE]|stop|status")
+            addProperty("consent", "closecode consent status|grant|revoke <capability> [--package PKG]")
+            addProperty("secrets", "closecode secrets list|set <name> <value>|set <name> --file FILE|delete <name>")
+            addProperty("deploy", "closecode deploy [--preset auto|static|node|python|android] [--dry-run] [--yes]")
+            addProperty("selftest", "closecode selftest [--keep]")
             addProperty("testUi", "closecode test-ui script.json")
             addProperty("audit", "closecode audit tail")
             addProperty("install", "closecode install")

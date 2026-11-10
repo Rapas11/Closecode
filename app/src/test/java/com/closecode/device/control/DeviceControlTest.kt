@@ -12,6 +12,8 @@ class DeviceControlTest {
         assertEquals("ui-automation", ConsentStore.normalize("ui"))
         assertEquals("files", ConsentStore.normalize("storage"))
         assertEquals("shell", ConsentStore.normalize("exec"))
+        assertEquals("notifications", ConsentStore.normalize("notify"))
+        assertEquals("secrets", ConsentStore.normalize("vault"))
         assertEquals(null, ConsentStore.normalize("root"))
     }
 

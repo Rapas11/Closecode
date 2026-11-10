@@ -3,7 +3,8 @@ package com.closecode.control
 import android.content.Context
 import com.closecode.build.ProjectSettings
 import com.closecode.build.ProjectTypeDetector
-import com.closecode.device.DeviceTools
+import android.content.Intent
+import com.closecode.device.WebPreviewActivity
 import com.closecode.jobs.JobInfo
 import com.closecode.jobs.JobManager
 import com.closecode.ui.ide.openOpenCodeInBrowser
@@ -11,9 +12,8 @@ import com.closecode.ui.project.PreviewServer
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.io.File
-import java.net.InetSocketAddress
-import java.net.Socket
 import java.nio.charset.StandardCharsets
+import java.util.UUID
 
 /**
  * The website equivalent of `closecode run`: build the static output, serve it on loopback,
@@ -26,6 +26,8 @@ internal object PreviewCommand {
         val open: Boolean = true,
         val screenshot: Boolean = false,
         val dom: Boolean = false,
+        val test: String? = null,
+        val eval: String? = null,
         val stop: Boolean = false,
         val status: Boolean = false,
     )
@@ -41,6 +43,14 @@ internal object PreviewCommand {
                 "--open" -> options = options.copy(open = true)
                 "--screenshot", "--shot" -> options = options.copy(screenshot = true)
                 "--dom", "--html" -> options = options.copy(dom = true)
+                "--test", "--script" -> {
+                    options = options.copy(test = arguments.getOrNull(index + 1))
+                    index++
+                }
+                "--eval" -> {
+                    options = options.copy(eval = arguments.getOrNull(index + 1))
+                    index++
+                }
                 "--port" -> {
                     arguments.getOrNull(index + 1)?.toIntOrNull()?.let {
                         options = options.copy(port = it)
@@ -50,6 +60,8 @@ internal object PreviewCommand {
                 else -> when {
                     argument.startsWith("--port=") -> argument.substringAfter('=').toIntOrNull()
                         ?.let { options = options.copy(port = it) }
+                    argument.startsWith("--test=") -> options = options.copy(test = argument.substringAfter('='))
+                    argument.startsWith("--eval=") -> options = options.copy(eval = argument.substringAfter('='))
                 }
             }
             index++
@@ -134,28 +146,81 @@ internal object PreviewCommand {
             url = url,
             stop = { server.stop() },
         )
-        if (options.open) {
-            runCatching { openOpenCodeInBrowser(context, url) }.onFailure {
-                return JsonObject().apply {
-                    addProperty("ok", true)
-                    addProperty("id", job.id)
-                    addProperty("url", url)
-                    addProperty("artifact", root.absolutePath)
-                    addProperty("note", "The preview is serving, but no browser could be opened.")
-                }
+        val script = when {
+            options.test != null -> runCatching {
+                val file = File(options.test).takeIf { it.isAbsolute }
+                    ?: File(projectDir, options.test)
+                file.readText()
+            }.getOrNull()
+            options.eval != null -> options.eval
+            options.dom -> "return document.documentElement.outerHTML;"
+            else -> null
+        }
+        if (options.test != null && script == null) {
+            JobManager.stop(context, job.id)
+            return CommandEnvelope.failed(
+                "Test script not found: ${options.test}",
+                code = "not_found",
+            )
+        }
+        val wantsHarness = script != null || options.screenshot || options.open
+        val outputDir = File(File(context.filesDir, "preview"), UUID.randomUUID().toString())
+        outputDir.mkdirs()
+        if (wantsHarness) {
+            val intent = Intent(context, WebPreviewActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                .putExtra(WebPreviewActivity.EXTRA_URL, url)
+                .putExtra(WebPreviewActivity.EXTRA_OUTPUT, outputDir.absolutePath)
+                .putExtra(WebPreviewActivity.EXTRA_SCREENSHOT, options.screenshot)
+                .putExtra(WebPreviewActivity.EXTRA_FINISH, script != null || options.screenshot)
+            script?.let { intent.putExtra(WebPreviewActivity.EXTRA_SCRIPT, it) }
+            val opened = runCatching { context.startActivity(intent) }.isSuccess
+            if (!opened) {
+                openOpenCodeInBrowser(context, url)
+            }
+            if (!opened && (script != null || options.screenshot)) {
+                JobManager.stop(context, job.id)
+                return CommandEnvelope.failed(
+                    "Could not open the in-app preview. Open CloseCode on screen and retry.",
+                    code = "preview_failed",
+                )
             }
         }
-        val screenshot = if (options.screenshot) {
+        val result = if (script != null || options.screenshot) {
+            waitForHarness(outputDir, 30_000, options.screenshot)
+        } else {
+            null
+        }
+        val harnessError = result?.string("error")
+        val testValue = result?.get("value")
+        val failed = result?.boolean("ok") == false
+        val dom = if (options.dom) {
+            testValue?.let { runCatching { it.asString }.getOrNull() ?: it.toString() }
+        } else {
+            null
+        }
+        val testJson = if (options.test != null && testValue != null) {
             runCatching {
-                Thread.sleep(1_500)
-                DeviceTools.screenshot(context, projectDir, null)
+                if (testValue.isJsonPrimitive) {
+                    com.google.gson.JsonParser.parseString(testValue.asString)
+                } else {
+                    testValue
+                }
             }.getOrNull()
         } else {
             null
         }
-        val dom = if (options.dom) fetchText(url) else null
-        return JsonObject().apply {
-            addProperty("ok", true)
+        val screenshotFile = File(outputDir, "screenshot.png").takeIf { it.isFile }
+        val envelope = if (failed || harnessError != null) {
+            CommandEnvelope.failed(
+                harnessError ?: "The browser test failed.",
+                code = "preview_test_failed",
+                remedy = "Read the test result, fix the page or script, then retry.",
+            )
+        } else {
+            CommandEnvelope.of(ok = true)
+        }
+        return envelope.apply {
             addProperty("id", job.id)
             addProperty("kind", job.kind)
             addProperty("url", url)
@@ -164,15 +229,39 @@ internal object PreviewCommand {
             addProperty("artifact", root.absolutePath)
             add("artifacts", JsonArray().apply {
                 add(root.absolutePath)
-                (screenshot?.get("path")?.takeIf { it.isJsonPrimitive })?.asString?.let { add(it) }
+                screenshotFile?.let { add(it.absolutePath) }
             })
-            add("errors", JsonArray())
-            add("warnings", JsonArray())
-            addProperty("exitCode", 0)
             addProperty("durationMs", 0)
-            screenshot?.let { add("screenshot", it) }
+            testJson?.let { add("test", it) }
             dom?.let { addProperty("dom", it) }
+            screenshotFile?.let {
+                addProperty("screenshot", it.absolutePath)
+                add("warnings", JsonArray())
+            }
+            addProperty("mode", "webview")
         }
+    }
+
+    private fun JsonObject.string(key: String): String? = runCatching {
+        get(key)?.takeIf { it.isJsonPrimitive }?.asString
+    }.getOrNull()
+
+    private fun JsonObject.boolean(key: String): Boolean? = runCatching {
+        get(key)?.takeIf { it.isJsonPrimitive }?.asBoolean
+    }.getOrNull()
+
+    private fun waitForHarness(directory: File, timeoutMs: Long, screenshot: Boolean): JsonObject? {
+        val result = File(directory, "result.json")
+        val shot = File(directory, "screenshot.png")
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (result.isFile) return runCatching {
+                com.google.gson.JsonParser.parseString(result.readText()).asJsonObject
+            }.getOrNull()
+            if (screenshot && shot.isFile) return JsonObject()
+            Thread.sleep(200)
+        }
+        return null
     }
 
     private fun outputRoot(projectDir: File): File? = listOf("dist", "out", "build", "public", ".")
@@ -187,19 +276,4 @@ internal object PreviewCommand {
         }
     }
 
-    private fun fetchText(url: String): String? = runCatching {
-        val port = url.substringAfterLast(':').toInt()
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress("127.0.0.1", port), 2_000)
-            socket.getOutputStream().write(
-                "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
-                    .toByteArray(StandardCharsets.UTF_8),
-            )
-            socket.getOutputStream().flush()
-            val bytes = socket.getInputStream().readBytes()
-            String(bytes, StandardCharsets.UTF_8)
-                .substringAfter("\r\n\r\n")
-                .take(200_000)
-        }
-    }.getOrNull()
 }

@@ -15,6 +15,9 @@ object ShellEnvironment {
         val dataDir: File,
         val filesDir: File,
         val shellTools: File,
+        val mediaTools: File,
+        val goTools: File,
+        val rustTools: File,
         val gradlePrefix: File,
         val sdk: File,
         val gradleRoot: File,
@@ -27,6 +30,9 @@ object ShellEnvironment {
             dataDir = data,
             filesDir = files,
             shellTools = ShellToolsRepo.workingPrefix(data),
+            mediaTools = ShellToolsRepo.workingPrefix(data, "m"),
+            goTools = ShellToolsRepo.workingPrefix(data, "go"),
+            rustTools = ShellToolsRepo.workingPrefix(data, "rs"),
             gradlePrefix = File(data, "file/g"),
             sdk = File(files, "sdk"),
             gradleRoot = File(files, "gradle"),
@@ -71,11 +77,17 @@ object ShellEnvironment {
         home: File,
     ) {
         val shell = paths.shellTools.takeIf { File(it, "bin/sh").exists() }
+        val media = paths.mediaTools.takeIf { File(it, "bin").isDirectory }
+        val go = paths.goTools.takeIf { File(it, "bin/go").isFile }
+        val rust = paths.rustTools.takeIf { File(it, "bin/cargo").isFile }
         val java = javaHome(paths)
         val gradleBin = gradleBin(paths)
         val certificate = certificate(paths)
         val path = buildList {
             shell?.let { add(File(it, "bin").absolutePath) }
+            media?.let { add(File(it, "bin").absolutePath) }
+            go?.let { add(File(it, "bin").absolutePath) }
+            rust?.let { add(File(it, "bin").absolutePath) }
             add(File(home, ".local/bin").absolutePath)
             java?.let { add(File(it, "bin").absolutePath) }
             gradleBin?.let { add(it.absolutePath) }
@@ -96,6 +108,13 @@ object ShellEnvironment {
                 .filter { it.isNotEmpty() && it != File(shell, "lib").absolutePath }
             environment["LD_LIBRARY_PATH"] =
                 (listOf(File(shell, "lib").absolutePath) + base).joinToString(":")
+            media?.let { mediaPrefix ->
+                val existing = environment["LD_LIBRARY_PATH"].orEmpty()
+                val mediaLib = File(mediaPrefix, "lib").absolutePath
+                if (!existing.split(':').contains(mediaLib)) {
+                    environment["LD_LIBRARY_PATH"] = (listOf(mediaLib) + existing.split(':').filter { it.isNotEmpty() }).joinToString(":")
+                }
+            }
             environment["npm_config_prefix"] = shell.absolutePath
             environment["NODE_PATH"] = File(shell, "lib/node_modules").absolutePath
             environment["PIP_CACHE_DIR"] = File(shell, "cache/pip").absolutePath

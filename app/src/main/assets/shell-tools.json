@@ -1,5 +1,5 @@
 {
-  "version": "2",
+  "version": "3",
   "repo": "https://packages.termux.dev/apt/termux-main",
   "roots": [
     "git",
@@ -11,7 +11,10 @@
     "zip",
     "jq",
     "ca-certificates",
-    "uv"
+    "uv",
+    "openssh",
+    "rsync",
+    "tar"
   ],
   "required": [
     "bin/git",
@@ -26,6 +29,10 @@
     "bin/zip",
     "bin/jq",
     "bin/uv",
-    "bin/uvx"
+    "bin/uvx",
+    "bin/ssh",
+    "bin/scp",
+    "bin/rsync",
+    "bin/tar"
   ]
 }

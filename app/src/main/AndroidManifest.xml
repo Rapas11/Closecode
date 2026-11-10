@@ -20,6 +20,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Only for the Back to editor pill over a built app. Android asks once, in the
@@ -105,6 +107,34 @@
         <receiver
             android:name=".build.BuildCancelReceiver"
             android:exported="false" />
+
+        <!-- Optional notification access. The user enables it in system settings. -->
+        <service
+            android:name=".device.CloseCodeNotificationListenerService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- In-app website preview and JavaScript assertions for `closecode preview`. -->
+        <activity
+            android:name=".device.WebPreviewActivity"
+            android:exported="false"
+            android:configChanges="keyboardHidden|orientation|screenSize|screenLayout|uiMode"
+            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+
+        <service
+            android:name=".device.ScreenRecordService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <activity
+            android:name=".device.ScreenRecordActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Material.Light.Dialog.NoActionBar" />
 
         <!-- Optional screenshot consent flow. The system MediaProjection dialog is the UI. -->
         <activity

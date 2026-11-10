@@ -34,11 +34,12 @@ object OpenCodeAgentMd {
         - `closecode build` — a debug APK with the phone's engine; add `--release` for release.
         - `closecode clean [--gradle-caches|--sdk]` — delete build output, Gradle dependency
           caches, or the downloaded SDK.
-        - `closecode init --template android-compose|web-vite|web-static|python-fastapi|python-cli|node-express [name]`
+        - `closecode init --template android-compose|web-vite|web-static|python-fastapi|python-cli|node-express [name] [--install]`
           — create a project.
         - `closecode serve [--port N] [--host H]` — start the project's dev/static server;
           `serve status|stop` manages it.
-        - `closecode preview [--screenshot] [--dom]` — build and serve a static site.
+        - `closecode preview [--screenshot] [--dom] [--test test.js]` — build and serve a static
+          site in the in-app WebView and run rendered browser checks.
         - `closecode test|lint|format|package|release` — per-ecosystem tasks.
         - `closecode jobs list|stop <id>|logs <id>|stop-all` — background jobs.
         - `closecode config show|set <key> <value>` — pin versions and ports in `.closecode.json`.
@@ -48,9 +49,21 @@ object OpenCodeAgentMd {
         - `closecode ui dump|tap|wait|assert|scroll|type --package PKG` — drive any app (defaults to this project).
         - `closecode intent open|start|broadcast|share` — start activities, deep links, broadcasts and shares.
         - `closecode device battery|network|storage|display|volume|brightness|dnd|clipboard|sensors`.
-        - `closecode files list|read|write|delete` — the scoped shared folder.
+        - `closecode setup --media` installs ffmpeg/sqlite/imagemagick; `--go` and `--rust`
+          install those language packs.
+        - `closecode files list|read|write|delete|share|media|uri` — the app-specific shared
+          folder, plus MediaStore sharing and content-URI reads.
         - `closecode exec [--cwd DIR] [--timeout MS] [--approve] <command>` — run a shell command with streamed output.
-        - `closecode consent status|grant|revoke <capability>` and `closecode audit tail` — grants and the audit log.
+        - `closecode notifications list|dismiss <key>|reply <key> <text>|enable` — the enabled
+          notification listener; `enable` opens the system settings screen.
+        - `closecode screen start [--audio] [--path FILE]|stop|status` — screen recording.
+        - `closecode consent status|grant|revoke <capability> [--package PKG]` and
+          `closecode audit tail` — grants, per-app grants, and the audit log.
+        - `closecode secrets list|set <name> <value>|set <name> --file FILE|delete <name>` — the
+          encrypted deployment vault; values are never printed.
+        - `closecode deploy [--preset auto|static|node|python|android] [--dry-run] [--yes]` —
+          rsync/scp over SSH using `deploy.host`, `deploy.user`, `deploy.path`, `deploy.key`.
+        - `closecode selftest [--keep]` — scaffold every template and check detection offline.
         - `closecode stop-all` — stop every job and cancel the running build.
         - `closecode test-ui script.json` — run a multi-app step script (launch → wait → tap → assert).
 

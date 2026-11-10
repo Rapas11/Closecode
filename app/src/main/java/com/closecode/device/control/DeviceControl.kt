@@ -50,13 +50,14 @@ internal object DeviceControl {
 
     fun checkUiConsent(context: Context, packageName: String?): JsonObject? {
         if (!isProtected(packageName)) return null
-        if (ConsentStore(context).isGranted("ui-automation")) return null
+        if (ConsentStore(context).isGrantedFor("ui-automation", packageName)) return null
         return CommandEnvelope.failed(
             "UI control of $packageName is blocked by default because it looks like a sensitive app.",
             code = "needs_consent",
-            remedy = "Run closecode consent grant ui-automation only if you really want this.",
+            remedy = "Run closecode consent grant ui-automation --package $packageName only if you really want this.",
         ).apply {
             addProperty("package", packageName.orEmpty())
+            addProperty("scope", packageName.orEmpty())
         }
     }
 
@@ -492,6 +493,9 @@ internal object DeviceControl {
                     addProperty("bytes", file.length())
                 }
             }
+            "share", "publish", "media-save" -> shareToMediaStore(context, root, rest)
+            "media", "media-list" -> listMediaStore(context, rest)
+            "uri", "media-read" -> readMediaStore(context, rest)
             "delete", "rm" -> {
                 val file = resolve(root, rest.firstOrNull())
                     ?: return CommandEnvelope.failed("usage: closecode files delete <path> --yes", code = "usage")
@@ -506,10 +510,163 @@ internal object DeviceControl {
                     addProperty("path", file.absolutePath)
                 }
             }
-            else -> CommandEnvelope.failed("usage: closecode files list|read|write|delete", code = "usage")
+            else -> CommandEnvelope.failed(
+                "usage: closecode files list|read|write|delete|share <path>|media|uri <content-uri>",
+                code = "usage",
+            )
         }
         AuditLog(context).record("files $action", null, rest, result.ok(), result.get("error")?.asString)
         return result
+    }
+
+    private fun shareToMediaStore(context: Context, root: File, arguments: List<String>): JsonObject {
+        val source = resolve(root, arguments.firstOrNull())
+            ?: return CommandEnvelope.failed("usage: closecode files share <path> [--name NAME]", code = "usage")
+        if (!source.isFile) return CommandEnvelope.failed("Not a file: ${source.path}", code = "not_found")
+        val name = option(arguments, "--name") ?: source.name
+        val mime = mimeType(name)
+        val collection = when {
+            mime.startsWith("image/") -> android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            mime.startsWith("video/") -> android.provider.MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+            mime.startsWith("audio/") -> android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+            else -> if (Build.VERSION.SDK_INT >= 29) {
+                android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            } else {
+                android.provider.MediaStore.Files.getContentUri("external")
+            }
+        }
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, mime)
+            if (Build.VERSION.SDK_INT >= 29) {
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, if (mime.startsWith("image/") || mime.startsWith("video/")) "Pictures/CloseCode" else "Download/CloseCode")
+                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+            }
+        }
+        return runCatching {
+            val uri = context.contentResolver.insert(collection, values)
+                ?: return CommandEnvelope.failed("The shared media store refused the file.", code = "file_failed")
+            context.contentResolver.openOutputStream(uri)?.use { out ->
+                source.inputStream().use { it.copyTo(out) }
+            } ?: throw java.io.IOException("Could not open the destination.")
+            if (Build.VERSION.SDK_INT >= 29) {
+                context.contentResolver.update(
+                    uri,
+                    android.content.ContentValues().apply {
+                        put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                    },
+                    null,
+                    null,
+                )
+            }
+            CommandEnvelope.of(ok = true).apply {
+                addProperty("path", source.absolutePath)
+                addProperty("uri", uri.toString())
+                addProperty("name", name)
+                addProperty("mime", mime)
+                addProperty("bytes", source.length())
+            }
+        }.getOrElse {
+            CommandEnvelope.failed(
+                "Could not write to the shared media store: ${it.message}",
+                code = if (it is SecurityException) "needs_permission" else "file_failed",
+                remedy = "Grant storage permission to CloseCode in system settings, then retry.",
+            )
+        }
+    }
+
+    private fun listMediaStore(context: Context, arguments: List<String>): JsonObject {
+        val limit = option(arguments, "--limit")?.toIntOrNull()?.coerceIn(1, 500) ?: 100
+        val collection = if (Build.VERSION.SDK_INT >= 29) {
+            android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        } else {
+            android.provider.MediaStore.Files.getContentUri("external")
+        }
+        return runCatching {
+            val projection = arrayOf(
+                android.provider.MediaStore.MediaColumns._ID,
+                android.provider.MediaStore.MediaColumns.DISPLAY_NAME,
+                android.provider.MediaStore.MediaColumns.SIZE,
+                android.provider.MediaStore.MediaColumns.MIME_TYPE,
+            )
+            val rows = context.contentResolver.query(
+                collection,
+                projection,
+                null,
+                null,
+                "${android.provider.MediaStore.MediaColumns.DATE_ADDED} DESC",
+            )
+            val items = JsonArray()
+            rows?.use { cursor ->
+                while (cursor.moveToNext() && items.size() < limit) {
+                    items.add(JsonObject().apply {
+                        addProperty("uri", android.content.ContentUris.withAppendedId(
+                            collection,
+                            cursor.getLong(0),
+                        ).toString())
+                        addProperty("name", cursor.getString(1).orEmpty())
+                        addProperty("bytes", cursor.getLong(2))
+                        addProperty("mime", cursor.getString(3).orEmpty())
+                    })
+                }
+            }
+            CommandEnvelope.of(ok = true).apply { add("media", items) }
+        }.getOrElse {
+            CommandEnvelope.failed(
+                "Reading shared media needs storage permission: ${it.message}",
+                code = if (it is SecurityException) "needs_permission" else "file_failed",
+                remedy = "Grant storage/media permission to CloseCode in system settings, then retry.",
+            )
+        }
+    }
+
+    private fun readMediaStore(context: Context, arguments: List<String>): JsonObject {
+        val raw = arguments.firstOrNull()
+            ?: return CommandEnvelope.failed("usage: closecode files uri <content-uri> [--output PATH]", code = "usage")
+        val uri = android.net.Uri.parse(raw)
+        val output = option(arguments, "--output")
+        return runCatching {
+            val input = context.contentResolver.openInputStream(uri)
+                ?: return CommandEnvelope.failed("Could not open $raw", code = "not_found")
+            input.use { stream ->
+                if (output != null) {
+                    val file = File(output).takeIf { it.isAbsolute }
+                        ?: File(context.getExternalFilesDir(null), "shared/$output")
+                    file.parentFile?.mkdirs()
+                    file.outputStream().use { stream.copyTo(it) }
+                    CommandEnvelope.of(ok = true).apply {
+                        addProperty("uri", raw)
+                        addProperty("path", file.absolutePath)
+                        addProperty("bytes", file.length())
+                    }
+                } else {
+                    val text = stream.bufferedReader().use { it.readText() }.take(1_000_000)
+                    CommandEnvelope.of(ok = true).apply {
+                        addProperty("uri", raw)
+                        addProperty("content", text)
+                    }
+                }
+            }
+        }.getOrElse {
+            CommandEnvelope.failed(
+                "Could not read $raw: ${it.message}",
+                code = if (it is SecurityException) "needs_permission" else "file_failed",
+            )
+        }
+    }
+
+    private fun mimeType(name: String): String = when (name.substringAfterLast('.', "").lowercase()) {
+        "png" -> "image/png"
+        "jpg", "jpeg" -> "image/jpeg"
+        "gif" -> "image/gif"
+        "webp" -> "image/webp"
+        "mp4" -> "video/mp4"
+        "mp3" -> "audio/mpeg"
+        "m4a" -> "audio/mp4"
+        "pdf" -> "application/pdf"
+        "json" -> "application/json"
+        "txt", "log", "md" -> "text/plain"
+        else -> "application/octet-stream"
     }
 
     fun exec(
@@ -610,6 +767,14 @@ internal object DeviceControl {
         return result
     }
 
+    fun screen(context: Context, arguments: List<String>): JsonObject =
+        ScreenControl.run(context, arguments)
+
+    fun notifications(context: Context, arguments: List<String>): JsonObject {
+        val result = com.closecode.device.NotificationControl.run(context, arguments)
+        return result
+    }
+
     fun consent(context: Context, arguments: List<String>): JsonObject {
         val store = ConsentStore(context)
         val action = arguments.firstOrNull()?.lowercase(Locale.US) ?: "status"
@@ -618,13 +783,20 @@ internal object DeviceControl {
                 add("grants", JsonObject().apply {
                     store.grants().forEach { (name, granted) -> addProperty(name, granted) }
                 })
+                add("scopes", JsonObject().apply {
+                    store.scopedGrants().forEach { (name, scopes) ->
+                        add(name, JsonArray().apply { scopes.sorted().forEach { add(it) } })
+                    }
+                })
             }
             "grant", "allow" -> {
                 val capability = arguments.getOrNull(1)
-                    ?: return CommandEnvelope.failed("usage: closecode consent grant <capability>", code = "usage")
-                val done = store.grant(capability)
+                    ?: return CommandEnvelope.failed("usage: closecode consent grant <capability> [--package PKG]", code = "usage")
+                val scope = option(arguments, "--package") ?: option(arguments, "--app")
+                val done = if (scope != null) store.grantFor(capability, scope) else store.grant(capability)
                 CommandEnvelope.of(ok = done).apply {
-                    addProperty("capability", capability.lowercase())
+                    addProperty("capability", capacityName(capability))
+                    if (scope != null) addProperty("package", scope)
                     if (!done) {
                         addProperty("error", "Unknown capability.")
                         addProperty("code", "unknown_capability")
@@ -636,15 +808,19 @@ internal object DeviceControl {
             }
             "revoke", "deny" -> {
                 val capability = arguments.getOrNull(1)
-                    ?: return CommandEnvelope.failed("usage: closecode consent revoke <capability>", code = "usage")
-                val done = store.revoke(capability)
+                    ?: return CommandEnvelope.failed("usage: closecode consent revoke <capability> [--package PKG]", code = "usage")
+                val scope = option(arguments, "--package") ?: option(arguments, "--app")
+                val done = if (scope != null) store.revokeFor(capability, scope) else store.revoke(capability)
                 CommandEnvelope.of(ok = done).apply {
-                    addProperty("capability", capability.lowercase())
+                    addProperty("capability", capacityName(capability))
+                    if (scope != null) addProperty("package", scope)
                 }
             }
-            else -> CommandEnvelope.failed("usage: closecode consent status|grant|revoke", code = "usage")
+            else -> CommandEnvelope.failed("usage: closecode consent status|grant|revoke [--package PKG]", code = "usage")
         }
     }
+
+    private fun capacityName(raw: String): String = ConsentStore.normalize(raw) ?: raw.lowercase()
 
     fun audit(context: Context, arguments: List<String>): JsonObject {
         val action = arguments.firstOrNull()?.lowercase(Locale.US) ?: "tail"

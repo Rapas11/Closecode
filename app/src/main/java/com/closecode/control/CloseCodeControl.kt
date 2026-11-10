@@ -205,6 +205,11 @@ object CloseCodeControl {
                 "files" -> send(output, DeviceControl.files(context, args(request)))
                 "consent" -> send(output, DeviceControl.consent(context, args(request)))
                 "audit" -> send(output, DeviceControl.audit(context, args(request)))
+                "notifications" -> send(output, DeviceControl.notifications(context, args(request)))
+                "screen" -> {
+                    it.soTimeout = 0
+                    send(output, DeviceControl.screen(context, args(request)))
+                }
                 "stop-all" -> send(output, DeviceControl.stopAll(context))
                 "exec" -> {
                     it.soTimeout = 0
@@ -263,6 +268,12 @@ object CloseCodeControl {
                     runBlocking { preview(context, request, output) }
                 }
                 "jobs" -> send(output, jobs(context, request))
+                "secrets" -> send(output, SecretsCommand.run(context, args(request)))
+                "selftest" -> send(output, SelftestCommand.run(context, args(request)))
+                "deploy" -> {
+                    it.soTimeout = 0
+                    send(output, deploy(context, request))
+                }
                 "init" -> send(output, init(context, request))
                 "config" -> send(output, config(context, request))
                 "test", "lint", "format", "package", "release" -> {
@@ -1252,6 +1263,15 @@ object CloseCodeControl {
         addProperty("build", BuildConfig.VERSION_CODE)
     }
 
+    private fun deploy(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: return error("Run closecode from a registered project folder.")
+        return DeployCommand.run(context, project.directory, args(request))
+    }
+
     private fun serve(context: Context, request: JsonObject, output: OutputStream) {
         val project = resolveProject(
             context,
@@ -1665,6 +1685,9 @@ internal fun controlCommandScript(basePath: String): String = """
         serve) echo "usage: closecode serve [--port N] [--host H] [--json] | serve status|stop" ;;
         preview) echo "usage: closecode preview [--port N] [--no-open] [--screenshot] [--dom] | preview status|stop" ;;
         jobs) echo "usage: closecode jobs list|stop <id>|logs <id>|stop-all" ;;
+        secrets) echo "usage: closecode secrets list|set <name> <value>|set <name> --file FILE|delete <name>" ;;
+        deploy) echo "usage: closecode deploy [--preset auto|static|node|python|android] [--dry-run] [--yes]" ;;
+        selftest) echo "usage: closecode selftest [--keep]" ;;
         init) echo "usage: closecode init --template android-compose|web-vite|web-static|python-fastapi|python-cli|node-express [name]" ;;
         config) echo "usage: closecode config show|set <key> <value>|unset <key>" ;;
         test) echo "usage: closecode test — run the project's tests" ;;
@@ -1685,7 +1708,7 @@ internal fun controlCommandScript(basePath: String): String = """
         describe|d) echo "usage: closecode describe" ;;
         tool|t) echo "usage: closecode tool aapt2|d8|r8|kotlinc [args...]" ;;
         tools) echo "usage: closecode tools [status|install|remove]" ;;
-        setup) echo "usage: closecode setup --gradle|--web|--python|--native|--all|--remove <component>" ;;
+        setup) echo "usage: closecode setup --gradle|--web|--python|--native|--media|--go|--rust|--all|--remove <component>" ;;
         doctor|doc) echo "usage: closecode doctor [--json]" ;;
         toolchain) echo "usage: closecode toolchain status [--json]" ;;
         signing|sign) echo "usage: closecode signing status|generate|import|select|delete" ;;
@@ -1696,10 +1719,12 @@ internal fun controlCommandScript(basePath: String): String = """
         apps) echo "usage: closecode apps list|launch <pkg>|stop <pkg>|info <pkg>|install <apk>|uninstall <pkg> --yes|clear <pkg>" ;;
         intent) echo "usage: closecode intent open <uri>|start <pkg/activity>|broadcast <action>|share <file>" ;;
         device) echo "usage: closecode device battery|network|storage|display|volume [n]|brightness [n]|dnd|clipboard [text]|sensors|orientation|all" ;;
-        files) echo "usage: closecode files list|read|write|delete" ;;
+        files) echo "usage: closecode files list|read|write|delete|share|media|uri" ;;
         exec) echo "usage: closecode exec [--cwd DIR] [--timeout MS] [--approve] <command...>" ;;
-        consent) echo "usage: closecode consent status|grant|revoke <capability>" ;;
+        consent) echo "usage: closecode consent status|grant|revoke <capability> [--package PKG]" ;;
         audit) echo "usage: closecode audit tail [lines]" ;;
+        notifications|notify) echo "usage: closecode notifications list|dismiss <key>|reply <key> <text>|enable" ;;
+        screen) echo "usage: closecode screen start [--audio] [--path FILE]|stop|status" ;;
         stop-all) echo "usage: closecode stop-all" ;;
         test-ui) echo "usage: closecode test-ui <script.json> [--keep-going]" ;;
         stop) echo "usage: closecode stop [package]" ;;
@@ -1707,7 +1732,7 @@ internal fun controlCommandScript(basePath: String): String = """
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing gradle check github run app stop restart ui apps intent device files exec consent audit stop-all test-ui clean serve preview jobs init config test lint format package release"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac
@@ -1737,6 +1762,7 @@ internal fun controlCommandScript(basePath: String): String = """
       exec|sh) CMD=exec ;;
       consent|grants) CMD=consent ;;
       audit) CMD=audit ;;
+      notifications|notify|notif) CMD=notifications ;;
       stop-all|stopall) CMD=stop-all ;;
       test-ui|testui) CMD=test-ui ;;
       log|logcat) CMD=logcat ;;
@@ -1764,7 +1790,7 @@ internal fun controlCommandScript(basePath: String): String = """
       rel|release) CMD=release ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|notifications|screen|deploy|secrets|selftest|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
       *) help >&2; exit 2 ;;
     esac
     case "${'$'}{2:-}" in

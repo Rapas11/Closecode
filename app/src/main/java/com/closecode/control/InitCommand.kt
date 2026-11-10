@@ -8,6 +8,7 @@ import com.closecode.ui.model.defaultPackageName
 import com.closecode.ui.project.ProjectRepository
 import com.closecode.ui.project.Scaffold
 import com.closecode.ui.project.ScaffoldFile
+import com.closecode.tools.ShellEnvironment
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.io.File
@@ -31,11 +32,13 @@ internal object InitCommand {
     data class Options(
         val template: String?,
         val name: String?,
+        val install: Boolean = false,
     )
 
     fun parse(arguments: List<String>): Options {
         var template: String? = null
         var name: String? = null
+        var install = false
         var index = 0
         while (index < arguments.size) {
             when (val argument = arguments[index]) {
@@ -47,6 +50,7 @@ internal object InitCommand {
                     name = arguments.getOrNull(index + 1)
                     index++
                 }
+                "--install", "--deps" -> install = true
                 else -> when {
                     argument.startsWith("--template=") -> template = argument.substringAfter('=')
                     argument.startsWith("--name=") -> name = argument.substringAfter('=')
@@ -55,7 +59,7 @@ internal object InitCommand {
             }
             index++
         }
-        return Options(template, name)
+        return Options(template, name, install)
     }
 
     fun run(context: Context, options: Options): JsonObject {
@@ -108,6 +112,7 @@ internal object InitCommand {
                 }
             }
             val directory = repository.projectDir(record.slug)
+            val install = if (options.install) installDependencies(context, directory, template) else null
             JsonObject().apply {
                 addProperty("ok", true)
                 addProperty("id", record.id)
@@ -122,6 +127,7 @@ internal object InitCommand {
                         .sorted()
                         .forEach { add(it) }
                 })
+                install?.let { add("install", it) }
                 add("next", JsonArray().apply {
                     when (template) {
                         "android-compose" -> add("closecode build --gradle")
@@ -148,6 +154,58 @@ internal object InitCommand {
                 code = "init_failed",
                 remedy = "Check free storage and try again.",
             )
+        }
+    }
+
+    private fun installDependencies(context: Context, directory: File, template: String): JsonObject {
+        val command = when (template) {
+            "web-vite", "node-express" -> listOf("npm", "install")
+            "python-fastapi" -> listOf("python3", "-m", "pip", "install", "-r", "requirements.txt")
+            else -> return JsonObject().apply {
+                addProperty("ok", true)
+                addProperty("skipped", true)
+                addProperty("reason", "This template has no package dependencies.")
+            }
+        }
+        val builder = ProcessBuilder(command)
+            .directory(directory)
+            .redirectErrorStream(true)
+        builder.environment().clear()
+        builder.environment().putAll(ShellEnvironment.env(context, directory))
+        return runCatching {
+            val process = builder.start()
+            val output = StringBuilder()
+            val reader = Thread {
+                runCatching {
+                    process.inputStream.bufferedReader().useLines { lines ->
+                        lines.forEach { line ->
+                            synchronized(output) {
+                                if (output.length < 40_000) output.appendLine(line)
+                            }
+                        }
+                    }
+                }
+            }.apply { isDaemon = true; start() }
+            val finished = process.waitFor(900, java.util.concurrent.TimeUnit.SECONDS)
+            if (!finished) process.destroyForcibly()
+            reader.join(3_000)
+            val code = runCatching { process.exitValue() }.getOrDefault(124)
+            JsonObject().apply {
+                addProperty("ok", code == 0)
+                addProperty("command", command.joinToString(" "))
+                addProperty("exitCode", code)
+                addProperty("output", output.toString().takeLast(4_000))
+                if (code != 0) {
+                    addProperty("remedy", "Run closecode setup --web, then npm install / pip install in the project.")
+                }
+            }
+        }.getOrElse {
+            JsonObject().apply {
+                addProperty("ok", false)
+                addProperty("command", command.joinToString(" "))
+                addProperty("error", it.message ?: "Could not start the package manager.")
+                addProperty("remedy", "Run closecode setup --web first.")
+            }
         }
     }
 
