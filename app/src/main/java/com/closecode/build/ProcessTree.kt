@@ -26,6 +26,8 @@ internal object ProcessTree {
         }
     }
 
+    fun pid(process: Process): Long = pidOf(process)?.toLong() ?: -1L
+
     private fun pidOf(process: Process): Int? = runCatching {
         val field = process.javaClass.getDeclaredField("pid").apply { isAccessible = true }
         (field.get(process) as? Number)?.toInt()?.takeIf { it > 0 }

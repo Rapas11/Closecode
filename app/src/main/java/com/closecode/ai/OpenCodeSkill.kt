@@ -38,6 +38,17 @@ object OpenCodeSkill {
           selected automatically when it is installed, the phone's engine otherwise.
         - `closecode clean [--gradle-caches|--sdk]` — delete build output, Gradle dependency
           caches, or the downloaded SDK.
+        - `closecode init --template android-compose|web-vite|web-static|python-fastapi|python-cli|node-express [name]`
+          — create a project that the installed phone toolchains can build.
+        - `closecode serve [--port N] [--host H]` — run the project's Vite/Next/Astro/Flask/
+          FastAPI/Python static server as a background job; `serve status|stop` manages it.
+        - `closecode preview` — build and serve a static site, open it, and optionally take a
+          screenshot (`--screenshot`) or read the served HTML (`--dom`).
+        - `closecode test|lint|format|package|release` — the same task names for Gradle, npm,
+          Python and CMake projects.
+        - `closecode jobs list|stop <id>|logs <id>|stop-all` — every server or long task.
+        - `closecode config show|set <key> <value>` — pin engine, sdk, buildTools,
+          gradleVersion, nodeVersion, pythonVersion, env.* and ports.* in `.closecode.json`.
         - `closecode run` — build, install, launch, and wait until the app is in front.
         - `closecode install` — install the built APK on this phone.
         - `closecode signing status|generate|import` — the key used for release APKs.
@@ -51,6 +62,8 @@ object OpenCodeSkill {
         - `closecode ui scroll down|up [selector]` — scroll the screen.
         - `closecode input tap|swipe|longpress|text|key` — raw touch, typing and keys.
         - `closecode accessibility status|enable` — the service that drives other UI.
+        - `closecode describe` also reports the detected project type (Gradle Android, npm,
+          static HTML, Python, CMake or mixed).
         - `closecode logcat` — the installed app's own log.
         - `closecode screenshot` — a screenshot of what the app shows.
         - `closecode export` — export a file or folder out of the project.

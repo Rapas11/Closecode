@@ -47,8 +47,10 @@ object BuildSetupFactory {
                 SharedPreferencesKeyValueStore(context),
             )
             val facts = GradleReader.read(project.directory)
+            val settings = ProjectSettings.read(project.directory)
             val nativeUsage = NativeProject.detect(project.directory, facts)
-            val compileSdk = project.savedCompileSdk
+            val compileSdk = settings.sdk
+                ?: project.savedCompileSdk
                 ?: facts.compileSdk
                 ?: ProjectPins.COMPILE_SDK
             val bundledAapt2 = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
@@ -91,7 +93,9 @@ object BuildSetupFactory {
             val wrapperVersion = GradleWrapper.version(project.directory)
             val knownWrapper = wrapperVersion
                 ?.takeIf { gradleStore.manifest.forVersion(it) != null }
-            val gradleVersion = knownWrapper ?: gradleStore.manifest.distribution.version
+            val gradleVersion = settings.gradleVersion
+                ?: knownWrapper
+                ?: gradleStore.manifest.distribution.version
             val nativeStore = NativeToolsStore(context)
             val native = nativeStore.toolchain()
             val nativeMissing = if (nativeUsage.usesNative) nativeStore.missing() else emptyList()
@@ -99,13 +103,20 @@ object BuildSetupFactory {
             val agpVersion = facts.plugins
                 .firstOrNull { it.id == "com.android.application" || it.id == "com.android.library" }
                 ?.version
-            val requiredBuildTools = platformStore.requiredBuildToolsVersion(agpVersion)
-            val gradleBuildTools = platformStore.bestBuildTools(requiredBuildTools)
+            val requiredBuildTools = settings.buildTools
+                ?: platformStore.requiredBuildToolsVersion(agpVersion)
+            val pinnedBuildTools = settings.buildTools?.let { pin ->
+                platformStore.buildToolsDir(pin)?.let { pin to it }
+            }
+            val gradleBuildTools = pinnedBuildTools ?: platformStore.bestBuildTools(requiredBuildTools)
             val gradleMissing = buildList {
                 if (!gradleStore.isReady(gradleVersion)) add("Gradle tools")
                 if (gradlePlatform == null) add("Android $compileSdk platform")
                 if (gradleBuildTools == null) {
-                    add("build-tools $requiredBuildTools (or newer)")
+                    add(
+                        if (settings.buildTools != null) "build-tools ${settings.buildTools}"
+                        else "build-tools $requiredBuildTools (or newer)",
+                    )
                 }
                 if (aapt2 == null) add("aapt2")
                 if (nativeUsage.usesNative && native == null) add("Native tools")

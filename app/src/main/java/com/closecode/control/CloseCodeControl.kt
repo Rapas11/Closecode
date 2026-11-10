@@ -13,6 +13,8 @@ import com.closecode.build.GradleDiagnostics
 import com.closecode.build.GradlePlan
 import com.closecode.build.GradleRunner
 import com.closecode.build.ProjectCheck
+import com.closecode.build.ProjectSettings
+import com.closecode.build.ProjectTypeDetector
 import com.closecode.build.ToolchainHolder
 import com.closecode.build.ToolchainManifest
 import com.closecode.build.BuildCancel
@@ -20,6 +22,7 @@ import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
 import com.closecode.device.CloseCodeAccessibilityService
 import com.closecode.device.DeviceTools
+import com.closecode.jobs.JobManager
 import com.closecode.tools.ShellToolsManifest
 import com.closecode.tools.ShellToolsStore
 import com.closecode.ui.git.GitService
@@ -180,7 +183,7 @@ object CloseCodeControl {
             }
             when (string(request, "command").orEmpty()) {
                 "ping" -> send(output, ping())
-                "status" -> send(output, status(context))
+                "status" -> send(output, status(context, request))
                 "cancel" -> send(output, cancel())
                 "install" -> send(output, install(context, request))
                 "launch" -> send(output, launch(context, request))
@@ -233,6 +236,23 @@ object CloseCodeControl {
                     runBlocking { run(context, request, output) }
                 }
                 "clean" -> send(output, clean(context, request))
+                "serve" -> {
+                    it.soTimeout = 0
+                    runBlocking { serve(context, request, output) }
+                }
+                "preview" -> {
+                    it.soTimeout = 0
+                    runBlocking { preview(context, request, output) }
+                }
+                "jobs" -> send(output, jobs(context, request))
+                "init" -> send(output, init(context, request))
+                "config" -> send(output, config(context, request))
+                "test", "lint", "format", "package", "release" -> {
+                    it.soTimeout = 0
+                    runBlocking {
+                        ecosystem(context, request, output, string(request, "command").orEmpty())
+                    }
+                }
                 "gradle" -> {
                     it.soTimeout = 0
                     runBlocking { gradle(context, request, output) }
@@ -336,6 +356,15 @@ object CloseCodeControl {
             gradleMissing = setup.gradleMissing,
             last = last,
         )
+        val settings = ProjectSettings.read(project.directory)
+        description.add("projectType", ProjectTypeDetector.detect(project.directory, settings).json())
+        description.add("settings", settings.json())
+        description.add("serve", JsonObject().apply {
+            addProperty("running", JobManager.list(context).any {
+                it.kind == "serve" && it.status == "running" &&
+                    runCatching { File(it.cwd).canonicalPath }.getOrNull() == project.directory.canonicalPath
+            })
+        })
         val shellTools = ShellToolsStore(context, ShellToolsManifest.load(context))
         description.add("shellTools", JsonObject().apply {
             addProperty("ready", shellTools.isReady())
@@ -533,7 +562,11 @@ object CloseCodeControl {
      * understands the project's own plugins and dependencies. The custom engine remains an
      * explicit fallback (`--engine closecode`) or the automatic choice when Gradle is not ready.
      */
-    private fun chooseGradle(arguments: List<String>, gradleReady: Boolean): Boolean {
+    private fun chooseGradle(
+        arguments: List<String>,
+        gradleReady: Boolean,
+        pinnedEngine: String? = null,
+    ): Boolean {
         var custom = false
         var forced = false
         var index = 0
@@ -551,6 +584,8 @@ object CloseCodeControl {
         return when {
             custom -> false
             forced -> true
+            pinnedEngine == com.closecode.build.ProjectSettings.ENGINE_GRADLE -> true
+            pinnedEngine == com.closecode.build.ProjectSettings.ENGINE_CLOSECODE -> false
             else -> gradleReady
         }
     }
@@ -592,8 +627,13 @@ object CloseCodeControl {
             return null
         }
         val arguments = args(request)
+        val projectSettings = com.closecode.build.ProjectSettings.read(resolved.directory)
         val gradleNeeded = setup.gradle == null && gradleRequired(resolved, setup)
-        val useGradle = chooseGradle(arguments, setup.gradle != null || gradleNeeded)
+        val useGradle = chooseGradle(
+            arguments,
+            setup.gradle != null || gradleNeeded,
+            projectSettings.engine,
+        )
         send(output, JsonObject().apply {
             addProperty("ok", true)
             addProperty("event", "start")
@@ -699,6 +739,17 @@ object CloseCodeControl {
             cwd = string(request, "cwd"),
             slug = string(request, "project"),
         ) ?: return error("Run closecode from a registered project folder.")
+        val settings = ProjectSettings.read(project.directory)
+        val detection = ProjectTypeDetector.detect(project.directory, settings)
+        if (detection.primary != ProjectTypeDetector.GRADLE_ANDROID) {
+            return EcosystemCommand.run(
+                context,
+                project.directory,
+                settings,
+                "clean",
+                emptyList(),
+            ) { }.json
+        }
         val build = File(project.directory, "build")
         val existed = build.exists()
         val removed = !existed || build.deleteRecursively()
@@ -1117,12 +1168,219 @@ object CloseCodeControl {
         addProperty("build", BuildConfig.VERSION_CODE)
     }
 
-    private fun status(context: Context): JsonObject {
+    private fun serve(context: Context, request: JsonObject, output: OutputStream) {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        if (project == null) {
+            send(output, error("Run closecode from a registered project folder."))
+            return
+        }
+        val settings = ProjectSettings.read(project.directory)
+        val options = ServeCommand.parse(args(request), settings)
+        val response = runCatching {
+            ServeCommand.run(context, project.directory, settings, options) { event ->
+                send(output, event)
+            }
+        }.getOrElse { failure ->
+            CommandEnvelope.failed(
+                failure.message ?: "The server command failed.",
+                code = "serve_failed",
+                remedy = "Check the job log with closecode jobs logs <id>.",
+            )
+        }
+        send(output, response)
+    }
+
+    private suspend fun preview(context: Context, request: JsonObject, output: OutputStream) {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        if (project == null) {
+            send(output, error("Run closecode from a registered project folder."))
+            return
+        }
+        val settings = ProjectSettings.read(project.directory)
+        val options = PreviewCommand.parse(args(request))
+        val response = runCatching {
+            PreviewCommand.run(context, project.directory, settings, options) { event ->
+                send(output, event)
+            }
+        }.getOrElse { failure ->
+            CommandEnvelope.failed(
+                failure.message ?: "The preview failed.",
+                code = "preview_failed",
+                remedy = "Check the build log, then retry closecode preview.",
+            )
+        }
+        send(output, response)
+    }
+
+    private fun jobs(context: Context, request: JsonObject): JsonObject {
+        val arguments = args(request)
+        val action = arguments.firstOrNull()?.lowercase() ?: "list"
+        return when (action) {
+            "list", "ls", "status" -> JsonObject().apply {
+                addProperty("ok", true)
+                addProperty("count", JobManager.list(context).size)
+                add("jobs", com.google.gson.JsonArray().apply {
+                    JobManager.list(context).forEach { add(it.json()) }
+                })
+            }
+            "stop", "kill" -> {
+                val id = arguments.getOrNull(1) ?: return CommandEnvelope.failed(
+                    "usage: closecode jobs stop <id>",
+                    code = "usage",
+                )
+                val stopped = JobManager.stop(context, id)
+                if (stopped == null) {
+                    CommandEnvelope.failed(
+                        "No job with id '$id'.",
+                        code = "not_found",
+                        remedy = "Run closecode jobs list.",
+                    )
+                } else {
+                    JsonObject().apply {
+                        addProperty("ok", true)
+                        add("job", stopped.json())
+                    }
+                }
+            }
+            "stop-all", "stopall" -> JsonObject().apply {
+                addProperty("ok", true)
+                add("stopped", JobManager.stopAll(context))
+            }
+            "logs", "log" -> {
+                val id = arguments.getOrNull(1) ?: return CommandEnvelope.failed(
+                    "usage: closecode jobs logs <id> [lines]",
+                    code = "usage",
+                )
+                val lines = JobManager.logs(context, id, arguments.getOrNull(2)?.toIntOrNull() ?: 80)
+                    ?: return CommandEnvelope.failed(
+                        "No job with id '$id'.",
+                        code = "not_found",
+                    )
+                JsonObject().apply {
+                    addProperty("ok", true)
+                    addProperty("id", id)
+                    add("lines", com.google.gson.JsonArray().apply { lines.forEach { add(it) } })
+                }
+            }
+            else -> CommandEnvelope.failed(
+                "usage: closecode jobs list|stop <id>|logs <id>|stop-all",
+                code = "usage",
+            )
+        }
+    }
+
+    private fun init(context: Context, request: JsonObject): JsonObject =
+        InitCommand.run(context, InitCommand.parse(args(request)))
+
+    private fun config(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: return error("Run closecode from a registered project folder.")
+        return ConfigCommand.run(project.directory, args(request))
+    }
+
+    private suspend fun ecosystem(
+        context: Context,
+        request: JsonObject,
+        output: OutputStream,
+        task: String,
+    ) {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        if (project == null) {
+            send(output, error("Run closecode from a registered project folder."))
+            return
+        }
+        val settings = ProjectSettings.read(project.directory)
+        val detection = ProjectTypeDetector.detect(project.directory, settings)
+        if (detection.primary == ProjectTypeDetector.GRADLE_ANDROID) {
+            val gradleTask = when (task) {
+                "test" -> "testDebugUnitTest"
+                "lint" -> "lintDebug"
+                "format" -> {
+                    val buildText = listOf("build.gradle.kts", "build.gradle", "app/build.gradle.kts", "app/build.gradle")
+                        .joinToString("\n") { name ->
+                            runCatching { File(project.directory, name).readText() }.getOrDefault("")
+                        }
+                    when {
+                        buildText.contains("spotless") -> "spotlessApply"
+                        buildText.contains("ktlint") -> "ktlintFormat"
+                        else -> {
+                            send(output, CommandEnvelope.failed(
+                                "This Gradle project has no formatter configured.",
+                                code = "no_formatter",
+                                remedy = "Add Spotless or ktlint to the build, then retry.",
+                            ))
+                            return
+                        }
+                    }
+                }
+                "package", "release" -> "assembleRelease"
+                else -> task
+            }
+            fullGradle(context, request, output, gradleTask)
+            return
+        }
+        if (task == "clean" && detection.primary == ProjectTypeDetector.UNKNOWN) {
+            send(output, CommandEnvelope.failed(
+                "This project type cannot be cleaned automatically.",
+                code = "unknown_type",
+                remedy = "Set a type with closecode config set type <type>, then retry.",
+            ))
+            return
+        }
+        val result = runCatching {
+            EcosystemCommand.run(
+                context,
+                project.directory,
+                settings,
+                task,
+                args(request).filterNot { it == "--json" || it == task },
+            ) { event -> send(output, event) }
+        }.getOrElse { failure ->
+            EcosystemCommand.Result(
+                CommandEnvelope.failed(
+                    failure.message ?: "The command failed.",
+                    code = "command_failed",
+                ),
+                1,
+            )
+        }
+        send(output, result.json)
+    }
+
+    private fun status(context: Context, request: JsonObject): JsonObject {
         val active = BuildCoordinator.active()
         val last = BuildCoordinator.last()
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
         return JsonObject().apply {
             addProperty("ok", true)
             addProperty("accessibility", CloseCodeAccessibilityService.connected())
+            if (project != null) {
+                val settings = ProjectSettings.read(project.directory)
+                add("projectType", ProjectTypeDetector.detect(project.directory, settings).json())
+                add("settings", settings.json())
+            }
+            add("jobs", com.google.gson.JsonArray().apply {
+                JobManager.list(context).filter { it.status == "running" }.forEach { add(it.json()) }
+            })
             addProperty("running", active != null)
             if (active != null) {
                 addProperty("id", active.id)
@@ -1206,11 +1464,29 @@ object CloseCodeControl {
     private fun error(message: String): JsonObject = JsonObject().apply {
         addProperty("ok", false)
         addProperty("error", message)
+        addProperty("code", "failed")
+    }
+
+    /** Every response carries the same keys, so the agent never has to parse an adapter shape. */
+    private fun normalized(json: JsonObject): JsonObject {
+        if (!json.has("ok")) return json
+        if (!json.has("artifacts")) json.add("artifacts", com.google.gson.JsonArray())
+        if (!json.has("errors")) json.add("errors", com.google.gson.JsonArray())
+        if (!json.has("warnings")) json.add("warnings", com.google.gson.JsonArray())
+        if (!json.has("exitCode")) {
+            json.addProperty("exitCode", if (json.get("ok")?.asBoolean == true) 0 else 1)
+        }
+        if (!json.has("durationMs")) json.addProperty("durationMs", 0)
+        if (json.get("ok")?.asBoolean == false && !json.has("code")) {
+            json.addProperty("code", "failed")
+        }
+        return json
     }
 
     private fun send(output: OutputStream, json: JsonObject): Boolean = synchronized(output) {
         runCatching {
-            output.write((json.toString() + "\n").toByteArray(StandardCharsets.UTF_8))
+            val envelope = normalized(json)
+            output.write((envelope.toString() + "\n").toByteArray(StandardCharsets.UTF_8))
             output.flush()
             true
         }.getOrDefault(false)
@@ -1302,6 +1578,16 @@ internal fun controlCommandScript(basePath: String): String = """
         build|b) echo "usage: closecode build [--gradle] [--release]" ;;
         run|r) echo "usage: closecode run [--gradle] [--release]" ;;
         clean) echo "usage: closecode clean [--gradle-caches|--sdk]" ;;
+        serve) echo "usage: closecode serve [--port N] [--host H] [--json] | serve status|stop" ;;
+        preview) echo "usage: closecode preview [--port N] [--no-open] [--screenshot] [--dom] | preview status|stop" ;;
+        jobs) echo "usage: closecode jobs list|stop <id>|logs <id>|stop-all" ;;
+        init) echo "usage: closecode init --template android-compose|web-vite|web-static|python-fastapi|python-cli|node-express [name]" ;;
+        config) echo "usage: closecode config show|set <key> <value>|unset <key>" ;;
+        test) echo "usage: closecode test — run the project's tests" ;;
+        lint) echo "usage: closecode lint — run the project's linter" ;;
+        format) echo "usage: closecode format — format the project's sources" ;;
+        package) echo "usage: closecode package — build a distributable artifact" ;;
+        release) echo "usage: closecode release — build a release artifact" ;;
         status|s) echo "usage: closecode status" ;;
         cancel|c) echo "usage: closecode cancel" ;;
         ping|p) echo "usage: closecode ping" ;;
@@ -1328,7 +1614,7 @@ internal fun controlCommandScript(basePath: String): String = """
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing gradle check github run app stop restart ui clean"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing gradle check github run app stop restart ui clean serve preview jobs init config test lint format package release"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac
@@ -1366,9 +1652,17 @@ internal fun controlCommandScript(basePath: String): String = """
       g|gradle) CMD=gradle ;;
       chk|check) CMD=check ;;
       gh|github) CMD=github ;;
+      sv|serve) CMD=serve ;;
+      pv|preview) CMD=preview ;;
+      job|jobs) CMD=jobs ;;
+      init) CMD=init ;;
+      cfg|config) CMD=config ;;
+      fmt|format) CMD=format ;;
+      pkg|package) CMD=package ;;
+      rel|release) CMD=release ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|gradle|check|github|run|app|stop|restart|ui|clean) ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|gradle|check|github|run|app|stop|restart|ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
       *) help >&2; exit 2 ;;
     esac
     case "${'$'}{2:-}" in

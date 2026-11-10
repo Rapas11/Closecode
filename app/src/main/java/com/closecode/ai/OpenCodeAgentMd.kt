@@ -34,6 +34,14 @@ object OpenCodeAgentMd {
         - `closecode build` — a debug APK with the phone's engine; add `--release` for release.
         - `closecode clean [--gradle-caches|--sdk]` — delete build output, Gradle dependency
           caches, or the downloaded SDK.
+        - `closecode init --template android-compose|web-vite|web-static|python-fastapi|python-cli|node-express [name]`
+          — create a project.
+        - `closecode serve [--port N] [--host H]` — start the project's dev/static server;
+          `serve status|stop` manages it.
+        - `closecode preview [--screenshot] [--dom]` — build and serve a static site.
+        - `closecode test|lint|format|package|release` — per-ecosystem tasks.
+        - `closecode jobs list|stop <id>|logs <id>|stop-all` — background jobs.
+        - `closecode config show|set <key> <value>` — pin versions and ports in `.closecode.json`.
         - `closecode run` — build, install, launch, and wait until the app is in front.
         - `closecode install`, `closecode launch` — put the APK on this phone, then open it.
         - `closecode signing status|generate|import` — the key used for release APKs.

@@ -161,6 +161,27 @@ internal object ProjectDescription {
             addProperty("build", "closecode build [--release] [--gradle]")
             addProperty("run", "closecode run — build, install, launch, then wait for the app")
             addProperty("signing", "closecode signing status|generate|import|select|delete")
+            addProperty(
+                "serve",
+                "closecode serve [--port 3000] [--host 0.0.0.0] — run this project's dev or " +
+                    "static server as a background job; serve status|stop manage it",
+            )
+            addProperty(
+                "preview",
+                "closecode preview [--screenshot] [--dom] — build and serve a static site, then " +
+                    "open it",
+            )
+            addProperty("jobs", "closecode jobs list|stop <id>|logs <id>|stop-all")
+            addProperty(
+                "init",
+                "closecode init --template android-compose|web-vite|web-static|" +
+                    "python-fastapi|python-cli|node-express [name]",
+            )
+            addProperty(
+                "config",
+                "closecode config show|set <key> <value>|unset <key> — pins in .closecode.json",
+            )
+            addProperty("test", "closecode test|lint|format|package|release")
             addProperty("install", "closecode install")
             addProperty("launch", "closecode launch")
             addProperty("app", "closecode app — installed/foreground state and screen size")

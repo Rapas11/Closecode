@@ -145,6 +145,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Servers and long-running test/format commands survive app backgrounding. -->
+        <service
+            android:name=".jobs.JobKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- The OpenCode server on the phone. It keeps running while the user is in another
              app, and the notification says what is running, where, and stops it. -->
         <service

@@ -175,6 +175,47 @@ class ProjectRepository(context: Context) {
         }
     }
 
+    /**
+     * Creates a project from an explicit file list. Used by `closecode init` for ecosystems
+     * the start-screen templates do not cover, while keeping registration/identity identical.
+     */
+    fun createFromFiles(
+        name: String,
+        tab: TemplateTab,
+        templateName: String,
+        config: ProjectConfig,
+        files: List<ScaffoldFile>,
+        now: Long = System.currentTimeMillis(),
+    ): ProjectRecord {
+        store.ensureRoot()
+        val cleanName = cleanName(name)
+        val id = ProjectIdentity.newId()
+        val slug = uniqueSlug(cleanName, id)
+        val packageName = config.packageName.takeIf { it.isNotBlank() }
+        registry.begin(id, slug, cleanName, packageName)
+        try {
+            files.forEach { file -> store.createFile(slug, file.path, file.content) }
+            val record = ProjectRecord(
+                id = id,
+                slug = slug,
+                name = cleanName,
+                tab = tab,
+                templateIndex = 0,
+                templateName = templateName,
+                config = config,
+                createdAt = now,
+                lastOpened = now,
+            )
+            store.createFile(slug, ProjectStore.METADATA, record.toJson())
+            registry.commit(id)
+            return record
+        } catch (failure: Throwable) {
+            registry.cancel(id)
+            runCatching { store.deleteProject(slug) }
+            throw failure
+        }
+    }
+
     fun delete(slug: String): Boolean {
         if (!store.exists(slug)) return false
         val record = find(slug)
