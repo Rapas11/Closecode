@@ -14,7 +14,9 @@
     "uv",
     "openssh",
     "rsync",
-    "tar"
+    "tar",
+    "openssl",
+    "xz-utils"
   ],
   "required": [
     "bin/git",
@@ -33,6 +35,8 @@
     "bin/ssh",
     "bin/scp",
     "bin/rsync",
-    "bin/tar"
+    "bin/tar",
+    "bin/openssl",
+    "bin/xz"
   ]
 }

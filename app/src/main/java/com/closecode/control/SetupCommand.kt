@@ -24,14 +24,35 @@ import java.util.concurrent.TimeUnit
  */
 object SetupCommand {
 
+    private data class LanguagePack(
+        val id: String,
+        val asset: String,
+        val prefix: String,
+        val home: String,
+        val label: String,
+        val checks: List<Pair<String, List<String>>>,
+    )
+
+    private val languagePacks = listOf(
+        LanguagePack("go", "shell-go.json", "go", "hgo", "Go", listOf("go" to listOf("version"))),
+        LanguagePack("rust", "shell-rust.json", "rs", "hrs", "Rust", listOf(
+            "rustc" to listOf("--version"),
+            "cargo" to listOf("--version"),
+        )),
+        LanguagePack("dart", "shell-dart.json", "dart", "hdart", "Dart", listOf("dart" to listOf("--version"))),
+        LanguagePack("php", "shell-php.json", "php", "hphp", "PHP", listOf("php" to listOf("--version"))),
+        LanguagePack("ruby", "shell-ruby.json", "rb", "hrb", "Ruby", listOf("ruby" to listOf("--version"))),
+        LanguagePack("deno", "shell-deno.json", "deno", "hdeno", "Deno", listOf("deno" to listOf("--version"))),
+        LanguagePack("bun", "shell-bun.json", "bun", "hbun", "Bun", listOf("bun" to listOf("--version"))),
+    )
+
     data class Options(
         val gradle: Boolean = false,
         val web: Boolean = false,
         val python: Boolean = false,
         val native: Boolean = false,
         val media: Boolean = false,
-        val go: Boolean = false,
-        val rust: Boolean = false,
+        val languages: Set<String> = emptySet(),
         val all: Boolean = false,
         val sdk: Int? = null,
         val buildTools: String? = null,
@@ -46,10 +67,8 @@ object SetupCommand {
         val wantsWeb: Boolean get() = web || python || all
         val wantsNative: Boolean get() = native || ndk || cmake || all
         val wantsMedia: Boolean get() = media
-        val wantsGo: Boolean get() = go
-        val wantsRust: Boolean get() = rust
         val valid: Boolean
-            get() = wantsGradle || wantsWeb || wantsNative || wantsMedia || wantsGo || wantsRust ||
+            get() = wantsGradle || wantsWeb || wantsNative || wantsMedia || languages.isNotEmpty() ||
                 sdk != null || buildTools != null || !remove.isNullOrBlank()
     }
 
@@ -63,8 +82,13 @@ object SetupCommand {
                 "--python", "python" -> options = options.copy(python = true)
                 "--native", "native" -> options = options.copy(native = true)
                 "--media", "media", "--ffmpeg" -> options = options.copy(media = true)
-                "--go", "go", "--golang" -> options = options.copy(go = true)
-                "--rust", "rust", "--cargo" -> options = options.copy(rust = true)
+                "--go", "go", "--golang" -> options = options.copy(languages = options.languages + "go")
+                "--rust", "rust", "--cargo" -> options = options.copy(languages = options.languages + "rust")
+                "--dart", "dart" -> options = options.copy(languages = options.languages + "dart")
+                "--php", "php" -> options = options.copy(languages = options.languages + "php")
+                "--ruby", "ruby" -> options = options.copy(languages = options.languages + "ruby")
+                "--deno", "deno" -> options = options.copy(languages = options.languages + "deno")
+                "--bun", "bun" -> options = options.copy(languages = options.languages + "bun")
                 "--all", "all" -> options = options.copy(all = true)
                 "--yes", "-y" -> options = options.copy(yes = true)
                 "--wifi-only", "wifi", "--wifi" -> options = options.copy(wifiOnly = true)
@@ -122,6 +146,7 @@ object SetupCommand {
                closecode setup --media
                closecode setup --go
                closecode setup --rust
+               closecode setup --dart|--php|--ruby|--deno|--bun
                closecode setup --all
                closecode setup --remove gradle|sdk|native|web|python
         Options: --json --yes --wifi-only
@@ -170,22 +195,18 @@ object SetupCommand {
             label = "Media tools",
             cachePrefix = "media-tools",
         )
-        val goTools = ShellToolsStore(
-            context,
-            ShellToolsManifest.load(context, "shell-go.json"),
-            prefixName = "go",
-            homeName = "hgo",
-            label = "Go tools",
-            cachePrefix = "go-tools",
-        )
-        val rustTools = ShellToolsStore(
-            context,
-            ShellToolsManifest.load(context, "shell-rust.json"),
-            prefixName = "rs",
-            homeName = "hrs",
-            label = "Rust tools",
-            cachePrefix = "rust-tools",
-        )
+        val languageStores = languagePacks
+            .filter { it.id in options.languages }
+            .associate { pack ->
+                pack.id to ShellToolsStore(
+                    context,
+                    ShellToolsManifest.load(context, pack.asset),
+                    prefixName = pack.prefix,
+                    homeName = pack.home,
+                    label = "${pack.label} tools",
+                    cachePrefix = "${pack.id}-tools",
+                )
+            }
         val native = NativeToolsStore(context)
         val sdk = options.sdk ?: 35
         val requestedBuildTools = options.buildTools ?: platform.buildToolsVersion()
@@ -201,8 +222,7 @@ object SetupCommand {
         }
         if (options.wantsWeb) components.add("web-python")
         if (options.wantsMedia) components.add("media-tools")
-        if (options.wantsGo) components.add("go-tools")
-        if (options.wantsRust) components.add("rust-tools")
+        options.languages.sorted().forEach { components.add("$it-tools") }
         if (options.wantsNative) {
             if (options.cmake || options.native || options.all) components.add("cmake")
             if (options.ndk || options.native || options.all) components.add("ndk")
@@ -354,21 +374,12 @@ object SetupCommand {
             })
         }
 
-        if (options.wantsGo) {
-            val result = installPack(context, goTools, "go-tools", emit)
-            if (!result.ok) throw IllegalStateException(result.error ?: "The Go tools did not install.")
+        languageStores.forEach { (id, store) ->
+            val result = installPack(context, store, "$id-tools", emit)
+            if (!result.ok) throw IllegalStateException(result.error ?: "The $id tools did not install.")
             emit(event("verify").apply {
-                addProperty("component", "go-tools")
-                addProperty("ok", goTools.isReady())
-            })
-        }
-
-        if (options.wantsRust) {
-            val result = installPack(context, rustTools, "rust-tools", emit)
-            if (!result.ok) throw IllegalStateException(result.error ?: "The Rust tools did not install.")
-            emit(event("verify").apply {
-                addProperty("component", "rust-tools")
-                addProperty("ok", rustTools.isReady())
+                addProperty("component", "$id-tools")
+                addProperty("ok", store.isReady())
             })
         }
 
@@ -410,16 +421,10 @@ object SetupCommand {
                 tests.add(selfTest("aapt2", aapt2, listOf("version"), context))
             }
         }
-        if (options.wantsGo) {
-            val go = File(goTools.directory, "bin/go")
-            if (go.isFile) tests.add(selfTest("go", go, listOf("version"), context))
-        }
-        if (options.wantsRust) {
-            for ((name, command) in listOf(
-                "rustc" to File(rustTools.directory, "bin/rustc"),
-                "cargo" to File(rustTools.directory, "bin/cargo"),
-            )) {
-                if (command.isFile) tests.add(selfTest(name, command, listOf("--version"), context))
+        languageStores.forEach { (id, store) ->
+            languagePacks.first { it.id == id }.checks.forEach { (name, arguments) ->
+                val command = File(store.directory, "bin/$name")
+                if (command.isFile) tests.add(selfTest(name, command, arguments, context))
             }
         }
         if (options.wantsMedia) {
@@ -511,22 +516,27 @@ object SetupCommand {
                 label = "Media tools",
                 cachePrefix = "media-tools",
             ).remove()
-            "go", "golang", "go-tools" -> ShellToolsStore(
-                context,
-                ShellToolsManifest.load(context, "shell-go.json"),
-                prefixName = "go",
-                homeName = "hgo",
-                label = "Go tools",
-                cachePrefix = "go-tools",
-            ).remove()
-            "rust", "cargo", "rust-tools" -> ShellToolsStore(
-                context,
-                ShellToolsManifest.load(context, "shell-rust.json"),
-                prefixName = "rs",
-                homeName = "hrs",
-                label = "Rust tools",
-                cachePrefix = "rust-tools",
-            ).remove()
+            "go", "golang", "go-tools", "rust", "cargo", "rust-tools",
+            "dart", "dart-tools", "php", "php-tools", "ruby", "ruby-tools",
+            "deno", "deno-tools", "bun", "bun-tools" -> {
+                val id = what.substringBefore('-').let {
+                    when (it) {
+                        "golang" -> "go"
+                        "cargo" -> "rust"
+                        else -> it
+                    }
+                }
+                val pack = languagePacks.firstOrNull { it.id == id }
+                    ?: return error("Unknown component '$what'. ${usage()}", "setup")
+                ShellToolsStore(
+                    context,
+                    ShellToolsManifest.load(context, pack.asset),
+                    prefixName = pack.prefix,
+                    homeName = pack.home,
+                    label = "${pack.label} tools",
+                    cachePrefix = "${pack.id}-tools",
+                ).remove()
+            }
             else -> return error("Unknown component '$what'. ${usage()}", "setup")
         }
         emit(event("done").apply {

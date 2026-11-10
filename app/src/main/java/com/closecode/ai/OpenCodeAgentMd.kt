@@ -49,8 +49,8 @@ object OpenCodeAgentMd {
         - `closecode ui dump|tap|wait|assert|scroll|type --package PKG` — drive any app (defaults to this project).
         - `closecode intent open|start|broadcast|share` — start activities, deep links, broadcasts and shares.
         - `closecode device battery|network|storage|display|volume|brightness|dnd|clipboard|sensors`.
-        - `closecode setup --media` installs ffmpeg/sqlite/imagemagick; `--go` and `--rust`
-          install those language packs.
+        - `closecode setup --media` installs ffmpeg/sqlite/imagemagick; on-demand language
+          packs are `--go`, `--rust`, `--dart`, `--php`, `--ruby`, `--deno`, `--bun`.
         - `closecode files list|read|write|delete|share|media|uri` — the app-specific shared
           folder, plus MediaStore sharing and content-URI reads.
         - `closecode exec [--cwd DIR] [--timeout MS] [--approve] <command>` — run a shell command with streamed output.
@@ -63,7 +63,8 @@ object OpenCodeAgentMd {
           encrypted deployment vault; values are never printed.
         - `closecode deploy [--preset auto|static|node|python|android] [--dry-run] [--yes]` —
           rsync/scp over SSH using `deploy.host`, `deploy.user`, `deploy.path`, `deploy.key`.
-        - `closecode selftest [--keep]` — scaffold every template and check detection offline.
+        - `closecode selftest [--build] [--keep]` — scaffold every template, check detection, and
+          optionally build the web/Python cases.
         - `closecode stop-all` — stop every job and cancel the running build.
         - `closecode test-ui script.json` — run a multi-app step script (launch → wait → tap → assert).
 

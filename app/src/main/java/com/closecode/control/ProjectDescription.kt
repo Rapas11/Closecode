@@ -192,7 +192,7 @@ internal object ProjectDescription {
             addProperty("consent", "closecode consent status|grant|revoke <capability> [--package PKG]")
             addProperty("secrets", "closecode secrets list|set <name> <value>|set <name> --file FILE|delete <name>")
             addProperty("deploy", "closecode deploy [--preset auto|static|node|python|android] [--dry-run] [--yes]")
-            addProperty("selftest", "closecode selftest [--keep]")
+            addProperty("selftest", "closecode selftest [--build] [--keep]")
             addProperty("testUi", "closecode test-ui script.json")
             addProperty("audit", "closecode audit tail")
             addProperty("install", "closecode install")

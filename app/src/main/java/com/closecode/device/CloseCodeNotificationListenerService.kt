@@ -11,6 +11,7 @@ import android.service.notification.StatusBarNotification
 import androidx.core.app.RemoteInput
 import com.closecode.device.control.AuditLog
 import com.closecode.device.control.ConsentStore
+import com.closecode.device.control.DeviceControl
 import com.closecode.control.CommandEnvelope
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -104,15 +105,28 @@ internal object NotificationControl {
         arguments: List<String>,
     ): JsonObject {
         val wanted = valueAfter(arguments, "--package")
+        val blocked = mutableListOf<String>()
         val notifications = runCatching { listener.activeNotifications.toList() }
             .getOrDefault(emptyList())
             .filter { wanted == null || it.packageName == wanted }
+            .filter { notification ->
+                val allowed = !DeviceControl.isProtected(notification.packageName) ||
+                    ConsentStore(context).isScopedGranted("notifications", notification.packageName)
+                if (!allowed) blocked += notification.packageName
+                allowed
+            }
         return CommandEnvelope.of(ok = true).apply {
             add("notifications", JsonArray().apply {
                 notifications.forEach { notification ->
                     add(json(notification))
                 }
             })
+            if (blocked.isNotEmpty()) {
+                add("blocked", JsonArray().apply { blocked.distinct().forEach { add(it) } })
+                add("warnings", JsonArray().apply {
+                    add("Protected apps need an explicit per-app notification grant.")
+                })
+            }
         }
     }
 
@@ -123,6 +137,18 @@ internal object NotificationControl {
     ): JsonObject {
         val key = arguments.getOrNull(1)
             ?: return CommandEnvelope.failed("usage: closecode notifications dismiss <key>", code = "usage")
+        val packageName = runCatching {
+            listener.activeNotifications.firstOrNull { it.key == key }?.packageName
+        }.getOrNull()
+        if (packageName != null && DeviceControl.isProtected(packageName) &&
+            !ConsentStore(context).isScopedGranted("notifications", packageName)
+        ) {
+            return CommandEnvelope.failed(
+                "Dismissing notifications from $packageName is blocked by default.",
+                code = "needs_consent",
+                remedy = "Run closecode consent grant notifications --package $packageName",
+            )
+        }
         listener.cancelNotification(key)
         return CommandEnvelope.of(ok = true).apply { addProperty("key", key) }
     }
@@ -140,6 +166,15 @@ internal object NotificationControl {
         val notification = runCatching {
             listener.activeNotifications.firstOrNull { it.key == key }
         }.getOrNull() ?: return CommandEnvelope.failed("No notification with key '$key'.", code = "not_found")
+        if (DeviceControl.isProtected(notification.packageName) &&
+            !ConsentStore(context).isScopedGranted("notifications", notification.packageName)
+        ) {
+            return CommandEnvelope.failed(
+                "Notification replies to ${notification.packageName} are blocked by default.",
+                code = "needs_consent",
+                remedy = "Run closecode consent grant notifications --package ${notification.packageName}",
+            )
+        }
         val action = notification.notification.actions.orEmpty().firstOrNull { action ->
             action.remoteInputs?.isNotEmpty() == true
         } ?: return CommandEnvelope.failed("This notification has no reply action.", code = "no_reply")

@@ -18,6 +18,11 @@ object ShellEnvironment {
         val mediaTools: File,
         val goTools: File,
         val rustTools: File,
+        val dartTools: File,
+        val phpTools: File,
+        val rubyTools: File,
+        val denoTools: File,
+        val bunTools: File,
         val gradlePrefix: File,
         val sdk: File,
         val gradleRoot: File,
@@ -33,6 +38,11 @@ object ShellEnvironment {
             mediaTools = ShellToolsRepo.workingPrefix(data, "m"),
             goTools = ShellToolsRepo.workingPrefix(data, "go"),
             rustTools = ShellToolsRepo.workingPrefix(data, "rs"),
+            dartTools = ShellToolsRepo.workingPrefix(data, "dart"),
+            phpTools = ShellToolsRepo.workingPrefix(data, "php"),
+            rubyTools = ShellToolsRepo.workingPrefix(data, "rb"),
+            denoTools = ShellToolsRepo.workingPrefix(data, "deno"),
+            bunTools = ShellToolsRepo.workingPrefix(data, "bun"),
             gradlePrefix = File(data, "file/g"),
             sdk = File(files, "sdk"),
             gradleRoot = File(files, "gradle"),
@@ -80,6 +90,11 @@ object ShellEnvironment {
         val media = paths.mediaTools.takeIf { File(it, "bin").isDirectory }
         val go = paths.goTools.takeIf { File(it, "bin/go").isFile }
         val rust = paths.rustTools.takeIf { File(it, "bin/cargo").isFile }
+        val dart = paths.dartTools.takeIf { File(it, "bin/dart").isFile }
+        val php = paths.phpTools.takeIf { File(it, "bin/php").isFile }
+        val ruby = paths.rubyTools.takeIf { File(it, "bin/ruby").isFile }
+        val deno = paths.denoTools.takeIf { File(it, "bin/deno").isFile }
+        val bun = paths.bunTools.takeIf { File(it, "bin/bun").isFile }
         val java = javaHome(paths)
         val gradleBin = gradleBin(paths)
         val certificate = certificate(paths)
@@ -88,6 +103,11 @@ object ShellEnvironment {
             media?.let { add(File(it, "bin").absolutePath) }
             go?.let { add(File(it, "bin").absolutePath) }
             rust?.let { add(File(it, "bin").absolutePath) }
+            dart?.let { add(File(it, "bin").absolutePath) }
+            php?.let { add(File(it, "bin").absolutePath) }
+            ruby?.let { add(File(it, "bin").absolutePath) }
+            deno?.let { add(File(it, "bin").absolutePath) }
+            bun?.let { add(File(it, "bin").absolutePath) }
             add(File(home, ".local/bin").absolutePath)
             java?.let { add(File(it, "bin").absolutePath) }
             gradleBin?.let { add(it.absolutePath) }

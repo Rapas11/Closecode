@@ -25,6 +25,13 @@ class ConsentStore(context: Context) {
         return kv.getBoolean("consent.$clean.scope.$key", false)
     }
 
+    /** True only for an explicit grant on this exact package. */
+    fun isScopedGranted(capability: String, scope: String?): Boolean {
+        val clean = normalize(capability) ?: return false
+        val key = scope?.trim()?.takeIf { it.isNotEmpty() } ?: return false
+        return kv.getBoolean("consent.$clean.scope.$key", false)
+    }
+
     fun grantFor(capability: String, scope: String): Boolean {
         val clean = normalize(capability) ?: return false
         val key = scope.trim().takeIf { it.isNotEmpty() } ?: return false

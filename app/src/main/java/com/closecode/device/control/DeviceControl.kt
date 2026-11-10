@@ -50,7 +50,7 @@ internal object DeviceControl {
 
     fun checkUiConsent(context: Context, packageName: String?): JsonObject? {
         if (!isProtected(packageName)) return null
-        if (ConsentStore(context).isGrantedFor("ui-automation", packageName)) return null
+        if (ConsentStore(context).isScopedGranted("ui-automation", packageName)) return null
         return CommandEnvelope.failed(
             "UI control of $packageName is blocked by default because it looks like a sensitive app.",
             code = "needs_consent",

@@ -2,10 +2,12 @@ package com.closecode.control
 
 import android.content.Context
 import com.closecode.build.ProjectTypeDetector
+import com.closecode.tools.ShellEnvironment
 import com.closecode.ui.project.ProjectRepository
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
  * `closecode selftest` scaffolds every template and checks the files and detection signals
@@ -27,12 +29,20 @@ internal object SelftestCommand {
     fun run(context: Context, arguments: List<String>): JsonObject {
         val repository = ProjectRepository(context)
         val keep = arguments.contains("--keep")
+        val build = arguments.contains("--build") || arguments.contains("--full")
         val checks = JsonArray()
         val created = mutableListOf<String>()
         try {
             cases.forEach { case ->
                 val name = "selftest-${case.template}-${System.nanoTime()}"
-                val createdProject = InitCommand.run(context, InitCommand.Options(case.template, name))
+                val createdProject = InitCommand.run(
+                    context,
+                    InitCommand.Options(
+                        template = case.template,
+                        name = name,
+                        install = build && (case.template == "web-vite" || case.template == "node-express"),
+                    ),
+                )
                 if (createdProject.get("ok")?.asBoolean != true) {
                     checks.add(check(case.template, false, createdProject.get("error")?.asString ?: "scaffold failed"))
                     return@forEach
@@ -56,18 +66,56 @@ internal object SelftestCommand {
                     addProperty("directory", directory.absolutePath)
                     add("detection", detection.json())
                 })
+                if (build && ok) checks.add(buildCheck(context, directory, case.template))
             }
             checks.add(structuralChecks(context))
             val ok = checks.all { it.asJsonObject.get("ok")?.asBoolean == true }
             return CommandEnvelope.of(ok = ok).apply {
                 add("checks", checks)
-                addProperty("fullBuild", false)
+                addProperty("fullBuild", build)
                 if (!ok) {
                     addProperty("remedy", "Read the failing check; closecode setup installs the missing toolchain.")
                 }
             }
         } finally {
             if (!keep) created.forEach { runCatching { repository.delete(it) } }
+        }
+    }
+
+    private fun buildCheck(context: Context, directory: File, template: String): JsonObject {
+        val command = when (template) {
+            "web-vite" -> listOf("npm", "run", "build")
+            "node-express" -> listOf("node", "--check", "server.js")
+            "python-fastapi", "python-cli" -> listOf("python3", "-m", "compileall", "-q", ".")
+            "android-compose" -> null
+            else -> null
+        }
+        if (command == null) {
+            return check("$template-build", true, "no build step for this template").apply {
+                addProperty("skipped", true)
+                if (template == "android-compose") {
+                    addProperty("note", "Build Android templates with closecode build on the phone.")
+                }
+            }
+        }
+        val builder = ProcessBuilder(command)
+            .directory(directory)
+            .redirectErrorStream(true)
+        builder.environment().clear()
+        builder.environment().putAll(ShellEnvironment.env(context, directory))
+        return runCatching {
+            val process = builder.start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            val finished = process.waitFor(15, TimeUnit.MINUTES)
+            if (!finished) process.destroyForcibly()
+            val code = runCatching { process.exitValue() }.getOrDefault(124)
+            check(
+                "$template-build",
+                code == 0,
+                if (code == 0) "built successfully" else output.takeLast(1_500),
+            ).apply { addProperty("exitCode", code) }
+        }.getOrElse {
+            check("$template-build", false, "could not start ${command.first()}: ${it.message}")
         }
     }
 

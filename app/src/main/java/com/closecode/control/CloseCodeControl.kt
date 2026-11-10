@@ -1687,7 +1687,7 @@ internal fun controlCommandScript(basePath: String): String = """
         jobs) echo "usage: closecode jobs list|stop <id>|logs <id>|stop-all" ;;
         secrets) echo "usage: closecode secrets list|set <name> <value>|set <name> --file FILE|delete <name>" ;;
         deploy) echo "usage: closecode deploy [--preset auto|static|node|python|android] [--dry-run] [--yes]" ;;
-        selftest) echo "usage: closecode selftest [--keep]" ;;
+        selftest) echo "usage: closecode selftest [--build] [--keep]" ;;
         init) echo "usage: closecode init --template android-compose|web-vite|web-static|python-fastapi|python-cli|node-express [name]" ;;
         config) echo "usage: closecode config show|set <key> <value>|unset <key>" ;;
         test) echo "usage: closecode test — run the project's tests" ;;
@@ -1708,7 +1708,7 @@ internal fun controlCommandScript(basePath: String): String = """
         describe|d) echo "usage: closecode describe" ;;
         tool|t) echo "usage: closecode tool aapt2|d8|r8|kotlinc [args...]" ;;
         tools) echo "usage: closecode tools [status|install|remove]" ;;
-        setup) echo "usage: closecode setup --gradle|--web|--python|--native|--media|--go|--rust|--all|--remove <component>" ;;
+        setup) echo "usage: closecode setup --gradle|--web|--python|--native|--media|--go|--rust|--dart|--php|--ruby|--deno|--bun|--all|--remove <component>" ;;
         doctor|doc) echo "usage: closecode doctor [--json]" ;;
         toolchain) echo "usage: closecode toolchain status [--json]" ;;
         signing|sign) echo "usage: closecode signing status|generate|import|select|delete" ;;
