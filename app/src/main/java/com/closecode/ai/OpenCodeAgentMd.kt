@@ -57,9 +57,11 @@ object OpenCodeAgentMd {
         - `closecode notifications list|dismiss <key>|reply <key> <text>|enable` — the enabled
           notification listener; `enable` opens the system settings screen.
         - `closecode screen start [--audio] [--path FILE]|stop|status` — screen recording.
-        - `closecode consent status|grant|revoke <capability> [--package PKG]` and
+        - `closecode consent status|request|revoke <capability> [--package PKG]` and
           `closecode audit tail|egress` — grants, per-app grants, the audit log, and outbound
-          deploy/share transfers.
+          deploy/share transfers. `request` only asks: the user allows it in CloseCode →
+          Settings → Agent permissions, so the command answers `needs_consent` and nothing is
+          granted until they tap Allow.
         - `closecode secrets list|set <name> <value>|set <name> --file FILE|delete <name>` — the
           encrypted deployment vault; values are never printed.
         - `closecode deploy [--preset auto|static|node|python|android] [--dry-run] [--yes]` —
@@ -100,6 +102,9 @@ object OpenCodeAgentMd {
         - On this phone the user only talks to you. Routine build, check and fix commands run
           by themselves. Destructive shell work and access outside the project ask in the
           OpenCode page; wait for the user's answer instead of trying to bypass it.
+        - When a command answers `needs_consent` or `needs_permission`, ask the user to allow it
+          in CloseCode → Settings → Agent permissions (or on the system screen the command names)
+          and run the command again. Never try to work around a missing grant.
         - When the app itself misbehaves, tell the user to open CloseCode → AI → Server log;
           the file lives at `files/opencode/logs/server.log` in the app's private storage.
     """.trimIndent() + "\n"
