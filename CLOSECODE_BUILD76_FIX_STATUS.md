@@ -43,19 +43,23 @@ host with no arm64 phone attached).
   now deletes the stale `GRADLE_USER_HOME/init.d/zz-closecode-*.gradle` script, and the Gradle
   launcher is patched properly at unpack time instead of by hand.
 
-## Still open (not part of P0/P1)
+## P2 - Security
 
-The report contains more than P0 and P1. §12 lists two more items that are **not** done:
+| ID | Change | Files |
+|----|--------|-------|
+| P2-1 | The agent can no longer grant itself anything. `closecode consent grant` (and the new `closecode consent request`) records the ask and answers `{"ok":false,"code":"needs_consent","needsUser":true,"capability","package","requestId"}`; the phone posts a notification and Settings -> **Agent permissions** shows the request with Allow and Deny. Only that screen flips a grant. `secrets`, `ui-automation`, `screen` and `shell` are marked as never self-grantable. The request, the approval and the denial all go to the audit log. | `device/control/ConsentStore.kt`, `device/control/ConsentNotifier.kt`, `device/control/DeviceControl.kt`, `ui/settings/SettingsPages.kt`, `ui/settings/SettingsModel.kt`, `ui/settings/SettingsScreen.kt`, `MainActivity.kt` |
 
-- **P2-1 — consent can be self-granted.** `closecode consent grant shell` still flips the grant
-  itself. The report wants `{"ok":false,"code":"needs_confent","needsUser":true}`, a user
-  confirmation in the UI, no self-grant for secrets / ui-automation / screen / shell, an audit
-  entry for granted *and* denied attempts, and `closecode consent request <capability>`.
-- **P3 — test gaps.** The commands in the P3 table (`selftest --build`, `init --template
-  android-compose`, `test/lint/format/package/release`, `test-ui`, `secrets`, `deploy --dry-run`,
-  `screen`, `notifications`, `files`, `signing`) are not covered end to end.
+## P3 - Test gaps
 
-The device acceptance run (§9) is also still outstanding — see below.
+`closecode selftest` now also runs the commands the report lists as never exercised, through the
+same code path the CLI uses: `secrets` (the value is never listed, survives a restart, can be
+deleted), `files` (write, read, delete in the scoped folder), `deploy --dry-run`, `signing` (the
+keys and the selected certificate's SHA-256), `screen`, `notifications`, `test-ui`, and the
+dispatch of `test`/`lint`/`format`/`package`/`release` for every ecosystem. A check that needs a
+system permission says `skipped` with the reason instead of pretending it passed. The release
+checklist lives in `docs/release-checklist.md`.
+
+The device acceptance run (section 9) is still outstanding - see below.
 
 ## Verified here
 

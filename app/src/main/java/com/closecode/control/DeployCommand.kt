@@ -22,7 +22,7 @@ internal object DeployCommand {
             return CommandEnvelope.failed(
                 "The network capability is not granted.",
                 code = "needs_consent",
-                remedy = "Run closecode consent grant network",
+                remedy = "Run closecode consent request network, then allow it in Settings > Agent permissions.",
             )
         }
         val action = arguments.firstOrNull()?.lowercase()

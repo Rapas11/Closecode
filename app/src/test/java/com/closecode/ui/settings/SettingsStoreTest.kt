@@ -239,7 +239,7 @@ class SettingsStoreTest {
         val count = sections.flatMap { it.groups.flatMap { it.rows } }.size
         println("SECTIONS: ${sections.size}, ROWS: $count")
         assertEquals(11, sections.size)
-        assertEquals(61, rowCount())
+        assertEquals(62, rowCount())
     }
 
     @Test

@@ -148,6 +148,8 @@ fun SettingsScreen(
     onOpenSetupGuide: () -> Unit = {},
     templateTab: TemplateTab? = null,
     openDetail: Boolean = false,
+    openAgentPermissions: Boolean = false,
+    onAgentPermissionsConsumed: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val repository = rememberProjectRepository()
@@ -165,6 +167,14 @@ fun SettingsScreen(
     var sdkOpen by remember { mutableStateOf(false) }
     var signingOpen by remember { mutableStateOf(false) }
     var credentialsOpen by remember { mutableStateOf(false) }
+    var agentPermissionsOpen by remember { mutableStateOf(openAgentPermissions) }
+    // The notification asks for the permissions screen; the page opens once and the flag clears.
+    LaunchedEffect(openAgentPermissions) {
+        if (openAgentPermissions) {
+            agentPermissionsOpen = true
+            onAgentPermissionsConsumed()
+        }
+    }
     var infoPage by remember { mutableStateOf<String?>(null) }
     var comingSoon by remember { mutableStateOf<String?>(null) }
     var aiOpen by remember { mutableStateOf(false) }
@@ -196,6 +206,10 @@ fun SettingsScreen(
     }
     if (credentialsOpen) {
         CredentialsPage(onBack = { credentialsOpen = false })
+        return
+    }
+    if (agentPermissionsOpen) {
+        AgentPermissionsPage(onBack = { agentPermissionsOpen = false })
         return
     }
     if (aiOpen) {
@@ -351,6 +365,7 @@ fun SettingsScreen(
             SettingsAction.NATIVE_TOOLS -> nativeToolsOpen = true
             SettingsAction.SIGNING_KEYS -> signingOpen = true
             SettingsAction.CREDENTIALS -> credentialsOpen = true
+            SettingsAction.AGENT_PERMISSIONS -> agentPermissionsOpen = true
             SettingsAction.LICENSES -> infoPage = "licenses"
             SettingsAction.PRIVACY -> infoPage = "privacy"
             SettingsAction.AI_SETTINGS -> aiOpen = true

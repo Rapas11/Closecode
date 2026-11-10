@@ -1803,7 +1803,7 @@ internal fun controlCommandScript(basePath: String): String = """
         device) echo "usage: closecode device battery|network|storage|display|volume [n]|brightness [n]|dnd|clipboard [text]|sensors|orientation|all" ;;
         files) echo "usage: closecode files list|read|write|delete|share|media|uri" ;;
         exec) echo "usage: closecode exec [--cwd DIR] [--timeout MS] [--approve] <command...>" ;;
-        consent) echo "usage: closecode consent status|grant|revoke <capability> [--package PKG]" ;;
+        consent) echo "usage: closecode consent status|request|revoke <capability> [--package PKG]" ;;
         audit) echo "usage: closecode audit tail [lines]|egress [lines]" ;;
         notifications|notify) echo "usage: closecode notifications list|dismiss <key>|reply <key> <text>|enable" ;;
         screen) echo "usage: closecode screen start [--audio] [--path FILE]|stop|status" ;;

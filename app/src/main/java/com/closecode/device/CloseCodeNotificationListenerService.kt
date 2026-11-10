@@ -54,7 +54,7 @@ internal object NotificationControl {
             return CommandEnvelope.failed(
                 "The notifications capability is not granted.",
                 code = "needs_consent",
-                remedy = "Run closecode consent grant notifications",
+                remedy = "Run closecode consent request notifications, then allow it in Settings > Agent permissions.",
             )
         }
         val action = arguments.firstOrNull()?.lowercase() ?: "list"
@@ -146,7 +146,7 @@ internal object NotificationControl {
             return CommandEnvelope.failed(
                 "Dismissing notifications from $packageName is blocked by default.",
                 code = "needs_consent",
-                remedy = "Run closecode consent grant notifications --package $packageName",
+                remedy = "Run closecode consent request notifications --package $packageName, then allow it in Settings > Agent permissions.",
             )
         }
         listener.cancelNotification(key)
@@ -172,7 +172,7 @@ internal object NotificationControl {
             return CommandEnvelope.failed(
                 "Notification replies to ${notification.packageName} are blocked by default.",
                 code = "needs_consent",
-                remedy = "Run closecode consent grant notifications --package ${notification.packageName}",
+                remedy = "Run closecode consent request notifications --package ${notification.packageName}, then allow it in Settings > Agent permissions.",
             )
         }
         val action = notification.notification.actions.orEmpty().firstOrNull { action ->

@@ -73,6 +73,8 @@ internal object SelftestCommand {
                 if (build && ok) checks.add(buildCheck(context, directory, case.template))
             }
             checks.add(structuralChecks(context))
+            // P3: the commands the report lists as never exercised end to end.
+            checks.addAll(SelftestCommands.run(context))
             val ok = checks.all { it.asJsonObject.get("ok")?.asBoolean == true }
             return CommandEnvelope.of(ok = ok).apply {
                 add("checks", checks)

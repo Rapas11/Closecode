@@ -15,7 +15,7 @@ internal object SecretsCommand {
             return CommandEnvelope.failed(
                 "The secrets capability is not granted.",
                 code = "needs_consent",
-                remedy = "Run closecode consent grant secrets",
+                remedy = "Run closecode consent request secrets, then allow it in Settings > Agent permissions.",
             )
         }
         val store = SecretStore(context)

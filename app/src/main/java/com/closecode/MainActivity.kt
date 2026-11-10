@@ -62,6 +62,7 @@ import com.closecode.ui.settings.LocalAnimationsEnabled
 import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.settings.OptionSetting
 import com.closecode.ui.settings.SettingsScreen
+import com.closecode.device.control.ConsentNotifier
 import com.closecode.ui.settings.rememberSettingsStore
 import com.closecode.ui.theme.ClosecodeTheme
 import kotlinx.coroutines.Dispatchers
@@ -70,6 +71,17 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private var keyboardLayoutListener: android.view.ViewTreeObserver.OnGlobalLayoutListener? = null
+
+    /** P2-1: set when a consent notification asks for the permissions screen. */
+    private val agentPermissionsRequested = mutableStateOf(false)
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getStringExtra(ConsentNotifier.EXTRA_OPEN) == ConsentNotifier.OPEN_PERMISSIONS) {
+            agentPermissionsRequested.value = true
+        }
+    }
 
     // Keyboard visibility from the window height, registered while attached: the visible frame
     // shrinks by the keyboard while some devices report zero inset height with a stuck visible
@@ -106,6 +118,10 @@ class MainActivity : ComponentActivity() {
         com.closecode.device.ScreenshotStore.clear(applicationContext)
         CloseCodeControl.start(applicationContext)
         CrashReport.install(filesDir) { BuildInfo.label }
+        // P2-1: a consent notification opens the permissions screen.
+        if (intent?.getStringExtra(ConsentNotifier.EXTRA_OPEN) == ConsentNotifier.OPEN_PERMISSIONS) {
+            agentPermissionsRequested.value = true
+        }
         // A crash leaves its report in a file; the next launch offers it up for copying or
         // sharing instead of swallowing it. There is no logcat on a phone, so this dialog is
         // the whole report.
@@ -323,6 +339,8 @@ class MainActivity : ComponentActivity() {
                                 onOpenSetupGuide = { nav.navigate("onboarding") },
                                 templateTab = settingsTab,
                                 openDetail = settingsOpenDetail,
+                                openAgentPermissions = agentPermissionsRequested.value,
+                                onAgentPermissionsConsumed = { agentPermissionsRequested.value = false },
                             )
                         }
 

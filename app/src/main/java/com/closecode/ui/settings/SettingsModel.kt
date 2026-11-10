@@ -113,6 +113,7 @@ enum class SettingsAction {
     NATIVE_TOOLS,
     CREDENTIALS,
     SIGNING_KEYS,
+    AGENT_PERMISSIONS,
     LICENSES,
     PRIVACY,
     AI_SETTINGS,
@@ -674,6 +675,12 @@ fun sections(
                         "Release signing key",
                         "Open",
                         id = SettingsAction.SIGNING_KEYS,
+                    ),
+                    Row.Nav(
+                        "Agent permissions",
+                        "What the agent may do",
+                        "Open",
+                        id = SettingsAction.AGENT_PERMISSIONS,
                     ),
                     Row.Nav(
                         "Privacy",

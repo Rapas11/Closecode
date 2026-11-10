@@ -80,6 +80,7 @@ class SettingsGitHubTest {
                 SettingsAction.EDIT_GIT_NAME,
                 SettingsAction.EDIT_GIT_EMAIL,
                 SettingsAction.SIGNING_KEYS,
+                SettingsAction.AGENT_PERMISSIONS,
                 SettingsAction.AI_PROVIDER_KEY,
                 SettingsAction.UPDATE_RUNTIME,
                 SettingsAction.PRIVACY,

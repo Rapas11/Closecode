@@ -54,7 +54,7 @@ internal object DeviceControl {
         return CommandEnvelope.failed(
             "UI control of $packageName is blocked by default because it looks like a sensitive app.",
             code = "needs_consent",
-            remedy = "Run closecode consent grant ui-automation --package $packageName only if you really want this.",
+            remedy = "Run closecode consent request ui-automation --package $packageName, then allow it in Settings > Agent permissions if you really want this.",
         ).apply {
             addProperty("package", packageName.orEmpty())
             addProperty("scope", packageName.orEmpty())
@@ -452,7 +452,7 @@ internal object DeviceControl {
             return CommandEnvelope.failed(
                 "The files capability is not granted.",
                 code = "needs_consent",
-                remedy = "Run closecode consent grant files",
+                remedy = "Run closecode consent request files, then allow it in Settings > Agent permissions.",
             )
         }
         val root = File(context.getExternalFilesDir(null), "shared").apply { mkdirs() }
@@ -699,7 +699,7 @@ internal object DeviceControl {
             return CommandEnvelope.failed(
                 "The shell capability is not granted.",
                 code = "needs_consent",
-                remedy = "Run closecode consent grant shell",
+                remedy = "Run closecode consent request shell, then allow it in Settings > Agent permissions.",
             )
         }
         var cwd = projectDir
@@ -806,22 +806,56 @@ internal object DeviceControl {
                         add(name, JsonArray().apply { scopes.sorted().forEach { add(it) } })
                     }
                 })
+                // P2-1: the ask that is waiting for the user.
+                store.pending()?.let { add("pending", it.json()) }
             }
-            "grant", "allow" -> {
+            "grant", "allow", "request", "ask" -> {
                 val capability = arguments.getOrNull(1)
-                    ?: return CommandEnvelope.failed("usage: closecode consent grant <capability> [--package PKG]", code = "usage")
+                    ?: return CommandEnvelope.failed("usage: closecode consent request <capability> [--package PKG]", code = "usage")
                 val scope = option(arguments, "--package") ?: option(arguments, "--app")
-                val done = if (scope != null) store.grantFor(capability, scope) else store.grant(capability)
-                CommandEnvelope.of(ok = done).apply {
-                    addProperty("capability", capacityName(capability))
-                    if (scope != null) addProperty("package", scope)
-                    if (!done) {
-                        addProperty("error", "Unknown capability.")
-                        addProperty("code", "unknown_capability")
+                val clean = ConsentStore.normalize(capability)
+                    ?: return CommandEnvelope.failed(
+                        "Unknown capability '$capability'.",
+                        code = "unknown_capability",
+                        remedy = "Ask for one of: ${ConsentStore.CAPABILITIES.joinToString()}",
+                    ).apply {
                         add("capabilities", JsonArray().apply {
                             ConsentStore.CAPABILITIES.forEach { add(it) }
                         })
                     }
+                if (store.isGrantedFor(clean, scope)) {
+                    return CommandEnvelope.of(ok = true).apply {
+                        addProperty("capability", clean)
+                        addProperty("package", scope ?: "")
+                        addProperty("granted", true)
+                        addProperty("note", "This capability is already allowed.")
+                    }
+                }
+                // P2-1: the agent asks; the user decides. Nothing is granted here.
+                val request = store.request(clean, scope)
+                    ?: return CommandEnvelope.failed(
+                        "The request could not be recorded.",
+                        code = "request_failed",
+                    )
+                ConsentNotifier.notify(context, request)
+                AuditLog(context).record(
+                    "consent request",
+                    scope,
+                    arguments,
+                    false,
+                    "needs_consent: $clean",
+                )
+                CommandEnvelope.failed(
+                    "CloseCode needs your permission to use '$clean'.",
+                    code = "needs_consent",
+                    remedy = "Open CloseCode → Settings → Agent permissions, tap Allow, then retry.",
+                ).apply {
+                    addProperty("needsUser", true)
+                    addProperty("capability", clean)
+                    addProperty("package", scope ?: "")
+                    addProperty("requestId", request.id)
+                    addProperty("sensitive", ConsentStore.isSensitive(clean))
+                    add("actions", JsonArray().apply { add("closecode consent status") })
                 }
             }
             "revoke", "deny" -> {
@@ -829,12 +863,23 @@ internal object DeviceControl {
                     ?: return CommandEnvelope.failed("usage: closecode consent revoke <capability> [--package PKG]", code = "usage")
                 val scope = option(arguments, "--package") ?: option(arguments, "--app")
                 val done = if (scope != null) store.revokeFor(capability, scope) else store.revoke(capability)
+                // A revocation is a decision too: it is audited like a grant.
+                AuditLog(context).record(
+                    "consent revoke",
+                    scope,
+                    arguments,
+                    done,
+                    if (done) "revoked: ${capacityName(capability)}" else "unknown capability",
+                )
                 CommandEnvelope.of(ok = done).apply {
                     addProperty("capability", capacityName(capability))
                     if (scope != null) addProperty("package", scope)
                 }
             }
-            else -> CommandEnvelope.failed("usage: closecode consent status|grant|revoke [--package PKG]", code = "usage")
+            else -> CommandEnvelope.failed(
+                "usage: closecode consent status|request|revoke [--package PKG]",
+                code = "usage",
+            )
         }
     }
 

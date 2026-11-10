@@ -52,6 +52,8 @@ import com.closecode.build.SigningKeySource
 import com.closecode.build.SigningStore
 import com.closecode.ai.OpenCode
 import com.closecode.ai.OpenCodeDefaults
+import com.closecode.device.control.AuditLog
+import com.closecode.device.control.ConsentStore
 import com.closecode.tools.GradleToolsManifest
 import com.closecode.tools.GradleToolsStore
 import com.closecode.tools.NativeToolsStore
@@ -198,6 +200,131 @@ private fun PageAction(
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 7.dp),
     )
+}
+
+/**
+ * P2-1: the only place a capability becomes allowed.
+ *
+ * The agent may ask (`closecode consent request shell`), never grant. The ask appears here
+ * and in a notification; the user taps Allow or Deny, and both decisions are audited.
+ */
+@Composable
+internal fun AgentPermissionsPage(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val c = LocalPageColors.current
+    val store = remember(context) { ConsentStore(context) }
+    var pending by remember { mutableStateOf(store.pending()) }
+    var grants by remember { mutableStateOf(store.grants()) }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    fun refresh() {
+        pending = store.pending()
+        grants = store.grants()
+    }
+
+    SettingsPageScaffold(title = "Agent permissions", onBack = onBack) {
+        Text(
+            "The agent asks for these; you decide. Nothing is allowed without your tap here.",
+            color = c.mock.muted,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            fontFamily = Sans,
+        )
+        val request = pending
+        if (request != null) {
+            PageCard {
+                Text(
+                    "The agent asked for ${request.capability}",
+                    color = c.mock.text,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    request.scope?.let { "Scoped to $it." }
+                        ?: "Applies to every app.",
+                    color = c.mock.muted,
+                    fontSize = 12.sp,
+                    fontFamily = Sans,
+                )
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    PageAction("Allow") {
+                        store.resolve(request, approved = true)
+                        AuditLog(context).record(
+                            "consent approve",
+                            request.scope,
+                            listOf(request.capability),
+                            true,
+                            "granted: ${request.capability}",
+                        )
+                        message = "${request.capability} is now allowed."
+                        refresh()
+                    }
+                    PageAction("Deny", danger = true) {
+                        store.resolve(request, approved = false)
+                        AuditLog(context).record(
+                            "consent deny",
+                            request.scope,
+                            listOf(request.capability),
+                            false,
+                            "denied: ${request.capability}",
+                        )
+                        message = "${request.capability} stays off."
+                        refresh()
+                    }
+                }
+            }
+        }
+        ConsentStore.CAPABILITIES.forEach { capability ->
+            val allowed = grants[capability] == true
+            PageCard {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            capability,
+                            color = c.mock.text,
+                            fontSize = 14.sp,
+                            fontFamily = Sans,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            when {
+                                allowed -> "Allowed"
+                                ConsentStore.isSensitive(capability) ->
+                                    "Not allowed · only you can turn this on"
+                                else -> "Not allowed"
+                            },
+                            color = c.mock.muted,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                        )
+                    }
+                    PageAction(if (allowed) "Revoke" else "Allow", danger = allowed) {
+                        store.set(capability, allowed.not())
+                        AuditLog(context).record(
+                            if (allowed) "consent revoke" else "consent approve",
+                            null,
+                            listOf(capability),
+                            true,
+                            "${if (allowed) "revoked" else "granted"}: $capability",
+                        )
+                        message = "$capability is now ${if (allowed) "off" else "allowed"}."
+                        refresh()
+                    }
+                }
+            }
+        }
+        message?.let {
+            Text(it, color = c.mock.muted, fontSize = 12.sp, fontFamily = Sans)
+        }
+    }
 }
 
 @Composable

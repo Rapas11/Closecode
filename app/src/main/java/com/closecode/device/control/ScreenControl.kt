@@ -19,7 +19,7 @@ internal object ScreenControl {
             return CommandEnvelope.failed(
                 "The screen capability is not granted.",
                 code = "needs_consent",
-                remedy = "Run closecode consent grant screen",
+                remedy = "Run closecode consent request screen, then allow it in Settings > Agent permissions.",
             )
         }
         val action = arguments.firstOrNull()?.lowercase() ?: "status"
