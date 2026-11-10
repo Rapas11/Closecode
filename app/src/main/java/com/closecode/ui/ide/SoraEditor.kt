@@ -47,6 +47,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -80,6 +81,7 @@ import com.closecode.ui.theme.Sans
 import io.github.rosemoe.sora.event.ContentChangeEvent
 import io.github.rosemoe.sora.event.EditorKeyEvent
 import io.github.rosemoe.sora.event.EventReceiver
+import io.github.rosemoe.sora.event.HandleStateChangeEvent
 import io.github.rosemoe.sora.event.ScrollEvent
 import io.github.rosemoe.sora.event.SelectionChangeEvent
 import io.github.rosemoe.sora.lang.EmptyLanguage
@@ -100,6 +102,7 @@ import io.github.rosemoe.sora.text.ContentReference
 import io.github.rosemoe.sora.widget.CodeEditor
 import io.github.rosemoe.sora.widget.SymbolPairMatch
 import io.github.rosemoe.sora.widget.component.EditorAutoCompletion
+import io.github.rosemoe.sora.widget.component.EditorTextActionWindow
 import io.github.rosemoe.sora.widget.schemes.EditorColorScheme
 import io.github.rosemoe.sora.widget.style.DiagnosticIndicatorStyle
 import kotlinx.coroutines.Dispatchers
@@ -107,6 +110,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.math.roundToInt
 
 private const val SoraHighlightLimit = 200_000
 private const val SoraHighlightDelayMs = 120L
@@ -172,6 +176,15 @@ internal fun SoraIdeEditorArea(
     var caretLine by remember { mutableIntStateOf(1) }
     var hasSelection by remember { mutableStateOf(false) }
     var autoCompleteOpen by remember { mutableStateOf(false) }
+    var searchOpen by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var replaceOpen by remember { mutableStateOf(false) }
+    var replacement by remember { mutableStateOf("") }
+    var searchCurrent by remember { mutableIntStateOf(0) }
+    var searchTotal by remember { mutableIntStateOf(0) }
+    var searchMenuOpen by remember { mutableStateOf(false) }
+    var selectionMenuAllowed by remember { mutableStateOf(true) }
+    var scrollTick by remember { mutableIntStateOf(0) }
     var problems by remember { mutableStateOf(ProblemsByLine()) }
     var currentAnalysis by remember { mutableStateOf<KotlinFileAnalysis?>(null) }
     var quickFixLine by remember { mutableStateOf<Int?>(null) }
@@ -245,8 +258,13 @@ internal fun SoraIdeEditorArea(
             view.props.highlightMatchingDelimiters = true
             view.props.stickyScroll = false
             view.setColorScheme(scheme)
+            view.searcher.isCyclicJumping = true
+            runCatching {
+                view.getComponent(EditorTextActionWindow::class.java)?.isEnabled = false
+            }
         }
     }
+    val searchController = remember(editor) { SoraSearchController(editor) }
 
     fun forgetPlace(name: String) {
         caretByFile.remove(name)
@@ -289,6 +307,8 @@ internal fun SoraIdeEditorArea(
             }),
             view.subscribeEvent(ScrollEvent::class.java, EventReceiver { event, _ ->
                 viewportTick++
+                selectionMenuAllowed = false
+                scrollTick++
                 val lastLine = (view.text.lineCount - 1).coerceAtLeast(0)
                 scrollByFile[latestActive] = view.firstVisibleLine.coerceIn(0, lastLine) to view.offsetX
                 if (view.text.length > SoraHighlightLimit) {
@@ -300,6 +320,9 @@ internal fun SoraIdeEditorArea(
                     )
                 }
                 refreshAutoCompleteOpen()
+            }),
+            view.subscribeEvent(HandleStateChangeEvent::class.java, EventReceiver { event, _ ->
+                selectionMenuAllowed = !event.isHeld
             }),
             view.subscribeEvent(EditorKeyEvent::class.java, EventReceiver { event, _ ->
                 if (event.action == KeyEvent.ACTION_DOWN &&
@@ -315,6 +338,33 @@ internal fun SoraIdeEditorArea(
             subscriptions.forEach { it.unsubscribe() }
             latestPlace(caretByFile.toMap(), scrollByFile.toMap())
         }
+    }
+
+    LaunchedEffect(editor, searchOpen, searchQuery) {
+        if (!searchOpen || searchQuery.isEmpty()) {
+            searchController.close()
+            searchCurrent = 0
+            searchTotal = 0
+            return@LaunchedEffect
+        }
+        delay(150)
+        val immediate = searchController.search(searchQuery)
+        searchCurrent = immediate.first
+        searchTotal = immediate.second
+        if (immediate.second > 0) return@LaunchedEffect
+        repeat(12) {
+            delay(40)
+            val counts = searchController.counts()
+            searchCurrent = counts.first
+            searchTotal = counts.second
+            if (counts.second > 0) return@LaunchedEffect
+        }
+    }
+
+    LaunchedEffect(scrollTick) {
+        if (scrollTick == 0) return@LaunchedEffect
+        delay(180)
+        selectionMenuAllowed = true
     }
 
     LaunchedEffect(
@@ -549,6 +599,16 @@ internal fun SoraIdeEditorArea(
 
     LaunchedEffect(active) {
         editor.setDiagnostics(null)
+        if (searchOpen) {
+            searchOpen = false
+            replaceOpen = false
+            searchMenuOpen = false
+            searchQuery = ""
+            replacement = ""
+            searchController.close()
+            searchCurrent = 0
+            searchTotal = 0
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -807,6 +867,62 @@ internal fun SoraIdeEditorArea(
             .fillMaxHeight()
             .background(colors.editor),
     ) {
+        EditorSearchBar(
+            state = EditorSearchUiState(
+                open = searchOpen,
+                query = searchQuery,
+                replaceOpen = replaceOpen,
+                replacement = replacement,
+                current = searchCurrent,
+                total = searchTotal,
+                menuOpen = searchMenuOpen,
+            ),
+            onQueryChange = { searchQuery = it },
+            onNext = {
+                val counts = searchController.next()
+                searchCurrent = counts.first
+                searchTotal = counts.second
+            },
+            onPrevious = {
+                val counts = searchController.previous()
+                searchCurrent = counts.first
+                searchTotal = counts.second
+            },
+            onClose = {
+                searchOpen = false
+                replaceOpen = false
+                searchMenuOpen = false
+                searchQuery = ""
+                replacement = ""
+                searchController.close()
+                searchCurrent = 0
+                searchTotal = 0
+            },
+            onMenuToggle = { searchMenuOpen = it },
+            onLast = {
+                val counts = searchController.last()
+                searchCurrent = counts.first
+                searchTotal = counts.second
+            },
+            onReplaceRow = { replaceOpen = true },
+            onReplaceAllOpen = { replaceOpen = true },
+            onReplacementChange = { replacement = it },
+            onReplaceOne = {
+                val had = searchTotal > 0
+                val counts = searchController.replaceCurrent(replacement)
+                searchCurrent = counts.first
+                searchTotal = counts.second
+                latestToast(if (had) "Replaced 1 match" else "No match to replace")
+            },
+            onReplaceAllNow = {
+                val replaced = searchTotal
+                val counts = searchController.replaceAll(replacement)
+                searchCurrent = counts.first
+                searchTotal = counts.second
+                if (replaced > 0) latestToast("Replaced $replaced matches")
+                else latestToast("No matches to replace")
+            },
+        )
         if (tabs.isNotEmpty()) {
             Row(
                 Modifier
@@ -916,10 +1032,11 @@ internal fun SoraIdeEditorArea(
                     Modifier
                         .size(40.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .combinedClickable(
-                            onClick = { editor.beginSearchMode() },
-                            onLongClick = {},
-                        ),
+                        .clickable {
+                            replaceOpen = false
+                            searchMenuOpen = false
+                            searchOpen = true
+                        },
                     contentAlignment = Alignment.Center,
                 ) {
                     CcIcon(CcIcons.Search, colors.mock.textSoft, 18.dp)
@@ -941,6 +1058,44 @@ internal fun SoraIdeEditorArea(
             )
 
             val rowHeight = editor.rowHeight.toFloat()
+            val selectionAnchor = remember(
+                viewportTick,
+                hasSelection,
+                selectionMenuAllowed,
+                searchOpen,
+                editorSize,
+                scrollTick,
+            ) {
+                if (!hasSelection || !selectionMenuAllowed || searchOpen) {
+                    null
+                } else {
+                    runCatching {
+                        val cursor = editor.cursor
+                        val line = cursor.leftLine.coerceIn(0, (editor.text.lineCount - 1).coerceAtLeast(0))
+                        val column = cursor.leftColumn.coerceIn(0, editor.text.getColumnCount(line))
+                        val offsets = editor.layout.getCharLayoutOffset(line, column)
+                        val location = IntArray(2)
+                        editor.getLocationInWindow(location)
+                        IntOffset(
+                            (location[0] + editor.measureTextRegionOffset() + offsets[1] - editor.offsetX)
+                                .roundToInt(),
+                            (location[1] + offsets[0] - rowHeight - editor.offsetY).roundToInt(),
+                        )
+                    }.getOrNull()
+                }
+            }
+            SelectionToolbar(
+                ui = SelectionUi(
+                    visible = selectionAnchor != null,
+                    anchorX = selectionAnchor?.x ?: 0,
+                    anchorY = selectionAnchor?.y ?: 0,
+                    lineHeight = rowHeight.roundToInt(),
+                ),
+                onSelectAll = { editor.selectAll() },
+                onCopy = { editor.copyText() },
+                onPaste = { editor.pasteText() },
+                onCut = { editor.cutText() },
+            )
             val codeLeftPx = editor.measureTextRegionOffset().coerceAtLeast(0f)
             val gapPx = with(density) { 6.dp.toPx() }
             fun rowTop(line: Int): Float {
@@ -1477,6 +1632,7 @@ private fun soraPalette(c: PageColors): Map<Int, Int> = mapOf(
 
 private fun soraColorScheme(c: PageColors): EditorColorScheme = EditorColorScheme().apply {
     applyDefault()
+    val dark = c.editor.luminance() < 0.5f
     setColor(EditorColorScheme.WHOLE_BACKGROUND, c.editor.toArgb())
     setColor(EditorColorScheme.TEXT_NORMAL, c.tx.toArgb())
     setColor(EditorColorScheme.CURRENT_LINE, c.activeLineBg.toArgb())
@@ -1484,7 +1640,10 @@ private fun soraColorScheme(c: PageColors): EditorColorScheme = EditorColorSchem
     setColor(EditorColorScheme.LINE_NUMBER_CURRENT, c.lineNumberActive.toArgb())
     setColor(EditorColorScheme.LINE_NUMBER_BACKGROUND, c.editor.toArgb())
     setColor(EditorColorScheme.LINE_DIVIDER, c.divider.toArgb())
-    setColor(EditorColorScheme.SELECTED_TEXT_BACKGROUND, c.textSelection.toArgb())
+    setColor(
+        EditorColorScheme.SELECTED_TEXT_BACKGROUND,
+        if (dark) 0xFF3F3B8F.toInt() else c.textSelection.toArgb(),
+    )
     setColor(EditorColorScheme.SCROLL_BAR_TRACK, c.editor.toArgb())
     setColor(EditorColorScheme.SCROLL_BAR_THUMB, c.scrollThumb.toArgb())
     setColor(EditorColorScheme.BLOCK_LINE, c.indentGuide.toArgb())

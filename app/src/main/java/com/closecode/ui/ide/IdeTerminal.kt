@@ -460,7 +460,6 @@ internal fun IdeTerminal(
     var completionCandidates by remember { mutableStateOf(emptyList<Completion>()) }
     var completionCycle by remember { mutableStateOf(0) }
     var completionStart by remember { mutableStateOf(0) }
-    var renameShell by remember { mutableStateOf<Int?>(null) }
     val keyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val promptFocus = remember { androidx.compose.ui.focus.FocusRequester() }
     val fallbackCommands = rememberTerminalCommandsState(projectSlug)
@@ -820,7 +819,10 @@ internal fun IdeTerminal(
             onSelectShell = { sessions.select(it) },
             onNewShell = { sessions.openNew() },
             onCloseShell = { sessions.close(it) },
-            onRenameShell = { renameShell = it },
+            onRenameShell = { number, name -> sessions.rename(number, name) },
+            onClearShell = { number ->
+                sessionList.firstOrNull { it.number == number }?.clearLines()
+            },
             onSaveCommand = { command, name ->
                 val entry = if (name.isNullOrBlank()) command else "$name\u0000$command"
                 if (entry !in savedCommands) persistCommands(savedCommands + entry)
@@ -855,22 +857,5 @@ internal fun IdeTerminal(
             focusRequester = promptFocus,
         )
 
-        androidx.activity.compose.BackHandler(enabled = renameShell != null) {
-            com.closecode.ui.ide.BackLog.press("terminal", "branch=rename-shell")
-            renameShell = null
-        }
-        renameShell?.let { number ->
-            val target = sessionList.firstOrNull { it.number == number }
-            IdeNameDialog(
-                title = "Rename shell",
-                hint = "server",
-                initial = target?.customName.orEmpty(),
-                onCreate = { name ->
-                    sessions.rename(number, name)
-                    renameShell = null
-                },
-                onDismiss = { renameShell = null },
-            )
-        }
     }
 }

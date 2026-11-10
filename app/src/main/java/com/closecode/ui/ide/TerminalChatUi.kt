@@ -41,8 +41,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -64,8 +62,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -79,8 +81,10 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import com.closecode.ui.CcIcon
 import com.closecode.ui.theme.Mono
 import java.text.SimpleDateFormat
@@ -249,7 +253,8 @@ internal fun TerminalChatScreen(
     onSelectShell: (Int) -> Unit,
     onNewShell: () -> Unit,
     onCloseShell: (Int) -> Unit,
-    onRenameShell: (Int) -> Unit,
+    onRenameShell: (Int, String) -> Unit,
+    onClearShell: (Int) -> Unit,
     onSaveCommand: (String, String?) -> Unit,
     onPickSaved: (String) -> Unit,
     onSpecialKey: (String) -> Unit,
@@ -282,6 +287,7 @@ internal fun TerminalChatScreen(
             onNew = onNewShell,
             onClose = onCloseShell,
             onRename = onRenameShell,
+            onClear = onClearShell,
         )
         MessageList(
             messages = messages,
@@ -357,9 +363,12 @@ private fun ShellTabs(
     onSelect: (Int) -> Unit,
     onNew: () -> Unit,
     onClose: (Int) -> Unit,
-    onRename: (Int) -> Unit,
+    onRename: (Int, String) -> Unit,
+    onClear: (Int) -> Unit,
 ) {
-    var menuFor by remember { mutableStateOf<Int?>(null) }
+    var cardFor by remember { mutableStateOf<Int?>(null) }
+    var cardAnchor by remember { mutableStateOf(IntOffset.Zero) }
+    val haptics = LocalHapticFeedback.current
     Row(
         Modifier
             .fillMaxWidth()
@@ -371,15 +380,27 @@ private fun ShellTabs(
         sessions.forEach { session ->
             val selected = session.number == selectedId
             val label = session.customName?.takeIf { it.isNotBlank() } ?: "Shell ${session.number}"
+            var tabOrigin by remember(session.number) { mutableStateOf(IntOffset.Zero) }
             Box {
                 Row(
                     Modifier
+                        .onGloballyPositioned { coordinates ->
+                            val position = coordinates.positionInWindow()
+                            tabOrigin = IntOffset(
+                                position.x.roundToInt(),
+                                (position.y + coordinates.size.height).roundToInt(),
+                            )
+                        }
                         .height(32.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(if (selected) TC.accent else TC.tile)
                         .combinedClickable(
                             onClick = { onSelect(session.number) },
-                            onLongClick = { menuFor = session.number },
+                            onLongClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                cardAnchor = tabOrigin
+                                cardFor = session.number
+                            },
                         )
                         .padding(horizontal = 14.dp)
                         .semantics { contentDescription = label },
@@ -397,21 +418,15 @@ private fun ShellTabs(
                         maxLines = 1,
                     )
                 }
-                DropdownMenu(expanded = menuFor == session.number, onDismissRequest = { menuFor = null }) {
-                    DropdownMenuItem(
-                        text = { Text("Rename", fontFamily = Mono) },
-                        onClick = {
-                            menuFor = null
-                            onRename(session.number)
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Close shell", fontFamily = Mono) },
-                        enabled = sessions.size > 1,
-                        onClick = {
-                            menuFor = null
-                            onClose(session.number)
-                        },
+                if (cardFor == session.number) {
+                    ShellTabCard(
+                        anchor = cardAnchor,
+                        shellName = label,
+                        isRunning = session.commandRunning,
+                        onRename = { onRename(session.number, it) },
+                        onClear = { onClear(session.number) },
+                        onClose = { onClose(session.number) },
+                        onDismiss = { cardFor = null },
                     )
                 }
             }

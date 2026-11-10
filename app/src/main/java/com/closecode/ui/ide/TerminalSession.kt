@@ -403,13 +403,17 @@ internal class TerminalSessions {
     /**
      * Closes one shell, and only that one.
      *
-     * The last one is never closed: there would be nothing left to type into, and a terminal with no
-     * tabs is not a state a reader can get out of.
+     * Closing the last shell leaves a fresh empty Shell 1 behind, so the terminal can never reach
+     * a state with no tabs and nowhere to type.
      */
     fun close(number: Int) {
-        if (sessions.size <= 1) return
         val target = sessions.firstOrNull { it.number == number } ?: return
         target.close()
+        if (sessions.size <= 1) {
+            sessions = listOf(TerminalSession(1))
+            activeId = 1
+            return
+        }
         val remaining = sessions.filterNot { it.number == number }
         sessions = remaining
         if (activeId == number) activeId = remaining.first().number
@@ -423,7 +427,7 @@ internal class TerminalSessions {
     /** Names one shell from a long press. Blank clears back to the numbered label. */
     fun rename(number: Int, name: String) {
         sessions.firstOrNull { it.number == number }?.customName =
-            name.takeIf { it.isNotBlank() }
+            name.trim().take(24).takeIf { it.isNotBlank() }
     }
 }
 

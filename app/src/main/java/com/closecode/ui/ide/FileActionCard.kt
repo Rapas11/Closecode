@@ -160,7 +160,7 @@ fun FileActionCard(
 }
 
 /** Puts the card at the pressed point, then keeps it fully on screen and above the keyboard. */
-private class AnchoredPositionProvider(
+internal class AnchoredPositionProvider(
     private val anchor: IntOffset,
     private val imeBottom: Int,
     private val margin: Int,

@@ -20,9 +20,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
@@ -228,72 +226,61 @@ internal fun DeveloperPage(onBack: () -> Unit) {
 
     if (showCrash) {
         val text = crashText ?: ""
-        AlertDialog(
-            onDismissRequest = { showCrash = false },
-            title = { Text("Last crash") },
-            text = {
-                Column(
-                    Modifier
-                        .height(280.dp)
-                        .verticalScroll(rememberScrollState()),
-                ) {
-                    Text(
-                        text = text,
-                        color = c.mock.text,
-                        fontSize = 11.sp,
-                        fontFamily = Mono,
-                        lineHeight = 16.sp,
-                    )
-                }
+        CcPopup(
+            title = "Last crash",
+            onDismiss = { showCrash = false },
+            actions = {
+                CcPopupButton("Close", onClick = { showCrash = false })
             },
-            confirmButton = {
-                TextButton(onClick = { showCrash = false }) { Text("Close") }
-            },
-        )
+        ) {
+            Column(
+                Modifier
+                    .height(280.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                Text(
+                    text = text,
+                    color = c.mock.text,
+                    fontSize = 11.sp,
+                    fontFamily = Mono,
+                    lineHeight = 16.sp,
+                )
+            }
+        }
     }
     if (confirmDeleteTools) {
-        AlertDialog(
-            onDismissRequest = { confirmDeleteTools = false },
-            title = { Text("Delete build tools?") },
-            text = { Text("You can download them again.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmDeleteTools = false
-                        scope.launch {
-                            withContext(Dispatchers.IO) {
-                                ToolchainHolder.deleteEverything(context)
-                            }
-                            android.widget.Toast.makeText(
-                                context,
-                                "Build tools deleted",
-                                android.widget.Toast.LENGTH_SHORT,
-                            ).show()
-                        }
-                    },
-                ) { Text("Delete") }
+        CcConfirmPopup(
+            title = "Delete build tools?",
+            message = "You can download them again.",
+            confirmText = "Delete",
+            destructive = true,
+            onConfirm = {
+                confirmDeleteTools = false
+                scope.launch {
+                    withContext(Dispatchers.IO) {
+                        ToolchainHolder.deleteEverything(context)
+                    }
+                    android.widget.Toast.makeText(
+                        context,
+                        "Build tools deleted",
+                        android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
             },
-            dismissButton = {
-                TextButton(onClick = { confirmDeleteTools = false }) { Text("Cancel") }
-            },
+            onDismiss = { confirmDeleteTools = false },
         )
     }
     if (confirmCrash) {
-        AlertDialog(
-            onDismissRequest = { confirmCrash = false },
-            title = { Text("Crash test?") },
-            text = { Text("The app will stop now. The next launch shows the crash report.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmCrash = false
-                        throw RuntimeException("CloseCode crash test")
-                    },
-                ) { Text("Crash") }
+        CcConfirmPopup(
+            title = "Crash test?",
+            message = "The app will stop now. The next launch shows the crash report.",
+            confirmText = "Crash",
+            destructive = true,
+            onConfirm = {
+                confirmCrash = false
+                throw RuntimeException("CloseCode crash test")
             },
-            dismissButton = {
-                TextButton(onClick = { confirmCrash = false }) { Text("Cancel") }
-            },
+            onDismiss = { confirmCrash = false },
         )
     }
 }

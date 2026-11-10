@@ -10,10 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
@@ -470,119 +467,92 @@ fun SettingsScreen(
 
     val editing = editingString
     if (editing != null) {
-        var draft by remember(editing) { mutableStateOf(settings.text(editing)) }
         val title = when (editing) {
             StringSetting.GIT_NAME -> "Git author name"
             StringSetting.GIT_EMAIL -> "Git author email"
             StringSetting.GIT_DEFAULT_BRANCH -> "Default branch"
         }
-        AlertDialog(
-            onDismissRequest = { editingString = null },
-            title = { Text(title) },
-            text = {
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    singleLine = true,
-                    label = {
-                        Text(if (editing == StringSetting.GIT_DEFAULT_BRANCH) "Branch" else "Value")
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+        CcInputPopup(
+            title = title,
+            initial = settings.text(editing),
+            hint = if (editing == StringSetting.GIT_DEFAULT_BRANCH) "Branch" else "Value",
+            isValid = { true },
+            onSave = { value ->
+                onSettingsChange(settings.withText(editing, value))
+                editingString = null
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onSettingsChange(settings.withText(editing, draft))
-                        editingString = null
-                    },
-                ) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingString = null }) { Text("Cancel") }
-            },
+            onDismiss = { editingString = null },
         )
     }
 
     if (confirmClearCaches) {
-        AlertDialog(
-            onDismissRequest = { confirmClearCaches = false },
-            title = { Text("Clear caches?") },
-            text = { Text("Cached build and editor files will be deleted. Projects are kept.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmClearCaches = false
-                        scope.launch {
-                            live = facts.clearCaches()
-                            toast("Caches cleared")
-                        }
-                    },
-                ) { Text("Clear") }
+        CcConfirmPopup(
+            title = "Clear caches?",
+            message = "Cached build and editor files will be deleted. Projects are kept.",
+            confirmText = "Clear",
+            destructive = true,
+            onConfirm = {
+                confirmClearCaches = false
+                scope.launch {
+                    live = facts.clearCaches()
+                    toast("Caches cleared")
+                }
             },
-            dismissButton = {
-                TextButton(onClick = { confirmClearCaches = false }) { Text("Cancel") }
-            },
+            onDismiss = { confirmClearCaches = false },
         )
     }
     if (confirmDeleteTools) {
-        AlertDialog(
-            onDismissRequest = { confirmDeleteTools = false },
-            title = { Text("Delete build tools?") },
-            text = { Text("You can download them again.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmDeleteTools = false
-                        scope.launch {
-                            val ok = withContext(Dispatchers.IO) {
-                                ToolchainHolder.deleteEverything(context)
-                            }
-                            toast(if (ok) "Build tools deleted" else "Nothing to delete")
-                            refreshKey++
-                        }
-                    },
-                ) { Text("Delete") }
+        CcConfirmPopup(
+            title = "Delete build tools?",
+            message = "You can download them again.",
+            confirmText = "Delete",
+            destructive = true,
+            onConfirm = {
+                confirmDeleteTools = false
+                scope.launch {
+                    val ok = withContext(Dispatchers.IO) {
+                        ToolchainHolder.deleteEverything(context)
+                    }
+                    toast(if (ok) "Build tools deleted" else "Nothing to delete")
+                    refreshKey++
+                }
             },
-            dismissButton = {
-                TextButton(onClick = { confirmDeleteTools = false }) { Text("Cancel") }
-            },
+            onDismiss = { confirmDeleteTools = false },
         )
     }
     if (confirmSignOut) {
-        AlertDialog(
-            onDismissRequest = { confirmSignOut = false },
-            title = { Text("Sign out of GitHub?") },
-            text = { Text("The stored token will be removed from this phone.") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmSignOut = false
-                        tokenStore.clear()
-                        githubToken = null
-                        onGitHubChanged()
-                        toast("Disconnected from GitHub")
-                    },
-                ) { Text("Sign out") }
+        CcConfirmPopup(
+            title = "Sign out of GitHub?",
+            message = "The stored token will be removed from this phone.",
+            confirmText = "Sign out",
+            destructive = true,
+            onConfirm = {
+                confirmSignOut = false
+                tokenStore.clear()
+                githubToken = null
+                onGitHubChanged()
+                toast("Disconnected from GitHub")
             },
-            dismissButton = {
-                TextButton(onClick = { confirmSignOut = false }) { Text("Cancel") }
-            },
+            onDismiss = { confirmSignOut = false },
         )
     }
 
     val soon = comingSoon
     if (soon != null) {
-        AlertDialog(
-            onDismissRequest = { comingSoon = null },
-            title = { Text("Coming soon") },
-            text = {
-                Text("$soon is not available in this build yet.")
+        CcPopup(
+            title = "Coming soon",
+            onDismiss = { comingSoon = null },
+            actions = {
+                CcPopupButton("OK", onClick = { comingSoon = null })
             },
-            confirmButton = {
-                TextButton(onClick = { comingSoon = null }) { Text("OK") }
-            },
-        )
+        ) {
+            Text(
+                text = "$soon is not available in this build yet.",
+                color = LocalCcColors.current.textSoft,
+                fontSize = 13.sp,
+                fontFamily = Sans,
+            )
+        }
     }
 }
 

@@ -22,10 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
@@ -228,46 +225,26 @@ internal fun SavedCommandsPage(store: KeyValueStore, onBack: () -> Unit) {
 
     if (adding || editorIndex != null) {
         val title = if (adding) "Add command" else "Edit command"
-        AlertDialog(
-            onDismissRequest = {
+        CcInputPopup(
+            title = title,
+            initial = draft,
+            hint = "Command",
+            isValid = { it.trim().isNotEmpty() },
+            onSave = { value ->
+                val trimmed = value.trim()
+                val index = editorIndex
+                if (index == null) {
+                    commands.add(trimmed)
+                } else {
+                    commands[index] = trimmed
+                }
+                persist(commands.toList())
                 adding = false
                 editorIndex = null
             },
-            title = { Text(title) },
-            text = {
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    singleLine = true,
-                    label = { Text("Command") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val value = draft.trim()
-                        if (value.isNotEmpty()) {
-                            val index = editorIndex
-                            if (index == null) {
-                                commands.add(value)
-                            } else {
-                                commands[index] = value
-                            }
-                            persist(commands.toList())
-                        }
-                        adding = false
-                        editorIndex = null
-                    },
-                ) { Text("Save") }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        adding = false
-                        editorIndex = null
-                    },
-                ) { Text("Cancel") }
+            onDismiss = {
+                adding = false
+                editorIndex = null
             },
         )
     }

@@ -23,10 +23,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -537,31 +535,20 @@ internal fun SigningKeysPage(onBack: () -> Unit) {
 
     val pending = importBytes
     if (pending != null) {
-        AlertDialog(
-            onDismissRequest = { importBytes = null; password = "" },
-            title = { Text("Import signing key") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(pending.second, color = c.mock.muted, fontSize = 12.sp, fontFamily = Mono)
-                    OutlinedTextField(
-                        value = alias,
-                        onValueChange = { alias = it },
-                        label = { Text("Name") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it },
-                        label = { Text("Keystore password") },
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+        CcPopup(
+            title = "Import signing key",
+            onDismiss = {
+                importBytes = null
+                password = ""
             },
-            confirmButton = {
-                TextButton(
+            actions = {
+                CcPopupButton("Cancel", onClick = {
+                    importBytes = null
+                    password = ""
+                })
+                CcPopupButton(
+                    "Import",
+                    PopupButtonStyle.Filled,
                     onClick = {
                         store.importKey(
                             bytes = pending.first,
@@ -577,38 +564,45 @@ internal fun SigningKeysPage(onBack: () -> Unit) {
                         importBytes = null
                         password = ""
                     },
-                ) { Text("Import") }
+                )
             },
-            dismissButton = {
-                TextButton(onClick = { importBytes = null; password = "" }) { Text("Cancel") }
-            },
-        )
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(pending.second, color = c.mock.muted, fontSize = 12.sp, fontFamily = Mono)
+                OutlinedTextField(
+                    value = alias,
+                    onValueChange = { alias = it },
+                    label = { Text("Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    label = { Text("Keystore password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 
     if (confirmGenerate) {
-        AlertDialog(
-            onDismissRequest = { confirmGenerate = false },
-            title = { Text("Generate release key?") },
-            text = {
-                Text(
-                    "This key is generated inside the Android Keystore and cannot be exported. " +
-                        "Use it to sign APKs installed on this phone, not for a Play Store upload.",
-                )
+        CcConfirmPopup(
+            title = "Generate release key?",
+            message = "This key is generated inside the Android Keystore and cannot be exported. " +
+                "Use it to sign APKs installed on this phone, not for a Play Store upload.",
+            confirmText = "Generate",
+            destructive = false,
+            onConfirm = {
+                confirmGenerate = false
+                store.generateRelease()
+                    .onSuccess { message = "Generated ${it.label}." }
+                    .onFailure { message = it.message ?: "The key was not generated." }
+                refresh()
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmGenerate = false
-                        store.generateRelease()
-                            .onSuccess { message = "Generated ${it.label}." }
-                            .onFailure { message = it.message ?: "The key was not generated." }
-                        refresh()
-                    },
-                ) { Text("Generate") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmGenerate = false }) { Text("Cancel") }
-            },
+            onDismiss = { confirmGenerate = false },
         )
     }
 }
