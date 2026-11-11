@@ -26,6 +26,7 @@ object ShellEnvironment {
         val gradlePrefix: File,
         val sdk: File,
         val gradleRoot: File,
+        val jdkHome: File? = null,
     )
 
     fun paths(context: Context): Paths {
@@ -46,12 +47,15 @@ object ShellEnvironment {
             gradlePrefix = File(data, "file/g"),
             sdk = File(files, "sdk"),
             gradleRoot = File(files, "gradle"),
+            jdkHome = JdkStore.selected(context)?.home,
         )
     }
 
-    fun javaHome(paths: Paths): File? = listOf(
+    fun javaHome(paths: Paths): File? = listOfNotNull(
+        paths.jdkHome,
         File(paths.gradlePrefix, "lib/jvm/java-17-openjdk"),
         File(paths.shellTools, "lib/jvm/java-17-openjdk"),
+        File(File(paths.dataDir, "file/j"), "lib/jvm/java-21-openjdk"),
     ).firstOrNull { File(it, "bin/java").isFile }
 
     fun gradleHome(paths: Paths): File? =
@@ -146,6 +150,7 @@ object ShellEnvironment {
             environment["ANDROID_SDK_ROOT"] = it.absolutePath
         }
         gradleHome(paths)?.let { environment["GRADLE_USER_HOME"] = it.absolutePath }
+        gradleBin?.let { environment["CLOSECODE_GRADLE"] = File(it, "gradle").absolutePath }
         certificate?.let {
             environment["SSL_CERT_FILE"] = it.absolutePath
             environment["CURL_CA_BUNDLE"] = it.absolutePath

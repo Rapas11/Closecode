@@ -6,7 +6,10 @@ import com.closecode.build.PlatformStore
 import com.closecode.build.SetupKeepAliveService
 import com.closecode.debug.DebugLog
 import com.closecode.tools.GradleToolsStore
+import com.closecode.tools.JdkStore
 import com.closecode.tools.NativeToolsStore
+import com.closecode.tools.OptionalPack
+import com.closecode.tools.OptionalPacks
 import com.closecode.tools.ShellEnvironment
 import com.closecode.tools.ShellToolsManifest
 import com.closecode.tools.ShellToolsStore
@@ -26,27 +29,7 @@ object SetupCommand {
 
     private const val MAX_SELF_TEST_CHARS = 8_000
 
-    private data class LanguagePack(
-        val id: String,
-        val asset: String,
-        val prefix: String,
-        val home: String,
-        val label: String,
-        val checks: List<Pair<String, List<String>>>,
-    )
-
-    private val languagePacks = listOf(
-        LanguagePack("go", "shell-go.json", "go", "hgo", "Go", listOf("go" to listOf("version"))),
-        LanguagePack("rust", "shell-rust.json", "rs", "hrs", "Rust", listOf(
-            "rustc" to listOf("--version"),
-            "cargo" to listOf("--version"),
-        )),
-        LanguagePack("dart", "shell-dart.json", "dart", "hdart", "Dart", listOf("dart" to listOf("--version"))),
-        LanguagePack("php", "shell-php.json", "php", "hphp", "PHP", listOf("php" to listOf("--version"))),
-        LanguagePack("ruby", "shell-ruby.json", "rb", "hrb", "Ruby", listOf("ruby" to listOf("--version"))),
-        LanguagePack("deno", "shell-deno.json", "deno", "hdeno", "Deno", listOf("deno" to listOf("--version"))),
-        LanguagePack("bun", "shell-bun.json", "bun", "hbun", "Bun", listOf("bun" to listOf("--version"))),
-    )
+    private val languagePacks: List<OptionalPack> get() = OptionalPacks.languages
 
     data class Options(
         val gradle: Boolean = false,
@@ -55,6 +38,7 @@ object SetupCommand {
         val native: Boolean = false,
         val media: Boolean = false,
         val languages: Set<String> = emptySet(),
+        val java21: Boolean = false,
         val all: Boolean = false,
         val sdk: Int? = null,
         val buildTools: String? = null,
@@ -64,26 +48,36 @@ object SetupCommand {
         val wifiOnly: Boolean = false,
         val remove: String? = null,
         val gradleVersion: String? = null,
+        val help: Boolean = false,
+        val invalid: List<String> = emptyList(),
     ) {
         val wantsGradle: Boolean get() = gradle || all
         val wantsWeb: Boolean get() = web || python || all
         val wantsNative: Boolean get() = native || ndk || cmake || all
         val wantsMedia: Boolean get() = media
         val valid: Boolean
-            get() = wantsGradle || wantsWeb || wantsNative || wantsMedia || languages.isNotEmpty() ||
-                sdk != null || buildTools != null || !remove.isNullOrBlank()
+            get() = invalid.isEmpty() && (wantsGradle || wantsWeb || wantsNative || wantsMedia ||
+                java21 || languages.isNotEmpty() || sdk != null || buildTools != null ||
+                !remove.isNullOrBlank())
     }
 
     fun parse(arguments: List<String>): Options {
         var options = Options()
+        fun invalid(message: String) {
+            options = options.copy(invalid = options.invalid + message)
+        }
         var index = 0
         while (index < arguments.size) {
             when (val arg = arguments[index]) {
+                "--help", "-h", "help" -> options = options.copy(help = true)
+                "--json" -> Unit
                 "--gradle", "gradle", "--full-gradle" -> options = options.copy(gradle = true)
                 "--web", "web" -> options = options.copy(web = true)
                 "--python", "python" -> options = options.copy(python = true)
                 "--native", "native" -> options = options.copy(native = true)
                 "--media", "media", "--ffmpeg" -> options = options.copy(media = true)
+                "--java21", "--jdk21", "--java-21", "--jdk-21" ->
+                    options = options.copy(java21 = true)
                 "--go", "go", "--golang" -> options = options.copy(languages = options.languages + "go")
                 "--rust", "rust", "--cargo" -> options = options.copy(languages = options.languages + "rust")
                 "--dart", "dart" -> options = options.copy(languages = options.languages + "dart")
@@ -96,42 +90,82 @@ object SetupCommand {
                 "--wifi-only", "wifi", "--wifi" -> options = options.copy(wifiOnly = true)
                 "--ndk" -> options = options.copy(ndk = true)
                 "--cmake" -> options = options.copy(cmake = true)
+                "--jdk", "--java" -> {
+                    val value = arguments.getOrNull(index + 1)?.takeUnless { it.startsWith("-") }
+                    if (value != null) {
+                        index++
+                        if (value == "21") {
+                            options = options.copy(java21 = true)
+                        } else {
+                            invalid("--jdk only offers 21; JDK 17 is part of Full Gradle")
+                        }
+                    } else {
+                        invalid("--jdk only offers 21; JDK 17 is part of Full Gradle")
+                    }
+                }
                 "--sdk" -> {
-                    val value = arguments.getOrNull(index + 1)?.toIntOrNull()
+                    val value = arguments.getOrNull(index + 1)?.toIntOrNull()?.takeIf { it > 0 }
                     if (value != null) {
                         options = options.copy(sdk = value)
                         index++
+                    } else {
+                        invalid("--sdk needs an Android API number")
                     }
                 }
                 "--build-tools" -> {
-                    val value = arguments.getOrNull(index + 1)
+                    val value = arguments.getOrNull(index + 1)?.takeUnless { it.startsWith("-") }
                     if (value != null) {
                         options = options.copy(buildTools = value)
                         index++
+                    } else {
+                        invalid("--build-tools needs a version")
                     }
                 }
                 "--gradle-version" -> {
-                    val value = arguments.getOrNull(index + 1)
+                    val value = arguments.getOrNull(index + 1)?.takeUnless { it.startsWith("-") }
                     if (value != null) {
                         options = options.copy(gradleVersion = value.trim())
                         index++
+                    } else {
+                        invalid("--gradle-version needs a version")
                     }
                 }
                 "--remove" -> {
-                    val value = arguments.getOrNull(index + 1)
+                    val value = arguments.getOrNull(index + 1)?.takeUnless { it.startsWith("-") }
                     if (value != null) {
                         options = options.copy(remove = value.lowercase())
                         index++
+                    } else {
+                        invalid("--remove needs a component name")
                     }
                 }
-                else -> if (arg.startsWith("--build-tools=")) {
-                    options = options.copy(buildTools = arg.substringAfter('='))
-                } else if (arg.startsWith("--sdk=")) {
-                    arg.substringAfter('=').toIntOrNull()?.let { options = options.copy(sdk = it) }
-                } else if (arg.startsWith("--gradle-version=")) {
-                    options = options.copy(gradleVersion = arg.substringAfter('=').trim())
-                } else if (arg.startsWith("--remove=")) {
-                    options = options.copy(remove = arg.substringAfter('=').lowercase())
+                else -> when {
+                    arg.startsWith("--build-tools=") -> {
+                        val value = arg.substringAfter('=')
+                        if (value.isBlank()) invalid("--build-tools needs a version")
+                        else options = options.copy(buildTools = value)
+                    }
+                    arg.startsWith("--sdk=") -> {
+                        val value = arg.substringAfter('=').toIntOrNull()?.takeIf { it > 0 }
+                        if (value == null) invalid("--sdk needs an Android API number")
+                        else options = options.copy(sdk = value)
+                    }
+                    arg.startsWith("--gradle-version=") -> {
+                        val value = arg.substringAfter('=').trim()
+                        if (value.isBlank()) invalid("--gradle-version needs a version")
+                        else options = options.copy(gradleVersion = value)
+                    }
+                    arg.startsWith("--remove=") -> {
+                        val value = arg.substringAfter('=').trim()
+                        if (value.isBlank()) invalid("--remove needs a component name")
+                        else options = options.copy(remove = value.lowercase())
+                    }
+                    arg.startsWith("--jdk=") || arg.startsWith("--java=") -> {
+                        val value = arg.substringAfter('=').trim()
+                        if (value == "21") options = options.copy(java21 = true)
+                        else invalid("--jdk only offers 21; JDK 17 is part of Full Gradle")
+                    }
+                    else -> invalid("unknown option '$arg'")
                 }
             }
             index++
@@ -146,11 +180,12 @@ object SetupCommand {
                closecode setup --python
                closecode setup --native
                closecode setup --media
+               closecode setup --java21
                closecode setup --go
                closecode setup --rust
                closecode setup --dart|--php|--ruby|--deno|--bun
                closecode setup --all
-               closecode setup --remove gradle|sdk|platform-tools|licenses|native|web|python
+               closecode setup --remove gradle|sdk|platform-tools|licenses|native|web|python|java21
         Options: --json --yes --wifi-only
     """.trimIndent()
 
@@ -160,6 +195,21 @@ object SetupCommand {
         cwd: String? = null,
         emit: (JsonObject) -> Unit,
     ): JsonObject {
+        if (options.help) {
+            return JsonObject().apply {
+                addProperty("ok", true)
+                addProperty("event", "help")
+                addProperty("usage", usage())
+            }
+        }
+        if (options.invalid.isNotEmpty()) {
+            return JsonObject().apply {
+                addProperty("ok", false)
+                addProperty("error", options.invalid.joinToString("; "))
+                addProperty("code", "usage")
+                addProperty("usage", usage())
+            }
+        }
         if (!options.valid) {
             return error("Nothing to install. ${usage()}", "setup")
         }
@@ -189,26 +239,10 @@ object SetupCommand {
         platform.acceptLicense()
         val gradle = GradleToolsStore(context)
         val shellTools = ShellToolsStore(context, ShellToolsManifest.load(context))
-        val mediaTools = ShellToolsStore(
-            context,
-            ShellToolsManifest.load(context, "shell-media.json"),
-            prefixName = "m",
-            homeName = "hm",
-            label = "Media tools",
-            cachePrefix = "media-tools",
-        )
+        val mediaTools = OptionalPacks.store(context, OptionalPacks.media)
         val languageStores = languagePacks
             .filter { it.id in options.languages }
-            .associate { pack ->
-                pack.id to ShellToolsStore(
-                    context,
-                    ShellToolsManifest.load(context, pack.asset),
-                    prefixName = pack.prefix,
-                    homeName = pack.home,
-                    label = "${pack.label} tools",
-                    cachePrefix = "${pack.id}-tools",
-                )
-            }
+            .associate { pack -> pack.id to OptionalPacks.store(context, pack) }
         val native = NativeToolsStore(context)
         val sdk = options.sdk ?: 35
         val requestedBuildTools = options.buildTools ?: platform.buildToolsVersion()
@@ -227,12 +261,47 @@ object SetupCommand {
         }
         if (options.wantsWeb) components.add("web-python")
         if (options.wantsMedia) components.add("media-tools")
+        if (options.java21) components.add("java21")
         options.languages.sorted().forEach { components.add("$it-tools") }
         if (options.wantsNative) {
             if (options.cmake || options.native || options.all) components.add("cmake")
             if (options.ndk || options.native || options.all) components.add("ndk")
         }
         emit(event("start").apply { add("components", components) })
+
+        if (options.java21) {
+            val jdk = JdkStore(context)
+            var lastBytes = 0L
+            var lastAt = System.currentTimeMillis()
+            val result = jdk.install21 { progress ->
+                val now = System.currentTimeMillis()
+                val speed = if (now > lastAt) {
+                    ((progress.doneBytes - lastBytes) * 1000L / (now - lastAt)).coerceAtLeast(0)
+                } else {
+                    0L
+                }
+                if (now - lastAt >= 500 || progress.stage == "done") {
+                    lastBytes = progress.doneBytes
+                    lastAt = now
+                }
+                emit(event("download").apply {
+                    addProperty("component", "java21")
+                    addProperty("stage", progress.stage)
+                    addProperty("received", progress.doneBytes)
+                    addProperty("total", progress.totalBytes)
+                    addProperty("bytesPerSec", speed)
+                    progress.packageName?.let { addProperty("package", it) }
+                    addProperty("message", progress.message)
+                })
+            }
+            if (!result.ok) {
+                throw IllegalStateException(result.error ?: "JDK 21 did not install.")
+            }
+            emit(event("verify").apply {
+                addProperty("component", "java21")
+                addProperty("ok", jdk.jdk21Ready())
+            })
+        }
 
         if (options.wantsGradle || options.sdk != null) {
             val target = if (options.wantsGradle) sdk else options.sdk!!
@@ -554,16 +623,11 @@ object SetupCommand {
             "licenses" -> platform.removeAllLicenses()
             "build-tools", "buildtools" -> platform.removeAllBuildTools()
             "native", "ndk", "cmake" -> NativeToolsStore(context).remove()
+            "java21", "jdk21", "jdk-21" -> JdkStore(context).remove21()
             "web", "python", "shell", "shell-tools" ->
                 ShellToolsStore(context, ShellToolsManifest.load(context)).remove()
-            "media", "ffmpeg", "media-tools" -> ShellToolsStore(
-                context,
-                ShellToolsManifest.load(context, "shell-media.json"),
-                prefixName = "m",
-                homeName = "hm",
-                label = "Media tools",
-                cachePrefix = "media-tools",
-            ).remove()
+            "media", "ffmpeg", "media-tools" ->
+                OptionalPacks.store(context, OptionalPacks.media).remove()
             "go", "golang", "go-tools", "rust", "cargo", "rust-tools",
             "dart", "dart-tools", "php", "php-tools", "ruby", "ruby-tools",
             "deno", "deno-tools", "bun", "bun-tools" -> {
@@ -576,14 +640,7 @@ object SetupCommand {
                 }
                 val pack = languagePacks.firstOrNull { it.id == id }
                     ?: return error("Unknown component '$what'. ${usage()}", "setup")
-                ShellToolsStore(
-                    context,
-                    ShellToolsManifest.load(context, pack.asset),
-                    prefixName = pack.prefix,
-                    homeName = pack.home,
-                    label = "${pack.label} tools",
-                    cachePrefix = "${pack.id}-tools",
-                ).remove()
+                OptionalPacks.store(context, pack).remove()
             }
             else -> return error("Unknown component '$what'. ${usage()}", "setup")
         }

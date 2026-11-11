@@ -1113,7 +1113,30 @@ internal fun IdeScreen(
             projectPackageName = packageOnScreen
             val report = withContext(Dispatchers.IO) {
                 runCatching {
-                    com.closecode.build.ProjectCheck.check(dir, slug, input)
+                    val setup = com.closecode.build.BuildSetupFactory.create(
+                        context,
+                        com.closecode.build.BuildSetup.Project(
+                            id = projectId,
+                            slug = slug,
+                            name = projectName,
+                            directory = dir,
+                            savedPackage = input.savedPackage,
+                            savedMinSdk = input.savedMinSdk,
+                            savedTargetSdk = input.savedTargetSdk,
+                            savedCompileSdk = input.savedCompileSdk,
+                            otherPackages = input.otherPackages,
+                        ),
+                    )
+                    val engine = com.closecode.build.ProjectSettings.read(dir).engine
+                    val useGradle = engine == com.closecode.build.ProjectSettings.ENGINE_GRADLE ||
+                        (engine != com.closecode.build.ProjectSettings.ENGINE_CLOSECODE &&
+                            setup.gradle != null)
+                    com.closecode.build.ProjectCheck.check(
+                        dir,
+                        slug,
+                        setup.checkInput,
+                        gradle = useGradle,
+                    )
                 }.getOrNull()
             }
             if (report != null) {
@@ -1642,9 +1665,8 @@ internal fun IdeScreen(
             toast = null
         }
     }
-    // The real build. The engine's chain does the work — resources, Compose, dex, pack,
-    // sign — and the panel draws its seven steps from the state stream. Every row is work
-    // that actually ran, with the milliseconds it took; there is no Gradle and no timer.
+    // The real build. Full Gradle is used whenever it is installed, exactly as the CLI does;
+    // otherwise the on-phone chain does the work. The panel draws its steps from the state stream.
     LaunchedEffect(building) {
         if (!building) return@LaunchedEffect
         buildBlocked = null
@@ -1688,6 +1710,12 @@ internal fun IdeScreen(
                 otherPackages = repository.reservedPackages(projectId),
             ),
         )
+        val pinnedEngine = com.closecode.build.ProjectSettings.read(projectRoot).engine
+        val useGradle = when (pinnedEngine) {
+            com.closecode.build.ProjectSettings.ENGINE_CLOSECODE -> false
+            com.closecode.build.ProjectSettings.ENGINE_GRADLE -> true
+            else -> setup.gradle != null
+        }
         val outcome = buildEngine.build(
             projectRoot,
             projectId,
@@ -1699,6 +1727,9 @@ internal fun IdeScreen(
             } else {
                 "debug"
             },
+            useGradle = useGradle,
+            gradle = setup.gradle,
+            setupCommand = if (useGradle) "closecode setup --gradle" else "closecode setup --all",
         )
         when (outcome) {
             is com.closecode.build.BuildOutcome.Blocked -> {

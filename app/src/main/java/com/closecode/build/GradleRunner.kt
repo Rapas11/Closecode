@@ -265,6 +265,7 @@ object GradleRunner {
         findApk: Boolean,
         options: GradleBuildOptions,
     ): GradleRunResult {
+        GradleUserProperties.ensure(toolchain.gradleHome, toolchain.aapt2, toolchain.javaHome)
         val initScript = File(toolchain.gradleHome, "init/closecode.gradle")
         initScript.parentFile?.mkdirs()
         initScript.writeText(

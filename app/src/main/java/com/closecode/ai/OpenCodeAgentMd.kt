@@ -23,8 +23,9 @@ object OpenCodeAgentMd {
     fun section(): String = """
         ## CloseCode phone rules
 
-        This project lives on an Android phone, built by CloseCode's own engine. There is no
-        Python, no desktop browser, and no `./gradlew`; a downloaded Gradle is optional.
+        This project lives on an Android phone, built by CloseCode. There is no desktop
+        browser. Full Gradle is used automatically when installed, and the project's
+        `./gradlew` delegates to that installed distribution.
 
         Everything is the `closecode` command. It is already on PATH. Run every command from
         this project root:
@@ -89,9 +90,9 @@ object OpenCodeAgentMd {
         - `closecode tool aapt2|d8|r8|kotlinc` — one toolchain tool at a time.
 
         The rules:
-        - Never run `./gradlew`; use the commands above. `closecode build` selects Full Gradle
-          automatically when it is installed, and says `needsSetup` with the exact
-          `closecode setup --gradle` command when a project needs Gradle but it is missing.
+        - Prefer `closecode build`; it selects Full Gradle automatically when installed, and
+          says `needsSetup` with the exact `closecode setup --gradle` command when a project
+          needs Gradle but it is missing. `./gradlew` also works through that installation.
         - When a build, check or the app's logcat shows an error, read it, fix the sources, and
           run the command again yourself until it passes. Do that without asking.
         - Test the running app with `closecode run`, then `ui dump` and `ui assert`. Fix what

@@ -516,6 +516,19 @@ object CloseCodeControl {
 
     private fun setup(context: Context, request: JsonObject, output: OutputStream) {
         val options = SetupCommand.parse(args(request))
+        if (options.help) {
+            sendRaw(output, SetupCommand.usage() + "\n", 0)
+            return
+        }
+        if (options.invalid.isNotEmpty()) {
+            sendRaw(
+                output,
+                "closecode setup: ${options.invalid.joinToString("; ")}\n\n" +
+                    SetupCommand.usage() + "\n",
+                2,
+            )
+            return
+        }
         val response = SetupCommand.run(
             context,
             options,
@@ -1227,10 +1240,22 @@ object CloseCodeControl {
         } catch (error: Throwable) {
             return error(error.message ?: error.javaClass.simpleName)
         }
-        val report = ProjectCheck.check(project.directory, project.slug, setup.checkInput)
+        val pinnedEngine = com.closecode.build.ProjectSettings.read(project.directory).engine
+        val useGradle = chooseGradle(
+            args(request),
+            setup.gradle != null,
+            pinnedEngine,
+        )
+        val report = ProjectCheck.check(
+            project.directory,
+            project.slug,
+            setup.checkInput,
+            gradle = useGradle,
+        )
         return JsonObject().apply {
             addProperty("ok", report.ok)
             addProperty("task", task)
+            addProperty("engine", if (useGradle) "gradle" else "closecode")
             addProperty("checks", "Static project checks. Real unit tests are not run on the phone.")
             addProperty("errors", report.errors.size)
             addProperty("warnings", report.warnings.size)
@@ -1736,9 +1761,14 @@ internal fun controlCommandScript(basePath: String): String = """
         export NODE_EXTRA_CA_CERTS="${'$'}SHELL_TOOLS/etc/tls/cert.pem"
       fi
     fi
-    JAVA_HOME="${'$'}GRADLE_PREFIX/lib/jvm/java-17-openjdk"
+    if [ -z "${'$'}JAVA_HOME" ] || [ ! -x "${'$'}JAVA_HOME/bin/java" ]; then
+      JAVA_HOME="${'$'}GRADLE_PREFIX/lib/jvm/java-17-openjdk"
+    fi
     if [ ! -x "${'$'}JAVA_HOME/bin/java" ]; then
       JAVA_HOME="${'$'}SHELL_TOOLS/lib/jvm/java-17-openjdk"
+    fi
+    if [ ! -x "${'$'}JAVA_HOME/bin/java" ]; then
+      JAVA_HOME="${'$'}DATA/file/j/lib/jvm/java-21-openjdk"
     fi
     if [ -x "${'$'}JAVA_HOME/bin/java" ]; then
       export JAVA_HOME
@@ -1748,6 +1778,7 @@ internal fun controlCommandScript(basePath: String): String = """
     fi
     for GRADLE_DIR in "${'$'}FILES"/gradle/gradle-*; do
       if [ -x "${'$'}GRADLE_DIR/bin/gradle" ]; then
+        export CLOSECODE_GRADLE="${'$'}GRADLE_DIR/bin/gradle"
         export PATH="${'$'}GRADLE_DIR/bin:${'$'}PATH"
         break
       fi
@@ -1790,7 +1821,7 @@ internal fun controlCommandScript(basePath: String): String = """
         describe|d) echo "usage: closecode describe" ;;
         tool|t) echo "usage: closecode tool aapt2|d8|r8|kotlinc [args...]" ;;
         tools) echo "usage: closecode tools [status|install|remove]" ;;
-        setup) echo "usage: closecode setup --gradle|--web|--python|--native|--media|--go|--rust|--dart|--php|--ruby|--deno|--bun|--all|--remove <component>" ;;
+        setup) echo "usage: closecode setup --gradle|--web|--python|--native|--media|--java21|--go|--rust|--dart|--php|--ruby|--deno|--bun|--all|--remove <component>" ;;
         doctor|doc) echo "usage: closecode doctor [--json]" ;;
         toolchain) echo "usage: closecode toolchain status [--json]" ;;
         signing|sign) echo "usage: closecode signing status|generate|import|select|delete" ;;

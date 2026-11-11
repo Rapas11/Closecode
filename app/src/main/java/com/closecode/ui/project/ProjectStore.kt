@@ -62,6 +62,7 @@ class ProjectStore(context: Context) {
         val file = ProjectSafety.resolveInProject(projectDir(slug), relative)
         ProjectSafety.ensureWritable(file)
         ProjectSafety.writeAtomic(file, content)
+        if (file.name == "gradlew") file.setExecutable(true, false)
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.closecode.ui.project
 
+import com.closecode.build.AndroidProjectFiles
 import com.closecode.build.ProjectPins
 import com.closecode.ui.model.ProjectConfig
 import com.closecode.ui.model.SelectedTemplate
@@ -46,6 +47,7 @@ object Scaffold {
                     wrapperProperties(config.gradleVersion),
                 ),
             )
+            add(ScaffoldFile("gradlew", AndroidProjectFiles.GRADLEW))
             add(
                 ScaffoldFile(
                     "app/build.gradle.kts",
@@ -97,6 +99,7 @@ object Scaffold {
                     wrapperProperties(config.gradleVersion),
                 ),
             )
+            add(ScaffoldFile("gradlew", AndroidProjectFiles.GRADLEW))
             add(ScaffoldFile("app/build.gradle.kts", appGradle(config)))
             add(ScaffoldFile("app/src/main/AndroidManifest.xml", manifest()))
             add(
@@ -324,8 +327,8 @@ object Scaffold {
     """.trimIndent() + "\n"
 
     /**
-     * Wrapper metadata only: the phone never runs Gradle, and the wrapper jar/scripts are not
-     * written. A desktop checkout can generate them with `gradle wrapper` using this version.
+     * Wrapper metadata for a desktop checkout. The phone uses the `gradlew` delegate, which
+     * runs the Gradle distribution installed from Settings instead of downloading it again.
      */
     private fun wrapperProperties(gradleVersion: String): String = """
         distributionBase=GRADLE_USER_HOME

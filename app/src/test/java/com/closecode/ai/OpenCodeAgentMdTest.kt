@@ -48,8 +48,9 @@ class OpenCodeAgentMdTest {
         }
         // There is no `closecode git` on the phone: teaching it would break hands-free work.
         assertFalse(Regex("closecode git\\b").containsMatchIn(text))
-        // The file must be clear that Gradle cannot be run directly.
-        assertTrue(text.contains("Never run `./gradlew`"))
+        // The wrapper is usable, but closecode build is the portable command.
+        assertTrue(text.contains("`./gradlew` also works"))
+        assertFalse(text.contains("Never run `./gradlew`"))
     }
 
     @Test

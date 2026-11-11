@@ -208,7 +208,14 @@ class PlatformStore(
         onProgress: (done: Long, total: Long) -> Unit = { _, _ -> },
     ): Result<File> = runCatching {
         buildToolsDir()?.let { dir ->
-            if (File(dir, "aapt2").isFile) return@runCatching dir
+            if (File(dir, "aapt2").isFile) {
+                GradleUserProperties.ensure(
+                    File(context.filesDir, "gradle/home"),
+                    buildToolsAapt2(),
+                    null,
+                )
+                return@runCatching dir
+            }
         }
         val part = File(context.cacheDir, "build-tools-$BUILD_TOOLS_VERSION.tar.xz.part")
         download(BUILD_TOOLS_URL, part, BUILD_TOOLS_SIZE, onProgress)
@@ -238,6 +245,11 @@ class PlatformStore(
             throw IOException("The build-tools archive has no aapt2.")
         }
         if (licenseAccepted()) installLicenses()
+        GradleUserProperties.ensure(
+            File(context.filesDir, "gradle/home"),
+            buildToolsAapt2(),
+            null,
+        )
         target
     }
 

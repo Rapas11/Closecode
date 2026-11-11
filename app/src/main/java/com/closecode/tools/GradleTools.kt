@@ -3,11 +3,15 @@ package com.closecode.tools
 import android.content.Context
 import android.os.Build
 import com.closecode.build.GradleLauncher
+import com.closecode.build.GradleUserProperties
+import com.closecode.build.PlatformStore
 import com.closecode.build.matchesSha256
+import com.closecode.ui.settings.SharedPreferencesKeyValueStore
 import com.closecode.debug.DebugLog
 import com.google.gson.JsonParser
 import java.io.File
 import java.io.IOException
+import java.io.RandomAccessFile
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.ZipFile
@@ -91,7 +95,8 @@ class GradleToolsStore(
     fun installedVersions(): List<String> = gradleRoot.listFiles().orEmpty()
         .filter { it.isDirectory && File(it, INSTALLED).isFile }
         .mapNotNull { it.name.removePrefix("gradle-").takeIf { name -> name != it.name } }
-    val javaHome: File get() = File(directory, "lib/jvm/java-17-openjdk")
+    val defaultJavaHome: File get() = File(directory, "lib/jvm/java-17-openjdk")
+    val javaHome: File get() = JdkStore.selected(context)?.home ?: defaultJavaHome
     val java: File get() = File(javaHome, "bin/java")
     val gradleHome: File get() = File(gradleRoot, "home")
 
@@ -111,9 +116,7 @@ class GradleToolsStore(
             gradleFor(version).isFile &&
             File(distributionDir(version), INSTALLED).isFile
 
-    fun installedBytes(): Long = termux.installedBytes() + gradleRoot.walkTopDown()
-        .filter { it.isFile }
-        .sumOf { it.length() }
+    fun installedBytes(): Long = termux.installedBytes() + DiskUsage.bytes(gradleRoot)
 
     /**
      * Removes the hand-placed workarounds from an earlier test run.
@@ -135,6 +138,15 @@ class GradleToolsStore(
 
     fun installedPackages(): List<String> = termux.installedPackages()
 
+    private fun patchUserProperties() {
+        val platform = PlatformStore(context, SharedPreferencesKeyValueStore(context))
+        GradleUserProperties.ensure(
+            gradleHome,
+            platform.buildToolsAapt2(),
+            javaHome.takeIf { java.isFile },
+        )
+    }
+
     fun install(
         progress: (ShellToolsStore.Progress) -> Unit,
         version: String? = null,
@@ -145,7 +157,15 @@ class GradleToolsStore(
         // `closecode setup --gradle` repairs the launcher instead of keeping the broken one.
         GradleLauncher.patch(gradleFor(wanted))
         removeStaleWorkarounds()
-        if (isReady(wanted)) return ShellToolsStore.Result(true)
+        patchUserProperties()
+        if (isReady(wanted)) {
+            val repaired = termux.repairPython(progress)
+            return if (repaired.ok) {
+                ShellToolsStore.Result(true)
+            } else {
+                ShellToolsStore.Result(false, repaired.error)
+            }
+        }
         if (!termux.isReady()) {
             val result = termux.install(progress)
             if (!result.ok) return result
@@ -169,6 +189,7 @@ class GradleToolsStore(
             if (!zip.isFile || !matchesSha256(zip, distribution.sha256)) {
                 download(part, distribution, progress)
                 if (!matchesSha256(part, distribution.sha256)) {
+                    part.delete()
                     throw IOException("The Gradle download failed its checksum.")
                 }
                 if (!part.renameTo(zip)) {
@@ -209,6 +230,7 @@ class GradleToolsStore(
             }
             temp.deleteRecursively()
             zip.delete()
+            patchUserProperties()
             DebugLog.crumb("TOOLS", "Gradle ${distribution.version} installed")
             progress(
                 ShellToolsStore.Progress(
@@ -221,7 +243,6 @@ class GradleToolsStore(
             )
             return ShellToolsStore.Result(true)
         } catch (error: Throwable) {
-            part.delete()
             DebugLog.crumb("TOOLS", "Gradle install failed: ${error.message ?: error.javaClass.simpleName}")
             return ShellToolsStore.Result(false, error.message ?: error.javaClass.simpleName)
         }
@@ -229,7 +250,16 @@ class GradleToolsStore(
 
     fun remove(): Boolean {
         val tools = termux.remove()
-        val gradle = !gradleRoot.exists() || gradleRoot.deleteRecursively()
+        // GRADLE_USER_HOME holds the dependency cache. Removing the distribution and JDK
+        // must not throw away a cache that took a full build to fill; clean --gradle-caches
+        // is the explicit action for that.
+        val gradle = removeGradleRootExceptCache(gradleRoot, "home")
+        context.cacheDir.listFiles()
+            ?.filter {
+                it.name.startsWith("gradle-tools-") ||
+                    it.name.endsWith(".zip.part")
+            }
+            ?.forEach { it.deleteRecursively() }
         DebugLog.crumb("TOOLS", "Gradle tools removed")
         return tools && gradle
     }
@@ -240,11 +270,11 @@ class GradleToolsStore(
         progress: (ShellToolsStore.Progress) -> Unit,
     ) {
         var done = if (part.isFile) part.length() else 0L
-        if (done > distribution.sizeBytes) {
+        if (distribution.sizeBytes > 0 && done > distribution.sizeBytes) {
             part.delete()
             done = 0L
         }
-        if (done == distribution.sizeBytes && done > 0L) return
+        if (distribution.sizeBytes > 0 && done == distribution.sizeBytes && done > 0L) return
         val connection = (URL(distribution.url).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             connectTimeout = 30_000
@@ -257,6 +287,11 @@ class GradleToolsStore(
             if (done > 0L && code != HttpURLConnection.HTTP_PARTIAL) {
                 part.delete()
                 done = 0L
+                if (code == 416) {
+                    connection.disconnect()
+                    download(part, distribution, progress)
+                    return
+                }
                 if (code != HttpURLConnection.HTTP_OK) {
                     throw IOException("The Gradle server answered HTTP $code.")
                 }
@@ -264,7 +299,8 @@ class GradleToolsStore(
                 throw IOException("The Gradle server answered HTTP $code.")
             }
             part.parentFile?.mkdirs()
-            part.outputStream().use { output ->
+            RandomAccessFile(part, "rw").use { output ->
+                output.seek(done)
                 connection.inputStream.use { input ->
                     val buffer = ByteArray(64 * 1024)
                     while (true) {
@@ -284,7 +320,7 @@ class GradleToolsStore(
                     }
                 }
             }
-            if (done != distribution.sizeBytes) {
+            if (distribution.sizeBytes > 0 && done != distribution.sizeBytes) {
                 throw IOException(
                     "Short Gradle download: $done of ${distribution.sizeBytes} bytes.",
                 )
@@ -318,5 +354,14 @@ class GradleToolsStore(
         const val PREFIX = "g"
         const val HOME = "gh"
         const val INSTALLED = ".installed"
+    }
+}
+
+/** Deletes the Gradle install but keeps `gradleRoot/home`, the user's dependency cache. */
+internal fun removeGradleRootExceptCache(root: File, cacheName: String): Boolean {
+    if (!root.exists()) return true
+    val cache = File(root, cacheName).canonicalFile
+    return root.listFiles().orEmpty().all { entry ->
+        entry.canonicalFile == cache || entry.deleteRecursively()
     }
 }

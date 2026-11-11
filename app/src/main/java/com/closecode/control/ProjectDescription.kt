@@ -134,7 +134,15 @@ internal object ProjectDescription {
             addProperty("cmake", setup.native?.cmakeVersion)
             add("missing", JsonArray().apply { setup.nativeMissing.forEach { add(it) } })
         })
-        val report = ProjectCheck.check(project.directory, project.slug, setup.checkInput)
+        val pinnedEngine = com.closecode.build.ProjectSettings.read(project.directory).engine
+        val useGradle = pinnedEngine != com.closecode.build.ProjectSettings.ENGINE_CLOSECODE &&
+            (gradleReady || pinnedEngine == com.closecode.build.ProjectSettings.ENGINE_GRADLE)
+        val report = ProjectCheck.check(
+            project.directory,
+            project.slug,
+            setup.checkInput,
+            gradle = useGradle,
+        )
         add("check", JsonObject().apply {
             addProperty("ok", report.ok)
             add("errors", JsonArray().apply {

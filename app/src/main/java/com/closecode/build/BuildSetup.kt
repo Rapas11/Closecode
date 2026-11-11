@@ -46,6 +46,7 @@ object BuildSetupFactory {
                 context,
                 SharedPreferencesKeyValueStore(context),
             )
+            runCatching { AndroidProjectFiles.prepare(project.directory, platformStore.rootDir()) }
             val facts = GradleReader.read(project.directory)
             val settings = ProjectSettings.read(project.directory)
             val nativeUsage = NativeProject.detect(project.directory, facts)

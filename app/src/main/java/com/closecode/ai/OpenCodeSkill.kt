@@ -96,10 +96,11 @@ object OpenCodeSkill {
         - `closecode github push|pull` — publish the project to its GitHub repository, or take
           what came back. It signs in through CloseCode itself; the token stays in the app.
 
-        CloseCode never runs `./gradlew`. When Full Gradle is installed it is the default
-        build engine; otherwise the phone's own engine is used. `closecode build --gradle`
-        forces Gradle, and `closecode gradle` runs a named task with the downloaded JDK and
-        Gradle distribution. `closecode gradle` accepts assembleDebug/assembleRelease
+        When Full Gradle is installed it is the default build engine; otherwise the phone's
+        own engine is used. `closecode build --gradle` forces Gradle, and `closecode gradle`
+        runs a named task with the downloaded JDK and Gradle distribution. A project's
+        `./gradlew` is a phone-safe delegate that runs the installed Gradle, so it works too,
+        but `closecode build` is the portable command. `closecode gradle` accepts assembleDebug/assembleRelease
         (build an APK), installDebug/installRelease and launch/launchRelease (build and
         install or open), bundleDebug/bundleRelease (App Bundle), test/testDebugUnitTest,
         lint/lintDebug, check and tasks, plus flavour tasks such as assembleFreeDebug or

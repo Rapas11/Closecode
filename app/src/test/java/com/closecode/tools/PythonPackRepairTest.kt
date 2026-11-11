@@ -31,8 +31,17 @@ class PythonPackRepairTest {
         assertFalse(PythonPackRepair.isRepaired(prefix))
 
         File(bundled, PythonPackRepair.PIP_FILE).writeText("wheel")
-        assertFalse(PythonPackRepair.needsRepair(prefix))
-        assertTrue(PythonPackRepair.isRepaired(prefix))
+        assertTrue(PythonPackRepair.needsRepair(prefix))
+        assertFalse(PythonPackRepair.isRepaired(prefix))
+    }
+
+    @Test
+    fun theNewestPythonDirectoryWins() {
+        val prefix = tmp.newFolder("prefix-two-pythons")
+        File(prefix, "lib/python3.9/ensurepip/_bundled").mkdirs()
+        val newest = File(prefix, "lib/python3.14/ensurepip/_bundled").apply { mkdirs() }
+
+        assertEquals(newest, PythonPackRepair.bundledDir(prefix))
     }
 
     @Test

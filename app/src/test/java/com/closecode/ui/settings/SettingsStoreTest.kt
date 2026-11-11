@@ -234,12 +234,12 @@ class SettingsStoreTest {
     }
 
     @Test
-    fun theScreenIsElevenSectionsAndFortyNineRows() {
+    fun theScreenIsElevenSectionsAndSixtySevenRows() {
         val sections = sections(SettingsLive())
         val count = sections.flatMap { it.groups.flatMap { it.rows } }.size
         println("SECTIONS: ${sections.size}, ROWS: $count")
         assertEquals(11, sections.size)
-        assertEquals(62, rowCount())
+        assertEquals(67, rowCount())
     }
 
     @Test

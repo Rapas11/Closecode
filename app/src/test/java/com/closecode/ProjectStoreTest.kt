@@ -158,6 +158,7 @@ class ProjectStoreTest {
         assertTrue(paths.contains("settings.gradle.kts"))
         assertTrue(paths.contains("build.gradle.kts"))
         assertTrue(paths.contains("gradle.properties"))
+        assertTrue(paths.contains("gradlew"))
         assertTrue(paths.contains("app/build.gradle.kts"))
         assertTrue(paths.contains("app/src/main/AndroidManifest.xml"))
         assertTrue(paths.contains("app/src/main/res/values/strings.xml"))

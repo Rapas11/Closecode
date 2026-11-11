@@ -162,6 +162,7 @@ fun SettingsScreen(
 
     var setupOpen by remember { mutableStateOf(false) }
     var shellToolsOpen by remember { mutableStateOf(false) }
+    var optionalPacksOpen by remember { mutableStateOf(false) }
     var gradleToolsOpen by remember { mutableStateOf(false) }
     var nativeToolsOpen by remember { mutableStateOf(false) }
     var sdkOpen by remember { mutableStateOf(false) }
@@ -279,6 +280,13 @@ fun SettingsScreen(
         )
         return
     }
+    if (optionalPacksOpen) {
+        OptionalPacksPage(
+            onBack = { optionalPacksOpen = false; refreshKey++ },
+            onChanged = { refreshKey++ },
+        )
+        return
+    }
     if (gradleToolsOpen) {
         GradleToolsPage(
             onBack = { gradleToolsOpen = false; refreshKey++ },
@@ -361,6 +369,7 @@ fun SettingsScreen(
             SettingsAction.DISCONNECT_GITHUB -> confirmSignOut = true
             SettingsAction.SDK_MANAGER -> sdkOpen = true
             SettingsAction.SHELL_TOOLS -> shellToolsOpen = true
+            SettingsAction.OPTIONAL_PACKS -> optionalPacksOpen = true
             SettingsAction.FULL_GRADLE -> gradleToolsOpen = true
             SettingsAction.NATIVE_TOOLS -> nativeToolsOpen = true
             SettingsAction.SIGNING_KEYS -> signingOpen = true

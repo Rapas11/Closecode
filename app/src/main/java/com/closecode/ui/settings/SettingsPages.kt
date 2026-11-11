@@ -56,7 +56,12 @@ import com.closecode.device.control.AuditLog
 import com.closecode.device.control.ConsentStore
 import com.closecode.tools.GradleToolsManifest
 import com.closecode.tools.GradleToolsStore
+import com.closecode.tools.InstalledJdk
+import com.closecode.tools.JdkStore
 import com.closecode.tools.NativeToolsStore
+import com.closecode.tools.OptionalPack
+import com.closecode.tools.OptionalPacks
+import com.closecode.tools.PythonPackRepair
 import com.closecode.tools.ShellToolsManifest
 import com.closecode.tools.ShellToolsStore
 import com.closecode.ui.github.TokenStore
@@ -822,6 +827,188 @@ internal fun SigningKeysPage(onBack: () -> Unit) {
 }
 
 @Composable
+private fun JdkSelectionCard(onChanged: () -> Unit) {
+    val context = LocalContext.current
+    val c = LocalPageColors.current
+    val store = remember(context) { JdkStore(context) }
+    val scope = rememberCoroutineScope()
+    var jdks by remember { mutableStateOf<List<InstalledJdk>>(emptyList()) }
+    var selectedPath by remember { mutableStateOf("") }
+    var jdk21Ready by remember { mutableStateOf(false) }
+    var jdk21Bytes by remember { mutableStateOf(0L) }
+    var busy by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<ShellToolsStore.Progress?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    suspend fun refresh() {
+        val snapshot = withContext(Dispatchers.IO) {
+            JdkSnapshot(
+                jdks = store.installed(),
+                selected = store.selected()?.home?.absolutePath.orEmpty(),
+                jdk21Ready = store.jdk21Ready(),
+                jdk21Bytes = store.jdk21Bytes(),
+            )
+        }
+        jdks = snapshot.jdks
+        selectedPath = snapshot.selected
+        jdk21Ready = snapshot.jdk21Ready
+        jdk21Bytes = snapshot.jdk21Bytes
+    }
+
+    fun choose(jdk: InstalledJdk) {
+        if (busy) return
+        scope.launch {
+            withContext(Dispatchers.IO) { store.select(jdk) }
+            refresh()
+            onChanged()
+        }
+    }
+
+    fun install21() {
+        if (busy) return
+        busy = true
+        error = null
+        progress = null
+        scope.launch {
+            val failure = withContext(Dispatchers.IO) {
+                val result = store.install21 { update -> scope.launch { progress = update } }
+                if (result.ok) {
+                    val chosen = store.installed().firstOrNull {
+                        it.home == store.jdk21Home ||
+                            it.home.absolutePath == store.jdk21Home.absolutePath
+                    }
+                    if (chosen != null && store.selected()?.home == chosen.home) {
+                        store.select(chosen)
+                    }
+                    null
+                } else {
+                    result.error ?: "JDK 21 did not install."
+                }
+            }
+            busy = false
+            progress = null
+            refresh()
+            if (failure != null) error = failure else onChanged()
+        }
+    }
+
+    fun remove21() {
+        if (busy) return
+        busy = true
+        error = null
+        scope.launch {
+            val removed = withContext(Dispatchers.IO) { store.remove21() }
+            busy = false
+            refresh()
+            if (!removed) error = "JDK 21 could not be removed." else onChanged()
+        }
+    }
+
+    LaunchedEffect(store) { refresh() }
+
+    PageCard {
+        Text(
+            text = "Java for Gradle",
+            color = c.mock.text,
+            fontSize = 14.sp,
+            fontFamily = Sans,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "JDK 17 is the default. JDK 8 and 11 are not offered because AGP 8.x " +
+                "requires Java 17 or newer. The selected JDK is written to Gradle and used " +
+                "by the editor, closecode build and ./gradlew.",
+            color = c.mock.muted,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            fontFamily = Sans,
+        )
+        jdks.forEach { jdk ->
+            Text(
+                text = "JDK ${jdk.version} · ${jdk.home.absolutePath}",
+                color = c.mock.text,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                fontFamily = Sans,
+            )
+            Text(
+                text = when {
+                    !jdk.supported -> "${jdk.source} · unsupported by AGP 8.x"
+                    jdk.home.absolutePath == selectedPath -> "${jdk.source} · selected"
+                    else -> jdk.source
+                },
+                color = if (jdk.home.absolutePath == selectedPath) c.mock.green else c.mock.muted,
+                fontSize = 11.sp,
+                fontFamily = Sans,
+            )
+            if (jdk.supported && jdk.home.absolutePath != selectedPath) {
+                PageAction("Use this JDK") { choose(jdk) }
+            }
+        }
+        if (jdk21Ready) {
+            Text(
+                text = "JDK 21 · ${store.jdk21Home.absolutePath}",
+                color = c.mock.text,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                fontFamily = Sans,
+            )
+            Text(
+                text = "${humanSize(jdk21Bytes)} on this phone",
+                color = c.mock.muted,
+                fontSize = 11.sp,
+                fontFamily = Sans,
+            )
+            PageAction("Remove JDK 21", danger = true) { remove21() }
+        } else {
+            Text(
+                text = "JDK 21 is optional. It downloads the current verified Termux OpenJDK 21 " +
+                    "package; JDK 17 stays installed.",
+                color = c.mock.muted,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                fontFamily = Sans,
+            )
+            PageAction("Install JDK 21") { install21() }
+        }
+        if (busy) {
+            val current = progress
+            Text(
+                text = current?.message ?: "Preparing JDK 21…",
+                color = c.mock.muted,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                fontFamily = Sans,
+            )
+            if (current != null && current.totalBytes > 0) {
+                Text(
+                    text = "${humanSize(current.doneBytes)} of ${humanSize(current.totalBytes)}",
+                    color = c.mock.muted,
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                )
+            }
+        }
+        error?.let { message ->
+            Text(
+                text = message,
+                color = c.mock.danger,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
+                fontFamily = Sans,
+            )
+        }
+    }
+}
+
+private data class JdkSnapshot(
+    val jdks: List<InstalledJdk>,
+    val selected: String,
+    val jdk21Ready: Boolean,
+    val jdk21Bytes: Long,
+)
+
+@Composable
 internal fun GradleToolsPage(
     onBack: () -> Unit,
     onOpenSdk: () -> Unit,
@@ -869,21 +1056,47 @@ internal fun GradleToolsPage(
         installing = true
         error = null
         progress = null
+        fun report(stage: String, component: String, done: Long, total: Long, message: String) {
+            scope.launch {
+                progress = ShellToolsStore.Progress(stage, done, total, component, message)
+            }
+        }
         scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                store.install(progress = { update ->
-                    scope.launch { progress = update }
-                })
+            val failure = withContext(Dispatchers.IO) {
+                try {
+                    platform.acceptLicense()
+                    report("download", "Android ${ProjectPins.COMPILE_SDK}", 0L, 0L,
+                        "Downloading Android ${ProjectPins.COMPILE_SDK}…")
+                    platform.installPlatform(ProjectPins.COMPILE_SDK) { done, total ->
+                        report("download", "Android ${ProjectPins.COMPILE_SDK}", done, total,
+                            "Downloading Android ${ProjectPins.COMPILE_SDK}…")
+                    }.getOrThrow()
+                    report("download", "Build tools ${platform.buildToolsVersion()}", 0L, 0L,
+                        "Downloading build tools…")
+                    platform.installBuildTools { done, total ->
+                        report("download", "Build tools ${platform.buildToolsVersion()}", done, total,
+                            "Downloading build tools…")
+                    }.getOrThrow()
+                    report("download", "Platform tools", 0L, 0L, "Downloading platform tools…")
+                    platform.installPlatformTools { done, total ->
+                        report("download", "Platform tools", done, total,
+                            "Downloading platform tools…")
+                    }.getOrThrow()
+                    platform.installLicenses()
+                    val result = store.install(progress = { update ->
+                        report(update.stage, update.packageName ?: "JDK and Gradle",
+                            update.doneBytes, update.totalBytes, update.message)
+                    })
+                    if (result.ok) null else result.error ?: "The Gradle tools did not install."
+                } catch (problem: Throwable) {
+                    problem.message ?: problem.javaClass.simpleName
+                }
             }
             installing = false
             progress = null
             refresh()
-            if (!result.ok) {
-                error = result.error ?: "The Gradle tools did not install."
-            } else if (!sdkReady) {
-                error = "The JDK and Gradle are installed. Install Android " +
-                    "${ProjectPins.COMPILE_SDK} and build-tools " +
-                    "${platform.buildToolsVersion()} in SDK Manager before building."
+            if (failure != null) {
+                error = failure
             } else {
                 onChanged()
             }
@@ -907,9 +1120,9 @@ internal fun GradleToolsPage(
 
     SettingsPageScaffold(title = "Full Gradle", onBack = onBack) {
         Text(
-            text = "CloseCode builds with its own engine by default. This optional pack adds " +
-                "a Termux OpenJDK 17 and the official Gradle ${store.manifest.distribution.version} " +
-                "distribution, so projects that need Gradle can build with --gradle.",
+            text = "Full Gradle is the default engine whenever it is installed, for editor builds " +
+                "and closecode build alike. The on-phone engine remains the fallback when it is " +
+                "not. This pack adds OpenJDK 17 and Gradle ${store.manifest.distribution.version}.",
             color = c.mock.muted,
             fontSize = 12.sp,
             lineHeight = 18.sp,
@@ -959,7 +1172,7 @@ internal fun GradleToolsPage(
                     )
                 }
                 Text(
-                    text = "Keep CloseCode open while the JDK and Gradle download.",
+                    text = "Keep CloseCode open while the toolchain downloads.",
                     color = c.mock.muted,
                     fontSize = 11.sp,
                     fontFamily = Sans,
@@ -980,6 +1193,28 @@ internal fun GradleToolsPage(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
+                        text = "Selected Java · ${store.javaHome.absolutePath}",
+                        color = c.mock.muted,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontFamily = Sans,
+                    )
+                    Text(
+                        text = "Gradle ${store.manifest.distribution.version} · " +
+                            store.gradle.absolutePath,
+                        color = c.mock.muted,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontFamily = Sans,
+                    )
+                    Text(
+                        text = "The editor, closecode build and ./gradlew all use the selected JDK.",
+                        color = c.mock.muted,
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        fontFamily = Sans,
+                    )
+                    Text(
                         text = "${humanSize(bytes)} on this phone",
                         color = c.mock.muted,
                         fontSize = 13.sp,
@@ -996,12 +1231,12 @@ internal fun GradleToolsPage(
                     }
                     Text(
                         text = if (sdkReady) {
-                            "Android SDK packages are ready. Add --gradle to a build to use " +
-                                "the full Gradle engine."
+                            "Android SDK packages are ready. Editor and CLI builds use " +
+                                "Full Gradle by default."
                         } else {
                             "Android ${ProjectPins.COMPILE_SDK} and build-tools " +
-                                "${platform.buildToolsVersion()} are still missing. Open SDK " +
-                                "Manager to install them."
+                                "${platform.buildToolsVersion()} are still missing. " +
+                                "Run the full toolchain download to repair them."
                         },
                         color = if (sdkReady) c.mock.muted else c.mock.danger,
                         fontSize = 12.sp,
@@ -1011,6 +1246,7 @@ internal fun GradleToolsPage(
                 }
                 if (!sdkReady) {
                     PageCard {
+                        PageAction("Install missing Android SDK") { install() }
                         PageAction("Open SDK Manager") { onOpenSdk() }
                     }
                 }
@@ -1028,10 +1264,10 @@ internal fun GradleToolsPage(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = "The download includes OpenJDK 17 and Gradle " +
-                        "${store.manifest.distribution.version}. Android " +
-                        "${ProjectPins.COMPILE_SDK} and build-tools " +
-                        "${platform.buildToolsVersion()} are installed from SDK Manager.",
+                    text = "The download includes OpenJDK 17, Gradle " +
+                        "${store.manifest.distribution.version}, Android " +
+                        "${ProjectPins.COMPILE_SDK}, build-tools " +
+                        "${platform.buildToolsVersion()}, platform-tools and the SDK licenses.",
                     color = c.mock.muted,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
@@ -1045,8 +1281,12 @@ internal fun GradleToolsPage(
                     lineHeight = 18.sp,
                     fontFamily = Sans,
                 )
-                PageAction("Download JDK and Gradle") { install() }
+                PageAction("Download full toolchain") { install() }
             }
+        }
+
+        if (loaded && !installing && !removing) {
+            JdkSelectionCard(onChanged = onChanged)
         }
 
         error?.let { message ->
@@ -1184,7 +1424,7 @@ internal fun NativeToolsPage(
         Text(
             text = "Projects with C/C++ sources need the Android NDK and CMake. These are " +
                 "optional; projects without native code do not need them. Native projects " +
-                "build with Full Gradle (--gradle).",
+                "build with Full Gradle, which is selected automatically once installed.",
             color = c.mock.muted,
             fontSize = 12.sp,
             lineHeight = 18.sp,
@@ -1271,8 +1511,8 @@ internal fun NativeToolsPage(
                     )
                     Text(
                         text = if (snapshot.gradleReady) {
-                            "Full Gradle is installed too. Use closecode build --gradle " +
-                                "for this project."
+                            "Full Gradle is installed too. closecode build and the editor " +
+                                "use it for this project by default."
                         } else {
                             "Full Gradle is still missing. Install it to build native projects."
                         },
@@ -1375,6 +1615,181 @@ internal fun NativeToolsPage(
 }
 
 @Composable
+internal fun OptionalPacksPage(
+    onBack: () -> Unit,
+    onChanged: () -> Unit = {},
+) {
+    val context = LocalContext.current
+    val c = LocalPageColors.current
+    val stores = remember(context) {
+        OptionalPacks.all.associate { pack -> pack.id to OptionalPacks.store(context, pack) }
+    }
+    val scope = rememberCoroutineScope()
+    var loaded by remember { mutableStateOf(false) }
+    var ready by remember { mutableStateOf(emptyMap<String, Boolean>()) }
+    var bytes by remember { mutableStateOf(emptyMap<String, Long>()) }
+    var active by remember { mutableStateOf<String?>(null) }
+    var installing by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf<ShellToolsStore.Progress?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var confirmRemove by remember { mutableStateOf<String?>(null) }
+
+    suspend fun refresh() {
+        val snapshot = withContext(Dispatchers.IO) {
+            stores.mapValues { (_, store) -> store.isReady() to store.installedBytes() }
+        }
+        ready = snapshot.mapValues { it.value.first }
+        bytes = snapshot.mapValues { it.value.second }
+        loaded = true
+    }
+
+    fun install(pack: OptionalPack) {
+        if (active != null) return
+        val store = stores[pack.id] ?: return
+        active = pack.id
+        installing = true
+        error = null
+        progress = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                store.install { update -> scope.launch { progress = update } }
+            }
+            installing = false
+            progress = null
+            active = null
+            refresh()
+            if (!result.ok) error = result.error ?: "The ${pack.label} did not install."
+            else onChanged()
+        }
+    }
+
+    fun remove(pack: OptionalPack) {
+        if (active != null) return
+        val store = stores[pack.id] ?: return
+        active = pack.id
+        installing = false
+        error = null
+        scope.launch {
+            val removed = withContext(Dispatchers.IO) { store.remove() }
+            active = null
+            refresh()
+            if (!removed) error = "The ${pack.label} could not be removed."
+            else onChanged()
+        }
+    }
+
+    LaunchedEffect(stores) { refresh() }
+
+    SettingsPageScaffold(title = "Optional packs", onBack = onBack) {
+        Text(
+            text = "Optional Termux packs install into CloseCode's private storage and use " +
+                "the same downloader, checksums and Remove action as the CLI: " +
+                "closecode setup --media, --go, --rust and the rest.",
+            color = c.mock.muted,
+            fontSize = 12.sp,
+            lineHeight = 18.sp,
+            fontFamily = Sans,
+        )
+        if (!loaded) {
+            PageCard {
+                Text("Checking packs…", color = c.mock.muted, fontSize = 13.sp, fontFamily = Sans)
+            }
+        }
+        OptionalPacks.all.forEach { pack ->
+            val store = stores[pack.id]
+            val isReady = ready[pack.id] == true
+            val isActive = active == pack.id
+            PageCard {
+                Text(
+                    text = pack.label,
+                    color = c.mock.text,
+                    fontSize = 14.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = pack.description,
+                    color = c.mock.muted,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    fontFamily = Sans,
+                )
+                Text(
+                    text = if (isReady) {
+                        "Installed · ${humanSize(bytes[pack.id] ?: 0L)} · Termux ${store?.version.orEmpty()}"
+                    } else {
+                        "Not installed · Termux ${store?.version.orEmpty()}"
+                    },
+                    color = if (isReady) c.mock.green else c.mock.muted,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                    fontFamily = Sans,
+                )
+                if (isActive && installing) {
+                    val current = progress
+                    Text(
+                        text = current?.message ?: "Preparing the download…",
+                        color = c.mock.text,
+                        fontSize = 12.sp,
+                        fontFamily = Sans,
+                    )
+                    val fraction = if (current != null && current.totalBytes > 0) {
+                        (current.doneBytes.toFloat() / current.totalBytes).coerceIn(0f, 1f)
+                    } else {
+                        0f
+                    }
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(c.chipBg),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(fraction)
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(c.mock.accent),
+                        )
+                    }
+                } else if (active == null) {
+                    if (confirmRemove == pack.id) {
+                        Text(
+                            text = "Remove ${pack.label}? Projects and project files are not touched.",
+                            color = c.mock.text,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                            fontFamily = Sans,
+                        )
+                        PageAction("Remove ${pack.label}", danger = true) {
+                            confirmRemove = null
+                            remove(pack)
+                        }
+                        PageAction("Cancel") { confirmRemove = null }
+                    } else if (isReady) {
+                        PageAction("Remove") { confirmRemove = pack.id }
+                    } else {
+                        PageAction("Install") { install(pack) }
+                    }
+                }
+            }
+        }
+        error?.let { message ->
+            PageCard {
+                Text(
+                    text = message,
+                    color = c.mock.danger,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    fontFamily = Sans,
+                )
+            }
+        }
+    }
+}
+
+@Composable
 internal fun ShellToolsPage(
     onBack: () -> Unit,
     onChanged: () -> Unit = {},
@@ -1392,6 +1807,7 @@ internal fun ShellToolsPage(
     var packages by remember { mutableStateOf(emptyList<String>()) }
     var installing by remember { mutableStateOf(false) }
     var removing by remember { mutableStateOf(false) }
+    var pythonNeedsRepair by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf<ShellToolsStore.Progress?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var confirmRemove by remember { mutableStateOf(false) }
@@ -1403,6 +1819,9 @@ internal fun ShellToolsPage(
         ready = snapshot.first
         bytes = snapshot.second
         packages = snapshot.third
+        pythonNeedsRepair = withContext(Dispatchers.IO) {
+            PythonPackRepair.needsRepair(store.directory)
+        }
         loaded = true
     }
 
@@ -1438,6 +1857,26 @@ internal fun ShellToolsPage(
             refresh()
             if (!removed) error = "The shell tools could not be removed."
             onChanged()
+        }
+    }
+
+    fun repairPython() {
+        if (installing || removing) return
+        installing = true
+        error = null
+        progress = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                store.repairPython { update -> scope.launch { progress = update } }
+            }
+            installing = false
+            progress = null
+            refresh()
+            if (!result.ok) {
+                error = result.error ?: "Python could not be repaired."
+            } else {
+                onChanged()
+            }
         }
     }
 
@@ -1540,6 +1979,20 @@ internal fun ShellToolsPage(
                         lineHeight = 18.sp,
                         fontFamily = Sans,
                     )
+                }
+                if (pythonNeedsRepair) {
+                    PageCard {
+                        Text(
+                            text = "Python's ensurepip bundle is missing the pip wheel, so " +
+                                "python3 -m venv cannot create a working environment. Repair " +
+                                "downloads the pinned, verified wheel.",
+                            color = c.mock.text,
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                            fontFamily = Sans,
+                        )
+                        PageAction("Repair Python") { repairPython() }
+                    }
                 }
                 PageCard {
                     PageAction("Remove shell tools", danger = true) {

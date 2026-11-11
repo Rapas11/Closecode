@@ -32,7 +32,51 @@ class SetupCommandTest {
     @Test
     fun emptyOrUnknownArgumentsAreNotAnInstallRequest() {
         assertFalse(SetupCommand.parse(emptyList()).valid)
-        assertFalse(SetupCommand.parse(listOf("--what")).valid)
+        val unknown = SetupCommand.parse(listOf("--what"))
+        assertFalse(unknown.valid)
+        assertEquals(listOf("unknown option '--what'"), unknown.invalid)
+    }
+
+    @Test
+    fun helpNeverStartsAnInstall() {
+        val options = SetupCommand.parse(listOf("--help"))
+        assertTrue(options.help)
+        assertFalse(options.valid)
+        assertTrue(options.invalid.isEmpty())
+    }
+
+    @Test
+    fun missingOptionValuesAreRejected() {
+        assertEquals(
+            listOf("--sdk needs an Android API number"),
+            SetupCommand.parse(listOf("--sdk")).invalid,
+        )
+        assertEquals(
+            listOf("--remove needs a component name"),
+            SetupCommand.parse(listOf("--remove")).invalid,
+        )
+        assertEquals(
+            listOf("--sdk needs an Android API number"),
+            SetupCommand.parse(listOf("--sdk=abc")).invalid,
+        )
+    }
+
+    @Test
+    fun acceptedGlobalFlagsAreNotReportedAsUnknown() {
+        val options = SetupCommand.parse(listOf("--gradle", "--json"))
+        assertTrue(options.gradle)
+        assertTrue(options.invalid.isEmpty())
+    }
+
+    @Test
+    fun jdk21CanBeInstalledRemovedAndOnly21IsAccepted() {
+        assertTrue(SetupCommand.parse(listOf("--java21")).java21)
+        assertTrue(SetupCommand.parse(listOf("--jdk", "21")).java21)
+        assertTrue(SetupCommand.parse(listOf("--jdk=21")).java21)
+        assertEquals("java21", SetupCommand.parse(listOf("--remove=java21")).remove)
+        val rejected = SetupCommand.parse(listOf("--jdk", "8"))
+        assertFalse(rejected.valid)
+        assertTrue(rejected.invalid.single().contains("only offers 21"))
     }
 
     @Test

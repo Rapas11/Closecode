@@ -2,6 +2,7 @@ package com.closecode
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import java.io.File
 import com.closecode.ui.project.headBranch
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -13,6 +14,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
+import com.closecode.build.GradleUserProperties
+import com.closecode.build.PlatformStore
 import com.closecode.control.CloseCodeControl
 import com.closecode.debug.BuildInfo
 import com.closecode.debug.DebugLog
@@ -63,6 +66,10 @@ import com.closecode.ui.settings.LocalSettings
 import com.closecode.ui.settings.OptionSetting
 import com.closecode.ui.settings.SettingsScreen
 import com.closecode.device.control.ConsentNotifier
+import com.closecode.ui.settings.SharedPreferencesKeyValueStore
+import com.closecode.tools.JdkStore
+import com.closecode.tools.ShellToolsManifest
+import com.closecode.tools.ShellToolsStore
 import com.closecode.ui.settings.rememberSettingsStore
 import com.closecode.ui.theme.ClosecodeTheme
 import kotlinx.coroutines.Dispatchers
@@ -130,6 +137,30 @@ class MainActivity : ComponentActivity() {
             var crashText by rememberSaveable { mutableStateOf(pendingCrash) }
             val settingsStore = rememberSettingsStore()
             var settings by remember(settingsStore) { mutableStateOf(settingsStore.read()) }
+            LaunchedEffect(Unit) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val shell = ShellToolsStore(
+                            applicationContext,
+                            ShellToolsManifest.load(applicationContext),
+                        )
+                        if (shell.isReady()) shell.repairPython()
+                    }
+                    runCatching {
+                        val platform = PlatformStore(
+                            applicationContext,
+                            SharedPreferencesKeyValueStore(applicationContext),
+                        )
+                        val javaHome = JdkStore.selected(applicationContext)?.home
+                            ?: File(applicationContext.dataDir, "file/g/lib/jvm/java-17-openjdk")
+                        GradleUserProperties.ensure(
+                            File(applicationContext.filesDir, "gradle/home"),
+                            platform.buildToolsAapt2(),
+                            javaHome.takeIf { File(it, "bin/java").isFile },
+                        )
+                    }
+                }
+            }
             LaunchedEffect(settings.gitName, settings.gitEmail, settings.gitDefaultBranch) {
                 GitService.configure(
                     settings.gitName,

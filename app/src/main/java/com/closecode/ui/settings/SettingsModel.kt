@@ -109,6 +109,7 @@ enum class SettingsAction {
     DISCONNECT_GITHUB,
     SDK_MANAGER,
     SHELL_TOOLS,
+    OPTIONAL_PACKS,
     FULL_GRADLE,
     NATIVE_TOOLS,
     CREDENTIALS,
@@ -362,38 +363,52 @@ fun sections(
                     )
                     add(
                         Row.Nav(
+                            "Media tools",
+                            "ffmpeg, sqlite3 and ImageMagick",
+                            "Open",
+                            id = SettingsAction.OPTIONAL_PACKS,
+                        )
+                    )
+                    add(
+                        Row.Nav(
+                            "Language packs",
+                            "Go, Rust, Dart, PHP, Ruby, Deno and Bun",
+                            "Open",
+                            id = SettingsAction.OPTIONAL_PACKS,
+                        )
+                    )
+                    add(
+                        Row.Nav(
                             "OpenCode runtime",
                             "Linux libraries it runs on",
                             live.openCodeRuntimeStatus,
                             id = SettingsAction.AI_SETTINGS,
                         )
                     )
-                    if (templateTab == TemplateTab.App) {
-                        add(
-                            Row.Nav(
-                                "SDK manager",
-                                "Android platforms and build tools",
-                                "Open",
-                                id = SettingsAction.SDK_MANAGER,
-                            )
+                    add(
+                        Row.Nav(
+                            "SDK manager",
+                            "Android platforms, build tools and licenses",
+                            "Open",
+                            id = SettingsAction.SDK_MANAGER,
                         )
-                        add(
-                            Row.Nav(
-                                "Full Gradle",
-                                "JDK 17 and Gradle for Gradle builds",
-                                "Open",
-                                id = SettingsAction.FULL_GRADLE,
-                            )
+                    )
+                    add(
+                        Row.Nav(
+                            "Full Gradle",
+                            "JDK 17 and Gradle for Gradle builds",
+                            "Open",
+                            id = SettingsAction.FULL_GRADLE,
                         )
-                        add(
-                            Row.Nav(
-                                "Native tools",
-                                "NDK and CMake for native code",
-                                "Open",
-                                id = SettingsAction.NATIVE_TOOLS,
-                            )
+                    )
+                    add(
+                        Row.Nav(
+                            "Native tools",
+                            "NDK and CMake for native code",
+                            "Open",
+                            id = SettingsAction.NATIVE_TOOLS,
                         )
-                    }
+                    )
                 },
             ),
             Group(

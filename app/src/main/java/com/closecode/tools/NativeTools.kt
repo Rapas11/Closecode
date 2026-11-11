@@ -112,9 +112,7 @@ class NativeToolsStore(
         if (!cmakeReady()) add("CMake")
     }
 
-    fun installedBytes(): Long = listOf(ndkHome, cmakeHome)
-        .filter { it.exists() }
-        .sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
+    fun installedBytes(): Long = listOf(ndkHome, cmakeHome).sumOf { DiskUsage.bytes(it) }
 
     fun install(progress: (ShellToolsStore.Progress) -> Unit): ShellToolsStore.Result {
         if (isReady()) return ShellToolsStore.Result(true)

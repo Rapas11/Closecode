@@ -31,23 +31,32 @@ object PythonPackRepair {
         val lib = File(prefix, "lib")
         val python = lib.listFiles()
             ?.filter { it.isDirectory && it.name.startsWith("python3.") }
-            ?.maxByOrNull { it.name }
+            ?.maxByOrNull { pythonRank(it.name) }
             ?: return null
         return File(python, "ensurepip/_bundled")
     }
 
-    /** True when the pack has python but ensurepip has no wheel to install. */
-    fun needsRepair(prefix: File): Boolean {
-        val bundled = bundledDir(prefix) ?: return false
-        val wheels = bundled.listFiles()?.filter { it.isFile && it.name.endsWith(".whl") }
-        return wheels.isNullOrEmpty()
+    private fun pythonRank(name: String): Int {
+        val parts = name.removePrefix("python").split('.')
+        val major = parts.getOrNull(0)?.toIntOrNull() ?: 0
+        val minor = parts.getOrNull(1)?.toIntOrNull() ?: 0
+        return major * 1000 + minor
     }
 
-    /** True when the prefix already has a usable pip wheel. */
+    /** True when the pack has python but ensurepip has no usable wheel to install. */
+    fun needsRepair(prefix: File): Boolean {
+        val bundled = bundledDir(prefix) ?: return false
+        val target = File(bundled, PIP_FILE)
+        return !target.isFile || target.length() != PIP_SIZE ||
+            !matchesSha256(target, PIP_SHA256)
+    }
+
+    /** True when the prefix has the pinned pip wheel ensurepip will install. */
     fun isRepaired(prefix: File): Boolean {
         val bundled = bundledDir(prefix) ?: return false
-        val wheels = bundled.listFiles()?.filter { it.isFile && it.name.endsWith(".whl") }
-        return !wheels.isNullOrEmpty()
+        val target = File(bundled, PIP_FILE)
+        return target.isFile && target.length() == PIP_SIZE &&
+            matchesSha256(target, PIP_SHA256)
     }
 
     /**
@@ -61,7 +70,11 @@ object PythonPackRepair {
     ): Result<File?> = runCatching {
         val bundled = bundledDir(prefix) ?: return@runCatching null
         val target = File(bundled, PIP_FILE)
-        if (target.isFile && target.length() == PIP_SIZE) return@runCatching target
+        if (target.isFile && target.length() == PIP_SIZE &&
+            matchesSha256(target, PIP_SHA256)
+        ) {
+            return@runCatching target
+        }
         bundled.mkdirs()
         val part = File(context.cacheDir, "$PIP_FILE.part")
         download(PIP_URL, part, PIP_SIZE, onProgress)

@@ -36,6 +36,7 @@ class ShellToolsStore(
 
     val directory: File get() = ShellToolsRepo.workingPrefix(context.dataDir, prefixName)
     val home: File get() = ShellToolsRepo.workingHome(context.dataDir, homeName)
+    val version: String get() = manifest.version
 
     fun isReady(): Boolean =
         manifest.roots.isNotEmpty() &&
@@ -43,10 +44,7 @@ class ShellToolsStore(
             File(directory, "bin/sh").exists() &&
             manifest.required.all { File(directory, it).exists() }
 
-    fun installedBytes(): Long = directory.walkTopDown()
-        .onEnter { !Files.isSymbolicLink(it.toPath()) }
-        .filter { it.isFile && !Files.isSymbolicLink(it.toPath()) }
-        .sumOf { it.length() }
+    fun installedBytes(): Long = DiskUsage.bytes(directory)
 
     fun installedPackages(): List<String> {
         val marker = File(directory, ".installed")
@@ -60,11 +58,13 @@ class ShellToolsStore(
         if (manifest.repo.isBlank() || manifest.roots.isEmpty()) {
             return Result(false, "The $label manifest is missing.")
         }
+        if (isReady()) return repairPython(progress)
         val architecture = ShellToolsRepo.architecture(Build.SUPPORTED_ABIS.toList())
             ?: return Result(false, "This phone's ABI has no Termux packages.")
         val temp = File(context.dataDir, "file/$prefixName.tmp")
         deleteTree(temp)
         val indexFile = File(context.cacheDir, "$cachePrefix-Packages")
+        indexFile.delete()
         try {
             progress(Progress("index", 0, 0, null, "Reading the package index..."))
             download(
@@ -82,23 +82,22 @@ class ShellToolsStore(
                     Progress("download", done, total, packageFile.name, packageFile.name),
                 )
                 val deb = File(context.cacheDir, "$cachePrefix-${packageFile.name}.deb")
-                try {
-                    download(
-                        ShellToolsRepo.packageUrl(manifest.repo, packageFile.fileName),
-                        deb,
-                    )
-                    if (packageFile.sizeBytes > 0 && deb.length() != packageFile.sizeBytes) {
-                        throw IOException("${packageFile.name} has the wrong size.")
-                    }
-                    if (!matchesSha256(deb, packageFile.sha256)) {
-                        throw IOException("${packageFile.name} failed its checksum.")
-                    }
-                    DebArchive.dataTar(deb.readBytes()).use { tar ->
-                        TarExtractor(SOURCE_PREFIX, temp, directory).extract(tar)
-                    }
-                } finally {
-                    deb.delete()
+                download(
+                    ShellToolsRepo.packageUrl(manifest.repo, packageFile.fileName),
+                    deb,
+                    packageFile.sizeBytes,
+                )
+                if (packageFile.sizeBytes > 0 && deb.length() != packageFile.sizeBytes) {
+                    throw IOException("${packageFile.name} has the wrong size.")
                 }
+                if (!matchesSha256(deb, packageFile.sha256)) {
+                    deb.delete()
+                    throw IOException("${packageFile.name} failed its checksum.")
+                }
+                DebArchive.dataTar(deb.readBytes()).use { tar ->
+                    TarExtractor(SOURCE_PREFIX, temp, directory).extract(tar)
+                }
+                deb.delete()
                 done += packageFile.sizeBytes
                 progress(Progress("unpack", done, total, packageFile.name, packageFile.name))
             }
@@ -154,8 +153,26 @@ class ShellToolsStore(
     fun remove(): Boolean = synchronized(lock) {
         deleteTree(directory)
         deleteTree(home)
+        context.cacheDir.listFiles()
+            ?.filter { it.name.startsWith("$cachePrefix-") || it.name.endsWith(".whl.part") }
+            ?.forEach { file ->
+                if (file.isDirectory) deleteTree(file) else file.delete()
+            }
         DebugLog.crumb("TOOLS", "$label removed")
         !directory.exists() && !home.exists()
+    }
+
+    fun repairPython(progress: (Progress) -> Unit = {}): Result = synchronized(lock) {
+        if (!PythonPackRepair.needsRepair(directory)) return Result(true)
+        return try {
+            progress(Progress("download", 0, PythonPackRepair.PIP_SIZE, "pip", "pip wheel"))
+            PythonPackRepair.repair(context, directory) { done, total ->
+                progress(Progress("download", done, total, "pip", "pip wheel"))
+            }.getOrThrow()
+            Result(true)
+        } catch (error: Throwable) {
+            Result(false, error.message ?: error.javaClass.simpleName)
+        }
     }
 
     private fun deleteTree(file: File) {
@@ -199,18 +216,49 @@ class ShellToolsStore(
         }
     }
 
-    private fun download(url: String, target: File) {
+    private fun download(url: String, target: File, expectedSize: Long = 0L) {
+        target.parentFile?.mkdirs()
+        var done = if (target.isFile) target.length() else 0L
+        if (expectedSize > 0 && done > expectedSize) {
+            target.delete()
+            done = 0L
+        }
+        if (expectedSize > 0 && done == expectedSize && done > 0L) return
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             connectTimeout = 30_000
             readTimeout = 120_000
+            if (done > 0L) setRequestProperty("Range", "bytes=$done-")
             setRequestProperty("User-Agent", "CloseCode/${Build.VERSION.SDK_INT}")
         }
         try {
             val code = connection.responseCode
-            if (code !in 200..299) throw IOException("The package server returned HTTP $code.")
-            target.outputStream().use { output ->
-                connection.inputStream.use { input -> input.copyTo(output) }
+            if (done > 0L && code != HttpURLConnection.HTTP_PARTIAL) {
+                target.delete()
+                done = 0L
+                if (code == 416) {
+                    connection.disconnect()
+                    download(url, target, expectedSize)
+                    return
+                }
+                if (code !in 200..299) throw IOException("The package server returned HTTP $code.")
+            } else if (code !in 200..299) {
+                throw IOException("The package server returned HTTP $code.")
+            }
+            java.io.RandomAccessFile(target, "rw").use { output ->
+                output.seek(done)
+                connection.inputStream.use { input ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        output.write(buffer, 0, count)
+                        done += count
+                    }
+                }
+            }
+            if (expectedSize > 0 && done != expectedSize) {
+                throw IOException("Short download: $done of $expectedSize bytes.")
             }
         } finally {
             connection.disconnect()
