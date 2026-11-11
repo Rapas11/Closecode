@@ -94,6 +94,32 @@ class JdkStore(
         return true
     }
 
+    /**
+     * Selects a JDK by path, the way the command line names it.
+     *
+     * The path must be a JDK this phone really has: a directory with a working `bin/java`.
+     * AGP 8.x needs Java 17 or newer, so anything older is refused instead of failing
+     * later inside a build.
+     */
+    fun selectPath(path: String): InstalledJdk? {
+        val wanted = path.trim().trimEnd('/')
+        if (wanted.isEmpty()) return null
+        val match = installed().firstOrNull {
+            it.home.absolutePath == wanted || it.home.path == wanted
+        } ?: return null
+        if (!match.supported) return null
+        if (!select(match)) return null
+        return match
+    }
+
+    /** Forgets the choice and falls back to the JDK that comes with Full Gradle. */
+    fun clearSelection(): InstalledJdk? {
+        prefs.remove(KEY)
+        val fallback = default(installed())
+        fallback?.let { writeGradleProperties(it.home) }
+        return fallback
+    }
+
     fun install21(progress: (ShellToolsStore.Progress) -> Unit): ShellToolsStore.Result {
         val result = jdk21.install(progress)
         if (result.ok) {

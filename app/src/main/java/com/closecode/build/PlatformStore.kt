@@ -143,7 +143,7 @@ class PlatformStore(
             ?.maxByOrNull { (version, _) -> compareVersions(version, "0") }
 
     fun sizeBytes(): Long = listOf(platforms, buildTools, platformToolsDir())
-        .sumOf { dir -> dir.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
+        .sumOf { dir -> com.closecode.tools.DiskUsage.bytes(dir) }
 
     fun installPlatform(
         api: Int,
@@ -245,12 +245,68 @@ class PlatformStore(
             throw IOException("The build-tools archive has no aapt2.")
         }
         if (licenseAccepted()) installLicenses()
+        repairBuildToolsScripts()
         GradleUserProperties.ensure(
             File(context.filesDir, "gradle/home"),
             buildToolsAapt2(),
             null,
         )
         target
+    }
+
+    /**
+     * Makes the build-tools scripts runnable on Android.
+     *
+     * Google's build-tools ship shell scripts that start with `#!/bin/bash`, and Android has
+     * no bash: `apksigner` then fails with "No such file or directory". The scripts are
+     * plain POSIX shell, so the interpreter line is rewritten to the one Android has.
+     * Returns how many files were fixed.
+     */
+    fun repairBuildToolsScripts(): Int {
+        var fixed = 0
+        buildTools.listFiles()
+            ?.filter { it.isDirectory }
+            ?.forEach { dir ->
+                dir.walkTopDown()
+                    .filter { it.isFile && it.length() < 64_000L }
+                    .forEach { file ->
+                        if (rewriteShebang(file)) fixed++
+                    }
+            }
+        return fixed
+    }
+
+    private fun rewriteShebang(file: File): Boolean {
+        val head = runCatching {
+            file.inputStream().use { input ->
+                val buffer = ByteArray(64)
+                val read = input.read(buffer)
+                if (read <= 0) return false
+                String(buffer, 0, read, Charsets.ISO_8859_1)
+            }
+        }.getOrNull() ?: return false
+        val newline = head.indexOf('\n')
+        val firstLine = if (newline >= 0) head.substring(0, newline) else head
+        if (!firstLine.startsWith("#!")) return false
+        if (!firstLine.contains("bash")) return false
+        val replacement = "#!/system/bin/sh".toByteArray(Charsets.ISO_8859_1)
+        return runCatching {
+            val rest = if (newline >= 0) {
+                file.inputStream().use { input ->
+                    input.skip((newline + 1).toLong())
+                    input.readBytes()
+                }
+            } else {
+                ByteArray(0)
+            }
+            file.outputStream().use { output ->
+                output.write(replacement)
+                output.write('\n'.code)
+                output.write(rest)
+            }
+            file.setExecutable(true, false)
+            true
+        }.getOrDefault(false)
     }
 
     fun removeBuildTools(version: String = BUILD_TOOLS_VERSION): Boolean {

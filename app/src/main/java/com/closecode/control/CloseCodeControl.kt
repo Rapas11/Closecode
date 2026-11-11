@@ -2,6 +2,7 @@ package com.closecode.control
 
 import android.content.Context
 import com.closecode.BuildConfig
+import com.closecode.build.ApkPostSigner
 import com.closecode.build.BuildCoordinator
 import com.closecode.build.BuildOutcome
 import com.closecode.build.BuildReport
@@ -11,10 +12,12 @@ import com.closecode.build.BuildState
 import com.closecode.build.CompileDriver
 import com.closecode.build.GradleDiagnostics
 import com.closecode.build.GradlePlan
+import com.closecode.build.GradleReader
 import com.closecode.build.GradleRunner
 import com.closecode.build.ProjectCheck
 import com.closecode.build.ProjectSettings
 import com.closecode.build.ProjectTypeDetector
+import com.closecode.build.SigningStore
 import com.closecode.build.ToolchainHolder
 import com.closecode.build.ToolchainManifest
 import com.closecode.build.BuildCancel
@@ -26,6 +29,7 @@ import com.closecode.device.control.ConsentStore
 import com.closecode.device.control.DeviceControl
 import com.closecode.device.control.UiScript
 import com.closecode.jobs.JobManager
+import com.closecode.tools.JdkStore
 import com.closecode.tools.ShellToolsManifest
 import com.closecode.tools.ShellToolsStore
 import com.closecode.ui.git.GitService
@@ -261,6 +265,7 @@ object CloseCodeControl {
                     }
                         .getOrElse { error(it.message ?: "Signing command failed.") },
                 )
+                "sign-apk" -> send(output, signApk(context, request))
                 "build" -> {
                     it.soTimeout = 0
                     val run = runBlocking { build(context, request, output) }
@@ -1488,16 +1493,97 @@ object CloseCodeControl {
         }
     }
 
+    /**
+     * Signs an APK with the CloseCode key.
+     *
+     * Gradle signs with whatever debug keystore it finds, which on a phone is the stock
+     * AOSP key and not CloseCode's. The key itself lives in the Android Keystore and
+     * cannot be handed to Gradle as a file, so the APK is signed after the fact — the same
+     * step `closecode build` already takes (P0-7). The result is that an APK built through
+     * the Gradle menu and one built by the app carry the same certificate, so one can
+     * update the other instead of forcing an uninstall that loses the user's data.
+     */
+    private fun signApk(context: Context, request: JsonObject): JsonObject {
+        val path = args(request).firstOrNull()?.trim().orEmpty()
+        if (path.isEmpty()) return error("sign-apk needs the path of an APK.")
+        val file = File(path)
+        if (!file.isFile) return error("There is no APK at $path.")
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        )
+        val minSdk = project?.let { GradleReader.read(it.directory).minSdk } ?: 29
+        val identity = runCatching { SigningStore(context).identity() }.getOrNull()
+            ?: return error("There is no signing key. Open Settings > Signing keys.")
+        return runCatching {
+            ApkPostSigner.sign(file, identity, minSdk)
+            JsonObject().apply {
+                addProperty("ok", true)
+                addProperty("apk", file.absolutePath)
+                addProperty("bytes", file.length())
+                addProperty("message", "Signed with the CloseCode key.")
+            }
+        }.getOrElse { error(it.message ?: "The APK could not be signed.") }
+    }
+
     private fun init(context: Context, request: JsonObject): JsonObject =
         InitCommand.run(context, InitCommand.parse(args(request)))
 
     private fun config(context: Context, request: JsonObject): JsonObject {
+        val arguments = args(request)
+        // The JDK choice belongs to the phone, not to one project, so it is handled before
+        // the project is resolved: `closecode config set jdk <path>` works from anywhere,
+        // and every build path — the editor, `closecode build` and `./gradlew` — follows it.
+        val action = arguments.firstOrNull()
+        val key = arguments.getOrNull(1)?.trim()
+        if ((action == "set" || action == "unset") && key == "jdk") {
+            return jdkConfig(context, arguments)
+        }
         val project = resolveProject(
             context,
             cwd = string(request, "cwd"),
             slug = string(request, "project"),
         ) ?: return error("Run closecode from a registered project folder.")
-        return ConfigCommand.run(project.directory, args(request))
+        return ConfigCommand.run(project.directory, arguments)
+    }
+
+    /** `closecode config set jdk <path>` and `closecode config unset jdk`. */
+    private fun jdkConfig(context: Context, arguments: List<String>): JsonObject {
+        val store = JdkStore(context)
+        return when (arguments.firstOrNull()) {
+            "set" -> {
+                val path = arguments.getOrNull(2)?.trim().orEmpty()
+                if (path.isEmpty()) return error("config set jdk needs a path.")
+                val chosen = store.selectPath(path)
+                if (chosen == null) {
+                    val known = store.installed().map { it.home.absolutePath }
+                    return error(
+                        "There is no usable JDK at $path." +
+                            if (known.isEmpty()) {
+                                " No JDK is installed; run closecode setup --gradle."
+                            } else {
+                                " Installed: ${known.joinToString()}"
+                            },
+                    )
+                }
+                JsonObject().apply {
+                    addProperty("ok", true)
+                    addProperty("jdk", chosen.home.absolutePath)
+                    addProperty("version", chosen.version)
+                    addProperty("message", "JDK ${chosen.version} is now used by every build path.")
+                }
+            }
+            "unset" -> {
+                val fallback = store.clearSelection()
+                JsonObject().apply {
+                    addProperty("ok", true)
+                    addProperty("jdk", fallback?.home?.absolutePath.orEmpty())
+                    addProperty("message", "The JDK choice was cleared; the default is used again.")
+                }
+            }
+            else -> error("config jdk needs set or unset.")
+        }
     }
 
     private suspend fun ecosystem(
@@ -1825,6 +1911,7 @@ internal fun controlCommandScript(basePath: String): String = """
         doctor|doc) echo "usage: closecode doctor [--json]" ;;
         toolchain) echo "usage: closecode toolchain status [--json]" ;;
         signing|sign) echo "usage: closecode signing status|generate|import|select|delete" ;;
+        sign-apk|resign) echo "usage: closecode sign-apk <path-to-apk>" ;;
         gradle|g) echo "usage: closecode gradle <task> [--gradle]" ;;
         check|chk) echo "usage: closecode check" ;;
         github|gh) echo "usage: closecode github push|pull [--force]" ;;
@@ -1890,6 +1977,7 @@ internal fun controlCommandScript(basePath: String): String = """
       doctor|doc) CMD=doctor ;;
       toolchain) CMD=toolchain ;;
       signing|sign) CMD=signing ;;
+      sign-apk|resign) CMD=sign-apk ;;
       g|gradle) CMD=gradle ;;
       chk|check) CMD=check ;;
       gh|github) CMD=github ;;
@@ -1903,7 +1991,7 @@ internal fun controlCommandScript(basePath: String): String = """
       rel|release) CMD=release ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|notifications|screen|deploy|secrets|selftest|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|sign-apk|resign|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|notifications|screen|deploy|secrets|selftest|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
       *) help >&2; exit 2 ;;
     esac
     case "${'$'}{2:-}" in

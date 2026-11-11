@@ -9,10 +9,15 @@ import com.closecode.device.control.ConsentStore
 import com.closecode.device.control.DeviceControl
 import com.closecode.device.control.ScreenControl
 import com.closecode.device.control.UiScript
+import com.closecode.tools.PythonPackRepair
+import com.closecode.tools.ShellEnvironment
+import com.closecode.tools.ShellToolsManifest
+import com.closecode.tools.ShellToolsStore
 import com.closecode.ui.project.ProjectRepository
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import java.io.File
+import java.util.concurrent.TimeUnit
 
 /**
  * P3: the commands the report lists as never exercised end to end.
@@ -34,7 +39,56 @@ internal object SelftestCommands {
         checks.add(notifications(context))
         checks.add(uiScript(context))
         checks.add(ecosystemDispatch(context))
+        checks.add(pythonVenv(context))
         return checks
+    }
+
+    /**
+     * `python3 -m venv` must produce an environment with a working pip.
+     *
+     * The failure this catches is quiet: ensurepip asks for the pip wheel that matches the
+     * runtime it belongs to, and a wheel left behind by an older Python is ignored, so the
+     * venv is created without pip and every later install fails.
+     */
+    private fun pythonVenv(context: Context): JsonObject {
+        val shell = ShellToolsStore(context, ShellToolsManifest.load(context))
+        if (!shell.isReady()) {
+            return check("python-venv", true, "skipped: the shell tools are not installed")
+                .apply { addProperty("skipped", true) }
+        }
+        val python = File(shell.directory, "bin/python3")
+        if (!python.isFile) {
+            return check("python-venv", false, "python3 is missing from the shell tools")
+        }
+        val work = File(context.cacheDir, "selftest-venv")
+        work.deleteRecursively()
+        work.mkdirs()
+        val environment = ShellEnvironment.env(context, work)
+        val result = runCatching {
+            val process = ProcessBuilder(python.absolutePath, "-m", "venv", "venv")
+                .directory(work)
+                .redirectErrorStream(true)
+                .apply { environment().putAll(environment) }
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor(120, TimeUnit.SECONDS)
+            output to process.exitValue()
+        }.getOrElse { "" to 1 }
+        val pip = File(work, "venv/bin/pip")
+        val ok = result.second == 0 && pip.isFile
+        work.deleteRecursively()
+        return check(
+            "python-venv",
+            ok,
+            if (ok) {
+                "python3 -m venv creates an environment with pip"
+            } else {
+                "python3 -m venv did not create a working pip: " +
+                    result.first.lines().lastOrNull().orEmpty().take(120)
+            },
+        ).apply {
+            addProperty("requiredWheel", PythonPackRepair.requiredFile(shell.directory) ?: "")
+        }
     }
 
     /** `closecode secrets set/list/delete`: the value is never printed and survives a restart. */

@@ -47,16 +47,15 @@ object AndroidProjectFiles {
         "    mv \"\$PROPS.tmp\" \"\$PROPS\"\n" +
         "  fi\n" +
         "fi\n" +
-        "if [ -z \"\$JAVA_HOME\" ] && [ -f \"\$PROPS\" ]; then\n" +
-        "  SELECTED_JAVA=\"\"\n" +
+        "SELECTED_JAVA=\"\"\n" +
+        "if [ -f \"\$PROPS\" ]; then\n" +
         "  while IFS='=' read -r KEY VALUE; do\n" +
         "    if [ \"\$KEY\" = \"org.gradle.java.home\" ]; then SELECTED_JAVA=\"\$VALUE\"; fi\n" +
         "  done < \"\$PROPS\"\n" +
-        "  if [ -n \"\$SELECTED_JAVA\" ] && [ -x \"\$SELECTED_JAVA/bin/java\" ]; then\n" +
-        "    export JAVA_HOME=\"\$SELECTED_JAVA\"\n" +
-        "  fi\n" +
         "fi\n" +
-        "if [ -z \"\$JAVA_HOME\" ]; then\n" +
+        "if [ -n \"\$SELECTED_JAVA\" ] && [ -x \"\$SELECTED_JAVA/bin/java\" ]; then\n" +
+        "  export JAVA_HOME=\"\$SELECTED_JAVA\"\n" +
+        "elif [ -z \"\$JAVA_HOME\" ]; then\n" +
         "  for CANDIDATE in \"\$DATA_DIR/file/g/lib/jvm/java-17-openjdk\" " +
         "\"\$DATA_DIR/file/u/lib/jvm/java-17-openjdk\" " +
         "\"\$DATA_DIR/file/j/lib/jvm/java-21-openjdk\"; do\n" +
@@ -66,7 +65,21 @@ object AndroidProjectFiles {
         "    fi\n" +
         "  done\n" +
         "fi\n" +
-        "exec \"\$GRADLE_BIN\" \"\$@\"\n"
+        "CLOSECODE_CLI=\"\$FILES_DIR/opencode/bin/closecode\"\n" +
+        "if [ ! -x \"\$CLOSECODE_CLI\" ]; then\n" +
+        "  CLOSECODE_CLI=\$(command -v closecode 2>/dev/null)\n" +
+        "fi\n" +
+        "\"\$GRADLE_BIN\" \"\$@\"\n" +
+        "GRADLE_CODE=\$?\n" +
+        "if [ \"\$GRADLE_CODE\" -eq 0 ] && [ -n \"\$CLOSECODE_CLI\" ]; then\n" +
+        "  find \"\$PWD\" -maxdepth 8 -path \"*/build/outputs/apk/debug/*.apk\" -print 2>/dev/null \\\n" +
+        "  | while IFS= read -r APK; do\n" +
+        "    [ -f \"\$APK\" ] || continue\n" +
+        "    \"\$CLOSECODE_CLI\" sign-apk \"\$APK\" >/dev/null 2>&1 || \\\n" +
+        "      printf 'closecode: %s keeps the Gradle key; build from the app to sign it with the CloseCode key.\\n' \"\$APK\" >&2\n" +
+        "  done\n" +
+        "fi\n" +
+        "exit \"\$GRADLE_CODE\"\n"
 
     data class Result(val changed: List<String>)
 

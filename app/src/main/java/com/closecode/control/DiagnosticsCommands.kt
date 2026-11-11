@@ -13,6 +13,7 @@ import com.closecode.build.SdkPlatforms
 import com.closecode.build.ToolchainDownloadService
 import com.closecode.device.CloseCodeAccessibilityService
 import com.closecode.tools.GradleToolsStore
+import com.closecode.tools.JdkStore
 import com.closecode.tools.NativeToolsStore
 import com.closecode.tools.ShellEnvironment
 import com.closecode.tools.ShellToolsManifest
@@ -69,6 +70,20 @@ object ToolchainStatusCommand {
                     addProperty("ok", File(dir, "aapt2").isFile)
                 })
             }
+        // Every JDK on the phone, and which one the builds use. A JDK that is installed but
+        // not listed is a JDK the user cannot choose.
+        val jdkStore = JdkStore(context)
+        val selectedJdk = jdkStore.selected()?.home?.absolutePath
+        val jdks = JsonArray()
+        jdkStore.installed().forEach { jdk ->
+            jdks.add(JsonObject().apply {
+                addProperty("path", jdk.home.absolutePath)
+                addProperty("version", jdk.version)
+                addProperty("source", jdk.source)
+                addProperty("supported", jdk.supported)
+                addProperty("selected", jdk.home.absolutePath == selectedJdk)
+            })
+        }
         val missing = JsonArray()
         if (!File(gradle.javaHome, "bin/java").isFile) missing.add("jdk")
         if (!gradle.isReady()) missing.add("gradle")
@@ -92,6 +107,7 @@ object ToolchainStatusCommand {
                 addProperty("version", ToolProbe.run(gradle.java, listOf("-version"), env))
                 addProperty("ok", File(gradle.javaHome, "bin/java").isFile)
             })
+            add("jdks", jdks)
             add("gradle", JsonObject().apply {
                 addProperty("home", gradle.distributionDir.absolutePath)
                 addProperty("distribution", gradle.manifest.distribution.version)

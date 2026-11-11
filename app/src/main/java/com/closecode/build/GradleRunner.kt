@@ -341,7 +341,22 @@ object GradleRunner {
         val log = runCatching {
             val dir = File(projectDir, "build/logs")
             dir.mkdirs()
-            File(dir, "build.log").apply { writeText(text) }
+            File(dir, "build.log").apply {
+                writeText(
+                    buildString {
+                        append("CloseCode Gradle build\n")
+                        append("Java ")
+                        append(javaVersion(toolchain.javaHome))
+                        append(" (")
+                        append(toolchain.javaHome.absolutePath)
+                        append(")\n")
+                        append("Gradle ")
+                        append(toolchain.distributionVersion)
+                        append("\n\n")
+                        append(text)
+                    },
+                )
+            }
         }.getOrNull()
         return GradleRunResult(
             apk = if (findApk && code == 0 && !timedOut && !wasCancelled) {
@@ -423,4 +438,18 @@ object GradleRunner {
             .filter { it.isNotEmpty() }
             .toList()
     }
+}
+
+/**
+ * The version of a JDK, read from the `release` file it ships.
+ *
+ * The build log names the Java that ran the build, so "which JDK was this?" is answered by
+ * the log instead of by guessing from the path.
+ */
+private fun javaVersion(javaHome: File): String {
+    val release = File(javaHome, "release")
+    if (!release.isFile) return "unknown"
+    val text = runCatching { release.readText() }.getOrNull() ?: return "unknown"
+    val match = Regex("JAVA_VERSION=\"([^\"]+)\"").find(text) ?: return "unknown"
+    return match.groupValues.getOrNull(1) ?: "unknown"
 }

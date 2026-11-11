@@ -34,7 +34,10 @@ class AndroidProjectFilesTest {
         assertTrue(wrapper.readText().contains("command -v gradle"))
         assertTrue(wrapper.readText().contains("GRADLE_USER_HOME"))
         assertTrue(wrapper.readText().contains("JAVA_HOME"))
-        assertTrue(wrapper.readText().contains("exec \"\$GRADLE_BIN\" \"\$@\""))
+        assertTrue(wrapper.readText().contains("\"\$GRADLE_BIN\" \"\$@\""))
+        // The shim does not exec Gradle: it signs what Gradle built and then reports Gradle's
+        // own exit code, so a failed build is still a failed build.
+        assertTrue(wrapper.readText().contains("exit \"\$GRADLE_CODE\""))
         assertTrue(wrapper.canExecute())
         assertEquals("sdk.dir=/files/sdk", File(project, "local.properties").readText().trim())
     }
@@ -76,6 +79,26 @@ class AndroidProjectFilesTest {
         assertTrue(text.contains("android.aapt2FromMavenOverride"))
         assertTrue(text.contains("org.gradle.java.home"))
         assertTrue(text.contains("CloseCode shim v2"))
+    }
+
+    @Test
+    fun theShimSignsWhatGradleBuiltAndFollowsTheSelectedJdk() {
+        val project = tmp.newFolder("app")
+        File(project, "app/build.gradle.kts").apply {
+            parentFile?.mkdirs()
+            writeText("android {}\n")
+        }
+
+        AndroidProjectFiles.prepare(project, File("/files/sdk"))
+
+        val text = File(project, "gradlew").readText()
+        // The selected JDK wins over an inherited JAVA_HOME, so the launcher and the daemon
+        // always run on the same Java.
+        assertTrue(text.contains("org.gradle.java.home"))
+        assertFalse(text.contains("if [ -z \"\$JAVA_HOME\" ] && [ -f \"\$PROPS\" ]"))
+        // Gradle signs with the stock AOSP key; the shim asks the app to sign it properly.
+        assertTrue(text.contains("sign-apk"))
+        assertTrue(text.contains("build/outputs/apk/debug"))
     }
 
     @Test

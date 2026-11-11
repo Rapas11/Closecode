@@ -2,11 +2,10 @@
 
 **One file containing all ten required documents.**
 
-- Build: **80** (`0.80.1611`), working tree at commit `0d318ce` plus the uncommitted
-  build-80 toolchain work.
-- Unit suite: **1611 tests, 0 failures, 0 errors, 8 skipped**.
-- Artifact: `build/CloseCode-build80-tests1611-debug.apk`,
-  SHA-256 `eae8b48def5df9dc91ae3ad22994716c79e4e6962625651dba671404f67be465`.
+- Build: **81** (`0.81.1615`), on top of commit `843ba1d`.
+- Unit suite: **1615 tests, 0 failures, 0 errors, 8 skipped**.
+- Artifact: `build/CloseCode-build81-tests1615-debug.apk`,
+  SHA-256 `8b2e9924985a7db2ce971bdeda19ea1dc63a13d80106f6f545edfab1c28309bd`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -25,6 +24,7 @@
 | 8 | Security model | The two permission layers and what protects what |
 | 9 | Test report | The 14 acceptance tests, with honest pass / fail / blocked |
 | 10 | Known limitations | Everything CloseCode cannot do, and why |
+| 11 | The in-app agent's audit | What the agent found on the phone, and what build 81 changed |
 
 ---
 
@@ -33,8 +33,7 @@
 
 # PART 1 — CURRENT CAPABILITIES
 
-Status: audit snapshot for build **80** (versionName `0.80.1611`), working tree at commit
-`0d318ce` plus uncommitted build-80 work.
+Status: audit snapshot for build **81** (versionName `0.81.1615`), on top of commit `843ba1d`.
 
 How to read this file: every claim is either **Proven** (a test run, a device run, or a
 host POC produced it) or **Code-verified** (the implementation is present and traced, but
@@ -43,7 +42,7 @@ the strength of a class name, a config key or an endpoint existing.
 
 Source of truth for the build under test:
 `app/build.gradle.kts:14` (`closecodeBuild = 80`), `app/build.gradle.kts:16`
-(`closecodeTests = 1611`).
+(`closecodeTests = 1615`).
 
 ---
 
@@ -51,9 +50,9 @@ Source of truth for the build under test:
 
 | Evidence | Result | Where |
 |---|---|---|
-| JVM unit suite | **1611 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
+| JVM unit suite | **1615 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build80-tests1611-debug.apk`, SHA-256 `eae8b48def5df9dc91ae3ad22994716c79e4e6962625651dba671404f67be465` | `build/` |
+| Delivered artifact | `build/CloseCode-build81-tests1615-debug.apk`, SHA-256 `8b2e9924985a7db2ce971bdeda19ea1dc63a13d80106f6f545edfab1c28309bd` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -341,7 +340,7 @@ is a hand-maintained constant that can drift from the real result.
 #### 1.9 Real device-level tests
 
 `app/src/androidTest/` contains one stock template assertion
-(`ExampleInstrumentedTest.kt`). All 1611 tests are JVM tests; nothing is exercised on a
+(`ExampleInstrumentedTest.kt`). All 1615 tests are JVM tests; nothing is exercised on a
 real Android runtime in CI.
 
 ---
@@ -619,7 +618,7 @@ audit log. This is defect D11 and is addressed in the roadmap, not silently.
 
 ### 8. Test and delivery infrastructure
 
-- 146 JVM test files under `app/src/test/java/com/closecode/`; 1611 tests in the last run
+- 146 JVM test files under `app/src/test/java/com/closecode/`; 1615 tests in the last run
   (0 failures, 0 errors, 8 skipped).
 - One stock instrumentation test in `app/src/androidTest/` — no real device tests.
 - CI: `.github/workflows/build.yml:32` (unit suite), `:35` (assemble + upload). No lint,
@@ -1544,9 +1543,9 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | JDK | 17.0.20.1+1 at `/opt/java/jdk-17.0.20.1+1` |
 | Android SDK | `/opt/android_sdk`, platform 35 |
 | Gradle | 8.13 (wrapper) |
-| Unit suite | **1611 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
+| Unit suite | **1615 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build80-tests1611-debug.apk`, SHA-256 `eae8b48def5df9dc91ae3ad22994716c79e4e6962625651dba671404f67be465` |
+| Artifact | `build/CloseCode-build81-tests1615-debug.apk`, SHA-256 `8b2e9924985a7db2ce971bdeda19ea1dc63a13d80106f6f545edfab1c28309bd` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |
@@ -1859,7 +1858,7 @@ the bundled OpenCode server is prevented from downloading one
 
 | Limit | Consequence | Evidence |
 |---|---|---|
-| All 1611 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
+| All 1615 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
 | One stock instrumentation test | No real device test exists | `app/src/androidTest/java/com/closecode/ExampleInstrumentedTest.kt` |
 | No lint or static analysis task | Style and some correctness issues are not machine-checked | `app/build.gradle.kts`; `.github/workflows/build.yml:32`, `:35` |
 | The test-count constant is hand-maintained | The version number could claim a count that was never run (defect D8) | `app/build.gradle.kts:16` |
@@ -1876,3 +1875,110 @@ the bundled OpenCode server is prevented from downloading one
 | No language server | Code-intelligence phase (hand-written analyser stays as the fallback) |
 | No remote execution or task routing | Remote-execution phase |
 | No lint task, drifting test count, no instrumentation | Quality phase |
+
+---
+
+# PART 11 — THE IN-APP AGENT'S AUDIT, AND WHAT BUILD 81 CHANGED
+
+## 11.1 What happened
+
+The user asked the OpenCode agent inside CloseCode what it can and cannot do. The agent
+answered by **auditing the app on the phone**: it used CloseCode's own terminal, build and
+file tools, measured the real behaviour, and wrote two things.
+
+| Artifact | What it is |
+|---|---|
+| `guild.v10` | Five broken items, each with the problem, the raw evidence, why it matters, what to do and a "done when" |
+| `closecode-acceptance.sh` | A 343-line on-device acceptance board written for Android's toybox shell. `sh closecode-acceptance.sh` prints `PASS n FAIL n SKIP n` and exits non-zero on any failure |
+
+On build 80 the board read **PASS 16, FAIL 6, SKIP 3**. The script is now part of the
+repository, so the user, the agent and the developer all run the same checks.
+
+This is the product working as the roadmap intends: the agent used the phone to check the
+phone. It also shows why the registry phase matters — the agent had to *guess* where a
+capability lived because there was no single list of them.
+
+## 11.2 The five items, and what is now true
+
+### Item 1 — one signing key on every path — **fixed in build 81**
+
+The agent proved that the two build paths produced different certificates:
+
+| Path | Certificate |
+|---|---|
+| `closecode build` | `CN=Closecode Debug` (`30fae35d…`) |
+| `./gradlew assembleDebug` | the stock AOSP debug key (`a6811008…`) |
+
+The consequence is data loss: an APK from the Gradle menu cannot update the app that
+`closecode install` put on the phone, so Android answers `signature_mismatch` and the user
+is told to uninstall.
+
+**Why it happened.** `closecode build` re-signs Gradle's output with the CloseCode key
+(`build/BuildEngine.kt:260-285`, the P0-7 step). A bare `./gradlew` never goes through that
+step, so AGP signs with whatever debug keystore it finds. The CloseCode key **cannot** be
+handed to Gradle as a file: it is generated in the Android Keystore
+(`build/DebugKey.kt:31-55`) and is not exportable.
+
+**The fix.** The `./gradlew` shim now asks the app to sign what Gradle produced, through the
+new `closecode sign-apk <apk>` command, using the same `ApkPostSigner` the app's own build
+path uses. The shim keeps Gradle's exit code, so a failed build is still a failed build. Only
+debug APKs are re-signed; a release APK keeps the signing configuration the project asked
+for.
+
+### Item 2 — a JDK must be selectable, and every path must follow it — **fixed in build 81**
+
+What build 80 had: a screen that lists the installed JDKs and a selection that the editor
+and the app's build path follow. What was missing, and is now there:
+
+| Gap | Fix |
+|---|---|
+| `closecode config set jdk <path>` was rejected as an unknown key | Accepted, validated (the path must be a real JDK, Java 17 or newer) and stored as the phone-wide choice (`control/CloseCodeControl.kt`, `jdkConfig`) |
+| `closecode toolchain status --json` listed one JDK | It now lists every installed JDK with its path, version, source and which one is selected (`jdks` array) |
+| The shim let an inherited `JAVA_HOME` beat the selection, so the launcher ran on 17 and the daemon on 21 | The selected JDK now wins, so the launcher and the daemon always agree (`build/AndroidProjectFiles.kt`) |
+| It was impossible to tell which Java a build used | The build log now names it: `Java 21.0.13 (/path)` (`build/GradleRunner.kt`) |
+| `closecode setup --java21` installed a JDK nothing could see | It appears in the status output and in the Settings screen through the same discovery |
+
+### Item 3 — `python3 -m venv` — **fixed properly in build 81**
+
+The agent's diagnosis was better than the first attempt in build 80, which pinned pip 25.2
+regardless of the runtime. The real cause is a mismatch: Termux's Python 3.14 asks ensurepip
+for `pip-26.2.2-py3-none-any.whl`, while the bundle held `pip-25.2`, left behind by an older
+Python. ensurepip then fails inside `python3 -m venv` and the environment has no pip.
+
+**The fix.** The installer now reads the runtime's own `_PIP_VERSION` and installs exactly
+that wheel, verified by size and SHA-256, and removes wheels left over from an older runtime
+so an upgrade repairs itself (`tools/PythonPackRepair.kt`). A new phone self-test
+(`closecode selftest`) runs `python3 -m venv` for real and fails if pip is missing.
+
+### Item 4 — removing Gradle must not delete the cache — **already fixed in build 80**
+
+The removal keeps `files/gradle/home`, and clearing it is the separate `clean --gradle-caches`
+action. The acceptance script keeps this as a regression check and tests it destructively
+with `--all`.
+
+### Item 5 — a failed download must resume — **already fixed in build 80**
+
+Every download keeps its partial file and sends a `Range:` request when it retries. The
+acceptance script marks this check as skipped, because it needs a network that fails on
+purpose.
+
+## 11.3 One more thing the agent found
+
+The phone had a `build-tools/35.0.0` whose scripts start with `#!/bin/bash`. Android has no
+bash, so its `apksigner` failed with "No such file or directory". Build 81 repairs the
+interpreter line of any build-tools on the phone at start-up and after an install
+(`build/PlatformStore.kt`, `repairBuildToolsScripts`), because those scripts are plain
+POSIX shell.
+
+## 11.4 What is still to be measured
+
+The board itself has **not** been re-run on the phone yet. Everything in this part is
+verified by the unit suite (1615 tests) and by the code, and the device measurement is
+pending: install `build/CloseCode-build81-tests1615-debug.apk`, then run
+
+```sh
+sh closecode-acceptance.sh
+```
+
+and paste the board back. Until that board says `FAIL 0`, these fixes are *implemented*,
+not *proven on the phone*.

@@ -151,6 +151,8 @@ class MainActivity : ComponentActivity() {
                             applicationContext,
                             SharedPreferencesKeyValueStore(applicationContext),
                         )
+                        // Android has no bash: a build-tools script that asks for it cannot run.
+                        platform.repairBuildToolsScripts()
                         val javaHome = JdkStore.selected(applicationContext)?.home
                             ?: File(applicationContext.dataDir, "file/g/lib/jvm/java-17-openjdk")
                         GradleUserProperties.ensure(
