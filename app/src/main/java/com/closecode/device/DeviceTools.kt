@@ -29,26 +29,32 @@ object DeviceTools {
 
     private const val DEFAULT_APK = "build/outputs/apk/debug/app-debug.apk"
 
+    /**
+     * Installs an APK.
+     *
+     * [apk] is the file the user named, already resolved against the folder they were in.
+     * Without one, the APK the project built is used.
+     */
     fun install(
         context: Context,
         project: File,
-        argument: String?,
+        apk: File?,
         waitMs: Long = 0,
         openSettings: Boolean = false,
     ): JsonObject {
-        val apk = if (argument.isNullOrBlank()) {
+        val target = if (apk == null) {
             val custom = File(project, DEFAULT_APK).takeIf { it.isFile }
             custom ?: com.closecode.build.GradlePlan.findAnyApk(project)
                 ?: com.closecode.build.GradlePlan.findApk(project, "debug")
                 ?: com.closecode.build.GradlePlan.findApk(project, "release")
         } else {
-            resolve(project, argument)?.takeIf { it.isFile }
+            apk.takeIf { it.isFile }
         } ?: return error("No APK to install. Build the project first or pass an APK path.")
-        val packageName = packageNameOfApk(context, apk)
+        val packageName = packageNameOfApk(context, target)
 
         // P0-7 / P1-7: a package signed with a different key can never be updated in place.
         // Detect it before opening a session, and hand back the exact recovery commands.
-        val apkCertificates = certificatesOf(context, apk = apk)
+        val apkCertificates = certificatesOf(context, apk = target)
         val installedCertificates = packageName
             ?.let { certificatesOf(context, packageName = it) }
             .orEmpty()
@@ -81,7 +87,7 @@ object DeviceTools {
         }
         val before = packageName?.let { packageStamp(context, it) }
         return runCatching {
-            val session = InstallHelper.install(context, apk, packageName.orEmpty())
+            val session = InstallHelper.install(context, target, packageName.orEmpty())
             if (session < 0) {
                 InstallChecks.permissionNeeded(context.packageName, openedSettings = false)
             } else {
@@ -92,7 +98,7 @@ object DeviceTools {
                 }
                 ok().apply {
                     addProperty("session", session)
-                    addProperty("apk", apk.absolutePath)
+                    addProperty("apk", target.absolutePath)
                     addProperty("package", packageName.orEmpty())
                     if (apkCertificates.isNotEmpty()) {
                         addProperty("signature", apkCertificates.first())
@@ -392,20 +398,22 @@ object DeviceTools {
         }
     }
 
-    fun export(context: Context, project: File, argument: String?): JsonObject {
-        val source = if (argument.isNullOrBlank()) {
-            project
-        } else {
-            resolve(project, argument) ?: return error("That path is outside the project.")
-        }
-        if (!source.exists()) return error("There is nothing to export at ${source.path}.")
+    /**
+     * Exports a file or a folder.
+     *
+     * [source] is the file the user named, already resolved against the folder they were in.
+     * Without one, the whole project is exported.
+     */
+    fun export(context: Context, project: File, source: File?): JsonObject {
+        val from = source ?: project
+        if (!from.exists()) return error("There is nothing to export at ${from.path}.")
         val outputDir = File(context.filesDir, "exports")
         return runCatching {
-            val target = ExportHelper.export(source, outputDir)
+            val target = ExportHelper.export(from, outputDir)
             ok().apply {
                 addProperty("path", target.absolutePath)
                 addProperty("bytes", target.length())
-                addProperty("kind", if (source.isDirectory) "project" else "file")
+                addProperty("kind", if (from.isDirectory) "project" else "file")
             }
         }.getOrElse { error("Export failed: ${it.message ?: it.javaClass.simpleName}") }
     }

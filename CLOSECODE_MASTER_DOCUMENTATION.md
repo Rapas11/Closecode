@@ -2,10 +2,10 @@
 
 **One file containing all ten required documents.**
 
-- Build: **85** (`0.85.1646`), on top of commit `9c8a541`.
-- Unit suite: **1646 tests, 0 failures, 0 errors, 8 skipped**.
-- Artifact: `build/CloseCode-build85-tests1646-debug.apk`,
-  SHA-256 `12a5c5f9d7fbcf7a97ca537a591883cd50da742a2877d2788d1c2fb7bb2e8fb4`.
+- Build: **86** (`0.86.1651`), on top of commit `bd9ac05`.
+- Unit suite: **1651 tests, 0 failures, 0 errors, 8 skipped**.
+- Artifact: `build/CloseCode-build86-tests1651-debug.apk`,
+  SHA-256 `c341aea2f215862ecd71924cb62b8df2255960962b6ecf593f75bc615e3a56a3`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -33,7 +33,7 @@
 
 # PART 1 — CURRENT CAPABILITIES
 
-Status: audit snapshot for build **85** (versionName `0.85.1646`), on top of commit `9c8a541`.
+Status: audit snapshot for build **86** (versionName `0.86.1651`), on top of commit `bd9ac05`.
 
 How to read this file: every claim is either **Proven** (a test run, a device run, or a
 host POC produced it) or **Code-verified** (the implementation is present and traced, but
@@ -42,7 +42,7 @@ the strength of a class name, a config key or an endpoint existing.
 
 Source of truth for the build under test:
 `app/build.gradle.kts:14` (`closecodeBuild = 80`), `app/build.gradle.kts:16`
-(`closecodeTests = 1646`).
+(`closecodeTests = 1651`).
 
 ---
 
@@ -50,9 +50,9 @@ Source of truth for the build under test:
 
 | Evidence | Result | Where |
 |---|---|---|
-| JVM unit suite | **1646 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
+| JVM unit suite | **1651 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build85-tests1646-debug.apk`, SHA-256 `12a5c5f9d7fbcf7a97ca537a591883cd50da742a2877d2788d1c2fb7bb2e8fb4` | `build/` |
+| Delivered artifact | `build/CloseCode-build86-tests1651-debug.apk`, SHA-256 `c341aea2f215862ecd71924cb62b8df2255960962b6ecf593f75bc615e3a56a3` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -340,7 +340,7 @@ is a hand-maintained constant that can drift from the real result.
 #### 1.9 Real device-level tests
 
 `app/src/androidTest/` contains one stock template assertion
-(`ExampleInstrumentedTest.kt`). All 1646 tests are JVM tests; nothing is exercised on a
+(`ExampleInstrumentedTest.kt`). All 1651 tests are JVM tests; nothing is exercised on a
 real Android runtime in CI.
 
 ---
@@ -618,7 +618,7 @@ audit log. This is defect D11 and is addressed in the roadmap, not silently.
 
 ### 8. Test and delivery infrastructure
 
-- 146 JVM test files under `app/src/test/java/com/closecode/`; 1646 tests in the last run
+- 146 JVM test files under `app/src/test/java/com/closecode/`; 1651 tests in the last run
   (0 failures, 0 errors, 8 skipped).
 - One stock instrumentation test in `app/src/androidTest/` — no real device tests.
 - CI: `.github/workflows/build.yml:32` (unit suite), `:35` (assemble + upload). No lint,
@@ -1543,9 +1543,9 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | JDK | 17.0.20.1+1 at `/opt/java/jdk-17.0.20.1+1` |
 | Android SDK | `/opt/android_sdk`, platform 35 |
 | Gradle | 8.13 (wrapper) |
-| Unit suite | **1646 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
+| Unit suite | **1651 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build85-tests1646-debug.apk`, SHA-256 `12a5c5f9d7fbcf7a97ca537a591883cd50da742a2877d2788d1c2fb7bb2e8fb4` |
+| Artifact | `build/CloseCode-build86-tests1651-debug.apk`, SHA-256 `c341aea2f215862ecd71924cb62b8df2255960962b6ecf593f75bc615e3a56a3` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |
@@ -1858,7 +1858,7 @@ the bundled OpenCode server is prevented from downloading one
 
 | Limit | Consequence | Evidence |
 |---|---|---|
-| All 1646 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
+| All 1651 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
 | One stock instrumentation test | No real device test exists | `app/src/androidTest/java/com/closecode/ExampleInstrumentedTest.kt` |
 | No lint or static analysis task | Style and some correctness issues are not machine-checked | `app/build.gradle.kts`; `.github/workflows/build.yml:32`, `:35` |
 | The test-count constant is hand-maintained | The version number could claim a count that was never run (defect D8) | `app/build.gradle.kts:16` |
@@ -2268,6 +2268,58 @@ the old support library needs it.
 
 Build 85 is *implemented and tested here*. The board is the last step, and it belongs to the
 user: install `build/CloseCode-build85-tests1646-debug.apk` and run
+
+```sh
+sh closecode-acceptance.sh --all
+```
+
+---
+
+# PART 16 — BUILD 86: ONE PLACE FOR PATHS, AND A HINT
+
+The agent re-checked build 85 on the phone: **PASS 23 FAIL 0 SKIP 3**, and the two skips were
+verified by hand. It found one small bug and one suggestion.
+
+## 16.1 A path means what the user typed — in one place
+
+`closecode sign-apk t.apk` said "There is no APK at t.apk" while the file was in the folder
+the user was standing in. The same mistake was in three commands: `sign-apk` looked in the
+app's own folder, and `install`, `export` and `test-ui` resolved a relative path against the
+*project* instead of the shell's folder — and `install` refused an absolute path outside the
+project altogether.
+
+**One resolver now** (`control/CommandPaths.kt`): a relative path belongs to the folder the
+command was run from, an absolute path is exactly that path. Every command that takes a path
+uses it:
+
+| Command | Before | Now |
+|---|---|---|
+| `sign-apk` | the app's own folder | the folder the command was run from |
+| `install <apk>` | inside the project only | the folder the command was run from, or the exact path |
+| `export <file>` | inside the project only | the folder the command was run from, or the exact path |
+| `test-ui <script>` | the project folder | the folder the command was run from |
+| `venv <dir>` | the filesystem root | the folder the command was run from (build 85) |
+
+`closecode files read/write` keeps its own contract — those names live inside the app's
+scoped shared folder — and `closecode gradle <task>` takes a task name, not a path.
+
+## 16.2 The speed hint
+
+The one-tap action from build 85 (Project settings → Build speed → "Speed up this project")
+and `closecode speed` are both in place. Now the app also **notices**: a Gradle project whose
+`gradle.properties` lacks the three settings gets a note in the project check, which appears
+in the Problems panel and in `closecode check`, naming the command that fixes it.
+
+## 16.3 What is proven here, and what still needs the phone
+
+| Claim | Proof |
+|---|---|
+| The suite is green | 1651 tests, 0 failures, 0 errors, 8 skipped |
+| A relative path lands in the user's folder | Five tests over the one resolver, plus the venv command using it |
+| The phone | **Still to be measured.** The board runs on the phone |
+
+Build 86 is *implemented and tested here*. The board is the last step, and it belongs to the
+user: install `build/CloseCode-build86-tests1651-debug.apk` and run
 
 ```sh
 sh closecode-acceptance.sh --all

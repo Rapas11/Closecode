@@ -75,13 +75,8 @@ object VenvCommand {
     }
 
     /** A relative path belongs to the folder the command was run from. */
-    internal fun resolve(directory: String, cwd: String?): File {
-        val file = File(directory)
-        if (file.isAbsolute) return file
-        val base = cwd?.trim()?.takeIf { it.isNotEmpty() }?.let { File(it) }
-            ?: File(System.getProperty("user.dir") ?: "/")
-        return File(base, directory).absoluteFile
-    }
+    internal fun resolve(directory: String, cwd: String?): File =
+        CommandPaths.resolve(directory, cwd)
 
     private fun ok(target: File, madeBy: String, pip: String): JsonObject = JsonObject().apply {
         addProperty("ok", true)

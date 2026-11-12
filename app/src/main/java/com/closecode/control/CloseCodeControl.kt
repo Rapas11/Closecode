@@ -359,7 +359,7 @@ object CloseCodeControl {
 
     private fun testUi(context: Context, request: JsonObject): JsonObject {
         val project = resolveProject(context, string(request, "cwd"), string(request, "project"))
-        return UiScript.run(context, project?.directory, args(request))
+        return UiScript.run(context, project?.directory, args(request), string(request, "cwd"))
     }
 
     private fun apps(context: Context, request: JsonObject): JsonObject {
@@ -405,7 +405,7 @@ object CloseCodeControl {
         return DeviceTools.install(
             context,
             project.directory,
-            path,
+            path?.let { CommandPaths.resolve(it, string(request, "cwd")) },
             openSettings = openSettings,
         )
     }
@@ -445,7 +445,11 @@ object CloseCodeControl {
             cwd = string(request, "cwd"),
             slug = string(request, "project"),
         ) ?: return error("Run closecode from a registered project folder.")
-        return DeviceTools.export(context, project.directory, args(request).firstOrNull())
+        return DeviceTools.export(
+            context,
+            project.directory,
+            args(request).firstOrNull()?.let { CommandPaths.resolve(it, string(request, "cwd")) },
+        )
     }
 
     private fun screenshot(context: Context, request: JsonObject): JsonObject {
@@ -1008,7 +1012,7 @@ object CloseCodeControl {
         val install = DeviceTools.install(
             context,
             run.project.directory,
-            built.apk.absolutePath,
+            built.apk,
             waitMs = 60_000,
         )
         send(output, install)
@@ -1078,14 +1082,14 @@ object CloseCodeControl {
             return false
         }
         if (task == "installDebug" || task == "installRelease") {
-            val json = DeviceTools.install(context, run.project.directory, built.apk.absolutePath)
+            val json = DeviceTools.install(context, run.project.directory, built.apk)
             send(output, json)
             return ok(json)
         }
         val installed = DeviceTools.install(
             context,
             run.project.directory,
-            built.apk.absolutePath,
+            built.apk,
         )
         if (installed.get("ok")?.asBoolean != true) {
             send(output, installed)
@@ -1568,8 +1572,8 @@ object CloseCodeControl {
         val path = arguments.firstOrNull { !it.startsWith("--") }?.trim().orEmpty()
         val onlyIfUnsigned = arguments.any { it == "--if-unsigned" }
         if (path.isEmpty()) return error("sign-apk needs the path of an APK.")
-        val file = File(path)
-        if (!file.isFile) return error("There is no APK at $path.")
+        val file = CommandPaths.resolve(path, string(request, "cwd"))
+        if (!file.isFile) return error("There is no APK at ${file.absolutePath}.")
         val project = resolveProject(
             context,
             cwd = string(request, "cwd"),

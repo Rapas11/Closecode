@@ -381,6 +381,29 @@ object ProjectCheck {
             )
         }
 
+        // 11. Build speed: a project that was made before the phone settings existed can be
+        // given them in one tap, so the app says so rather than leaving the project slow.
+        if (gradle) {
+            val properties = File(projectDir, "gradle.properties")
+            val text = if (properties.isFile) {
+                runCatching { properties.readText() }.getOrDefault("")
+            } else {
+                ""
+            }
+            val missing = com.closecode.control.SpeedCommand.SPEED_SETTINGS.filter { (key, _) ->
+                !text.lines().any { it.trimStart().startsWith("$key=") }
+            }
+            if (missing.isNotEmpty()) {
+                findings += Finding(
+                    Severity.Note,
+                    "This project builds without the fast settings. " +
+                        "Run closecode speed, or Project settings > Build speed, to use every " +
+                        "core, reuse finished builds and compile Kotlin in one JVM.",
+                    "gradle.properties",
+                )
+            }
+        }
+
         return Report(findings)
     }
 

@@ -1,41 +1,46 @@
-CloseCode — build 85 brief: one regression, one small bug, one suggestion
+CloseCode — build 86 brief: one small bug, one suggestion
 You are the developer of my phone app CloseCode. You have everything you need to build it. This file is the complete instruction for the next build.
 
-Last build tested: 84 (CloseCode 0.84.1636, commit 949ff88) Device: one Android phone, arm64, Android 16, 8 cores, 11.9 GB RAM Test project: com.rapas.redit — AGP 8.12.0, Kotlin 1.9.24, Compose BOM 2024.09.03, Media3 + MediaPipe + Vosk, minSdk 26, targetSdk 35
+Last build tested: 85 (CloseCode 0.85.1646, commit 9c8a541) Device: one Android phone, arm64, Android 16, 8 cores, 11.9 GB RAM Test project: com.rapas.redit — AGP 8.12.0, Kotlin 1.9.24, Compose BOM 2024.09.03, Media3 + MediaPipe + Vosk, minSdk 26, targetSdk 35
 
 The short version (read this first)
 I am the person who uses CloseCode on my phone. I want to build my Android app on my phone, with no computer and no AI helping me.
 
-Build 84 fixed the three things I asked for — thank you. But it broke one thing that used to work, and that one matters more than anything else in this list.
+The app now does everything I asked for. Build 85 fixed the last two problems and nothing is broken any more.
+
+Two small things are left, and neither of them stops me working:
 
 #	What I want	In one sentence
-1	closecode sign-apk must actually sign, and must never lie	It says "signed with the CloseCode key" and leaves the old key in the file.
-2	closecode venv must work with a relative path	It looks in the root of the filesystem instead of the folder I am in.
-3	Suggestion: give my existing project the same speed settings	The new projects got them; mine did not.
+1	closecode sign-apk must accept a relative path	It says "There is no APK at t.apk" while the file is right there in the folder I am in.
+2	Suggestion: give my existing project the same speed settings	The new projects got them; mine did not.
 How you will know it worked: run the script at the end of this file on the phone. When it prints FAIL 0, we are done.
 
 Please do not send me a build before that script says FAIL 0.
 
 Where we are
-Build 84 fixed all three items from the last brief. They are done:
+Build 85 is the first build where everything on my list works. The acceptance script at the bottom of this file runs on the phone and prints PASS/FAIL for everything. On build 85:
 
-Fixed in build 84	How I verified it on the phone
-The Compose template must compile	closecode init --template android-compose → closecode build --gradle → exit 0 in 246 s, APK 20,336,525 bytes, signed 30fae35d…, no manual edit to any generated file
-A release build must be signed	closecode release → app-release.apk (no longer *-unsigned.apk), "signed":true, "certificate":"CN=Closecode Debug (30fae35d…)", and apksigner verify agrees
-A failed download must resume	killed a download at 6 MB → the app kept the partial → the next run said "Continuing alsa-lib from 7860 of 453056 bytes…" and finished → afterwards closecode downloads says "No download is waiting to be continued."
-Two new commands came with it and both work: closecode venv <path> and closecode downloads. And you took the speed suggestion — the gradle.properties that closecode init writes now contains
+ PASS 23   FAIL 0   SKIP 3
+and the two skips that matter were verified separately:
 
-org.gradle.parallel=true
-org.gradle.caching=true
-kotlin.compiler.execution.strategy=in-process
-But build 84 also broke the one signing behaviour that was working. That is item 1.
+Removing a tool keeps the cache — verified in build 84 with --all: cache 2060368 KB before removing Gradle, 2060368 KB after
+A broken download resumes — verified by hand in build 84: killed a download at 6 MB, the app kept the partial, the next run said "Continuing alsa-lib from 7860 of 453056 bytes…" and finished
+Build 85 fixed the signing regression I reported. I took an APK, signed it with the wrong key, and ran closecode sign-apk on it:
+
+before : a6811008ffe66d61dd679b8a1954418a642e9a065de06cccd10a9bac3f41ddcc
+after  : 30fae35d64645323304340c4f570a58377de8153477a5e334dc62c036a87f979
+It really replaces the signature now, and the acceptance script's step 5 passes:
+
+closecode build : 30fae35d…
+./gradlew       : 30fae35d…      ← both the same again
+It also fixed closecode venv with a relative path, and closecode venv relvenv now creates the environment in the folder I am standing in.
 
 Do not break these — they are proven on the phone
 Behaviour	Evidence
+Both build paths sign with one key	closecode build → 30fae35d…; ./gradlew assembleDebug → the same; sign-apk replaces an existing signature
 A brand-new app builds	closecode init --template android-compose → closecode build --gradle → exit 0, 246 s, signed 30fae35d…, no manual edits
 A release build is signed	closecode release → app-release.apk, "signed":true, certificate reported, apksigner verify agrees
 A broken download resumes	"Continuing alsa-lib from 7860 of 453056 bytes…", partial cleaned up after success
-closecode build signs correctly	CN=Closecode Debug 30fae35d…
 A JDK can be chosen and every path follows	toolchain status --json returns a jdks array with selected; closecode config set jdk <path> is accepted; the gradlew shim exports the selected JDK unconditionally
 Removing a tool keeps the cache	closecode setup --remove gradle → cache 2060368 KB before, 2060368 KB after
 python3 -m venv	the runtime installs its own matching ensurepip wheel; pip install requests into a fresh venv works
@@ -49,85 +54,33 @@ Settings installs the whole toolchain	JDK 17, Gradle 8.13, platform 35, build-to
 Component sizes match the disk	Native tools reports 1.8 GB; du says NDK 1.7 GB + CMake 73 MB
 The gradlew shim fixes AAPT2	it writes android.aapt2FromMavenOverride into $GRADLE_USER_HOME/gradle.properties before starting Gradle
 A failed build	exits 1 with one root cause and a log path: "summary":"Gradle failed (exit 1): file:///…/MainActivity.kt:12:17 Unresolved reference: Text"
-Item 1 — closecode sign-apk must actually sign, and must never lie
-This is a regression. Build 83 did it right; build 84 broke it. It breaks the app the same way the original AAPT2 bug broke it: the APK from the Gradle menu cannot be installed.
-
-What the acceptance script sees on build 84
-5. Both build paths sign with the same key
-        closecode build : 30fae35d64645323304340c4f570a58377de8153477a5e334dc62c036a87f979
-        ./gradlew       : a6811008ffe66d61dd679b8a1954418a642e9a065de06cccd10a9bac3f41ddcc
-  FAIL  the two build paths use different signing keys
-a6811008… is the stock AOSP debug key, the one that lives in the OpenCode agent's own home. The gradlew shim is supposed to re-sign the APK with the CloseCode key after the Gradle build. It is not doing it.
-
-The cause, in three tests
-I took one APK and tried three things with it.
-
-1. An APK with no signature — works.
-
-$ closecode sign-apk unsigned.apk
-{"ok":true,"signed":true,"certificate":"CN=Closecode Debug (30fae35d…)",
- "message":"Signed with the CloseCode key."}
-
-$ apksigner verify --print-certs unsigned.apk
-Signer #1 certificate SHA-256 digest: 30fae35d64645323304340c4f570a58377de8153477a5e334dc62c036a87f979
-2. An APK already signed with the AOSP key, with --if-unsigned — correct.
-
-$ closecode sign-apk --if-unsigned wrongkey.apk
-{"ok":true,"signed":false,"message":"The APK already carries a signature; it was left alone."}
-3. The same APK, without the flag — WRONG. This is the bug.
-
-$ closecode sign-apk wrongkey.apk
-{"ok":true,"signed":true,"certificate":"CN=Closecode Debug (30fae35d…)",
- "message":"Signed with the CloseCode key."}
-
-$ apksigner verify -v --print-certs wrongkey.apk
-Verifies
-Verified using v3 scheme (APK Signature Scheme v3): true
-Number of signers: 1
-Signer #1 certificate DN: C=US, O=Android, CN=Android Debug
-Signer #1 certificate SHA-256 digest: a6811008ffe66d61dd679b8a1954418a642e9a065de06cccd10a9bac3f41ddcc
-It says "signed with the CloseCode key" and shows the CloseCode certificate, and the file still carries the AOSP key. The command lies.
-
-That is why the gradlew shim fails silently: the shim runs
-
-"$CLOSECODE_CLI" sign-apk "$APK" >/dev/null 2>&1 || \
-  printf 'closecode: %s keeps the Gradle key; …\n' "$APK" >&2
-sign-apk exits 0, so the warning never fires, and the user gets an APK with the wrong key and no warning at all.
-
-What to do
-closecode sign-apk without --if-unsigned must replace the existing signature. That is what the name says, and it is what the shim relies on. If you would rather protect a deliberately signed APK, add an explicit --force and make the shim use it — but the plain command must do the obvious thing.
-Never report a certificate the file does not carry. After signing, read the certificate back out of the file and report that one. If the file was left alone, say "signed":false and name the certificate that is actually in it — exactly as --if-unsigned already does correctly.
-The gradlew shim must end up with the CloseCode key. If sign-apk cannot replace the signature, the shim must say so loudly rather than pass a wrong-key APK on as a success.
-The release branch of the shim uses sign-apk --if-unsigned, which is right for a release APK that Gradle left unsigned — but if Gradle ever leaves an AOSP-signed release APK, it would be passed through untouched. Please check that case too.
-Done when
-closecode sign-apk on an APK that already carries a different signature replaces it, and apksigner verify shows the CloseCode certificate
-closecode sign-apk never reports a certificate the file does not carry
-the acceptance script's step 5 passes: both build paths report 30fae35d…
-Item 2 — closecode venv must work with a relative path
+Item 1 — closecode sign-apk must accept a relative path
 The evidence
-With an absolute path it works perfectly:
+The file is right there, in the folder I am standing in:
 
-$ closecode venv /data/user/0/com.closecode/cache/opencode/opencode/venvcmd
-{"ok":true,"path":"…/venvcmd","createdBy":"python3 -m venv","pip":"…/venvcmd/bin/pip",
- "message":"The environment was created with python3 -m venv."}
-With a relative path it resolves against the root of the filesystem instead of the folder I am standing in:
+$ cd /data/user/0/com.closecode/cache/opencode/opencode/signtest
+$ ls -l t.apk
+-rw------- 1 u0_a428 u0_a428_cache 20340621 21:44 t.apk
 
-$ cd /data/user/0/com.closecode/cache/opencode/opencode
-$ closecode venv venvcmd
-{"ok":false,"error":"The virtual environment could not be created. python3 -m venv said:
-  Error: [Errno 30] Read-only file system: '/venvcmd'","code":"venv_failed"}
-/venvcmd — the path lost its current directory.
+$ closecode sign-apk t.apk
+{"ok":false,"error":"There is no APK at t.apk.","code":"failed","exitCode":1}
+With the absolute path the same command works perfectly:
+
+$ closecode sign-apk /data/user/0/com.closecode/cache/opencode/opencode/signtest/t.apk
+{"ok":true,"signed":true,"certificate":"CN=Closecode Debug (30fae35d…)"}
+This is the same bug you fixed for closecode venv in build 85 — a relative path is not resolved against the current directory, so the command looks for it somewhere else.
 
 What to do
-Resolve a relative path against the current working directory, the way every other command does. closecode venv venvcmd must create ./venvcmd.
-Say which folder you are creating it in, in the reply, so the user can see it went where they expected.
+Resolve relative paths against the current working directory, in every command that takes a path — not one command at a time. closecode venv is fixed; closecode sign-apk is not. Please fix it once, in the shared place, so the next command does not have the same problem.
+Check the others while you are there. I tested these and they already work, so they are probably fine — but please confirm: closecode install <apk>, closecode export <file>, closecode files read/write, closecode gradle <task>.
+Say which file you actually touched, in the reply, so I can see it went where I expected.
 Done when
 cd /some/folder
-closecode venv venvcmd
-creates /some/folder/venvcmd, and the reply names that path.
+closecode sign-apk my.apk
+signs ./my.apk, and the acceptance script's step 12 passes.
 
-Item 3 — suggestion: the same speed settings for existing projects
-Not a bug. You put the three settings in the gradle.properties that closecode init writes, which is exactly right. The project I already had did not get them:
+Item 2 — suggestion: the same speed settings for existing projects
+Not a bug, and nothing is broken by it. You put the three settings in the gradle.properties that closecode init writes, which is exactly right. The project I already had did not get them:
 
 # what a new project gets now
 org.gradle.parallel=true
@@ -160,29 +113,26 @@ A failed build exits non-zero with one root cause, diagnostics and a log path.
 Reject unknown flags. Unknown arguments print usage and exit with no side effects.
 Never claim a capability the code does not have. If a screen says a tool works, it must work. A command that produces an unsigned APK must not report ok:true. A command that reports a certificate must report the one the file really has.
 A template that does not compile is a broken product. Anything you generate must be built and run before it reaches a user.
+A path means what the user typed. Resolve it against the folder they are in.
 Before you ship — run this yourself
 Do not send me a build until these are true on your side. Each one takes a minute.
 
-# item 1 — the three sign-apk cases
-apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android \
-  --ks-key-alias androiddebugkey --out /tmp/wrong.apk <some apk>
-closecode sign-apk /tmp/wrong.apk
-apksigner verify --print-certs /tmp/wrong.apk | grep SHA-256    # must be 30fae35d…
-
+cd /tmp && closecode sign-apk some.apk     # must sign /tmp/some.apk
+cd /tmp && closecode venv myenv            # must create /tmp/myenv
 closecode init --template android-compose freshapp
-cd freshapp && closecode build --gradle        # must exit 0, no edits
-cd .. && closecode release                      # must report signed:true
-cd /tmp && closecode venv myenv                 # must create /tmp/myenv, not /myenv
-closecode downloads                             # must list any waiting partials
-sh closecode-acceptance.sh --all                # the whole board
+cd freshapp && closecode build --gradle    # must exit 0, no edits
+cd .. && closecode release                  # must report signed:true
+sh closecode-acceptance.sh                 # the whole board, including the new step 12
 Then, and only then, send me the board.
 
 The test script
 Save this as closecode-acceptance.sh next to the project.
 
-sh closecode-acceptance.sh          # safe checks, about 8 minutes
+sh closecode-acceptance.sh          # safe checks, about 9 minutes
 sh closecode-acceptance.sh --all    # also removes and reinstalls Gradle
 It is written for Android's toybox, so it uses grep -E for alternation. The only thing it changes is a temporary syntax error in app/build.gradle.kts, which it puts back immediately.
+
+Step 12 is new: it checks that closecode sign-apk and closecode venv accept a relative path.
 
 #!/system/bin/sh
 # =============================================================================
@@ -519,6 +469,31 @@ fi
 # =============================================================================
 head_ "11. A failed download resumes"
 skip "needs a network that fails on purpose — test manually"
+
+# =============================================================================
+head_ "12. Commands that take a path accept a relative one"
+cd "$TMP" 2>/dev/null || cd "$ROOT"
+if [ -f "$TMP/apk-pipeline.apk" ]; then
+  cp "$TMP/apk-pipeline.apk" "$TMP/rel.apk"
+  OUT=$(closecode sign-apk rel.apk 2>&1)
+  if echo "$OUT" | grep -qi '"ok":true'; then
+    ok "closecode sign-apk rel.apk works with a relative path"
+  else
+    bad "closecode sign-apk does not accept a relative path"
+    echo "$OUT" | head -c 200 | sed 's/^/        /'
+  fi
+else
+  skip "no APK to test with"
+fi
+cd "$TMP" 2>/dev/null || cd "$ROOT"
+rm -rf "$TMP/relvenv" 2>/dev/null
+OUT=$(closecode venv relvenv 2>&1)
+if echo "$OUT" | grep -qi '"ok":true'; then
+  ok "closecode venv relvenv works with a relative path"
+else
+  bad "closecode venv does not accept a relative path"
+  echo "$OUT" | head -c 200 | sed 's/^/        /'
+fi
 
 # =============================================================================
 say ""

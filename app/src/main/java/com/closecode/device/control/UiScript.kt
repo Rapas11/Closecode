@@ -19,6 +19,7 @@ internal object UiScript {
         context: Context,
         projectDir: File?,
         arguments: List<String>,
+        cwd: String? = null,
     ): JsonObject {
         val path = arguments.firstOrNull { !it.startsWith("--") }
             ?: return CommandEnvelope.failed(
@@ -26,7 +27,8 @@ internal object UiScript {
                 code = "usage",
             )
         val keepGoing = arguments.contains("--keep-going")
-        val file = if (File(path).isAbsolute) File(path) else File(projectDir, path)
+        // A script the user named belongs to the folder they are in.
+        val file = com.closecode.control.CommandPaths.resolve(path, cwd)
         if (!file.isFile) {
             return CommandEnvelope.failed("Script not found: ${file.path}", code = "not_found")
         }
