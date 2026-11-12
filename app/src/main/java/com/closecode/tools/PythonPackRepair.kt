@@ -265,56 +265,11 @@ object PythonPackRepair {
         }
     }
 
-    /** Resumable download: a `.part` file, a Range request, and a size check before use. */
+    /** Resumable download: the same one every other download uses. */
     private fun download(
         url: String,
         target: File,
         expectedSize: Long,
         onProgress: (Long, Long) -> Unit,
-    ) {
-        target.parentFile?.mkdirs()
-        var done = if (target.isFile) target.length() else 0L
-        if (expectedSize > 0 && done > expectedSize) {
-            target.delete()
-            done = 0L
-        }
-        if (expectedSize > 0 && done == expectedSize && done > 0L) return
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = true
-            connectTimeout = 30_000
-            readTimeout = 120_000
-            if (done > 0L) setRequestProperty("Range", "bytes=$done-")
-            setRequestProperty("User-Agent", "CloseCode")
-        }
-        try {
-            val code = connection.responseCode
-            if (done > 0L && code != HttpURLConnection.HTTP_PARTIAL) {
-                target.delete()
-                done = 0L
-                if (code !in 200..299) throw IOException("The pip server returned HTTP $code.")
-            } else if (code !in 200..299) {
-                throw IOException("The pip server returned HTTP $code.")
-            }
-            val remaining = connection.contentLengthLong.takeIf { it > 0 }
-            val total = if (remaining != null) done + remaining else expectedSize
-            RandomAccessFile(target, "rw").use { output ->
-                output.seek(done)
-                connection.inputStream.use { input ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        done += count
-                        onProgress(done, total)
-                    }
-                }
-            }
-            if (expectedSize > 0 && done != expectedSize) {
-                throw IOException("Short download: $done of $expectedSize bytes.")
-            }
-        } finally {
-            connection.disconnect()
-        }
-    }
+    ) = ResumableDownload.download(url, target, expectedSize, onProgress)
 }

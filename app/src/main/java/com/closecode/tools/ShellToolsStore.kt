@@ -90,14 +90,13 @@ class ShellToolsStore(
                     part,
                     packageFile.sizeBytes,
                 ) { saved, size ->
+                    val message = if (saved > 0L && size > 0L && saved < size) {
+                        "Continuing ${packageFile.name} from $saved of $size bytes…"
+                    } else {
+                        "Downloading ${packageFile.name}…"
+                    }
                     progress(
-                        Progress(
-                            "download",
-                            saved,
-                            size,
-                            packageFile.name,
-                            "Continuing ${packageFile.name} from $saved bytes…",
-                        ),
+                        Progress("download", saved, size, packageFile.name, message),
                     )
                 }
                 if (packageFile.sizeBytes > 0 && part.length() != packageFile.sizeBytes) {
@@ -260,58 +259,7 @@ class ShellToolsStore(
         target: File,
         expectedSize: Long = 0L,
         onProgress: (Long, Long) -> Unit = { _, _ -> },
-    ) {
-        target.parentFile?.mkdirs()
-        var done = if (target.isFile) target.length() else 0L
-        if (expectedSize > 0 && done > expectedSize) {
-            target.delete()
-            done = 0L
-        }
-        if (expectedSize > 0 && done == expectedSize && done > 0L) return
-        if (done > 0L) {
-            // The user must see that the download continues instead of starting over.
-            onProgress(done, expectedSize)
-        }
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = true
-            connectTimeout = 30_000
-            readTimeout = 120_000
-            if (done > 0L) setRequestProperty("Range", "bytes=$done-")
-            setRequestProperty("User-Agent", "CloseCode/${Build.VERSION.SDK_INT}")
-        }
-        try {
-            val code = connection.responseCode
-            if (done > 0L && code != HttpURLConnection.HTTP_PARTIAL) {
-                target.delete()
-                done = 0L
-                if (code == 416) {
-                    connection.disconnect()
-                    download(url, target, expectedSize)
-                    return
-                }
-                if (code !in 200..299) throw IOException("The package server returned HTTP $code.")
-            } else if (code !in 200..299) {
-                throw IOException("The package server returned HTTP $code.")
-            }
-            java.io.RandomAccessFile(target, "rw").use { output ->
-                output.seek(done)
-                connection.inputStream.use { input ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        done += count
-                    }
-                }
-            }
-            if (expectedSize > 0 && done != expectedSize) {
-                throw IOException("Short download: $done of $expectedSize bytes.")
-            }
-        } finally {
-            connection.disconnect()
-        }
-    }
+    ) = ResumableDownload.download(url, target, expectedSize, onProgress)
 
     private fun matchesSha256(file: File, expected: String): Boolean {
         if (expected.isBlank()) return false

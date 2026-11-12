@@ -321,9 +321,22 @@ object Scaffold {
         """.trimIndent() + "\n"
     }
 
+    /**
+     * The settings a new project starts with.
+     *
+     * A phone has several cores, so Gradle is told to use them. The build cache means an
+     * unchanged module is reused instead of compiled again, which is what makes the second
+     * build of a project fast. The Kotlin compiler runs inside the Gradle daemon instead of
+     * starting a second JVM: on a phone, where several JVMs compete for the same memory,
+     * that is both faster and the reason a build does not fail with "Could not connect to
+     * Kotlin compile daemon".
+     */
     private fun gradleProperties(): String = """
         org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
         android.useAndroidX=true
+        org.gradle.parallel=true
+        org.gradle.caching=true
+        kotlin.compiler.execution.strategy=in-process
     """.trimIndent() + "\n"
 
     /**
@@ -428,6 +441,7 @@ object Scaffold {
         import android.os.Bundle
         import androidx.activity.ComponentActivity
         import androidx.activity.compose.setContent
+        import androidx.compose.material3.Text
 
         class MainActivity : ComponentActivity() {
             override fun onCreate(savedInstanceState: Bundle?) {

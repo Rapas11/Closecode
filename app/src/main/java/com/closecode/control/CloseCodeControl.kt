@@ -267,6 +267,7 @@ object CloseCodeControl {
                 )
                 "sign-apk" -> send(output, signApk(context, request))
                 "venv" -> send(output, VenvCommand.run(context, args(request)))
+                "downloads" -> send(output, pendingDownloads(context))
                 "build" -> {
                     it.soTimeout = 0
                     val run = runBlocking { build(context, request, output) }
@@ -1209,6 +1210,41 @@ object CloseCodeControl {
         } else {
             null
         }
+        // A release build without a signing configuration produces an unsigned APK that
+        // Android refuses to install. It is signed here, with the key the user selected, and
+        // the certificate is reported so the user can see which key signed it.
+        var certificate = ""
+        var signedApk = apk
+        if (apk != null) {
+            val minSdk = GradleReader.read(project.directory).minSdk ?: 29
+            val identity = runCatching { SigningStore(context).identity() }.getOrNull()
+            if (identity == null) {
+                send(output, CommandEnvelope.failed(
+                    "The build finished, but there is no signing key. " +
+                        "Open Settings > Signing keys, or import a release key.",
+                    code = "no_signing_key",
+                    remedy = "closecode signing select <key>",
+                ))
+                return false
+            }
+            val wasSigned = ApkPostSigner.isVerified(apk, minSdk)
+            val result = runCatching {
+                ApkPostSigner.signIfUnsigned(apk, identity, minSdk)
+            }
+            signedApk = result.getOrElse { failure ->
+                send(output, CommandEnvelope.failed(
+                    "The build finished, but the APK could not be signed: " +
+                        (failure.message ?: failure.javaClass.simpleName),
+                    code = "signing_failed",
+                    remedy = "closecode signing status",
+                ))
+                return false
+            }
+            certificate = ApkPostSigner.describe(identity)
+            if (!wasSigned) {
+                DebugLog.crumb("BUILD", "signed ${signedApk.name} with $certificate")
+            }
+        }
         send(output, JsonObject().apply {
             addProperty("ok", true)
             addProperty("task", task)
@@ -1218,7 +1254,7 @@ object CloseCodeControl {
             addProperty(
                 "result",
                 when {
-                    bundle != null || apk != null -> "built"
+                    bundle != null || signedApk != null -> "built"
                     else -> "passed"
                 },
             )
@@ -1226,9 +1262,13 @@ object CloseCodeControl {
                 addProperty("bundle", bundle.absolutePath)
                 addProperty("bytes", bundle.length())
             }
-            if (apk != null) {
-                addProperty("apk", apk.absolutePath)
-                addProperty("bytes", apk.length())
+            if (signedApk != null) {
+                addProperty("apk", signedApk.absolutePath)
+                addProperty("bytes", signedApk.length())
+                if (certificate.isNotEmpty()) {
+                    addProperty("certificate", certificate)
+                    addProperty("signed", true)
+                }
             }
         })
         return true
@@ -1505,7 +1545,9 @@ object CloseCodeControl {
      * update the other instead of forcing an uninstall that loses the user's data.
      */
     private fun signApk(context: Context, request: JsonObject): JsonObject {
-        val path = args(request).firstOrNull()?.trim().orEmpty()
+        val arguments = args(request)
+        val path = arguments.firstOrNull { !it.startsWith("--") }?.trim().orEmpty()
+        val onlyIfUnsigned = arguments.any { it == "--if-unsigned" }
         if (path.isEmpty()) return error("sign-apk needs the path of an APK.")
         val file = File(path)
         if (!file.isFile) return error("There is no APK at $path.")
@@ -1517,15 +1559,68 @@ object CloseCodeControl {
         val minSdk = project?.let { GradleReader.read(it.directory).minSdk } ?: 29
         val identity = runCatching { SigningStore(context).identity() }.getOrNull()
             ?: return error("There is no signing key. Open Settings > Signing keys.")
-        return runCatching {
-            ApkPostSigner.sign(file, identity, minSdk)
-            JsonObject().apply {
+        if (onlyIfUnsigned && ApkPostSigner.isVerified(file, minSdk)) {
+            // The project signed it itself; that key is the user's choice, not ours.
+            return JsonObject().apply {
                 addProperty("ok", true)
                 addProperty("apk", file.absolutePath)
-                addProperty("bytes", file.length())
+                addProperty("signed", false)
+                addProperty("message", "The APK already carries a signature; it was left alone.")
+            }
+        }
+        return runCatching {
+            val signed = ApkPostSigner.signIfUnsigned(file, identity, minSdk)
+            JsonObject().apply {
+                addProperty("ok", true)
+                addProperty("apk", signed.absolutePath)
+                addProperty("bytes", signed.length())
+                addProperty("signed", true)
+                addProperty("certificate", ApkPostSigner.describe(identity))
                 addProperty("message", "Signed with the CloseCode key.")
             }
         }.getOrElse { error(it.message ?: "The APK could not be signed.") }
+    }
+
+    /**
+     * The downloads that were interrupted and are waiting to be continued.
+     *
+     * An interrupted download keeps what it downloaded, so the next attempt continues
+     * instead of starting over. This is where those partial files are, so the user does not
+     * have to go looking for them.
+     */
+    private fun pendingDownloads(context: Context): JsonObject {
+        val partials = com.google.gson.JsonArray()
+        context.cacheDir.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".part") }
+            ?.sortedBy { it.name }
+            ?.forEach { file ->
+                partials.add(JsonObject().apply {
+                    addProperty("file", file.absolutePath)
+                    addProperty("bytes", file.length())
+                })
+            }
+        File(context.filesDir, "gradle").listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".part") }
+            ?.sortedBy { it.name }
+            ?.forEach { file ->
+                partials.add(JsonObject().apply {
+                    addProperty("file", file.absolutePath)
+                    addProperty("bytes", file.length())
+                })
+            }
+        return JsonObject().apply {
+            addProperty("ok", true)
+            add("partials", partials)
+            addProperty("count", partials.size())
+            addProperty(
+                "message",
+                if (partials.size() == 0) {
+                    "No download is waiting to be continued."
+                } else {
+                    "These downloads continue from where they stopped the next time they run."
+                },
+            )
+        }
     }
 
     private fun init(context: Context, request: JsonObject): JsonObject =
@@ -1915,6 +2010,7 @@ internal fun controlCommandScript(basePath: String): String = """
         signing|sign) echo "usage: closecode signing status|generate|import|select|delete" ;;
         sign-apk|resign) echo "usage: closecode sign-apk <path-to-apk>" ;;
         venv) echo "usage: closecode venv <directory>" ;;
+        downloads) echo "usage: closecode downloads" ;;
         gradle|g) echo "usage: closecode gradle <task> [--gradle]" ;;
         check|chk) echo "usage: closecode check" ;;
         github|gh) echo "usage: closecode github push|pull [--force]" ;;
@@ -1935,7 +2031,7 @@ internal fun controlCommandScript(basePath: String): String = """
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing sign-apk venv gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing sign-apk venv downloads gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac
@@ -1982,6 +2078,7 @@ internal fun controlCommandScript(basePath: String): String = """
       signing|sign) CMD=signing ;;
       sign-apk|resign) CMD=sign-apk ;;
       venv) CMD=venv ;;
+      downloads) CMD=downloads ;;
       g|gradle) CMD=gradle ;;
       chk|check) CMD=check ;;
       gh|github) CMD=github ;;
@@ -1995,7 +2092,7 @@ internal fun controlCommandScript(basePath: String): String = """
       rel|release) CMD=release ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|sign-apk|resign|venv|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|notifications|screen|deploy|secrets|selftest|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|sign-apk|resign|venv|downloads|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|notifications|screen|deploy|secrets|selftest|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
       *) help >&2; exit 2 ;;
     esac
     case "${'$'}{2:-}" in

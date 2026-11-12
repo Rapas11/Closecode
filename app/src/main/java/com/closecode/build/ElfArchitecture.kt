@@ -48,4 +48,12 @@ object ElfArchitecture {
         val arch = of(file) ?: return false
         return arch != ARM64
     }
+
+    /**
+     * True when the file may run here.
+     *
+     * A file that is not an ELF binary at all is a wrapper script, which Android can run
+     * once its interpreter line is fixed — so it is not treated as foreign.
+     */
+    fun isRunnable(file: File): Boolean = file.isFile && !isForeign(file)
 }

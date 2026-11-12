@@ -60,6 +60,22 @@ class ElfArchitectureTest {
         assertFalse(ElfArchitecture.isForeign(file))
     }
 
+    /**
+     * The rule the app removes folders by: only a binary that is *proven* to be for another
+     * processor counts as foreign. A wrapper script may be perfectly runnable, and a working
+     * install is never destroyed on a guess.
+     */
+    @Test
+    fun onlyAProvenForeignBinaryCountsAsForeign() {
+        val x86 = elf(62, "aapt2-x86")
+        val arm = elf(183, "aapt2-arm")
+        val script = tmp.newFile("aapt2-script").apply { writeText("#!/system/bin/sh\n") }
+
+        assertFalse(ElfArchitecture.isRunnable(x86))
+        assertTrue(ElfArchitecture.isRunnable(arm))
+        assertTrue(ElfArchitecture.isRunnable(script))
+    }
+
     @Test
     fun aMissingFileIsNotAnElf() {
         assertNull(ElfArchitecture.of(File(tmp.root, "missing")))

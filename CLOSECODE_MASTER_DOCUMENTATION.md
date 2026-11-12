@@ -2,10 +2,10 @@
 
 **One file containing all ten required documents.**
 
-- Build: **83** (`0.83.1628`), on top of commit `6cd26ba`.
-- Unit suite: **1628 tests, 0 failures, 0 errors, 8 skipped**.
-- Artifact: `build/CloseCode-build83-tests1628-debug.apk`,
-  SHA-256 `5eac20bb3effd3fadc526033e6fccf9f7d2762d69a2365205e2b29830d3ca53d`.
+- Build: **84** (`0.84.1636`), on top of commit `949ff88`.
+- Unit suite: **1636 tests, 0 failures, 0 errors, 8 skipped**.
+- Artifact: `build/CloseCode-build84-tests1636-debug.apk`,
+  SHA-256 `bb61d61cf3255ac3e70adcc8c4e84ba8b9970bdeeef2ae64731414fa1598659c`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -33,7 +33,7 @@
 
 # PART 1 — CURRENT CAPABILITIES
 
-Status: audit snapshot for build **83** (versionName `0.83.1628`), on top of commit `6cd26ba`.
+Status: audit snapshot for build **84** (versionName `0.84.1636`), on top of commit `949ff88`.
 
 How to read this file: every claim is either **Proven** (a test run, a device run, or a
 host POC produced it) or **Code-verified** (the implementation is present and traced, but
@@ -42,7 +42,7 @@ the strength of a class name, a config key or an endpoint existing.
 
 Source of truth for the build under test:
 `app/build.gradle.kts:14` (`closecodeBuild = 80`), `app/build.gradle.kts:16`
-(`closecodeTests = 1628`).
+(`closecodeTests = 1636`).
 
 ---
 
@@ -50,9 +50,9 @@ Source of truth for the build under test:
 
 | Evidence | Result | Where |
 |---|---|---|
-| JVM unit suite | **1628 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
+| JVM unit suite | **1636 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build83-tests1628-debug.apk`, SHA-256 `5eac20bb3effd3fadc526033e6fccf9f7d2762d69a2365205e2b29830d3ca53d` | `build/` |
+| Delivered artifact | `build/CloseCode-build84-tests1636-debug.apk`, SHA-256 `bb61d61cf3255ac3e70adcc8c4e84ba8b9970bdeeef2ae64731414fa1598659c` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -340,7 +340,7 @@ is a hand-maintained constant that can drift from the real result.
 #### 1.9 Real device-level tests
 
 `app/src/androidTest/` contains one stock template assertion
-(`ExampleInstrumentedTest.kt`). All 1628 tests are JVM tests; nothing is exercised on a
+(`ExampleInstrumentedTest.kt`). All 1636 tests are JVM tests; nothing is exercised on a
 real Android runtime in CI.
 
 ---
@@ -618,7 +618,7 @@ audit log. This is defect D11 and is addressed in the roadmap, not silently.
 
 ### 8. Test and delivery infrastructure
 
-- 146 JVM test files under `app/src/test/java/com/closecode/`; 1628 tests in the last run
+- 146 JVM test files under `app/src/test/java/com/closecode/`; 1636 tests in the last run
   (0 failures, 0 errors, 8 skipped).
 - One stock instrumentation test in `app/src/androidTest/` — no real device tests.
 - CI: `.github/workflows/build.yml:32` (unit suite), `:35` (assemble + upload). No lint,
@@ -1543,9 +1543,9 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | JDK | 17.0.20.1+1 at `/opt/java/jdk-17.0.20.1+1` |
 | Android SDK | `/opt/android_sdk`, platform 35 |
 | Gradle | 8.13 (wrapper) |
-| Unit suite | **1628 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
+| Unit suite | **1636 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build83-tests1628-debug.apk`, SHA-256 `5eac20bb3effd3fadc526033e6fccf9f7d2762d69a2365205e2b29830d3ca53d` |
+| Artifact | `build/CloseCode-build84-tests1636-debug.apk`, SHA-256 `bb61d61cf3255ac3e70adcc8c4e84ba8b9970bdeeef2ae64731414fa1598659c` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |
@@ -1858,7 +1858,7 @@ the bundled OpenCode server is prevented from downloading one
 
 | Limit | Consequence | Evidence |
 |---|---|---|
-| All 1628 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
+| All 1636 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
 | One stock instrumentation test | No real device test exists | `app/src/androidTest/java/com/closecode/ExampleInstrumentedTest.kt` |
 | No lint or static analysis task | Style and some correctness issues are not machine-checked | `app/build.gradle.kts`; `.github/workflows/build.yml:32`, `:35` |
 | The test-count constant is hand-maintained | The version number could claim a count that was never run (defect D8) | `app/build.gradle.kts:16` |
@@ -2117,6 +2117,90 @@ it is not starting over.
 
 Build 83 is *implemented and unit-tested*. The board is the last step, and it belongs to the
 user: install `build/CloseCode-build83-tests1628-debug.apk` and run
+
+```sh
+sh closecode-acceptance.sh --all
+```
+
+---
+
+# PART 14 — BUILD 84: THE FOURTH BRIEF
+
+The agent re-checked build 83 on the phone: **PASS 23 FAIL 0 SKIP 3**, and **PASS 24 FAIL 0
+SKIP 2** with the destructive checks. Three defects and one suggestion were open.
+
+## 14.1 The Compose template now compiles
+
+The template used `Text("Hello, world")` without importing
+`androidx.compose.material3.Text`, so every new project failed its first build.
+
+- The import is there (`ui/project/Scaffold.kt`).
+- The app's own analyser now runs over **every generated Kotlin file** in the unit suite
+  (`ScaffoldCompilesTest`), so a missing import is caught in seconds instead of on the
+  phone. The test also proves it *can* fail: with the import removed, the same file is
+  reported as an unresolved reference.
+- The template was built for real on a machine with an Android SDK and Gradle: AGP 8.12.0,
+  Kotlin 1.9.24, Compose BOM 2024.09.03 — **BUILD SUCCESSFUL**, a 20 335 356-byte APK, and
+  `apksigner verify --print-certs` reports a signer certificate.
+
+## 14.2 A release build is signed, or it is not a success
+
+`closecode release` produced `app-release-unsigned.apk` and reported `ok:true` — a file
+Android cannot install.
+
+- The Gradle path now signs the APK when it has no signature, with the key the user
+  selected (`ApkPostSigner.signIfUnsigned`), and renames it so no file called
+  `*-unsigned.apk` is ever handed over.
+- An APK the project signed itself is left alone — that key is the user's choice.
+- The answer now carries the certificate: the signer's name and SHA-256, the way
+  `apksigner --print-certs` prints it.
+- If there is no signing key, or signing fails, the command says so and exits non-zero.
+- The `./gradlew` shim signs release APKs with `--if-unsigned`: debug APKs are always
+  re-signed with the CloseCode key (so both paths agree), release APKs only when they have
+  no signature at all.
+
+## 14.3 One download that resumes, tested
+
+The four copies of the download code are now one: `tools/ResumableDownload.kt`. It keeps
+the bytes on disk, asks for the rest with a `Range` header, starts again if the server
+ignores the range, checks the size, and reports the resume.
+
+The proof is a test, not a claim: a local HTTP server serves a file, the connection is cut
+at 120 000 of 300 000 bytes, and the next attempt continues — the result is byte-for-byte
+the file that was being served, and the second request carries `Range: bytes=120000-`
+(`ResumableDownloadTest`).
+
+`closecode downloads` lists the partial files that are waiting, with their size, so the
+user does not have to go looking for them.
+
+## 14.4 Faster builds in new projects
+
+The generated `gradle.properties` now carries:
+
+```properties
+org.gradle.parallel=true
+org.gradle.caching=true
+kotlin.compiler.execution.strategy=in-process
+```
+
+The phone has eight cores, the build cache reuses an unchanged module, and the Kotlin
+compiler runs inside the Gradle daemon instead of starting a second JVM — which is also
+the failure "Could not connect to Kotlin compile daemon" that the agent saw once. The
+template build above was made with exactly these settings and did not report it.
+
+## 14.5 What is proven here, and what still needs the phone
+
+| Claim | Proof |
+|---|---|
+| The suite is green | 1636 tests, 0 failures, 0 errors, 8 skipped |
+| The template compiles | A real Gradle build of the shipped template: BUILD SUCCESSFUL, a signed APK |
+| A missing import is caught | The analyser test fails when the import is removed |
+| A download resumes | Byte-for-byte equality after an interrupted transfer |
+| A finished download is not fetched again | The server sees one request |
+| The phone | **Still to be measured.** The board runs on the phone |
+
+Build 84 is *implemented and tested here*. The board is the last step and it belongs to
+the user: install `build/CloseCode-build84-tests1636-debug.apk` and run
 
 ```sh
 sh closecode-acceptance.sh --all

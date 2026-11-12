@@ -269,76 +269,28 @@ class GradleToolsStore(
         distribution: GradleDistribution,
         progress: (ShellToolsStore.Progress) -> Unit,
     ) {
-        var done = if (part.isFile) part.length() else 0L
-        if (distribution.sizeBytes > 0 && done > distribution.sizeBytes) {
-            part.delete()
-            done = 0L
-        }
-        if (distribution.sizeBytes > 0 && done == distribution.sizeBytes && done > 0L) return
-        if (done > 0L) {
-            // The user must see that the download continues instead of starting over.
+        var resumed = false
+        ResumableDownload.download(
+            distribution.url,
+            part,
+            distribution.sizeBytes,
+        ) { done, total ->
+            val size = if (total > 0) total else distribution.sizeBytes
+            val message = if (!resumed && done > 0) {
+                resumed = true
+                "Continuing from $done of $size bytes…"
+            } else {
+                "Downloading Gradle ${distribution.version}…"
+            }
             progress(
                 ShellToolsStore.Progress(
-                    "gradle-resume",
+                    "gradle-download",
                     done,
-                    distribution.sizeBytes,
+                    size,
                     distribution.fileName,
-                    "Continuing from ${done} of ${distribution.sizeBytes} bytes…",
+                    message,
                 ),
             )
-        }
-        val connection = (URL(distribution.url).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = true
-            connectTimeout = 30_000
-            readTimeout = 120_000
-            if (done > 0L) setRequestProperty("Range", "bytes=$done-")
-            setRequestProperty("User-Agent", "CloseCode/${Build.VERSION.SDK_INT}")
-        }
-        try {
-            val code = connection.responseCode
-            if (done > 0L && code != HttpURLConnection.HTTP_PARTIAL) {
-                part.delete()
-                done = 0L
-                if (code == 416) {
-                    connection.disconnect()
-                    download(part, distribution, progress)
-                    return
-                }
-                if (code != HttpURLConnection.HTTP_OK) {
-                    throw IOException("The Gradle server answered HTTP $code.")
-                }
-            } else if (code !in 200..299) {
-                throw IOException("The Gradle server answered HTTP $code.")
-            }
-            part.parentFile?.mkdirs()
-            RandomAccessFile(part, "rw").use { output ->
-                output.seek(done)
-                connection.inputStream.use { input ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        done += count
-                        progress(
-                            ShellToolsStore.Progress(
-                                "gradle-download",
-                                done,
-                                distribution.sizeBytes,
-                                distribution.fileName,
-                                "Downloading Gradle ${distribution.version}...",
-                            ),
-                        )
-                    }
-                }
-            }
-            if (distribution.sizeBytes > 0 && done != distribution.sizeBytes) {
-                throw IOException(
-                    "Short Gradle download: $done of ${distribution.sizeBytes} bytes.",
-                )
-            }
-        } finally {
-            connection.disconnect()
         }
     }
 

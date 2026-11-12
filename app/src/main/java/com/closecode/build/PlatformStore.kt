@@ -2,6 +2,7 @@ package com.closecode.build
 
 import android.content.Context
 import com.closecode.debug.DebugLog
+import com.closecode.tools.ResumableDownload
 import com.closecode.tools.TarExtractor
 import com.closecode.ui.settings.KeyValueStore
 import java.io.File
@@ -140,22 +141,34 @@ class PlatformStore(
      *
      * A folder that came from a desktop package holds x86-64 binaries. They are present, they
      * have the right names, and they cannot run here — so the folder is not "installed".
+     * A binary that is not an ELF file at all is a wrapper script, which the shebang repair
+     * makes runnable; it is left alone.
      */
     fun buildToolsUsable(dir: File): Boolean {
         val aapt2 = File(dir, "aapt2")
         if (!aapt2.isFile) return false
-        return ElfArchitecture.isArm64(aapt2)
+        return ElfArchitecture.isRunnable(aapt2)
     }
+
+    /** True when the folder's binaries are known to be for another processor. */
+    fun buildToolsForeign(dir: File): Boolean =
+        ElfArchitecture.isForeign(File(dir, "aapt2"))
 
     /** The processor of a build-tools folder's aapt2, for the status output. */
     fun buildToolsArchitecture(dir: File): String? =
         ElfArchitecture.of(File(dir, "aapt2"))
 
-    /** Removes build-tools folders whose binaries cannot run on this phone. */
+    /**
+     * Removes build-tools folders whose binaries are proven to be for another processor.
+     *
+     * Only a folder that is *known* to be foreign is removed. A folder whose binaries cannot
+     * be read is left alone: it may be a wrapper script that works, and a working install is
+     * never destroyed.
+     */
     fun removeUnusableBuildTools(keep: File? = null): Int {
         var removed = 0
         buildTools.listFiles()
-            ?.filter { it.isDirectory && it != keep && !buildToolsUsable(it) }
+            ?.filter { it.isDirectory && it != keep && buildToolsForeign(it) }
             ?.forEach { dir ->
                 if (dir.deleteRecursively()) removed++
             }
@@ -422,59 +435,7 @@ class PlatformStore(
         target: File,
         expectedSize: Long,
         onProgress: (Long, Long) -> Unit,
-    ) {
-        target.parentFile?.mkdirs()
-        var done = if (target.isFile) target.length() else 0L
-        if (expectedSize > 0 && done > expectedSize) {
-            target.delete()
-            done = 0L
-        }
-        if (expectedSize > 0 && done == expectedSize && done > 0L) return
-        if (done > 0L) {
-            // The user must see that the download continues instead of starting over.
-            onProgress(done, expectedSize)
-        }
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = true
-            connectTimeout = 30_000
-            readTimeout = 120_000
-            if (done > 0L) setRequestProperty("Range", "bytes=$done-")
-            setRequestProperty("User-Agent", "CloseCode/${android.os.Build.VERSION.SDK_INT}")
-        }
-        try {
-            val code = connection.responseCode
-            if (done > 0L && code != HttpURLConnection.HTTP_PARTIAL) {
-                // The server ignored the resume: start over rather than append the whole file.
-                target.delete()
-                done = 0L
-                if (code != HttpURLConnection.HTTP_OK && code !in 200..299) {
-                    throw IOException("The package server returned HTTP $code.")
-                }
-            } else if (code !in 200..299) {
-                throw IOException("The package server returned HTTP $code.")
-            }
-            val remaining = connection.contentLengthLong.takeIf { it > 0 }
-            val total = if (remaining != null) done + remaining else expectedSize
-            java.io.RandomAccessFile(target, "rw").use { output ->
-                output.seek(done)
-                connection.inputStream.use { input ->
-                    val buffer = ByteArray(64 * 1024)
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        output.write(buffer, 0, count)
-                        done += count
-                        onProgress(done, total)
-                    }
-                }
-            }
-            if (expectedSize > 0 && done != expectedSize) {
-                throw IOException("Short download: $done of $expectedSize bytes.")
-            }
-        } finally {
-            connection.disconnect()
-        }
-    }
+    ) = ResumableDownload.download(url, target, expectedSize, onProgress)
 
     private fun sha1(file: File): String = digest(file, "SHA-1")
     private fun sha256(file: File): String = digest(file, "SHA-256")
