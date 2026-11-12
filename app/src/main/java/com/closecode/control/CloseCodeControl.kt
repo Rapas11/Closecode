@@ -1935,7 +1935,7 @@ internal fun controlCommandScript(basePath: String): String = """
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing sign-apk gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing sign-apk venv gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac

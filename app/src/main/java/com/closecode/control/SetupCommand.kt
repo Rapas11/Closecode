@@ -699,37 +699,7 @@ object SetupCommand {
      * run on this phone.
      */
     private fun ensureBuildToolsAlias(platform: PlatformStore, requested: String) {
-        if (requested.isBlank()) return
-        val source = platform.buildToolsDir() ?: return
-        if (requested == source.name) return
-        val target = File(platform.rootDir(), "build-tools/$requested")
-        val existing = platform.buildToolsDir(requested)
-        if (existing != null && platform.buildToolsUsable(existing)) return
-        if (existing != null) {
-            // The folder is there but its tools are for another processor.
-            existing.deleteRecursively()
-        }
-        runCatching {
-            source.copyRecursively(target, overwrite = true)
-            File(target, ".closecode-shim").writeText(
-                "Compatibility copy of build-tools ${source.name} for $requested\n",
-            )
-            for (name in listOf("source.properties", "package.xml")) {
-                val file = File(target, name)
-                if (!file.isFile) continue
-                val text = file.readText()
-                    .replace(Regex("Pkg\\.Revision=.*"), "Pkg.Revision=$requested")
-                    .replace(
-                        Regex("<revision>\\s*<major>(\\d+)</major>\\s*<minor>(\\d+)</minor>\\s*<micro>(\\d+)</micro>\\s*</revision>"),
-                        "<revision><major>${requested.substringBefore('.')}</major>" +
-                            "<minor>${requested.substringAfter('.').substringBefore('.')}</minor>" +
-                            "<micro>${requested.substringAfterLast('.')}</micro></revision>",
-                    )
-                file.writeText(text)
-            }
-        }.onFailure {
-            DebugLog.crumb("SETUP", "build-tools alias failed: ${it.javaClass.simpleName}")
-        }
+        platform.ensureBuildToolsVersion(requested)
     }
 
     /**

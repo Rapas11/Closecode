@@ -111,7 +111,9 @@ object BuildSetupFactory {
             val requiredBuildTools = settings.buildTools
                 ?: platformStore.requiredBuildToolsVersion(agpVersion)
             val pinnedBuildTools = settings.buildTools?.let { pin ->
-                platformStore.buildToolsDir(pin)?.let { pin to it }
+                // A project may pin a version the app did not install; the working ARM64
+                // build-tools are copied under that name so the build works here.
+                platformStore.ensureBuildToolsVersion(pin)?.let { pin to it }
             }
             val gradleBuildTools = pinnedBuildTools ?: platformStore.bestBuildTools(requiredBuildTools)
             val gradleMissing = buildList {

@@ -5,7 +5,7 @@
 - Build: **83** (`0.83.1628`), on top of commit `6cd26ba`.
 - Unit suite: **1628 tests, 0 failures, 0 errors, 8 skipped**.
 - Artifact: `build/CloseCode-build83-tests1628-debug.apk`,
-  SHA-256 `c6618c2fd3d1cb5d6a0cf56935213118c430738cdd9c7397b6aea752185ccb27`.
+  SHA-256 `5eac20bb3effd3fadc526033e6fccf9f7d2762d69a2365205e2b29830d3ca53d`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -52,7 +52,7 @@ Source of truth for the build under test:
 |---|---|---|
 | JVM unit suite | **1628 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build83-tests1628-debug.apk`, SHA-256 `c6618c2fd3d1cb5d6a0cf56935213118c430738cdd9c7397b6aea752185ccb27` | `build/` |
+| Delivered artifact | `build/CloseCode-build83-tests1628-debug.apk`, SHA-256 `5eac20bb3effd3fadc526033e6fccf9f7d2762d69a2365205e2b29830d3ca53d` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -1545,7 +1545,7 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | Gradle | 8.13 (wrapper) |
 | Unit suite | **1628 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build83-tests1628-debug.apk`, SHA-256 `c6618c2fd3d1cb5d6a0cf56935213118c430738cdd9c7397b6aea752185ccb27` |
+| Artifact | `build/CloseCode-build83-tests1628-debug.apk`, SHA-256 `5eac20bb3effd3fadc526033e6fccf9f7d2762d69a2365205e2b29830d3ca53d` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |

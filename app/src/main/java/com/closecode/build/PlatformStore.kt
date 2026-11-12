@@ -165,6 +165,53 @@ class PlatformStore(
         return removed
     }
 
+    /**
+     * Makes sure a build-tools version exists and can run on this phone.
+     *
+     * A project may pin a version the app did not install. The working ARM64 build-tools are
+     * copied under that name, so the project builds instead of failing with "Build Tools
+     * revision not found" — and never with binaries that cannot execute here.
+     */
+    fun ensureBuildToolsVersion(version: String): File? {
+        if (version.isBlank()) return null
+        val existing = buildToolsDir(version)
+        if (existing != null && buildToolsUsable(existing)) return existing
+        val source = buildToolsDir()?.takeIf { buildToolsUsable(it) } ?: return existing
+        if (version == source.name) return source
+        val target = File(buildTools, version)
+        runCatching {
+            target.deleteRecursively()
+            source.copyRecursively(target, overwrite = true)
+            File(target, ".closecode-shim").writeText(
+                "Compatibility copy of build-tools ${source.name} for $version\n",
+            )
+            // AGP reads the version from these files, so the copy has to claim the version
+            // the project asked for.
+            for (name in listOf("source.properties", "package.xml")) {
+                val file = File(target, name)
+                if (!file.isFile) continue
+                val major = version.substringBefore('.').trim()
+                val minor = version.substringAfter('.', "").substringBefore('.').trim()
+                val micro = version.substringAfterLast('.', "0").trim()
+                file.writeText(
+                    file.readText()
+                        .replace(Regex("Pkg\\.Revision=.*"), "Pkg.Revision=$version")
+                        .replace(
+                            Regex(
+                                "<revision>\\s*<major>(\\d+)</major>\\s*<minor>(\\d+)</minor>" +
+                                    "\\s*<micro>(\\d+)</micro>\\s*</revision>",
+                            ),
+                            "<revision><major>$major</major><minor>$minor</minor>" +
+                                "<micro>$micro</micro></revision>",
+                        ),
+                )
+            }
+        }.onFailure {
+            DebugLog.crumb("SDK", "build-tools alias failed: ${it.javaClass.simpleName}")
+        }
+        return target.takeIf { buildToolsUsable(it) }
+    }
+
     /** The highest installed build-tools at or above [minimum], with its directory name. */
     fun bestBuildTools(minimum: String): Pair<String, File>? =
         buildTools.listFiles()
