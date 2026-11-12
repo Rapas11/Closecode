@@ -69,6 +69,19 @@ class SetupCommandTest {
     }
 
     @Test
+    fun helpCombinedWithAnInstallOptionRefusesTheInstall() {
+        val options = SetupCommand.parse(listOf("--native", "--help"))
+
+        assertFalse(options.help)
+        assertFalse(options.valid)
+        assertTrue(options.invalid.any { it.contains("--help cannot be combined") })
+        // A plain --help is still the help, and asks for nothing.
+        val plain = SetupCommand.parse(listOf("--help"))
+        assertTrue(plain.help)
+        assertFalse(plain.installsSomething())
+    }
+
+    @Test
     fun jdk21CanBeInstalledRemovedAndOnly21IsAccepted() {
         assertTrue(SetupCommand.parse(listOf("--java21")).java21)
         assertTrue(SetupCommand.parse(listOf("--jdk", "21")).java21)

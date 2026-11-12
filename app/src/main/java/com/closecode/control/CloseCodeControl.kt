@@ -1559,9 +1559,10 @@ object CloseCodeControl {
                 if (chosen == null) {
                     val known = store.installed().map { it.home.absolutePath }
                     return error(
-                        "There is no usable JDK at $path." +
+                        "config set jdk needs a JDK this phone has; there is no usable JDK at " +
+                            "$path." +
                             if (known.isEmpty()) {
-                                " No JDK is installed; run closecode setup --gradle."
+                                " Run closecode setup --gradle to install one."
                             } else {
                                 " Installed: ${known.joinToString()}"
                             },
@@ -1932,7 +1933,7 @@ internal fun controlCommandScript(basePath: String): String = """
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing sign-apk gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac

@@ -66,6 +66,18 @@ class ProjectSettingsTest {
         assertTrue(ProjectSettings.set(tmp.root, "type", "rust").isFailure)
     }
 
+    /** Item 9: the message must list the keys that exist, `jdk` among them. */
+    @Test
+    fun theUnknownKeyMessageListsTheKeysThatExist() {
+        val failure = ProjectSettings.set(tmp.root, "nonsense", "x").exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+        val message = failure?.message.orEmpty()
+        assertTrue(message.contains("jdk"))
+        assertTrue(message.contains("gradleVersion"))
+        assertTrue(message.contains("env.<NAME>"))
+    }
+
     @Test
     fun unsetRemovesOnlyThatKey() {
         write("""{"sdk":35,"gradleVersion":"8.13"}""")

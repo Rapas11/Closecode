@@ -266,6 +266,12 @@ object GradleRunner {
         options: GradleBuildOptions,
     ): GradleRunResult {
         GradleUserProperties.ensure(toolchain.gradleHome, toolchain.aapt2, toolchain.javaHome)
+        // A build-tools script that asks for bash cannot run on Android, and `apksigner` is
+        // what signs the APK. The scripts are repaired just before the build, so a version
+        // left behind by an older install cannot break the signing step.
+        runCatching {
+            com.closecode.tools.ShebangRepair.repair(File(toolchain.sdkRoot, "build-tools"))
+        }
         val initScript = File(toolchain.gradleHome, "init/closecode.gradle")
         initScript.parentFile?.mkdirs()
         initScript.writeText(

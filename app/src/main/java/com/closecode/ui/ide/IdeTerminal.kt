@@ -455,6 +455,20 @@ internal fun IdeTerminal(
     val settings = LocalSettings.current
     TerminalEnvironment.configure(context)
     val density = LocalDensity.current
+
+    // The Python runtime's own ensurepip bundle is checked once per app run, so a runtime
+    // that was upgraded under the app does not leave `python3 -m venv` broken. The check is
+    // a file test; only a missing wheel costs a download.
+    suspend fun repairPythonOnce() {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                com.closecode.tools.ShellToolsStore(
+                    context,
+                    com.closecode.tools.ShellToolsManifest.load(context),
+                ).repairPythonOnce()
+            }
+        }
+    }
     var ctrl by remember { mutableStateOf(ModifierLatch.OFF) }
     var alt by remember { mutableStateOf(ModifierLatch.OFF) }
     var completionCandidates by remember { mutableStateOf(emptyList<Completion>()) }
@@ -505,6 +519,11 @@ internal fun IdeTerminal(
         sessions.sessions.forEach { session ->
             launch {
                 withContext(Dispatchers.IO) { session.start(projectRoot, pipeShell) }
+                // A Python runtime that was upgraded under the app can leave the pip wheel its
+                // own ensurepip asks for missing, and `python3 -m venv` then fails. The repair
+                // runs once per app run, in the background, so a shell is never the reason a
+                // Python project cannot start.
+                withContext(Dispatchers.IO) { repairPythonOnce() }
                 if (!session.isRunning) {
                     session.appendLine(
                         if (projectRoot == null) {

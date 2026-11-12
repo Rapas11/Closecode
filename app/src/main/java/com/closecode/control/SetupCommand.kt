@@ -55,6 +55,11 @@ object SetupCommand {
         val wantsWeb: Boolean get() = web || python || all
         val wantsNative: Boolean get() = native || ndk || cmake || all
         val wantsMedia: Boolean get() = media
+        /** True when the request would install or remove something. */
+        fun installsSomething(): Boolean =
+            wantsGradle || wantsWeb || wantsNative || wantsMedia || java21 ||
+                languages.isNotEmpty() || sdk != null || buildTools != null ||
+                !remove.isNullOrBlank()
         val valid: Boolean
             get() = invalid.isEmpty() && (wantsGradle || wantsWeb || wantsNative || wantsMedia ||
                 java21 || languages.isNotEmpty() || sdk != null || buildTools != null ||
@@ -169,6 +174,15 @@ object SetupCommand {
                 }
             }
             index++
+        }
+        // "setup --native --help" asks for two different things. The install is refused with
+        // the usage, so nothing is downloaded; a plain "setup --help" is still the help.
+        if (options.help && options.installsSomething()) {
+            options = options.copy(
+                help = false,
+                invalid = options.invalid +
+                    "--help cannot be combined with an install option; run them one at a time",
+            )
         }
         return options
     }
@@ -616,6 +630,9 @@ object SetupCommand {
 
     private fun remove(context: Context, what: String, emit: (JsonObject) -> Unit): JsonObject {
         val platform = PlatformStore(context, SharedPreferencesKeyValueStore(context))
+        // The Gradle dependency cache is not part of the Gradle install. Removing the tool
+        // keeps it, so the next build is as fast as it was; clearing it is a separate action.
+        val gradleHome = GradleToolsStore(context).gradleHome
         val removed = when (what) {
             "gradle", "jdk" -> GradleToolsStore(context).remove()
             "sdk" -> platform.removeAllPlatforms() && platform.removeAllBuildTools()
@@ -647,12 +664,28 @@ object SetupCommand {
         emit(event("done").apply {
             addProperty("removed", removed)
             addProperty("component", what)
+            if (what == "gradle" || what == "jdk") {
+                addProperty("kept", gradleHome.absolutePath)
+                addProperty(
+                    "message",
+                    "The dependency cache in ${gradleHome.absolutePath} was kept. " +
+                        "Run closecode clean --gradle-caches to clear it on purpose.",
+                )
+            }
         })
         return JsonObject().apply {
             addProperty("ok", removed)
             addProperty("event", "done")
             addProperty("removed", removed)
             addProperty("component", what)
+            if (what == "gradle" || what == "jdk") {
+                addProperty("kept", gradleHome.absolutePath)
+                addProperty(
+                    "message",
+                    "The dependency cache in ${gradleHome.absolutePath} was kept. " +
+                        "Run closecode clean --gradle-caches to clear it on purpose.",
+                )
+            }
             if (!removed) addProperty("error", "Could not remove $what.")
         }
     }

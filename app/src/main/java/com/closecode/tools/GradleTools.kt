@@ -275,6 +275,18 @@ class GradleToolsStore(
             done = 0L
         }
         if (distribution.sizeBytes > 0 && done == distribution.sizeBytes && done > 0L) return
+        if (done > 0L) {
+            // The user must see that the download continues instead of starting over.
+            progress(
+                ShellToolsStore.Progress(
+                    "gradle-resume",
+                    done,
+                    distribution.sizeBytes,
+                    distribution.fileName,
+                    "Continuing from ${done} of ${distribution.sizeBytes} bytes…",
+                ),
+            )
+        }
         val connection = (URL(distribution.url).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             connectTimeout = 30_000

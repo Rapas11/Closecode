@@ -86,7 +86,17 @@ class ShellToolsStore(
                     ShellToolsRepo.packageUrl(manifest.repo, packageFile.fileName),
                     deb,
                     packageFile.sizeBytes,
-                )
+                ) { saved, size ->
+                    progress(
+                        Progress(
+                            "download",
+                            saved,
+                            size,
+                            packageFile.name,
+                            "Continuing ${packageFile.name} from $saved bytes…",
+                        ),
+                    )
+                }
                 if (packageFile.sizeBytes > 0 && deb.length() != packageFile.sizeBytes) {
                     throw IOException("${packageFile.name} has the wrong size.")
                 }
@@ -124,19 +134,38 @@ class ShellToolsStore(
                 },
             )
 
+            // P1-1: the pip wheel this runtime's own ensurepip asks for is put in place
+            // while the new prefix is still in the staging area, so the swap below installs
+            // a prefix that already works. A wheel left behind by an older Python is removed
+            // at the same time, so a runtime upgrade repairs itself.
+            if (PythonPackRepair.needsRepair(temp)) {
+                progress(
+                    Progress(
+                        "download",
+                        0,
+                        PythonPackRepair.expectedSize(temp),
+                        "pip",
+                        "Installing the pip wheel this Python asks for…",
+                    ),
+                )
+                val repaired = PythonPackRepair.repair(context, temp) { done, total ->
+                    progress(Progress("download", done, total, "pip", "Installing the pip wheel…"))
+                }
+                repaired.exceptionOrNull()?.let { error ->
+                    // The pack itself is good; only the wheel could not be fetched. The
+                    // install goes ahead and the next app start finishes the job, so the
+                    // user keeps a working shell instead of losing it to a slow download.
+                    DebugLog.crumb(
+                        "TOOLS",
+                        "pip wheel not installed: ${error.message ?: error.javaClass.simpleName}",
+                    )
+                }
+            }
+
             deleteTree(directory)
             if (!temp.renameTo(directory)) {
                 temp.copyRecursively(directory, overwrite = true)
                 deleteTree(temp)
-            }
-            // P1-1: Termux's python ships an empty ensurepip bundle, so `python3 -m venv`
-            // cannot install pip. The installer puts the pinned wheel there itself.
-            if (PythonPackRepair.needsRepair(directory)) {
-                progress(Progress("download", 0, PythonPackRepair.PIP_SIZE, "pip", "pip wheel"))
-                val repaired = PythonPackRepair.repair(context, directory) { done, total ->
-                    progress(Progress("download", done, total, "pip", "pip wheel"))
-                }
-                repaired.exceptionOrNull()?.let { throw it }
             }
             DebugLog.crumb("TOOLS", "$label installed · ${packages.size} packages")
             progress(Progress("done", total, total, null, "$label installed."))
@@ -216,7 +245,12 @@ class ShellToolsStore(
         }
     }
 
-    private fun download(url: String, target: File, expectedSize: Long = 0L) {
+    private fun download(
+        url: String,
+        target: File,
+        expectedSize: Long = 0L,
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ) {
         target.parentFile?.mkdirs()
         var done = if (target.isFile) target.length() else 0L
         if (expectedSize > 0 && done > expectedSize) {
@@ -224,6 +258,10 @@ class ShellToolsStore(
             done = 0L
         }
         if (expectedSize > 0 && done == expectedSize && done > 0L) return
+        if (done > 0L) {
+            // The user must see that the download continues instead of starting over.
+            onProgress(done, expectedSize)
+        }
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             connectTimeout = 30_000
@@ -279,8 +317,27 @@ class ShellToolsStore(
         return digest.digest().joinToString("") { "%02x".format(it) } == expected.lowercase()
     }
 
+    /**
+     * Repairs the ensurepip bundle once per app run.
+     *
+     * The wheel is checked, not downloaded, on every call: the check is a file test and a
+     * checksum of one small file. When the runtime was upgraded under the app and the wheel
+     * it asks for is missing, this puts it back, so `python3 -m venv` works without anyone
+     * touching the phone by hand.
+     */
+    fun repairPythonOnce(progress: (Progress) -> Unit = {}): Result = synchronized(lock) {
+        if (pythonChecked) return Result(true)
+        val result = repairPython(progress)
+        if (result.ok) pythonChecked = true
+        result
+    }
+
     private companion object {
         val lock = Any()
         const val SOURCE_PREFIX = "data/data/com.termux/files/usr"
+
+        /** The pip wheel has been checked in this app run already. */
+        @Volatile
+        var pythonChecked = false
     }
 }

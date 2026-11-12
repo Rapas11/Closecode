@@ -1306,7 +1306,9 @@ internal fun GradleToolsPage(
             PageCard {
                 Text(
                     text = "Remove the downloaded JDK and Gradle? Projects and project files " +
-                        "are not touched.",
+                        "are not touched, and the dependency cache is kept, so the next build " +
+                        "does not have to download everything again. Use " +
+                        "\"clean --gradle-caches\" to clear that cache on purpose.",
                     color = c.mock.text,
                     fontSize = 13.sp,
                     lineHeight = 19.sp,

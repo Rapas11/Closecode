@@ -84,6 +84,12 @@ object PythonPackRepair {
     fun requiredFile(prefix: File): String? =
         requiredVersion(prefix)?.let { "pip-$it-py3-none-any.whl" }
 
+    /** The size of the wheel this runtime needs, when this build knows it. */
+    fun expectedSize(prefix: File): Long {
+        val version = requiredVersion(prefix) ?: return 0L
+        return KNOWN[version]?.second ?: 0L
+    }
+
     /** True when the pack has python but ensurepip has no usable wheel to install. */
     fun needsRepair(prefix: File): Boolean {
         val bundled = bundledDir(prefix) ?: return false

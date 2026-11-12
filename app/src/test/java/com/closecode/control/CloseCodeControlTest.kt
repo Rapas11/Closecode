@@ -66,6 +66,21 @@ class CloseCodeControlTest {
         assertTrue(script.contains("\\\"args\\\":"))
     }
 
+    /** The command list is how anyone learns what the app can do. */
+    @Test
+    fun theHelpListsEveryCommandTheAppOffers() {
+        val script = controlCommandScript("/data/user/0/com.closecode/files/opencode")
+
+        for (command in listOf(
+            "build", "run", "clean", "check", "gradle", "setup", "describe", "doctor",
+            "toolchain", "signing", "sign-apk", "tool", "tools", "selftest", "config",
+            "exec", "files", "secrets", "ui", "input", "screen", "notifications", "deploy",
+            "jobs", "serve", "preview", "init", "github", "consent", "audit",
+        )) {
+            assertTrue("the help does not list $command", script.contains(command))
+        }
+    }
+
     /** P0-5: one marker for every command, and the wrapper exits with its code. */
     @Test
     fun theScriptTurnsTheExitMarkerIntoTheProcessExitCode() {

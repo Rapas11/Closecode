@@ -85,7 +85,7 @@ data class ProjectSettings(
                     throw IllegalArgumentException("use env.<NAME>=<value>")
                 !allowed(clean) ->
                     throw IllegalArgumentException(
-                        "unknown key; use type, engine, sdk, buildTools, gradleVersion, " +
+                        "unknown key; use type, engine, jdk, sdk, buildTools, gradleVersion, " +
                             "nodeVersion, pythonVersion, env.<NAME> or ports.<name>",
                     )
             }

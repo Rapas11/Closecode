@@ -1,6 +1,7 @@
 package com.closecode.build
 
 import android.content.Context
+import com.closecode.debug.DebugLog
 import com.closecode.tools.TarExtractor
 import com.closecode.ui.settings.KeyValueStore
 import java.io.File
@@ -258,55 +259,16 @@ class PlatformStore(
      * Makes the build-tools scripts runnable on Android.
      *
      * Google's build-tools ship shell scripts that start with `#!/bin/bash`, and Android has
-     * no bash: `apksigner` then fails with "No such file or directory". The scripts are
-     * plain POSIX shell, so the interpreter line is rewritten to the one Android has.
-     * Returns how many files were fixed.
+     * no bash: `apksigner` then fails with "No such file or directory". Every installed
+     * version is repaired, so a directory left behind by an older build stops breaking the
+     * build. Returns how many files were fixed.
      */
     fun repairBuildToolsScripts(): Int {
-        var fixed = 0
-        buildTools.listFiles()
-            ?.filter { it.isDirectory }
-            ?.forEach { dir ->
-                dir.walkTopDown()
-                    .filter { it.isFile && it.length() < 64_000L }
-                    .forEach { file ->
-                        if (rewriteShebang(file)) fixed++
-                    }
-            }
+        val fixed = com.closecode.tools.ShebangRepair.repair(buildTools)
+        if (fixed > 0) {
+            DebugLog.crumb("SDK", "repaired $fixed build-tools scripts for Android")
+        }
         return fixed
-    }
-
-    private fun rewriteShebang(file: File): Boolean {
-        val head = runCatching {
-            file.inputStream().use { input ->
-                val buffer = ByteArray(64)
-                val read = input.read(buffer)
-                if (read <= 0) return false
-                String(buffer, 0, read, Charsets.ISO_8859_1)
-            }
-        }.getOrNull() ?: return false
-        val newline = head.indexOf('\n')
-        val firstLine = if (newline >= 0) head.substring(0, newline) else head
-        if (!firstLine.startsWith("#!")) return false
-        if (!firstLine.contains("bash")) return false
-        val replacement = "#!/system/bin/sh".toByteArray(Charsets.ISO_8859_1)
-        return runCatching {
-            val rest = if (newline >= 0) {
-                file.inputStream().use { input ->
-                    input.skip((newline + 1).toLong())
-                    input.readBytes()
-                }
-            } else {
-                ByteArray(0)
-            }
-            file.outputStream().use { output ->
-                output.write(replacement)
-                output.write('\n'.code)
-                output.write(rest)
-            }
-            file.setExecutable(true, false)
-            true
-        }.getOrDefault(false)
     }
 
     fun removeBuildTools(version: String = BUILD_TOOLS_VERSION): Boolean {
@@ -388,6 +350,10 @@ class PlatformStore(
             done = 0L
         }
         if (expectedSize > 0 && done == expectedSize && done > 0L) return
+        if (done > 0L) {
+            // The user must see that the download continues instead of starting over.
+            onProgress(done, expectedSize)
+        }
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = true
             connectTimeout = 30_000
