@@ -1,357 +1,189 @@
-# CloseCode — build 84 brief: three defects, one suggestion
+CloseCode — build 85 brief: one regression, one small bug, one suggestion
+You are the developer of my phone app CloseCode. You have everything you need to build it. This file is the complete instruction for the next build.
 
-You are the developer of my phone app **CloseCode**. You have everything you need to
-build it. This file is the complete instruction for the next build — there is nothing
-else you need from me, and I am asking for **one build, not a series**.
+Last build tested: 84 (CloseCode 0.84.1636, commit 949ff88) Device: one Android phone, arm64, Android 16, 8 cores, 11.9 GB RAM Test project: com.rapas.redit — AGP 8.12.0, Kotlin 1.9.24, Compose BOM 2024.09.03, Media3 + MediaPipe + Vosk, minSdk 26, targetSdk 35
 
-**Last build tested:** 83 (CloseCode 0.83.1628, commit 62326b4)
-**Device:** one Android phone, arm64, Android 16, 8 cores, 11.9 GB RAM
-**Test project:** `com.rapas.redit` — AGP 8.12.0, Kotlin 1.9.24, Compose BOM
-2024.09.03, Media3 + MediaPipe + Vosk, minSdk 26, targetSdk 35
+The short version (read this first)
+I am the person who uses CloseCode on my phone. I want to build my Android app on my phone, with no computer and no AI helping me.
 
----
+Build 84 fixed the three things I asked for — thank you. But it broke one thing that used to work, and that one matters more than anything else in this list.
 
-## The short version (read this first)
+#	What I want	In one sentence
+1	closecode sign-apk must actually sign, and must never lie	It says "signed with the CloseCode key" and leaves the old key in the file.
+2	closecode venv must work with a relative path	It looks in the root of the filesystem instead of the folder I am in.
+3	Suggestion: give my existing project the same speed settings	The new projects got them; mine did not.
+How you will know it worked: run the script at the end of this file on the phone. When it prints FAIL 0, we are done.
 
-I am the person who uses CloseCode on my phone. I want to build my Android app on my
-phone, with no computer and no AI helping me.
+Please do not send me a build before that script says FAIL 0.
 
-Nearly all of that works now. **Three things are broken, and one would make my builds
-faster.** Please fix them all in one build.
+Where we are
+Build 84 fixed all three items from the last brief. They are done:
 
-| # | What I want | In one sentence |
-|---|---|---|
-| 1 | A brand-new app must build | The Compose template ships a file that does not compile, so a new project fails its very first build. |
-| 2 | A release build must be installable | `closecode release` produces an APK with no signature at all, so Android refuses it. |
-| 3 | A download that breaks continues where it stopped | An interrupted download still restarts from zero and keeps nothing. |
-| 4 | Make builds faster (suggestion, not a bug) | New projects could use all 8 cores and avoid a second JVM. |
+Fixed in build 84	How I verified it on the phone
+The Compose template must compile	closecode init --template android-compose → closecode build --gradle → exit 0 in 246 s, APK 20,336,525 bytes, signed 30fae35d…, no manual edit to any generated file
+A release build must be signed	closecode release → app-release.apk (no longer *-unsigned.apk), "signed":true, "certificate":"CN=Closecode Debug (30fae35d…)", and apksigner verify agrees
+A failed download must resume	killed a download at 6 MB → the app kept the partial → the next run said "Continuing alsa-lib from 7860 of 453056 bytes…" and finished → afterwards closecode downloads says "No download is waiting to be continued."
+Two new commands came with it and both work: closecode venv <path> and closecode downloads. And you took the speed suggestion — the gradle.properties that closecode init writes now contains
 
-**How you will know it worked:** run the script at the end of this file on the phone.
-When it prints `FAIL 0`, we are done.
-
-**Please do not send me a build before that script says `FAIL 0`.**
-
----
-
-## Where we are
-
-Build 83 was good. The acceptance script at the bottom of this file runs on the phone
-and prints PASS/FAIL for everything. On build 83:
-
-```
- PASS 23   FAIL 0   SKIP 3
-```
-
-and with the destructive checks enabled:
-
-```
- PASS 24   FAIL 0   SKIP 2
-```
-
-**Build 83 fixed these — thank you, and please keep them:**
-
-| Fixed in build 83 | How I verified it on the phone |
-|---|---|
-| `python3 -m venv` | the runtime now installs its own `ensurepip/_bundled/pip-26.2.2-py3-none-any.whl`, the stale `pip-25.2` is gone, and `pip install requests` into a fresh venv works |
-| Only runnable build-tools | `35.0.0` was removed, only the arm64 `35.0.1` remains, and `toolchain status` now reports `"arch":"arm64"` |
-| Removing a tool keeps the cache | `closecode setup --remove gradle` → cache 1663470 KB before, 1663470 KB after |
-| `closecode sign-apk` is documented | it is in `closecode --help` now |
-| `closecode setup --native --help` | prints usage, installs nothing |
-| The `jdk` key | `config set jdk` validates against the JDKs this phone actually has |
-
-And nothing regressed: both build paths still sign with `30fae35d…`, a JDK can still
-be chosen and every path follows it, the sizes still match the disk, and a failed
-build still exits 1 with one clear root cause.
-
----
-
-## Do not break these — they are proven on the phone
-
-| Behaviour | Evidence |
-|---|---|
-| Both build paths sign with one key | `closecode build` → `CN=Closecode Debug` `30fae35d…`; `./gradlew assembleDebug` → the same |
-| A JDK can be chosen and every path follows | `toolchain status --json` returns a `jdks` array with `selected`; `closecode config set jdk <path>` is accepted; the `gradlew` shim exports the selected JDK unconditionally |
-| Removing a tool keeps the cache | measured: 1663470 KB before, 1663470 KB after |
-| A fresh Compose project builds | `closecode init --template android-compose` → builds in 320 s → APK signed `30fae35d…` (after fixing item 1 below) |
-| `closecode build` | `BUILD SUCCESSFUL`, exit 0, 75 s, APK 77,145,483 bytes |
-| `./gradlew assembleDebug` | `BUILD SUCCESSFUL`, exit 0 |
-| `closecode check` | `engine:"gradle"`, `errors:0`, exit 0 |
-| `closecode test` | `testDebugUnitTest`, exit 0, 162 s, "passed" |
-| `closecode lint` | `lintDebug`, exit 0, 638 s, "passed" |
-| Settings installs the whole toolchain | JDK 17, Gradle 8.13, platform 35, build-tools 35.0.1, platform-tools, 4 SDK licenses, NDK 27.1.12297006, CMake 3.22.1 — each with a size and a Remove button |
-| Component sizes match the disk | Native tools reports 1.8 GB; `du` says NDK 1.7 GB + CMake 73 MB |
-| The `gradlew` shim fixes AAPT2 | it writes `android.aapt2FromMavenOverride` into `$GRADLE_USER_HOME/gradle.properties` before starting Gradle |
-| A failed build | exits 1 with one root cause and a log path: `"summary":"Gradle failed (exit 1): file:///…/MainActivity.kt:12:17 Unresolved reference: Text"` |
-
----
-
-# Item 1 — the Compose template must compile
-
-**This is the worst one.** Every new project fails its very first build.
-
-## The evidence
-
-```
-$ closecode init --template android-compose freshapp
-{"ok":true,"event":"done","files":["app/src/main/java/com/closecode/freshapp/MainActivity.kt",
- "app/src/main/java/com/closecode/freshapp/Theme.kt", …],"next":["closecode build --gradle"]}
-
-$ cd freshapp && closecode build --gradle
-{"ok":false,"event":"state","state":{"state":"failed","step":"Compile code",
- "message":"Gradle failed (exit 1): file:///…/freshapp/app/src/main/java/com/closecode/freshapp/MainActivity.kt:12:17 Unresolved reference: Text"}}
-EXIT=1
-```
-
-The generated file is:
-
-```kotlin
-package com.closecode.freshapp
-
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        setContent {
-            ClosecodeTheme {
-                Text("Hello, world")     // ← Text is never imported
-            }
-        }
-    }
-}
-```
-
-`Text` comes from `androidx.compose.material3.Text`. The import is missing.
-`material3` **is** in the generated dependencies, so the only thing missing is the
-import line.
-
-I added it by hand on the phone and the project then built perfectly:
-
-```
-$ closecode build --gradle
-{"ok":true,"event":"done","summary":"Built app-debug.apk in 320 s (20336525 bytes)."}
-```
-
-and the APK was signed with `CN=Closecode Debug` `30fae35d…`, the same key as every
-other path.
-
-## What to do
-
-1. **Add the missing import to the template:**
-   `import androidx.compose.material3.Text`
-2. **Compile the template before you ship it.** Every template should be built in CI
-   or in your own `closecode selftest --build`, so a missing import can never reach a
-   user again. `closecode selftest` already scaffolds every template — it must also
-   build them.
-3. **Check the other templates the same way.** `web-vite`, `web-static`,
-   `python-fastapi`, `python-cli`, `node-express` must all build or start cleanly from
-   what they generate.
-
-## Done when
-
-```
-closecode init --template android-compose freshapp
-cd freshapp && closecode build --gradle
-```
-
-exits 0 on a phone, with no manual edit to any generated file.
-
----
-
-# Item 2 — a release build must be signed
-
-## The evidence
-
-```
-$ closecode release
-{"ok":true,"task":"assembleRelease","exit":0,"durationMs":1879705,
- "apk":"…/app/build/outputs/apk/release/app-release-unsigned.apk","bytes":68970821}
-
-$ apksigner verify --print-certs app-release-unsigned.apk
-DOES NOT VERIFY
-ERROR: Missing META-INF/MANIFEST.MF
-```
-
-The APK has **no signature at all** — not a wrong one, none. Android cannot install
-it, and nothing in the output says so. The file name even says `unsigned`, but the
-command reported `"ok":true`.
-
-Meanwhile every other path signs correctly, and the release path is the one a user
-would use to ship the app they are building.
-
-## What to do
-
-1. **`closecode release` must sign the APK.** Use the same signing configuration the
-   debug path uses when there is no release key, and the imported release key when
-   there is one. `closecode signing` already knows about both.
-2. **A file named `*-unsigned.apk` must never be reported as a success.** If it
-   cannot be signed, say so and exit non-zero.
-3. **Report the certificate.** The command should print the signer DN and SHA-256, so
-   the user can see which key signed it, the same way the acceptance script does.
-
-## Done when
-
-```
-closecode release
-apksigner verify --print-certs app/build/outputs/apk/release/*.apk
-```
-
-reports a signer certificate, and no file called `*-unsigned.apk` is produced.
-
----
-
-# Item 3 — a failed download must resume
-
-## What I measured on build 83
-
-I interrupted a real download in the middle and looked for what was left behind.
-
-```
-$ closecode setup --java21 --json          # killed after 20 seconds
-…{"stage":"download","received":6180408,"total":116079708,"package":"libogg"}
-
-$ find … -type f -size +300k -newermt "-3 minutes"
-(nothing)
-$ find … -name "*.part" -o -name "*.partial" -o -name "*.resume" -o -name "*.download"
-(nothing)
-```
-
-**Nothing.** Six megabytes downloaded and none of it kept, so the next attempt has to
-start from zero. On a phone-sized connection one flaky moment costs the user the
-whole download, and the Install button looks broken.
-
-Build 82 behaved the same way, so this has not been touched yet.
-
-## What to do
-
-1. **Keep the partial file.** Download to a temporary file (for example
-   `<artifact>.part`) and keep it when the transfer fails.
-2. **Resume, do not restart.** On the next attempt, if the partial file exists, send
-   a `Range:` header for the bytes already on disk and append to the file.
-3. **Verify before you move it into place.** Check the total length and the checksum
-   of the finished file, then rename it into position atomically.
-4. **Never break a working install.** A failed install must leave the previous
-   working version in place and usable. The user must never end up with neither the
-   old version nor the new one.
-5. **Report the resume.** The progress event should show that it continued from the
-   saved offset, so the user can see it is not starting over.
-6. **Clean up after success.** The partial file must not be left behind once the
-   download completes.
-
-## Done when
-
-* a download that is interrupted resumes from the byte it stopped at
-* the resumed download produces a file that passes the same checksum as an
-  uninterrupted one
-* after a failed install, the previously installed version still works
-* the partial file is not left behind after a successful install
-
----
-
-# Item 4 — suggestion: make builds faster
-
-Not a bug, but the user asked for speed, so here is what I measured and what I would
-change.
-
-**Measured on this phone, this project:**
-
-| Task | Time |
-|---|---|
-| `closecode build` (warm) | **75 s** |
-| `closecode test` | 162 s |
-| `closecode lint` | 638 s |
-| `closecode release` | 1879 s (31 min) |
-| A brand-new project, first build | 320 s (includes the one-time library download) |
-
-The release build is the slow one and it is **not** downloads — `isMinifyEnabled` is
-`false` in that project, so R8 is not the cost. It is a second full compile of every
-source file plus `lintVitalRelease` plus dexing.
-
-**What I would change in the generated `gradle.properties` for new projects:**
-
-```properties
 org.gradle.parallel=true
 org.gradle.caching=true
 kotlin.compiler.execution.strategy=in-process
-```
+But build 84 also broke the one signing behaviour that was working. That is item 1.
 
-* `org.gradle.parallel=true` — this phone has **8 cores**; Gradle does not use them
-  by default.
-* `org.gradle.caching=true` — lets an unchanged module be reused instead of rebuilt,
-  which is what makes the second build of a project fast.
-* `kotlin.compiler.execution.strategy=in-process` — compiles Kotlin inside the Gradle
-  daemon instead of starting a second JVM. That saves RAM, and it removes this
-  failure, which I saw once during a build on this phone:
+Do not break these — they are proven on the phone
+Behaviour	Evidence
+A brand-new app builds	closecode init --template android-compose → closecode build --gradle → exit 0, 246 s, signed 30fae35d…, no manual edits
+A release build is signed	closecode release → app-release.apk, "signed":true, certificate reported, apksigner verify agrees
+A broken download resumes	"Continuing alsa-lib from 7860 of 453056 bytes…", partial cleaned up after success
+closecode build signs correctly	CN=Closecode Debug 30fae35d…
+A JDK can be chosen and every path follows	toolchain status --json returns a jdks array with selected; closecode config set jdk <path> is accepted; the gradlew shim exports the selected JDK unconditionally
+Removing a tool keeps the cache	closecode setup --remove gradle → cache 2060368 KB before, 2060368 KB after
+python3 -m venv	the runtime installs its own matching ensurepip wheel; pip install requests into a fresh venv works
+Only runnable build-tools	35.0.0 removed, only arm64 35.0.1, and the status reports "arch":"arm64"
+closecode build	BUILD SUCCESSFUL, exit 0, 75 s, APK 77,145,483 bytes
+./gradlew assembleDebug	BUILD SUCCESSFUL, exit 0
+closecode check	engine:"gradle", errors:0, exit 0
+closecode test	testDebugUnitTest, exit 0, 162 s, "passed"
+closecode lint	lintDebug, exit 0, 638 s, "passed"
+Settings installs the whole toolchain	JDK 17, Gradle 8.13, platform 35, build-tools 35.0.1, platform-tools, 4 SDK licenses, NDK 27.1.12297006, CMake 3.22.1 — each with a size and a Remove button
+Component sizes match the disk	Native tools reports 1.8 GB; du says NDK 1.7 GB + CMake 73 MB
+The gradlew shim fixes AAPT2	it writes android.aapt2FromMavenOverride into $GRADLE_USER_HOME/gradle.properties before starting Gradle
+A failed build	exits 1 with one root cause and a log path: "summary":"Gradle failed (exit 1): file:///…/MainActivity.kt:12:17 Unresolved reference: Text"
+Item 1 — closecode sign-apk must actually sign, and must never lie
+This is a regression. Build 83 did it right; build 84 broke it. It breaks the app the same way the original AAPT2 bug broke it: the APK from the Gradle menu cannot be installed.
 
-  ```
-  e: Daemon compilation failed: Could not connect to Kotlin compile daemon
-  java.lang.RuntimeException: Could not connect to Kotlin compile daemon
-      at org.jetbrains.kotlin.compilerRunner.GradleKotlinCompilerWork.compileWithDaemon(GradleKotlinCompilerWork.kt:218)
-  ```
+What the acceptance script sees on build 84
+5. Both build paths sign with the same key
+        closecode build : 30fae35d64645323304340c4f570a58377de8153477a5e334dc62c036a87f979
+        ./gradlew       : a6811008ffe66d61dd679b8a1954418a642e9a065de06cccd10a9bac3f41ddcc
+  FAIL  the two build paths use different signing keys
+a6811008… is the stock AOSP debug key, the one that lives in the OpenCode agent's own home. The gradlew shim is supposed to re-sign the APK with the CloseCode key after the Gradle build. It is not doing it.
 
-  The build recovered by compiling in-process, so it was not fatal — but on a phone,
-  where several JVMs compete for memory, it is a real source of flakiness.
+The cause, in three tests
+I took one APK and tried three things with it.
 
-If you agree, please put those three lines in the `gradle.properties` that
-`closecode init` writes, and consider them for the existing projects too.
+1. An APK with no signature — works.
 
----
+$ closecode sign-apk unsigned.apk
+{"ok":true,"signed":true,"certificate":"CN=Closecode Debug (30fae35d…)",
+ "message":"Signed with the CloseCode key."}
 
-# Rules that apply to all of this
+$ apksigner verify --print-certs unsigned.apk
+Signer #1 certificate SHA-256 digest: 30fae35d64645323304340c4f570a58377de8153477a5e334dc62c036a87f979
+2. An APK already signed with the AOSP key, with --if-unsigned — correct.
 
-1. **One installer, two front ends.** Anything in Settings must also be reachable from
-   `closecode setup`, and the reverse.
-2. **The app installs, the user consents.** The AI must never need `curl`, `tar`,
-   `chmod`, or a hand-written license file.
-3. **Never destroy a working install or a cache** to install or remove something.
-4. **One signing key** for every engine and every build path.
-5. **A failed build exits non-zero** with one root cause, diagnostics and a log path.
-6. **Reject unknown flags.** Unknown arguments print usage and exit with no side
-   effects.
-7. **Never claim a capability the code does not have.** If a screen says a tool works,
-   it must work. A command that produces an unsigned APK must not report `ok:true`.
-8. **A template that does not compile is a broken product.** Anything you generate
-   must be built and run before it reaches a user.
+$ closecode sign-apk --if-unsigned wrongkey.apk
+{"ok":true,"signed":false,"message":"The APK already carries a signature; it was left alone."}
+3. The same APK, without the flag — WRONG. This is the bug.
 
----
+$ closecode sign-apk wrongkey.apk
+{"ok":true,"signed":true,"certificate":"CN=Closecode Debug (30fae35d…)",
+ "message":"Signed with the CloseCode key."}
 
-# Before you ship — run this yourself
+$ apksigner verify -v --print-certs wrongkey.apk
+Verifies
+Verified using v3 scheme (APK Signature Scheme v3): true
+Number of signers: 1
+Signer #1 certificate DN: C=US, O=Android, CN=Android Debug
+Signer #1 certificate SHA-256 digest: a6811008ffe66d61dd679b8a1954418a642e9a065de06cccd10a9bac3f41ddcc
+It says "signed with the CloseCode key" and shows the CloseCode certificate, and the file still carries the AOSP key. The command lies.
 
-Do not send me a build until these are true on your side. Each one takes a minute and
-each one has cost me a round trip before.
+That is why the gradlew shim fails silently: the shim runs
 
-```
+"$CLOSECODE_CLI" sign-apk "$APK" >/dev/null 2>&1 || \
+  printf 'closecode: %s keeps the Gradle key; …\n' "$APK" >&2
+sign-apk exits 0, so the warning never fires, and the user gets an APK with the wrong key and no warning at all.
+
+What to do
+closecode sign-apk without --if-unsigned must replace the existing signature. That is what the name says, and it is what the shim relies on. If you would rather protect a deliberately signed APK, add an explicit --force and make the shim use it — but the plain command must do the obvious thing.
+Never report a certificate the file does not carry. After signing, read the certificate back out of the file and report that one. If the file was left alone, say "signed":false and name the certificate that is actually in it — exactly as --if-unsigned already does correctly.
+The gradlew shim must end up with the CloseCode key. If sign-apk cannot replace the signature, the shim must say so loudly rather than pass a wrong-key APK on as a success.
+The release branch of the shim uses sign-apk --if-unsigned, which is right for a release APK that Gradle left unsigned — but if Gradle ever leaves an AOSP-signed release APK, it would be passed through untouched. Please check that case too.
+Done when
+closecode sign-apk on an APK that already carries a different signature replaces it, and apksigner verify shows the CloseCode certificate
+closecode sign-apk never reports a certificate the file does not carry
+the acceptance script's step 5 passes: both build paths report 30fae35d…
+Item 2 — closecode venv must work with a relative path
+The evidence
+With an absolute path it works perfectly:
+
+$ closecode venv /data/user/0/com.closecode/cache/opencode/opencode/venvcmd
+{"ok":true,"path":"…/venvcmd","createdBy":"python3 -m venv","pip":"…/venvcmd/bin/pip",
+ "message":"The environment was created with python3 -m venv."}
+With a relative path it resolves against the root of the filesystem instead of the folder I am standing in:
+
+$ cd /data/user/0/com.closecode/cache/opencode/opencode
+$ closecode venv venvcmd
+{"ok":false,"error":"The virtual environment could not be created. python3 -m venv said:
+  Error: [Errno 30] Read-only file system: '/venvcmd'","code":"venv_failed"}
+/venvcmd — the path lost its current directory.
+
+What to do
+Resolve a relative path against the current working directory, the way every other command does. closecode venv venvcmd must create ./venvcmd.
+Say which folder you are creating it in, in the reply, so the user can see it went where they expected.
+Done when
+cd /some/folder
+closecode venv venvcmd
+creates /some/folder/venvcmd, and the reply names that path.
+
+Item 3 — suggestion: the same speed settings for existing projects
+Not a bug. You put the three settings in the gradle.properties that closecode init writes, which is exactly right. The project I already had did not get them:
+
+# what a new project gets now
+org.gradle.parallel=true
+org.gradle.caching=true
+kotlin.compiler.execution.strategy=in-process
+
+# what my existing project still has
+android.useAndroidX=true
+android.enableJetifier=true
+org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+Two thoughts, your call:
+
+Could CloseCode offer these as an action? A one-tap "Speed up this project" in Settings, or a hint when it notices a project is missing them. I would rather not edit my project by hand — that is exactly the kind of thing the app should do.
+android.enableJetifier=true is deprecated. It rewrites old support-library dependencies on every build and it is not needed by anything modern. If it can be dropped safely, dropping it makes builds faster.
+Measured on this phone, so you can see what is worth it:
+
+Task	Time
+closecode build (warm)	75 s
+closecode test	162 s
+closecode lint	638 s
+closecode release (small project)	836 s
+closecode release (my project)	1879 s
+A brand-new project, first build	246 s, including the one-time library download
+Rules
+One installer, two front ends. Anything in Settings must also be reachable from closecode setup, and the reverse.
+The app installs, the user consents. The AI must never need curl, tar, chmod, or a hand-written license file.
+Never destroy a working install or a cache to install or remove something.
+One signing key for every engine and every build path.
+A failed build exits non-zero with one root cause, diagnostics and a log path.
+Reject unknown flags. Unknown arguments print usage and exit with no side effects.
+Never claim a capability the code does not have. If a screen says a tool works, it must work. A command that produces an unsigned APK must not report ok:true. A command that reports a certificate must report the one the file really has.
+A template that does not compile is a broken product. Anything you generate must be built and run before it reaches a user.
+Before you ship — run this yourself
+Do not send me a build until these are true on your side. Each one takes a minute.
+
+# item 1 — the three sign-apk cases
+apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android \
+  --ks-key-alias androiddebugkey --out /tmp/wrong.apk <some apk>
+closecode sign-apk /tmp/wrong.apk
+apksigner verify --print-certs /tmp/wrong.apk | grep SHA-256    # must be 30fae35d…
+
 closecode init --template android-compose freshapp
-cd freshapp && closecode build --gradle        # item 1 — must exit 0, no edits
-cd .. && closecode release                      # item 2
-apksigner verify --print-certs */build/outputs/apk/release/*.apk   # must show a signer
-closecode --help | grep sign-apk
-closecode setup --native --help                 # must print usage, download nothing
-python3 -m venv /tmp/v && /tmp/v/bin/pip --version
+cd freshapp && closecode build --gradle        # must exit 0, no edits
+cd .. && closecode release                      # must report signed:true
+cd /tmp && closecode venv myenv                 # must create /tmp/myenv, not /myenv
+closecode downloads                             # must list any waiting partials
 sh closecode-acceptance.sh --all                # the whole board
-```
-
 Then, and only then, send me the board.
 
----
+The test script
+Save this as closecode-acceptance.sh next to the project.
 
-# The test script
-
-Save this as `closecode-acceptance.sh` next to the project.
-
-```
 sh closecode-acceptance.sh          # safe checks, about 8 minutes
 sh closecode-acceptance.sh --all    # also removes and reinstalls Gradle
-```
+It is written for Android's toybox, so it uses grep -E for alternation. The only thing it changes is a temporary syntax error in app/build.gradle.kts, which it puts back immediately.
 
-It is written for Android's toybox, so it uses `grep -E` for alternation. The only
-thing it changes is a temporary syntax error in `app/build.gradle.kts`, which it puts
-back immediately.
-
-
-```sh
 #!/system/bin/sh
 # =============================================================================
 # CloseCode acceptance test — run it ON THE PHONE, no computer needed.
@@ -701,4 +533,3 @@ say "==========================================================="
 rm -rf "$TMP"
 [ "$FAIL" -eq 0 ] && exit 0
 exit 1
-```

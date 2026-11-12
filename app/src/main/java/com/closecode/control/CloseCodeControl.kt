@@ -266,8 +266,9 @@ object CloseCodeControl {
                         .getOrElse { error(it.message ?: "Signing command failed.") },
                 )
                 "sign-apk" -> send(output, signApk(context, request))
-                "venv" -> send(output, VenvCommand.run(context, args(request)))
+                "venv" -> send(output, VenvCommand.run(context, args(request), string(request, "cwd")))
                 "downloads" -> send(output, pendingDownloads(context))
+                "speed" -> send(output, speedUp(context, request))
                 "build" -> {
                     it.soTimeout = 0
                     val run = runBlocking { build(context, request, output) }
@@ -1227,9 +1228,10 @@ object CloseCodeControl {
                 ))
                 return false
             }
-            val wasSigned = ApkPostSigner.isVerified(apk, minSdk)
             val result = runCatching {
-                ApkPostSigner.signIfUnsigned(apk, identity, minSdk)
+                // One key signs every build path: the release APK carries the key the user
+                // selected, the same one the debug path uses.
+                ApkPostSigner.signAndRename(apk, identity, minSdk)
             }
             signedApk = result.getOrElse { failure ->
                 send(output, CommandEnvelope.failed(
@@ -1240,10 +1242,18 @@ object CloseCodeControl {
                 ))
                 return false
             }
-            certificate = ApkPostSigner.describe(identity)
-            if (!wasSigned) {
-                DebugLog.crumb("BUILD", "signed ${signedApk.name} with $certificate")
+            // The certificate is read back out of the file, so the answer cannot claim a
+            // key the APK does not carry.
+            certificate = ApkPostSigner.certificateIn(signedApk, minSdk).orEmpty()
+            if (certificate.isEmpty()) {
+                send(output, CommandEnvelope.failed(
+                    "The APK was signed, but the certificate could not be read back from it.",
+                    code = "signature_unreadable",
+                    remedy = "closecode signing status",
+                ))
+                return false
             }
+            DebugLog.crumb("BUILD", "signed ${signedApk.name} with $certificate")
         }
         send(output, JsonObject().apply {
             addProperty("ok", true)
@@ -1544,6 +1554,15 @@ object CloseCodeControl {
      * the Gradle menu and one built by the app carry the same certificate, so one can
      * update the other instead of forcing an uninstall that loses the user's data.
      */
+    /**
+     * Signs an APK with the CloseCode key.
+     *
+     * The plain command always signs, and replaces whatever signature the file had: that is
+     * what the name says, and it is what the `gradlew` shim relies on so that an APK built
+     * through the Gradle menu carries the same certificate as one built by the app. The
+     * certificate in the answer is read back out of the file, so the answer and the file
+     * cannot disagree.
+     */
     private fun signApk(context: Context, request: JsonObject): JsonObject {
         val arguments = args(request)
         val path = arguments.firstOrNull { !it.startsWith("--") }?.trim().orEmpty()
@@ -1560,23 +1579,34 @@ object CloseCodeControl {
         val identity = runCatching { SigningStore(context).identity() }.getOrNull()
             ?: return error("There is no signing key. Open Settings > Signing keys.")
         if (onlyIfUnsigned && ApkPostSigner.isVerified(file, minSdk)) {
-            // The project signed it itself; that key is the user's choice, not ours.
+            // The file already carries a signature; that one is left alone, and it is the
+            // one that is reported.
             return JsonObject().apply {
                 addProperty("ok", true)
                 addProperty("apk", file.absolutePath)
                 addProperty("signed", false)
+                ApkPostSigner.certificateIn(file, minSdk)?.let { addProperty("certificate", it) }
                 addProperty("message", "The APK already carries a signature; it was left alone.")
             }
         }
         return runCatching {
-            val signed = ApkPostSigner.signIfUnsigned(file, identity, minSdk)
+            val signed = ApkPostSigner.sign(file, identity, minSdk)
+            val certificate = ApkPostSigner.certificateIn(signed, minSdk)
             JsonObject().apply {
                 addProperty("ok", true)
                 addProperty("apk", signed.absolutePath)
                 addProperty("bytes", signed.length())
                 addProperty("signed", true)
-                addProperty("certificate", ApkPostSigner.describe(identity))
-                addProperty("message", "Signed with the CloseCode key.")
+                // The certificate the file carries, read back out of it.
+                certificate?.let { addProperty("certificate", it) }
+                addProperty(
+                    "message",
+                    if (certificate != null) {
+                        "Signed with the CloseCode key: $certificate"
+                    } else {
+                        "Signed, but the certificate could not be read back."
+                    },
+                )
             }
         }.getOrElse { error(it.message ?: "The APK could not be signed.") }
     }
@@ -1621,6 +1651,18 @@ object CloseCodeControl {
                 },
             )
         }
+    }
+
+    /** `closecode speed`: the build settings that make this project faster on a phone. */
+    private fun speedUp(context: Context, request: JsonObject): JsonObject {
+        val project = resolveProject(
+            context,
+            cwd = string(request, "cwd"),
+            slug = string(request, "project"),
+        ) ?: return error("Run closecode from a registered project folder.")
+        val dropJetifier = args(request).any { it == "--drop-jetifier" }
+        val result = SpeedCommand.apply(project.directory, dropJetifier)
+        return SpeedCommand.report(result)
     }
 
     private fun init(context: Context, request: JsonObject): JsonObject =
@@ -2011,6 +2053,7 @@ internal fun controlCommandScript(basePath: String): String = """
         sign-apk|resign) echo "usage: closecode sign-apk <path-to-apk>" ;;
         venv) echo "usage: closecode venv <directory>" ;;
         downloads) echo "usage: closecode downloads" ;;
+        speed) echo "usage: closecode speed [--drop-jetifier]" ;;
         gradle|g) echo "usage: closecode gradle <task> [--gradle]" ;;
         check|chk) echo "usage: closecode check" ;;
         github|gh) echo "usage: closecode github push|pull [--force]" ;;
@@ -2031,7 +2074,7 @@ internal fun controlCommandScript(basePath: String): String = """
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing sign-apk venv downloads gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing sign-apk venv downloads speed gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac
@@ -2079,6 +2122,7 @@ internal fun controlCommandScript(basePath: String): String = """
       sign-apk|resign) CMD=sign-apk ;;
       venv) CMD=venv ;;
       downloads) CMD=downloads ;;
+      speed) CMD=speed ;;
       g|gradle) CMD=gradle ;;
       chk|check) CMD=check ;;
       gh|github) CMD=github ;;
@@ -2092,7 +2136,7 @@ internal fun controlCommandScript(basePath: String): String = """
       rel|release) CMD=release ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|sign-apk|resign|venv|downloads|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|notifications|screen|deploy|secrets|selftest|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|sign-apk|resign|venv|downloads|speed|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|notifications|screen|deploy|secrets|selftest|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
       *) help >&2; exit 2 ;;
     esac
     case "${'$'}{2:-}" in

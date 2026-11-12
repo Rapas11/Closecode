@@ -307,6 +307,31 @@ fun IdeProjectSettingsSheet(
                 )
             }
 
+            if (projectRoot != null) {
+                // The build settings that make a project faster on a phone. A new project
+                // gets them from the start; this gives an existing one the same, without
+                // the user editing a file by hand.
+                SettingsGroup("Build speed") {
+                    var speedNote by remember(projectRoot) { mutableStateOf<String?>(null) }
+                    SettingRow(
+                        icon = "bolt",
+                        tint = c.amber,
+                        title = "Speed up this project",
+                        sub = "Use every core, reuse finished builds, compile in one JVM",
+                        value = speedNote?.takeIf { it.isNotBlank() },
+                        onClick = {
+                            val result = com.closecode.control.SpeedCommand.apply(projectRoot)
+                            speedNote = if (result.changed) {
+                                "Added"
+                            } else {
+                                "Already set"
+                            }
+                        },
+                        showDivider = false,
+                    )
+                }
+            }
+
             if (report != null) {
                 val findings = report.findings.sortedBy { it.severity.ordinal }
                 if (findings.isNotEmpty()) {

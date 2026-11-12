@@ -72,17 +72,11 @@ object AndroidProjectFiles {
         "\"\$GRADLE_BIN\" \"\$@\"\n" +
         "GRADLE_CODE=\$?\n" +
         "if [ \"\$GRADLE_CODE\" -eq 0 ] && [ -n \"\$CLOSECODE_CLI\" ]; then\n" +
-        "  find \"\$PWD\" -maxdepth 8 -path \"*/build/outputs/apk/debug/*.apk\" -print 2>/dev/null \\\n" +
+        "  find \"\$PWD\" -maxdepth 8 -path \"*/build/outputs/apk/*/*.apk\" -print 2>/dev/null \\\n" +
         "  | while IFS= read -r APK; do\n" +
         "    [ -f \"\$APK\" ] || continue\n" +
         "    \"\$CLOSECODE_CLI\" sign-apk \"\$APK\" >/dev/null 2>&1 || \\\n" +
-        "      printf 'closecode: %s keeps the Gradle key; build from the app to sign it with the CloseCode key.\\n' \"\$APK\" >&2\n" +
-        "  done\n" +
-        "  find \"\$PWD\" -maxdepth 8 -path \"*/build/outputs/apk/release/*.apk\" -print 2>/dev/null \\\n" +
-        "  | while IFS= read -r APK; do\n" +
-        "    [ -f \"\$APK\" ] || continue\n" +
-        "    \"\$CLOSECODE_CLI\" sign-apk --if-unsigned \"\$APK\" >/dev/null 2>&1 || \\\n" +
-        "      printf 'closecode: %s could not be signed; open CloseCode and sign it from there.\\n' \"\$APK\" >&2\n" +
+        "      printf 'closecode: %s could not be signed with the CloseCode key; it still carries the key Gradle used, so Android will refuse to install it over the app.\\n' \"\$APK\" >&2\n" +
         "  done\n" +
         "fi\n" +
         "exit \"\$GRADLE_CODE\"\n"

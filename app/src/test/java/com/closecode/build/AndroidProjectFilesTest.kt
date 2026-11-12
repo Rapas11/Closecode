@@ -97,8 +97,13 @@ class AndroidProjectFilesTest {
         assertTrue(text.contains("org.gradle.java.home"))
         assertFalse(text.contains("if [ -z \"\$JAVA_HOME\" ] && [ -f \"\$PROPS\" ]"))
         // Gradle signs with the stock AOSP key; the shim asks the app to sign it properly.
+        // Every variant is signed, so one key signs every build path.
         assertTrue(text.contains("sign-apk"))
-        assertTrue(text.contains("build/outputs/apk/debug"))
+        assertTrue(text.contains("build/outputs/apk/*/*.apk"))
+        assertFalse(
+            "the shim must not leave an APK alone just because it carries a signature",
+            text.contains("--if-unsigned"),
+        )
     }
 
     @Test

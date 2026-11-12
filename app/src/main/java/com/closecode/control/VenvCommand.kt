@@ -20,7 +20,19 @@ object VenvCommand {
 
     private const val TIMEOUT_SECONDS = 180L
 
-    fun run(context: Context, arguments: List<String>): JsonObject {
+    /**
+     * `closecode venv <directory>`: a virtual environment with a working pip.
+     *
+     * [cwd] is the folder the command was run from. A relative path is resolved against it,
+     * the way every other command resolves one — `closecode venv venvcmd` creates
+     * `./venvcmd` in the folder the user is standing in, not `/venvcmd`.
+     *
+     * `python3 -m venv` is the normal way and is tried first. When the runtime's ensurepip
+     * cannot install pip — the failure that a mismatched ensurepip bundle causes — the command
+     * falls back to `uv venv`, which the shell pack installs and which works on its own. The
+     * user is told which one made the environment, and where.
+     */
+    fun run(context: Context, arguments: List<String>, cwd: String? = null): JsonObject {
         val directory = arguments.firstOrNull()?.trim()
         if (directory.isNullOrEmpty()) {
             return error("closecode venv needs a directory.")
@@ -33,7 +45,7 @@ object VenvCommand {
         val uv = File(shell.directory, "bin/uv")
         if (!python.isFile) return error("python3 is missing from the shell tools.")
 
-        val target = File(directory).absoluteFile
+        val target = resolve(directory, cwd)
         val environment = ShellEnvironment.env(context, File(context.filesDir, "tmp"))
 
         val first = run(
@@ -56,10 +68,19 @@ object VenvCommand {
             }
         }
         return error(
-            "The virtual environment could not be created." +
+            "The virtual environment could not be created in ${target.absolutePath}." +
                 " python3 -m venv said: " + first.second.trim().take(200) +
                 " Run closecode setup --python to repair the pip wheel.",
         )
+    }
+
+    /** A relative path belongs to the folder the command was run from. */
+    internal fun resolve(directory: String, cwd: String?): File {
+        val file = File(directory)
+        if (file.isAbsolute) return file
+        val base = cwd?.trim()?.takeIf { it.isNotEmpty() }?.let { File(it) }
+            ?: File(System.getProperty("user.dir") ?: "/")
+        return File(base, directory).absoluteFile
     }
 
     private fun ok(target: File, madeBy: String, pip: String): JsonObject = JsonObject().apply {
