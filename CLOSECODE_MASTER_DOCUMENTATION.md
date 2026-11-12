@@ -2,10 +2,10 @@
 
 **One file containing all ten required documents.**
 
-- Build: **82** (`0.82.1622`), on top of commit `edb795e`.
-- Unit suite: **1622 tests, 0 failures, 0 errors, 8 skipped**.
-- Artifact: `build/CloseCode-build82-tests1622-debug.apk`,
-  SHA-256 `a0807295062d37a05667b09ce4c572b63247b65f7bcde33d2401a7a8d7d54764`.
+- Build: **83** (`0.83.1628`), on top of commit `6cd26ba`.
+- Unit suite: **1628 tests, 0 failures, 0 errors, 8 skipped**.
+- Artifact: `build/CloseCode-build83-tests1628-debug.apk`,
+  SHA-256 `c6618c2fd3d1cb5d6a0cf56935213118c430738cdd9c7397b6aea752185ccb27`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -33,7 +33,7 @@
 
 # PART 1 — CURRENT CAPABILITIES
 
-Status: audit snapshot for build **82** (versionName `0.82.1622`), on top of commit `edb795e`.
+Status: audit snapshot for build **83** (versionName `0.83.1628`), on top of commit `6cd26ba`.
 
 How to read this file: every claim is either **Proven** (a test run, a device run, or a
 host POC produced it) or **Code-verified** (the implementation is present and traced, but
@@ -42,7 +42,7 @@ the strength of a class name, a config key or an endpoint existing.
 
 Source of truth for the build under test:
 `app/build.gradle.kts:14` (`closecodeBuild = 80`), `app/build.gradle.kts:16`
-(`closecodeTests = 1622`).
+(`closecodeTests = 1628`).
 
 ---
 
@@ -50,9 +50,9 @@ Source of truth for the build under test:
 
 | Evidence | Result | Where |
 |---|---|---|
-| JVM unit suite | **1622 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
+| JVM unit suite | **1628 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build82-tests1622-debug.apk`, SHA-256 `a0807295062d37a05667b09ce4c572b63247b65f7bcde33d2401a7a8d7d54764` | `build/` |
+| Delivered artifact | `build/CloseCode-build83-tests1628-debug.apk`, SHA-256 `c6618c2fd3d1cb5d6a0cf56935213118c430738cdd9c7397b6aea752185ccb27` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -340,7 +340,7 @@ is a hand-maintained constant that can drift from the real result.
 #### 1.9 Real device-level tests
 
 `app/src/androidTest/` contains one stock template assertion
-(`ExampleInstrumentedTest.kt`). All 1622 tests are JVM tests; nothing is exercised on a
+(`ExampleInstrumentedTest.kt`). All 1628 tests are JVM tests; nothing is exercised on a
 real Android runtime in CI.
 
 ---
@@ -618,7 +618,7 @@ audit log. This is defect D11 and is addressed in the roadmap, not silently.
 
 ### 8. Test and delivery infrastructure
 
-- 146 JVM test files under `app/src/test/java/com/closecode/`; 1622 tests in the last run
+- 146 JVM test files under `app/src/test/java/com/closecode/`; 1628 tests in the last run
   (0 failures, 0 errors, 8 skipped).
 - One stock instrumentation test in `app/src/androidTest/` — no real device tests.
 - CI: `.github/workflows/build.yml:32` (unit suite), `:35` (assemble + upload). No lint,
@@ -1543,9 +1543,9 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | JDK | 17.0.20.1+1 at `/opt/java/jdk-17.0.20.1+1` |
 | Android SDK | `/opt/android_sdk`, platform 35 |
 | Gradle | 8.13 (wrapper) |
-| Unit suite | **1622 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
+| Unit suite | **1628 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build82-tests1622-debug.apk`, SHA-256 `a0807295062d37a05667b09ce4c572b63247b65f7bcde33d2401a7a8d7d54764` |
+| Artifact | `build/CloseCode-build83-tests1628-debug.apk`, SHA-256 `c6618c2fd3d1cb5d6a0cf56935213118c430738cdd9c7397b6aea752185ccb27` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |
@@ -1858,7 +1858,7 @@ the bundled OpenCode server is prevented from downloading one
 
 | Limit | Consequence | Evidence |
 |---|---|---|
-| All 1622 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
+| All 1628 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
 | One stock instrumentation test | No real device test exists | `app/src/androidTest/java/com/closecode/ExampleInstrumentedTest.kt` |
 | No lint or static analysis task | Style and some correctness issues are not machine-checked | `app/build.gradle.kts`; `.github/workflows/build.yml:32`, `:35` |
 | The test-count constant is hand-maintained | The version number could claim a count that was never run (defect D8) | `app/build.gradle.kts:16` |
@@ -2025,3 +2025,99 @@ sh closecode-acceptance.sh --all
 Until that board prints `FAIL 0`, build 82 is *implemented and unit-tested*, not *proven on
 the phone*. The one thing this round cannot do is take the phone's measurements — the
 script performs real Gradle builds on the device.
+
+---
+
+# PART 13 — BUILD 83: THE THIRD BRIEF, THREE ITEMS
+
+The agent re-checked build 82 on the phone and reported **PASS 24 FAIL 0 SKIP 2**. Three items
+were still open. All three are in build 83.
+
+## 13.1 The venv, fixed at the root
+
+The agent removed the pip wheel it had placed by hand and `python3 -m venv` failed again. The
+runtime's own source explains why, and the fix now uses the mechanism the runtime already
+supports.
+
+`ensurepip/__init__.py` in this Python asks for `pip-26.2.2-py3-none-any.whl`, and the bundle
+held `pip-25.2` from an older Python. But the same file contains the escape hatch:
+
+```python
+_pkg_dir = sysconfig.get_config_var('WHEEL_PKG_DIR')
+if _pkg_dir:
+    _WHEEL_PKG_DIR = Path(_pkg_dir).resolve()
+...
+def _find_wheel_pkg_dir_pip():
+    if _WHEEL_PKG_DIR is None:
+        return None
+    dist_matching_wheels = _WHEEL_PKG_DIR.glob('pip-*.whl')
+    try:
+        last_matching_dist_wheel = sorted(dist_matching_wheels)[-1]
+    except IndexError:
+        return None
+    return nullcontext(last_matching_dist_wheel)
+```
+
+`ensurepip` **prefers** a wheels directory and takes the newest `pip-*.whl` in it. So the
+runtime's version constant stops mattering.
+
+What build 83 does:
+
+1. `share/python-wheels` is created in the prefix and a verified pip wheel is put there.
+2. The interpreter's own build-time configuration — the `_sysconfigdata` file next to it —
+   gets one line, `build_time_vars['WHEEL_PKG_DIR'] = '<that directory>'`. This is the same
+   mechanism a Linux distribution uses to ship wheels outside the standard library, and it is
+   read by `sysconfig.get_config_var` at import time.
+3. `ensurepip/_bundled` is kept in sync with the wheel the runtime asks for, and the wheels
+   an older runtime left behind are removed.
+4. The repair runs while the new prefix is still in the staging area, once per app run, and
+   whenever a shell starts.
+5. A new `closecode venv <directory>` command tries `python3 -m venv` and falls back to
+   `uv venv`, so an environment can still be made when ensurepip is unwell.
+
+## 13.2 Every installed tool must be able to run here
+
+The agent found `build-tools/35.0.0` holding **x86-64** binaries on an ARM phone: the
+scripts now start, but the programs they call cannot execute.
+
+- The processor of a binary is now read from its ELF header (`build/ElfArchitecture.kt`):
+  `arm64`, `x86_64` or unknown, with four unit tests.
+- A build-tools folder counts as installed only when its `aapt2` is an ARM64 binary
+  (`PlatformStore.buildToolsUsable`).
+- `closecode toolchain status --json` reports the architecture of every version and says
+  `ok:true` only for versions whose binaries can run on this phone.
+- A folder that cannot run here is removed at start-up and after an install, and a project
+  that pins that version gets the working ARM64 copy under the name it asked for.
+- The app only ever downloads the ARM64 build-tools archive, so a new install is ARM64 by
+  construction.
+
+## 13.3 A download that breaks continues where it stopped
+
+The agent interrupted a real download and found nothing left behind. Two things were wrong.
+
+- The Termux package download wrote straight to its final name, so a partial file was
+  indistinguishable from a finished one. It now goes to `<package>.deb.part` and is renamed
+  only after the checksum passes; the partial is removed once the package is unpacked.
+- There was no way to see that a partial was waiting. `closecode toolchain status --json`
+  now lists them under `partials`, with their size and path.
+
+Every downloader reports the resume (`Continuing from N of M bytes…`), so the user sees that
+it is not starting over.
+
+## 13.4 What is proven here, and what still needs the phone
+
+| Claim | Proof |
+|---|---|
+| The suite is green | 1628 tests, 0 failures, 0 errors, 8 skipped |
+| The interpreter is pointed at the wheels directory | Unit test: the line is added once, with the right path |
+| A complete setup needs no repair | Unit test: a real wheel in both places, and the pointer set, means nothing to do |
+| The architecture of a binary is read correctly | Four unit tests over real ELF headers |
+| `closecode venv` falls back to `uv` | The command is wired into the control surface and the help |
+| The phone | **Still to be measured.** The board runs on the phone and cannot run from this workspace |
+
+Build 83 is *implemented and unit-tested*. The board is the last step, and it belongs to the
+user: install `build/CloseCode-build83-tests1628-debug.apk` and run
+
+```sh
+sh closecode-acceptance.sh --all
+```

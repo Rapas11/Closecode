@@ -153,6 +153,9 @@ class MainActivity : ComponentActivity() {
                         )
                         // Android has no bash: a build-tools script that asks for it cannot run.
                         platform.repairBuildToolsScripts()
+                        // A build-tools folder with binaries for another processor can never
+                        // run here; it is only a broken choice, so it goes.
+                        platform.removeUnusableBuildTools()
                         val javaHome = JdkStore.selected(applicationContext)?.home
                             ?: File(applicationContext.dataDir, "file/g/lib/jvm/java-17-openjdk")
                         GradleUserProperties.ensure(

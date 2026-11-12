@@ -135,10 +135,40 @@ class PlatformStore(
     fun buildToolsDir(version: String): File? =
         File(buildTools, version).takeIf { it.isDirectory }
 
+    /**
+     * True when a build-tools folder holds binaries this phone can actually execute.
+     *
+     * A folder that came from a desktop package holds x86-64 binaries. They are present, they
+     * have the right names, and they cannot run here — so the folder is not "installed".
+     */
+    fun buildToolsUsable(dir: File): Boolean {
+        val aapt2 = File(dir, "aapt2")
+        if (!aapt2.isFile) return false
+        return ElfArchitecture.isArm64(aapt2)
+    }
+
+    /** The processor of a build-tools folder's aapt2, for the status output. */
+    fun buildToolsArchitecture(dir: File): String? =
+        ElfArchitecture.of(File(dir, "aapt2"))
+
+    /** Removes build-tools folders whose binaries cannot run on this phone. */
+    fun removeUnusableBuildTools(keep: File? = null): Int {
+        var removed = 0
+        buildTools.listFiles()
+            ?.filter { it.isDirectory && it != keep && !buildToolsUsable(it) }
+            ?.forEach { dir ->
+                if (dir.deleteRecursively()) removed++
+            }
+        if (removed > 0) {
+            DebugLog.crumb("SDK", "removed $removed build-tools folders that cannot run here")
+        }
+        return removed
+    }
+
     /** The highest installed build-tools at or above [minimum], with its directory name. */
     fun bestBuildTools(minimum: String): Pair<String, File>? =
         buildTools.listFiles()
-            ?.filter { it.isDirectory && File(it, "aapt2").isFile }
+            ?.filter { it.isDirectory && buildToolsUsable(it) }
             ?.map { it.name to it }
             ?.filter { (version, _) -> compareVersions(version, minimum) >= 0 }
             ?.maxByOrNull { (version, _) -> compareVersions(version, "0") }
@@ -247,6 +277,9 @@ class PlatformStore(
         }
         if (licenseAccepted()) installLicenses()
         repairBuildToolsScripts()
+        // A build-tools folder whose binaries are for another processor can never run on this
+        // phone. Leaving it next to the working one only gives the user a broken choice.
+        removeUnusableBuildTools(keep = target)
         GradleUserProperties.ensure(
             File(context.filesDir, "gradle/home"),
             buildToolsAapt2(),

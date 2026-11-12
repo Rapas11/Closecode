@@ -67,7 +67,11 @@ object ToolchainStatusCommand {
                     addProperty("version", dir.name)
                     addProperty("path", dir.absolutePath)
                     addProperty("shim", File(dir, ".closecode-shim").isFile)
-                    addProperty("ok", File(dir, "aapt2").isFile)
+                    // "ok" means these binaries can run on this phone, not that the folder
+                    // has files in it. A desktop build-tools folder holds x86-64 binaries
+                    // that no ARM phone can execute.
+                    addProperty("arch", platform.buildToolsArchitecture(dir) ?: "unknown")
+                    addProperty("ok", platform.buildToolsUsable(dir))
                 })
             }
         // Every JDK on the phone, and which one the builds use. A JDK that is installed but
@@ -120,6 +124,19 @@ object ToolchainStatusCommand {
                 addProperty("ok", gradle.isReady())
             })
             addProperty("gradleUserHome", gradle.gradleHome.absolutePath)
+            // Downloads that were interrupted keep their partial file, so the next attempt
+            // continues instead of starting over. These are the ones waiting.
+            add("partials", JsonArray().apply {
+                context.cacheDir.listFiles()
+                    ?.filter { it.isFile && it.name.endsWith(".part") }
+                    ?.sortedBy { it.name }
+                    ?.forEach { file ->
+                        add(JsonObject().apply {
+                            addProperty("file", file.absolutePath)
+                            addProperty("bytes", file.length())
+                        })
+                    }
+            })
             addProperty("sdkRoot", platform.rootDir().absolutePath)
             add("platforms", platforms)
             add("buildTools", buildTools)

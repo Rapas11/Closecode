@@ -690,11 +690,25 @@ object SetupCommand {
         }
     }
 
+    /**
+     * Makes sure the build-tools version a project asks for exists and can run here.
+     *
+     * The app ships one version, built for ARM64. A project that pins another version gets a
+     * copy of that one under the name it asked for — and if a folder with that name already
+     * exists but holds binaries for another processor, it is replaced, because it could never
+     * run on this phone.
+     */
     private fun ensureBuildToolsAlias(platform: PlatformStore, requested: String) {
-        if (requested.isBlank() || platform.buildToolsDir(requested) != null) return
+        if (requested.isBlank()) return
         val source = platform.buildToolsDir() ?: return
         if (requested == source.name) return
         val target = File(platform.rootDir(), "build-tools/$requested")
+        val existing = platform.buildToolsDir(requested)
+        if (existing != null && platform.buildToolsUsable(existing)) return
+        if (existing != null) {
+            // The folder is there but its tools are for another processor.
+            existing.deleteRecursively()
+        }
         runCatching {
             source.copyRecursively(target, overwrite = true)
             File(target, ".closecode-shim").writeText(

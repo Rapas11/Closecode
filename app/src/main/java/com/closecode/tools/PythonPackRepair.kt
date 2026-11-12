@@ -16,10 +16,15 @@ import java.net.URL
  * the `_bundled` folder either has no wheel at all or has one left behind by an older
  * Python. `python -m venv` then fails inside ensurepip and the new environment has no pip.
  *
- * The installer owns the fix — never the user, never the agent: it reads the version the
- * runtime asks for, downloads exactly that wheel, verifies its size and SHA-256, and puts
- * it where ensurepip looks. Wheels left over from an older runtime are removed, so a
- * runtime upgrade repairs itself instead of failing.
+ * The installer owns the fix — never the user, never the agent. It does two things:
+ *
+ * 1. It puts the wheel the runtime asks for in `ensurepip/_bundled`, and removes the wheels
+ *    an older runtime left behind, so the bundle and the runtime agree.
+ * 2. It points `sysconfig`'s `WHEEL_PKG_DIR` at `share/python-wheels` and keeps a wheel
+ *    there. `ensurepip` prefers that directory and takes the newest `pip-*.whl` in it, so
+ *    the runtime's own version constant stops mattering: a runtime upgrade is repaired by
+ *    putting any wheel there, and a wheel that was removed by hand comes back from the
+ *    directory.
  */
 object PythonPackRepair {
 
@@ -90,24 +95,52 @@ object PythonPackRepair {
         return KNOWN[version]?.second ?: 0L
     }
 
+    /** The directory `ensurepip` prefers when the runtime knows a wheels directory. */
+    fun wheelsDir(prefix: File): File = File(prefix, "share/python-wheels")
+
+    /** The file that holds the interpreter's build-time configuration. */
+    fun sysconfigData(prefix: File): File? {
+        val python = bundledDir(prefix)?.parentFile?.parentFile ?: return null
+        return python.listFiles()
+            ?.filter { it.isFile && it.name.startsWith("_sysconfigdata") }
+            ?.maxByOrNull { it.name }
+    }
+
+    /** True when the interpreter already looks for wheels in the directory we manage. */
+    fun wheelDirectoryConfigured(prefix: File): Boolean {
+        val data = sysconfigData(prefix) ?: return false
+        val text = runCatching { data.readText() }.getOrNull() ?: return false
+        return text.contains("WHEEL_PKG_DIR")
+    }
+
+    /** The wheels in the managed directory, newest last. */
+    private fun wheelsIn(dir: File): List<File> =
+        dir.listFiles()
+            ?.filter { it.isFile && it.name.startsWith("pip-") && it.name.endsWith(".whl") }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+
     /** True when the pack has python but ensurepip has no usable wheel to install. */
     fun needsRepair(prefix: File): Boolean {
         val bundled = bundledDir(prefix) ?: return false
         val required = requiredFile(prefix) ?: return false
-        val target = File(bundled, required)
-        if (!target.isFile) return true
-        val expected = KNOWN[requiredVersion(prefix)] ?: return !looksLikeWheel(target)
-        return target.length() != expected.second || !matchesSha256(target, expected.third)
+        val expected = requiredVersion(prefix)?.let { KNOWN[it] }
+        val bundledWheel = File(bundled, required)
+        val bundledOk = bundledWheel.isFile &&
+            (expected?.let {
+                bundledWheel.length() == it.second && matchesSha256(bundledWheel, it.third)
+            } ?: looksLikeWheel(bundledWheel))
+        // The wheels directory is what makes the runtime self-healing; without it the
+        // runtime's own version constant decides whether `venv` works.
+        val wheelsOk = wheelsIn(wheelsDir(prefix)).isNotEmpty() && wheelDirectoryConfigured(prefix)
+        return !(bundledOk && wheelsOk)
     }
 
-    /** True when the prefix has the wheel ensurepip will actually install. */
+    /** True when the prefix has a wheel ensurepip will actually install. */
     fun isRepaired(prefix: File): Boolean {
-        val bundled = bundledDir(prefix) ?: return false
-        val required = requiredFile(prefix) ?: return false
-        val target = File(bundled, required)
-        if (!target.isFile) return false
-        val expected = KNOWN[requiredVersion(prefix)] ?: return looksLikeWheel(target)
-        return target.length() == expected.second && matchesSha256(target, expected.third)
+        // A prefix without python has nothing to repair, and nothing that works either.
+        if (bundledDir(prefix) == null) return false
+        return !needsRepair(prefix)
     }
 
     /** A readable wheel, used when the exact version is not pinned in this build. */
@@ -118,12 +151,17 @@ object PythonPackRepair {
     }.getOrDefault(false)
 
     /**
-     * Puts the wheel the runtime asks for in place. Returns the wheel, or null when the
-     * prefix has no python at all. Fails loudly rather than leaving a half-written wheel.
+     * Puts the wheel the runtime asks for in place, and points the runtime at a wheels
+     * directory it can trust.
+     *
+     * [prefix] is the tree being repaired; [finalPrefix] is where that tree will live when
+     * the install finishes, which is the path the interpreter has to be told about.
+     * Returns the wheel, or null when the prefix has no python at all.
      */
     fun repair(
         context: Context,
         prefix: File,
+        finalPrefix: File = prefix,
         onProgress: (Long, Long) -> Unit = { _, _ -> },
     ): Result<File?> = runCatching {
         val bundled = bundledDir(prefix) ?: return@runCatching null
@@ -136,28 +174,58 @@ object PythonPackRepair {
             ?: throw IOException("PyPI has no wheel for pip $version.")
         val expectedSize = known?.second ?: fetched?.second ?: 0L
         val expectedSha = known?.third ?: fetched?.third
-        val target = File(bundled, wheel)
-        if (target.isFile && expectedSize > 0L && target.length() == expectedSize &&
-            expectedSha != null && matchesSha256(target, expectedSha)
-        ) {
-            removeStaleWheels(bundled, wheel)
-            return@runCatching target
-        }
-        bundled.mkdirs()
-        val part = File(context.cacheDir, "$wheel.part")
-        download(url, part, expectedSize, onProgress)
-        if (expectedSize > 0L && part.length() != expectedSize) {
+
+        val wheels = wheelsDir(prefix)
+        wheels.mkdirs()
+        val inWheels = File(wheels, wheel)
+        val inBundle = File(bundled, wheel)
+        val haveWheel = inWheels.isFile && inBundle.isFile &&
+            (expectedSha == null || matchesSha256(inWheels, expectedSha))
+        if (!haveWheel) {
+            val part = File(context.cacheDir, "$wheel.part")
+            download(url, part, expectedSize, onProgress)
+            if (expectedSize > 0L && part.length() != expectedSize) {
+                part.delete()
+                throw IOException("The pip wheel for $version has the wrong size.")
+            }
+            if (expectedSha != null && !matchesSha256(part, expectedSha)) {
+                part.delete()
+                throw IOException("The pip wheel for $version failed its checksum.")
+            }
+            part.copyTo(inWheels, overwrite = true)
+            part.copyTo(inBundle, overwrite = true)
             part.delete()
-            throw IOException("The pip wheel for $version has the wrong size.")
         }
-        if (expectedSha != null && !matchesSha256(part, expectedSha)) {
-            part.delete()
-            throw IOException("The pip wheel for $version failed its checksum.")
-        }
-        part.copyTo(target, overwrite = true)
-        part.delete()
+        // The bundle and the runtime must agree: only the wheel the runtime asks for stays.
         removeStaleWheels(bundled, wheel)
-        target
+        // The wheels directory is what makes this self-healing: ensurepip takes the newest
+        // pip wheel it finds there, whatever version the runtime thinks it wants.
+        removeStaleWheels(wheels, wheel)
+        pointInterpreterAtWheels(prefix, wheelsDir(finalPrefix))
+        inWheels
+    }
+
+    /**
+     * Tells the interpreter where its wheels are.
+     *
+     * `sysconfig` reads its build-time variables from a data file next to the interpreter.
+     * One line is added there, which is the same mechanism a distribution uses when it
+     * ships wheels outside the standard library.
+     */
+    internal fun pointInterpreterAtWheels(prefix: File, wheels: File) {
+        val data = sysconfigData(prefix) ?: return
+        val line = "build_time_vars['WHEEL_PKG_DIR'] = '${wheels.absolutePath}'"
+        val text = runCatching { data.readText() }.getOrNull() ?: return
+        if (text.contains("WHEEL_PKG_DIR")) {
+            // It is already set; replace the old path so a moved prefix keeps working.
+            val updated = Regex("build_time_vars\\['WHEEL_PKG_DIR'\\]\\s*=\\s*'[^']*'")
+                .replace(text, line)
+            if (updated != text) runCatching { data.writeText(updated) }
+            return
+        }
+        runCatching {
+            data.appendText("\n$line\n")
+        }
     }
 
     /** A wheel from an older runtime must not survive an upgrade. */

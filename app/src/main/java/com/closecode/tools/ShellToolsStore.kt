@@ -82,9 +82,12 @@ class ShellToolsStore(
                     Progress("download", done, total, packageFile.name, packageFile.name),
                 )
                 val deb = File(context.cacheDir, "$cachePrefix-${packageFile.name}.deb")
+                // The transfer goes to a .part file, so an interrupted download is never
+                // mistaken for a finished one, and it is found again by name to resume.
+                val part = File(context.cacheDir, "$cachePrefix-${packageFile.name}.deb.part")
                 download(
                     ShellToolsRepo.packageUrl(manifest.repo, packageFile.fileName),
-                    deb,
+                    part,
                     packageFile.sizeBytes,
                 ) { saved, size ->
                     progress(
@@ -97,12 +100,17 @@ class ShellToolsStore(
                         ),
                     )
                 }
-                if (packageFile.sizeBytes > 0 && deb.length() != packageFile.sizeBytes) {
+                if (packageFile.sizeBytes > 0 && part.length() != packageFile.sizeBytes) {
                     throw IOException("${packageFile.name} has the wrong size.")
                 }
-                if (!matchesSha256(deb, packageFile.sha256)) {
-                    deb.delete()
+                if (!matchesSha256(part, packageFile.sha256)) {
+                    part.delete()
                     throw IOException("${packageFile.name} failed its checksum.")
+                }
+                // Verified: the partial becomes the finished package.
+                if (!part.renameTo(deb)) {
+                    part.copyTo(deb, overwrite = true)
+                    part.delete()
                 }
                 DebArchive.dataTar(deb.readBytes()).use { tar ->
                     TarExtractor(SOURCE_PREFIX, temp, directory).extract(tar)
@@ -136,8 +144,10 @@ class ShellToolsStore(
 
             // P1-1: the pip wheel this runtime's own ensurepip asks for is put in place
             // while the new prefix is still in the staging area, so the swap below installs
-            // a prefix that already works. A wheel left behind by an older Python is removed
-            // at the same time, so a runtime upgrade repairs itself.
+            // a prefix that already works. The interpreter is pointed at a wheels directory
+            // too, which is what makes it self-healing: ensurepip takes the newest pip wheel
+            // it finds there, whatever version the runtime thinks it wants. A wheel left
+            // behind by an older Python is removed at the same time.
             if (PythonPackRepair.needsRepair(temp)) {
                 progress(
                     Progress(
@@ -148,7 +158,7 @@ class ShellToolsStore(
                         "Installing the pip wheel this Python asks for…",
                     ),
                 )
-                val repaired = PythonPackRepair.repair(context, temp) { done, total ->
+                val repaired = PythonPackRepair.repair(context, temp, directory) { done, total ->
                     progress(Progress("download", done, total, "pip", "Installing the pip wheel…"))
                 }
                 repaired.exceptionOrNull()?.let { error ->
@@ -194,7 +204,7 @@ class ShellToolsStore(
     fun repairPython(progress: (Progress) -> Unit = {}): Result = synchronized(lock) {
         if (!PythonPackRepair.needsRepair(directory)) return Result(true)
         return try {
-            progress(Progress("download", 0, PythonPackRepair.PIP_SIZE, "pip", "pip wheel"))
+            progress(Progress("download", 0, PythonPackRepair.expectedSize(directory), "pip", "pip wheel"))
             PythonPackRepair.repair(context, directory) { done, total ->
                 progress(Progress("download", done, total, "pip", "pip wheel"))
             }.getOrThrow()
