@@ -276,12 +276,19 @@ fi
 
 # =============================================================================
 head_ "9. The build log contains no error"
+# Step 6 breaks the build on purpose, so rebuild cleanly first: this check must
+# look at the log of a successful build, not of the deliberate failure.
+rm -f "$ROOT/build/logs/build.log" "$ROOT/build/logs/exec.log" 2>/dev/null
+closecode build > "$TMP/build9.json" 2>&1
 if [ -f "$ROOT/build/logs/build.log" ]; then
-  if grep -qE "^e: |^FAILURE:|BUILD FAILED" "$ROOT/build/logs/build.log"; then
-    bad "build/logs/build.log contains a build error"
-    grep -m2 -E "^e: |^FAILURE:|BUILD FAILED" "$ROOT/build/logs/build.log" | sed 's/^/        /'
+  if grep -qE "BUILD FAILED|^FAILURE:" "$ROOT/build/logs/build.log"; then
+    bad "build/logs/build.log contains a failed build"
+    grep -m2 -E "BUILD FAILED|^FAILURE:" "$ROOT/build/logs/build.log" | sed 's/^/        /'
   else
-    ok "build/logs/build.log is clean"
+    ok "build/logs/build.log has no failed build"
+  fi
+  if grep -q "Could not connect to Kotlin compile daemon" "$ROOT/build/logs/build.log" 2>/dev/null; then
+    printf '  WARN  the Kotlin compile daemon did not connect; the build fell back to in-process compilation\n'
   fi
 else
   skip "no build/logs/build.log"
@@ -326,6 +333,102 @@ fi
 # =============================================================================
 head_ "11. A failed download resumes"
 skip "needs a network that fails on purpose — test manually"
+
+# =============================================================================
+head_ "12. Commands that take a path accept a relative one"
+cd "$TMP" 2>/dev/null || cd "$ROOT"
+if [ -f "$TMP/apk-pipeline.apk" ]; then
+  cp "$TMP/apk-pipeline.apk" "$TMP/rel.apk"
+  OUT=$(closecode sign-apk rel.apk 2>&1)
+  if echo "$OUT" | grep -qi '"ok":true'; then
+    ok "closecode sign-apk rel.apk works with a relative path"
+  else
+    bad "closecode sign-apk does not accept a relative path"
+    echo "$OUT" | head -c 200 | sed 's/^/        /'
+  fi
+else
+  skip "no APK to test with"
+fi
+cd "$TMP" 2>/dev/null || cd "$ROOT"
+rm -rf "$TMP/relvenv" 2>/dev/null
+OUT=$(closecode venv relvenv 2>&1)
+if echo "$OUT" | grep -qi '"ok":true'; then
+  ok "closecode venv relvenv works with a relative path"
+else
+  bad "closecode venv does not accept a relative path"
+  echo "$OUT" | head -c 200 | sed 's/^/        /'
+fi
+
+# =============================================================================
+head_ "13. Every installed build-tools can run on this phone"
+BAD=""
+for D in "$SDK_ROOT"/build-tools/*/; do
+  [ -d "$D" ] || continue
+  A="$D/aapt2"
+  [ -f "$A" ] || continue
+  if ! "$A" version >/dev/null 2>&1; then
+    BAD="$BAD $(basename "$D")"
+  fi
+done
+if [ -n "$BAD" ]; then
+  bad "these installed build-tools cannot run on this phone:$BAD"
+  for D in "$SDK_ROOT"/build-tools/*/; do
+    [ -f "$D/aapt2" ] || continue
+    "$D/aapt2" version 2>&1 | head -1 | sed 's/^/        /'
+  done
+else
+  ok "every installed build-tools runs on this phone"
+fi
+
+# =============================================================================
+head_ "14. No half-finished install is left in the SDK"
+LEFTOVER=$(find "$SDK_ROOT" -maxdepth 3 -name ".installer" 2>/dev/null | head -3)
+if [ -n "$LEFTOVER" ]; then
+  bad "an unfinished install is still in the SDK"
+  printf '%s\n' "$LEFTOVER" | sed 's/^/        /'
+else
+  ok "no unfinished install is left in the SDK"
+fi
+
+# =============================================================================
+head_ "15. The NDK compiler runs on this phone"
+NDK_DIR=$(ls -d "$SDK_ROOT"/ndk/*/ 2>/dev/null | head -1)
+if [ -z "$NDK_DIR" ]; then
+  skip "no NDK installed"
+else
+  CC=""
+  for CAND in "$NDK_DIR"toolchains/llvm/prebuilt/linux-aarch64/bin/aarch64-linux-android21-clang \
+              "$NDK_DIR"toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang; do
+    [ -f "$CAND" ] && CC="$CAND" && break
+  done
+  if [ -z "$CC" ]; then
+    bad "the NDK has no android clang"
+  elif "$CC" --version >/dev/null 2>&1; then
+    ok "the NDK compiler runs on this phone"
+  else
+    bad "the NDK compiler cannot run on this phone"
+    "$CC" --version 2>&1 | head -1 | sed 's/^/        /'
+    head -1 "$CC" | sed 's/^/        shebang: /'
+  fi
+  # broken symlinks that were extracted as plain text files
+  BIN="$NDK_DIR"toolchains/llvm/prebuilt/linux-aarch64/bin
+  BROKEN=0
+  for f in "$BIN"/*; do
+    [ -f "$f" ] || continue
+    SIZE=$(wc -c < "$f" 2>/dev/null || echo 0)
+    if [ "$SIZE" -gt 0 ] && [ "$SIZE" -lt 40 ]; then
+      TARGET=$(cat "$f" 2>/dev/null)
+      if [ -n "$TARGET" ] && [ -f "$BIN/$TARGET" ]; then
+        BROKEN=$((BROKEN+1))
+      fi
+    fi
+  done
+  if [ "$BROKEN" -gt 0 ]; then
+    bad "$BROKEN NDK symlinks were extracted as plain text files"
+  else
+    ok "the NDK symlinks are intact"
+  fi
+fi
 
 # =============================================================================
 say ""

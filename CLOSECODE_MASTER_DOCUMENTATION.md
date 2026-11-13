@@ -2,10 +2,10 @@
 
 **One file containing all ten required documents.**
 
-- Build: **89** (`0.89.1663`), on top of commit `5d91d26`.
+- Build: **90** (`0.90.1663`), on top of commit `70d1cf0`.
 - Unit suite: **1663 tests, 0 failures, 0 errors, 8 skipped**.
-- Artifact: `build/CloseCode-build89-tests1663-debug.apk`,
-  SHA-256 `2748a83f6f9adb4cd828b77941e018da899390379ce144a88d6e84715c9ea1a8`.
+- Artifact: `build/CloseCode-build90-tests1663-debug.apk`,
+  SHA-256 `4d60e3b62f87309b7732b6fd2bc79d3a18da0ab51472148932d66c7585ceefac`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -33,7 +33,7 @@
 
 # PART 1 — CURRENT CAPABILITIES
 
-Status: audit snapshot for build **89** (versionName `0.89.1663`), on top of commit `5d91d26`.
+Status: audit snapshot for build **90** (versionName `0.90.1663`), on top of commit `70d1cf0`.
 
 How to read this file: every claim is either **Proven** (a test run, a device run, or a
 host POC produced it) or **Code-verified** (the implementation is present and traced, but
@@ -52,7 +52,7 @@ Source of truth for the build under test:
 |---|---|---|
 | JVM unit suite | **1663 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build89-tests1663-debug.apk`, SHA-256 `2748a83f6f9adb4cd828b77941e018da899390379ce144a88d6e84715c9ea1a8` | `build/` |
+| Delivered artifact | `build/CloseCode-build90-tests1663-debug.apk`, SHA-256 `4d60e3b62f87309b7732b6fd2bc79d3a18da0ab51472148932d66c7585ceefac` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -1545,7 +1545,7 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | Gradle | 8.13 (wrapper) |
 | Unit suite | **1663 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build89-tests1663-debug.apk`, SHA-256 `2748a83f6f9adb4cd828b77941e018da899390379ce144a88d6e84715c9ea1a8` |
+| Artifact | `build/CloseCode-build90-tests1663-debug.apk`, SHA-256 `4d60e3b62f87309b7732b6fd2bc79d3a18da0ab51472148932d66c7585ceefac` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |
@@ -2507,6 +2507,44 @@ rather than assumed.
 
 Build 89 is *implemented and tested here*. The board is the last step, and it belongs to the
 user: install `build/CloseCode-build89-tests1663-debug.apk` and run
+
+```sh
+sh closecode-acceptance.sh
+```
+
+---
+
+# PART 20 — BUILD 90: THE BOARD IN THE REPO, AND ONE MORE LEFTOVER
+
+The brief's test script had grown four steps that the copy in the repository did not have.
+The repository now carries the brief's script exactly, so the user, the agent and the
+developer all run the same board:
+
+| Step | What it checks |
+|---|---|
+| 12 | commands that take a path accept a relative one (`sign-apk rel.apk`, `venv relvenv`) |
+| 13 | every installed build-tools really runs on this phone |
+| 14 | no half-finished install is left in the SDK |
+| 15 | the NDK compiler runs on this phone |
+
+## 20.1 The gap step 14 found
+
+Step 14 looks for a leftover `.installer` folder in the SDK. The app removed those at
+start-up and before a wrapper build, but **not before the app's own build path** — so a
+build started from the editor could still find one, decide the package was broken, and fetch
+it itself. `BuildSetupFactory` now clears both the leftover installs and the build-tools
+folders that cannot run, before every build it prepares.
+
+## 20.2 What is proven here, and what still needs the phone
+
+| Claim | Proof |
+|---|---|
+| The suite is green | 1663 tests, 0 failures, 0 errors, 8 skipped |
+| The repository and the brief run the same board | The script in the repository is the brief's script, and it passes `sh -n` |
+| The phone | **Still to be measured.** The board runs on the phone |
+
+Build 90 is *implemented and tested here*. The board is the last step, and it belongs to the
+user: install `build/CloseCode-build90-tests1663-debug.apk` and run
 
 ```sh
 sh closecode-acceptance.sh

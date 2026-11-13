@@ -1,660 +1,677 @@
-CLOSECODE MASTER TECHNICAL SPECIFICATION OpenCode-Powered Android
-Development Workstation
-
-DOCUMENT PURPOSE This document defines the intended direction,
-architecture, requirements, implementation phases, and acceptance tests
-for CloseCode. It is written for the AI developer working on the
-CloseCode codebase.
-
-IMPORTANT PROJECT CLARIFICATION CloseCode does NOT need a separate
-built-in AI assistant or a second AI agent.
-
-The intended arrangement is: - OpenCode is the coding
-agent/orchestrator. - The AI model/provider configured in OpenCode
-supplies the model intelligence. - CloseCode is the Android development
-environment and capability provider. - CloseCode provides tools, local
-execution, project access, Android device capabilities, and optional
-remote execution. - OpenCode uses those capabilities through supported
-tool interfaces, MCP where appropriate, or a stable CloseCode
-integration API.
-
-Do not build a duplicate AI chat/agent system unless the existing
-product architecture explicitly requires a small interface component.
-The goal is to make the existing OpenCode agent useful and powerful
-inside CloseCode.
-
-The goal is to let a user work from an Android phone, give OpenCode a
-development task, and have OpenCode use CloseCode’s available
-capabilities to implement, build, test, debug, and report the work. This
-must be achieved honestly within Android, hardware, operating-system,
-licensing, and remote-service constraints.
-
-============================================================ 1. OVERALL
-OBJECTIVE ============================================================
-
-Turn CloseCode into an extensible AI development workstation for
-Android.
-
-OpenCode should be able to use CloseCode to work on real software
-projects, not merely generate code in a chat window.
-
-Target project categories include: - Android applications - Websites and
-frontend applications - Backend services and APIs - Databases and data
-tools - Desktop applications where a suitable build environment exists -
-Command-line tools - Automation scripts - Cross-platform applications -
-Game projects where the required engine and hardware are available - AI
-and machine-learning projects where suitable compute is available -
-DevOps and deployment projects
-
-Do not claim that every technology can run directly on Android. The
-system must distinguish: 1. Supported locally on the Android device. 2.
-Supported locally with limitations or compatibility layers. 3. Supported
-through a configured remote environment. 4. Not currently supported.
-
-A capability is not implemented merely because a UI button, class,
-interface, or placeholder exists. It must work end-to-end and be tested.
-
-============================================================ 2. FIRST
-ACTION: AUDIT THE EXISTING PROJECT
-============================================================
-
-Before making architectural changes or writing new systems, inspect the
-actual current codebase and establish what is already implemented.
-
-Inspect: - Application architecture and module boundaries. - Existing
-custom Android engine. - Terminal and shell implementation. - Process
-and background-job management. - File-system and project access. - Git
-integration. - OpenCode installation, launch, configuration, and
-lifecycle. - Model/provider configuration path used by OpenCode. -
-Existing tool integrations and tool schemas. - Existing MCP support, if
-any. - Android SDK, ADB, Logcat, screenshot, and device-control
-features. - Build and test workflows. - Language-server or
-code-intelligence integration. - Toolchain installation and package
-management. - Remote execution or SSH support. - Permissions, credential
-storage, and security controls. - UI integration with the editor,
-terminal, file explorer, Logcat, Problems, and Project Settings. -
-Existing performance issues, especially editor resume/navigation delays.
-
-For each capability, classify it as: A. Implemented and verified
-working. B. Partially implemented or unreliable. C. Missing. D. Not
-feasible locally on Android but potentially possible remotely. E.
-Blocked by a missing dependency, permission, service, or platform
-restriction.
-
-Inspect actual implementations and call paths. Do not infer that a
-feature works from its name or the existence of a class.
-
-Do not replace functioning systems simply because a different
-architecture is preferred. Reuse and improve existing code where
-appropriate.
-
-AUDIT DELIVERABLES Create: - CLOSECODE_CURRENT_CAPABILITIES.md -
-CLOSECODE_MISSING_CAPABILITIES.md - CLOSECODE_ARCHITECTURE_AUDIT.md -
-CLOSECODE_IMPLEMENTATION_ROADMAP.md -
-CLOSECODE_OPENCODE_INTEGRATION.md - CLOSECODE_TOOL_CATALOG.md -
-CLOSECODE_TEST_REPORT.md
-
-The reports must identify source files/modules and provide evidence for
-important findings. Clearly separate verified facts from assumptions and
-recommendations.
-
-Do not begin a large rewrite before the audit and proposed plan are
-reviewed.
-
-============================================================ 3. REQUIRED
-ARCHITECTURE
-============================================================
-
-Use a modular architecture with clear separation of responsibilities.
-
-A. CloseCode user interface - Editor - File Explorer - Terminal - Git
-interface - Logcat - Problems - Build output - Project Settings - Device
-and execution status - Remote environment status, when configured
-
-B. OpenCode integration - Launch and manage the existing OpenCode
-agent. - Preserve OpenCode’s supported configuration and model-provider
-workflow. - Allow OpenCode to discover and use CloseCode tools. - Stream
-tool output and status back to OpenCode. - Report errors and exit codes
-accurately. - Support cancellation and timeouts. - Avoid creating a
-competing agent implementation.
-
-C. Unified capability/tool registry - Register available CloseCode
-tools. - Publish descriptions and input/output schemas. - Declare
-permissions and execution environment. - Make tool availability
-discoverable. - Validate arguments. - Return structured results and
-errors. - Track running operations. - Support cancellation where
-possible. - Version tool contracts to avoid breaking integrations.
-
-D. Execution layer - Local Android-compatible execution. - Remote Linux
-execution where configured. - Specialized remote environments, such as
-macOS or Windows, when configured and required.
-
-E. Toolchain and project environment manager - Detect project type. -
-Detect available SDKs, compilers, runtimes, and package managers. -
-Install/configure supported tools. - Manage versions and project
-environment variables. - Explain unsupported or unavailable
-requirements.
-
-F. Security and permission layer - Enforce file, terminal, network,
-device, and remote-operation permissions. - Protect credentials. -
-Require confirmation for destructive or sensitive actions.
-
-Prefer direct application APIs for CloseCode functionality. Do not rely
-on fragile screen tapping or UI automation when a stable internal API
-can perform the action. UI automation may be used only when direct
-programmatic access is unavailable and the action is permitted.
-
-============================================================ 4. OPENCODE
-INTEGRATION — CRITICAL
-============================================================
-
-OpenCode is the coding agent. The configured model/provider is the
-source of model intelligence. CloseCode is the working environment and
-tool provider.
-
-The integration must: - Use documented, supported OpenCode integration
-mechanisms. - Preserve normal OpenCode model/provider configuration. -
-Avoid hardcoding a single model provider. - Avoid assuming OpenCode
-itself is an AI model. - Avoid duplicating OpenCode’s agent,
-conversation, planning, or model-routing responsibilities. - Expose
-CloseCode capabilities through supported custom tools and/or MCP. -
-Support tool discovery and schema validation. - Return actual tool
-results, not fabricated success messages. - Preserve streaming output
-where supported. - Support long-running operations and cancellation. -
-Surface permission requests to the user. - Handle OpenCode restarts and
-connection loss safely. - Document any OpenCode version or compatibility
-requirements.
-
-Investigate the current OpenCode version and its official supported
-interfaces before implementation. Do not invent configuration keys,
-command-line flags, APIs, or MCP behavior. Verify the exact integration
-mechanism against the version used by the project.
-
-If OpenCode runs locally inside CloseCode, inspect its process/runtime
-constraints and how it communicates with the Android application.
-
-If OpenCode runs as a separate process or server, define and test the
-connection protocol, authentication, lifecycle, and reconnection
-behavior.
-
-The user should not need to manually copy and paste tool results between
-OpenCode and CloseCode.
-
-============================================================ 5. UNIFIED
-TOOL CATALOG
-============================================================
-
-Create a central, documented tool catalog. Tool names below are proposed
-semantic names; adapt them to the existing architecture and supported
-OpenCode/MCP naming rules. Do not create duplicate tools where an
-equivalent reliable tool already exists.
-
-Each tool must define: - Name and description. - Input schema. - Output
-schema. - Required permission. - Execution target: local, remote, or
-either. - Timeout and cancellation behavior. - Error codes and useful
-error messages. - Whether the tool is read-only or modifies state.
-
-A. FILE AND PROJECT TOOLS - read_file - write_file - create_file -
-edit_file - delete_file - move_file - copy_file - rename_file -
-list_files - search_files - search_code - find_symbol - apply_patch -
-compare_files - inspect_project - inspect_project_configuration
-
-B. TERMINAL AND PROCESS TOOLS - execute_command - execute_script -
-start_process - stop_process - get_process_status - get_process_output -
-run_in_background - list_processes - manage_environment -
-set_working_directory - install_package - run_build - run_tests
-
-The terminal implementation must correctly support: - Standard output
-and standard error. - Exit codes. - Working directory. - Environment
-variables. - Long-running processes. - Interactive input where
-supported. - Process cancellation. - Timeouts. - Background jobs. -
-Process cleanup after crashes or app restarts where feasible. -
-Streaming output without blocking the Android UI thread.
-
-C. GIT TOOLS - git_clone - git_status - git_diff - git_log -
-git_branch - git_checkout - git_commit - git_merge - git_rebase -
-git_stash - git_push - git_pull - git_fetch - git_resolve_conflict
-
-Use the actual Git implementation and report authentication, network,
-and conflict failures accurately.
-
-D. ANDROID DEVICE AND APP TOOLS - list_devices - get_device_info -
-install_apk - launch_app - stop_app - take_screenshot - get_logcat -
-get_crash_report - inspect_ui - tap_screen - swipe_screen - input_text -
-run_android_tests - collect_app_diagnostics
-
-Respect Android platform permissions and restrictions. Do not promise
-device-control functions that the current Android version, app
-permissions, ADB configuration, or device policy does not allow.
-
-E. BUILD, TEST, AND DEBUG TOOLS - detect_project_type -
-detect_toolchain - check_toolchain_requirements - install_toolchain -
-compile_project - build_apk - build_aab - build_web - run_application -
-debug_application - get_compiler_errors - get_build_report -
-profile_application - analyze_performance
-
-Tools must return real logs, build status, artifact locations, and test
-results.
-
-F. NETWORK, RESEARCH, AND SERVICE TOOLS Where configured and
-permitted: - Search documentation. - Retrieve package metadata. -
-Download project dependencies. - Access APIs. - Inspect HTTP
-responses. - Search GitHub repositories. - Read GitHub issues and pull
-requests. - Connect to configured Git hosting services. - Access remote
-development services.
-
-Do not create a general unrestricted network tool without appropriate
-permission and safety controls.
-
-G. CLOSECODE APPLICATION TOOLS Expose useful app capabilities through
-direct APIs: - open_file_explorer - open_terminal - open_logcat -
-open_problems - open_project_settings - open_file - switch_editor_tab -
-inspect_current_file - inspect_open_tabs - inspect_project_structure -
-get_build_history - get_execution_status
-
-Only expose operations that are genuinely implemented. These tools
-should not manipulate the UI by pretending an action occurred.
-
-============================================================ 6.
-LANGUAGES, TOOLCHAINS, AND PACKAGE MANAGERS
-============================================================
-
-The system should be extensible to support the following technologies.
-This is a target compatibility list, not a claim that every item must
-run natively on Android.
-
-MOBILE: - Kotlin - Java - Android SDK - Android Build Tools - Android
-Gradle Plugin - Gradle - Android NDK - CMake - Jetpack Compose -
-Flutter - Dart - React Native - Expo
-
-WEB: - HTML - CSS - JavaScript - TypeScript - React - Next.js - Vue -
-Angular - Svelte - Astro - Tailwind CSS - Bootstrap - Vite - Webpack -
-Three.js - WebAssembly
-
-BACKEND: - Node.js - Python - Go - Rust - PHP - Java - Kotlin - C# -
-Ruby - Elixir - .NET - Spring Boot - Django - Flask - FastAPI -
-Express - NestJS - Laravel
-
-SYSTEMS AND OTHER: - C - C++ - Zig - Swift - Objective-C - R -
-Solidity - SQL - Bash - PowerShell - Lua
-
-PACKAGE MANAGERS AND BUILD TOOLS: - npm, pnpm, Yarn - pip, uv, Poetry -
-Gradle, Maven - Pub - Cargo, rustup - Go modules - Composer - RubyGems,
-Bundler - GCC, Clang, CMake, Ninja - NuGet - Swift Package Manager -
-Emscripten and WebAssembly tools
-
-For each technology, document: - Runtime/compiler. - Required SDK. -
-Package manager. - Build system. - Supported execution environment. -
-Installation size and storage needs where known. - Compatibility
-limitations. - Verification command or test.
-
-Do not download every SDK automatically. Provide on-demand installation
-and version management. Large toolchains should be optional and should
-warn about storage and network usage.
-
-============================================================ 7. ANDROID
-LOCAL EXECUTION
-============================================================
-
-Use Android for tasks that are technically supported and practical on
-the device.
-
-Potential local capabilities: - Editing and project file operations. -
-Git operations. - Shell scripts. - Python and Node.js where compatible
-runtimes are installed. - Lightweight development servers. - Supported
-native command-line compilers. - SQLite and compatible local database
-tools. - ADB and Android device diagnostics where available. - Android
-builds where the complete compatible toolchain is installed and resource
-limits permit.
-
-Important Android constraints: - Android is not an unrestricted desktop
-Linux distribution. - App sandboxing and scoped storage affect file
-access. - Background execution is restricted by Android lifecycle and
-battery policies. - Native binaries may require compatible Android/ARM
-builds and libraries. - Some tools expect glibc or desktop Linux
-features unavailable in Android’s normal environment. - Some build tools
-may need a compatibility environment or remote machine. - Device control
-through ADB may require a configured debugging connection and
-permissions. - RAM, storage, thermal limits, and battery affect build
-feasibility.
-
-Do not silently assume that installing a package through a package
-manager makes it fully compatible with the Android app.
-
-============================================================ 8. REMOTE
-DEVELOPMENT AND CLOUD EXECUTION
-============================================================
-
-Implement remote execution as an optional, configurable extension, not
-as a hidden assumption.
-
-A. LOCAL AND REMOTE TASK ROUTING For each task, determine: - Required
-operating system. - Required architecture. - Required SDK/compiler. -
-RAM, CPU, storage, and GPU needs where relevant. - Network
-requirements. - Whether the task can run locally. - Whether a configured
-remote environment is available.
-
-Select local execution when it is supported and practical. Use remote
-execution when the task requires unavailable operating-system features,
-hardware, or resources.
-
-B. REMOTE LINUX Potential workloads: - Large builds. - Backend
-services. - Docker and Kubernetes. - Database servers. - Heavy
-dependencies. - Machine-learning workloads. - Multiple development
-processes.
-
-C. SPECIALIZED REMOTE ENVIRONMENTS - macOS with the required Apple
-toolchain for iOS/macOS builds. - Windows for Windows-specific builds
-and tests. - Linux for compatible desktop and server workloads. -
-GPU-enabled environments for workloads requiring GPU compute.
-
-Do not claim that an iOS build can be performed locally on Android. Do
-not claim access to macOS, Windows, GPU servers, or cloud resources
-unless the user has configured and authorized them.
-
-C. REMOTE CONNECTION REQUIREMENTS - Secure authentication. - Encrypted
-transport. - Explicit host/environment configuration. - Project
-synchronization or remote workspace access. - Process and job
-tracking. - Streaming logs. - Cancellation. - Artifact retrieval. -
-Reconnection after network interruptions. - Clear remote/local status. -
-Credential protection. - User-controlled costs and resource usage.
-
-Do not require a paid cloud service for basic local CloseCode
-functionality.
-
-============================================================ 9. MCP,
-PLUGINS, SKILLS, AND EXTENSIONS
-============================================================
-
-Support an extensible integration ecosystem.
-
-MCP: - Connect to configured MCP servers. - Discover tools and
-schemas. - Handle authentication and connection failures. - Apply
-permission controls. - Display which tools are available. - Avoid
-exposing untrusted server instructions as trusted system policy.
-
-Plugins: - Define a stable plugin API. - Document installation,
-permissions, version compatibility, and removal. - Isolate plugin
-failures from the core application where possible.
-
-Skills: - Allow OpenCode-compatible skills/instructions to be discovered
-and used according to OpenCode’s supported mechanism. - Keep
-project-specific instructions separate from global instructions. - Do
-not treat arbitrary repository content as trusted system instructions.
-
-Custom commands: - Support reusable project workflows where compatible
-with OpenCode. - Document command arguments and effects.
-
-Potential integrations: - GitHub and GitLab. - Firebase and Supabase. -
-Databases. - Browser automation. - API testing. - Docker. - SSH and
-SFTP. - Cloud storage. - Documentation tools. - Deployment services.
-
-Do not invent compatibility. Verify each integration against its actual
-API and supported protocol.
-
-============================================================ 10. CODE
-INTELLIGENCE AND EDITOR PERFORMANCE
-============================================================
-
-Provide real code intelligence through appropriate language servers and
-editor integration.
-
-Capabilities: - Syntax highlighting. - Autocomplete. - Diagnostics. - Go
-to definition. - Find references. - Rename symbols. - Hover
-documentation. - Formatting. - Code folding. - Bracket matching. -
-Import assistance. - Semantic highlighting. - Refactoring.
-
-Investigate appropriate language servers, such as: - TypeScript Language
-Server. - Pyright. - Rust Analyzer. - Gopls. - Clangd. - Suitable Java
-and Kotlin language servers.
-
-Do not claim language-server support until the server can be
-installed/launched, communicate with the editor, and return working
-results.
-
-PERFORMANCE: The editor must remain responsive when navigating away and
-returning.
-
-Implement or verify: - Background parsing and analysis. - Incremental
-document updates. - Syntax highlighting caching. - Lazy
-initialization. - Lifecycle-aware editor state. - Cancellation of
-obsolete jobs. - Avoidance of duplicate language-server processes. -
-Memory and process cleanup. - Large-file handling. - Main-thread
-protection.
-
-Measure editor resume time and memory use before and after changes. Do
-not solve performance problems by silently removing useful editor
-features.
-
-============================================================ 11. BUILD,
-TEST, DEBUG, AND DELIVERY
-============================================================
-
-A successful development workflow should be:
-
-1.  OpenCode receives the user’s task.
-2.  OpenCode inspects the project using CloseCode tools.
-3.  OpenCode identifies the project type and requirements.
-4.  OpenCode checks available toolchains.
-5.  Missing dependencies are identified.
-6.  The user is informed before large downloads, paid remote usage, or
-    sensitive changes.
-7.  OpenCode creates or modifies project files.
-8.  OpenCode runs builds and tests.
-9.  OpenCode reads actual errors and logs.
-10. OpenCode fixes issues.
-11. OpenCode repeats relevant tests.
-12. OpenCode verifies outputs and artifacts.
-13. OpenCode reports what succeeded, failed, or remains unverified.
-14. The user can access the resulting files and artifacts.
-
-Build outputs must be stored in known, accessible locations. Report
-exact paths and provide working access to generated artifacts.
-
-Never report a successful build or test based only on an expected result
-or mocked response.
-
-============================================================ 12.
-SECURITY AND USER CONTROL
-============================================================
-
-Implement: - Project-scoped file permissions. - Read-only and write
-access levels. - Terminal command permission policies. - Confirmation
-for destructive operations. - Network permission controls. - Secure
-API-key and credential storage. - No secrets in ordinary logs or
-model-visible output. - Remote host authentication. - Process and
-resource limits. - Audit logs for important operations. - Backups or Git
-checkpoints before risky changes. - Cancellation and recovery
-mechanisms.
-
-The agent should be able to work efficiently without asking for approval
-for every harmless file operation, while sensitive and destructive
-actions remain protected.
-
-============================================================ 13.
-IMPLEMENTATION PHASES
-============================================================
-
-Implement in dependency order. Do not attempt a massive rewrite in one
-step.
-
-PHASE 0 — AUDIT AND BASELINE - Inspect current architecture. - Verify
-OpenCode launch and model/provider setup. - Inventory existing tools and
-capabilities. - Test terminal, file, Git, Android, build, and process
-functions. - Measure editor performance. - Produce audit reports and
-roadmap.
-
-PHASE 1 — RELIABLE CORE EXECUTION - Stabilize file operations. -
-Stabilize terminal execution. - Add robust process management. - Add
-output streaming and exit codes. - Add cancellation and timeouts. -
-Verify Git workflows.
-
-PHASE 2 — OPENCODE TOOL ACCESS - Implement the chosen supported OpenCode
-integration. - Register existing CloseCode capabilities. - Define tool
-schemas and permissions. - Verify tool discovery and real execution. -
-Test errors, cancellation, and reconnection.
-
-PHASE 3 — TOOLCHAIN MANAGEMENT - Detect project types. - Detect
-available runtimes and SDKs. - Add on-demand
-installation/configuration. - Add version and environment management. -
-Verify representative builds.
-
-PHASE 4 — BUILD, TEST, AND DEBUG - Integrate real build workflows. -
-Capture structured build results. - Integrate test execution. - Improve
-diagnostics and debugging. - Verify artifact delivery.
-
-PHASE 5 — ANDROID DEVICE INTEGRATION - Expose verified ADB/device
-capabilities. - Integrate Logcat, screenshots, app installation, and
-tests. - Enforce Android permissions and platform limitations.
-
-PHASE 6 — CODE INTELLIGENCE AND PERFORMANCE - Integrate language
-servers. - Improve editor responsiveness. - Test navigation and large
-files. - Prevent duplicate background processes.
-
-PHASE 7 — MCP AND EXTENSIONS - Integrate MCP. - Add plugin and skill
-compatibility. - Add documentation and integration examples.
-
-PHASE 8 — REMOTE EXECUTION - Add optional remote Linux support. - Add
-secure remote process and workspace management. - Add specialized
-environments when configured. - Verify artifact retrieval and failure
-recovery.
-
-PHASE 9 — ADVANCED WORKFLOWS - Multi-agent workflows using supported
-OpenCode capabilities. - Browser and API testing. - Database tools. -
-Deployment integrations. - Advanced profiling and automation.
-
-For each phase: - Define scope. - Identify files/modules. - Implement. -
-Run tests. - Record evidence. - Update documentation. - Preserve working
-functionality.
-
-============================================================ 14.
-ACCEPTANCE TESTS
-============================================================
-
-The project is not complete merely because it compiles.
-
-At minimum, verify these end-to-end tests:
-
-TEST 1 — OPENCODE CONNECTION OpenCode starts correctly, uses its
-configured model/provider, and can access the CloseCode tool
-integration.
-
-TEST 2 — TOOL DISCOVERY OpenCode can discover available CloseCode tools
-and their valid input schemas.
-
-TEST 3 — FILE WORKFLOW Ask OpenCode to inspect a project, create a file,
-modify it, read it back, and report the exact result.
-
-TEST 4 — TERMINAL WORKFLOW Ask OpenCode to run a command, stream output,
-return the exit code, and cancel a long-running process.
-
-TEST 5 — GIT WORKFLOW Ask OpenCode to inspect Git status, create a
-branch, make a controlled change, and show the diff.
-
-TEST 6 — PROJECT DETECTION Give OpenCode representative projects and
-verify it correctly identifies their technology and required toolchain.
-
-TEST 7 — BUILD WORKFLOW Build at least one supported project using the
-actual compiler/build system and retrieve the resulting artifact.
-
-TEST 8 — ERROR DIAGNOSIS Introduce a controlled build error. Verify
-OpenCode receives the real error, fixes it, and reruns the build.
-
-TEST 9 — ANDROID DEVICE WORKFLOW Where permissions and configuration
-allow, list a device, capture a screenshot, retrieve Logcat, and
-install/launch a test APK.
-
-TEST 10 — MCP Connect a test MCP server, discover its tool, invoke it,
-and handle a connection failure.
-
-TEST 11 — PERMISSIONS Verify that restricted and destructive operations
-are blocked or require approval according to policy.
-
-TEST 12 — PROCESS RECOVERY Test app navigation, background execution,
-interruption, cancellation, and recovery without leaving orphaned
-processes.
-
-TEST 13 — EDITOR PERFORMANCE Measure opening and returning to the
-editor, including a representative project with syntax highlighting and
-language intelligence enabled.
-
-TEST 14 — REMOTE EXECUTION Only if remote execution is configured: run a
-task remotely, stream logs, cancel it, and retrieve an artifact.
-
-For every test, record: - Environment and device details. - Exact
-steps. - Expected result. - Actual result. - Logs or other evidence. -
-Pass, fail, or blocked status. - Known limitations.
-
-============================================================ 15.
-REQUIRED DOCUMENTATION AND FINAL REPORT
-============================================================
-
-Maintain these documents:
-
-1.  CLOSECODE_CURRENT_CAPABILITIES.md
-2.  CLOSECODE_MISSING_CAPABILITIES.md
-3.  CLOSECODE_ARCHITECTURE_AUDIT.md
-4.  CLOSECODE_IMPLEMENTATION_ROADMAP.md
-5.  CLOSECODE_OPENCODE_INTEGRATION.md
-6.  CLOSECODE_TOOL_CATALOG.md
-7.  CLOSECODE_TOOLCHAIN_SUPPORT.md
-8.  CLOSECODE_SECURITY_MODEL.md
-9.  CLOSECODE_TEST_REPORT.md
-10. CLOSECODE_KNOWN_LIMITATIONS.md
-
-The final report must state: - What was implemented. - What was
-reused. - What was changed. - What was tested. - What passed. - What
-failed. - What remains incomplete. - Which features require remote
-services. - Which features cannot run locally on Android. - Any
-additional dependencies, storage, permissions, or costs.
-
-============================================================ 16.
-NON-NEGOTIABLE DEVELOPER RULES
-============================================================
-
-1.  Audit before major implementation.
-2.  Preserve working CloseCode functionality.
-3.  Do not build a second AI agent; OpenCode is the agent.
-4.  Do not confuse the AI model/provider with OpenCode.
-5.  Do not invent APIs, tool names, configuration keys, or
-    compatibility.
-6.  Verify the actual OpenCode version and supported integration method.
-7.  Do not claim a capability works until it has been tested.
-8.  Do not use mocked results as proof of real functionality.
-9.  Do not assume all desktop Linux tools run natively on Android.
-10. Do not silently move work to a remote service or incur costs.
-11. Do not expose secrets to the model or logs.
-12. Do not block the Android UI thread with builds or code analysis.
-13. Do not remove features merely to make tests pass.
-14. Document platform limitations and incomplete work.
-15. Implement in small, reviewable phases.
-
-============================================================ 17. FINAL
-PRODUCT VISION
-============================================================
-
-The intended user experience is:
-
-The user opens CloseCode on an Android phone, opens OpenCode,
-selects/configures an available model provider, and gives OpenCode a
-real development task.
-
-OpenCode should be able to inspect the project, use CloseCode’s tools,
-edit files, run commands, install supported dependencies, build, test,
-debug, and verify the result.
-
-When a task exceeds Android’s local capabilities, CloseCode should
-explain the requirement and use a configured remote environment if one
-is available and authorized.
-
-The user should receive an honest completion report and access to the
-actual generated files or build artifacts.
-
-The ultimate objective:
-
-MAKE CLOSECODE THE DEVELOPMENT ENVIRONMENT THAT OPENCODE CAN USE TO DO
-REAL SOFTWARE DEVELOPMENT FROM AN ANDROID PHONE.
-
-Start with the existing codebase. Audit it. Prove what already works.
-Identify the gaps. Then implement the roadmap systematically without
-unnecessary rewrites or unsupported claims.
+CloseCode — build 90 brief: three bugs in the app itself
+You are the developer of my phone app CloseCode. You have everything you need to build it. This file is the complete instruction for the next build — there is nothing else you need from me, and I am asking for one build, not a series.
+
+Last build tested: 89 (CloseCode 0.89.1663, commit 5d91d26) Device: one Android phone, arm64, Android 16, 8 cores, 11.9 GB RAM Test project: com.rapas.redit — AGP 8.12.0, Kotlin 1.9.24, Compose BOM 2024.09.03, Media3 + MediaPipe + Vosk, minSdk 26, targetSdk 35
+
+The short version (read this first)
+I am the person who uses CloseCode on my phone. I want to build my Android app on my phone, with no computer and no AI helping me.
+
+The build engine is finished — the acceptance script at the bottom of this file prints PASS 29, FAIL 0 on build 89. But the app itself has three bugs that stop me using it. All three are in the app, not in my project.
+
+#	What I want	In one sentence
+1	A new project I create in the app must compile	The "New project" screen still writes an old template, so every project I create there fails with "Unresolved reference 'Text'".
+2	The "package name already used" message must be right	It refuses a name that is not used anywhere on the phone.
+3	The app's own self-test must pass	It fails at step 10 "Full test build" because the bundled aapt2 is too old for Android 15.
+How you will know it worked: run the script at the end of this file on the phone. When it prints FAIL 0, we are done.
+
+Please do not send me a build before that script says FAIL 0.
+
+Where we are
+Build 89 is good. The build engine works, and I have proved it by building on the phone:
+
+Result
+My app — Media3, MediaPipe, Vosk, Compose	✅ builds three ways, one signing key
+A brand-new Android app from the CLI template	✅ 246 s, signed, no manual edits
+An app with native C++ (CMake + NDK + JNI)	✅ lib/arm64-v8a/libnativetest.so in the APK
+A release build	✅ signed, installable
+Unit tests and lint	✅ pass
+All six CLI templates	✅ generate correct files
+Python venvs	✅ pip install works inside them
+A fresh NDK install	✅ the compiler runs — you fixed the bash wrappers and the symlinks
+A broken download	✅ resumes, and cleans up afterwards
+Removing a tool	✅ the 1.6 GB cache survives
+closecode speed	✅ makes my builds faster
+What is left is the app's own behaviour, which the script cannot see.
+
+Bug 1 — a project I create in the app must compile
+What I see
+I create a project from the New project screen in the app, enter a package name, and the project it creates will not compile:
+
+MainActivity.kt
+ 12                 Text("Hello, world")
+     ^^^^^^^^^^^^^^ Unresolved reference 'Text'   E0101
+The cause
+There are two copies of the template, and only one of them was fixed.
+
+Build 84 fixed the template. I checked all three copies on the phone:
+
+Where the file came from	Has import androidx.compose.material3.Text?
+closecode init --template android-compose	✅ yes
+The app's own self-test scaffold (cache/self-test/build-app)	✅ yes
+The New project screen in the app (projects/buildprobe)	❌ no
+The file the editor writes still looks like this:
+
+package com.closecode.buildprobe
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            ClosecodeTheme {
+                Text("Hello, world")      // ← Text is never imported
+            }
+        }
+    }
+}
+So every project created from the app's own screen fails its first build, with an error the user has to read in a source file.
+
+What to do
+One template, two front ends. The New project screen and closecode init must write the same files from the same source. If the templates are in the APK's assets, update the copy the editor uses. If they are in two places in the code, make them one place — otherwise they will drift apart again, which is exactly what happened.
+Build what you generate before the user gets it. closecode selftest already scaffolds every template — please make it compile them too, not only create them. A template that does not compile is a broken product.
+Done when
+a project created from the New project screen builds with no manual edit
+closecode init and the New project screen produce identical files
+the acceptance script's step 16 passes
+Bug 2 — the "package name already used" message must be right
+What I see
+I enter a package name I have never used, and the app says it is taken:
+
+Package name
+com.rrbndbbdhdh.dibsh
+That package name is already used by another project. Pick a unique one.
+The same message appears twice — once under the field and once at the bottom of the form.
+
+The proof it is wrong
+That name exists nowhere on the phone:
+
+$ grep '"packageName"' files/project-registry.json | sort -u
+"packageName":"com.closecode.apitest"     "packageName":"com.closecode.buildprobe"
+"packageName":"com.closecode.gjb"         "packageName":"com.closecode.hh"
+…                                         "packageName":"com.rapas.redit"
+(no com.rrbndbbdhdh.dibsh)
+
+$ closecode apps list | grep rrbndbbdhdh
+(nothing)
+So it is not registered as a project and not installed on the phone — yet the form refuses it.
+
+Two things I noticed that point at the cause
+1. The registry is allowed to hold duplicates. While testing I created a project twice and the app happily wrote two entries with the same package name:
+
+"slug":"nativetest",  "packageName":"com.closecode.nativetest"
+"slug":"nativetest-2","packageName":"com.closecode.nativetest"
+So the uniqueness rule is not applied everywhere — the CLI does not check it at all. That suggests the editor's check is comparing against something that includes the entry for the project being created, so it finds itself and reports a clash.
+
+2. If it matches only a part of the name, every name fails. Every package name registered on this phone starts with com. If the check compares the first segment of what I typed, or looks for the new name as a substring of the existing ones, then com matches everything and no name is ever accepted — which is what I am seeing.
+
+I cannot tell which of the two it is without your code, but both produce exactly this symptom.
+
+What to do
+Compare the whole package name, against the registry's package names and the installed apps. Never a fragment, a segment or a substring.
+Exclude the project being created from the comparison. If the editor writes its registry entry before it validates, it will always find a match.
+Apply the same rule in both places. The CLI must refuse a duplicate too, so the two front ends cannot disagree.
+Show the name that is in the way. If it really is taken, say which project holds it. Right now the message gives the user nothing to act on.
+Done when
+a package name that is not used anywhere is accepted
+a package name that is used is refused, and the message names the project using it
+the check behaves the same in the app and in closecode init
+Bug 3 — the app's own self-test must pass
+What I see
+In the app, Developer → Self-test, step 10 fails:
+
+10. Full test build          Fail
+    Compile resources: The resources did not compile. See the build log.
+Every other step passes (Java compiler, D8, signing key, install permission, network, shell).
+
+The cause
+The build log says:
+
+== Compile resources
+version 1 (1.0) from the project
+error: failed to load include path /data/user/0/com.closecode/files/toolchain/1/android-35.jar.
+The app's own aapt2 cannot read the API 35 platform resources:
+
+$ closecode tool aapt2 dump badging sdk/platforms/android-35/android.jar
+error: illegal map type 'string' (22).
+error: failed to parse value for resource android:string/ (0x010407c1) with configuration 'am'.
+The SDK's aapt2 reads the very same file without trouble:
+
+$ sdk/build-tools/35.0.1/aapt2 dump badging sdk/platforms/android-35/android.jar
+package: name='android' versionCode='35' versionName='15'
+minSdkVersion:'35'
+Two copies of android.jar are involved and they are byte-for-byte identical (cmp says so), so the file is not the problem — the binary is. The aapt2 the phone engine uses is an older build whose resource-table parser does not understand Android 15's format. Its banner gives it away:
+
+app's aapt2 : aapt (aapt) 2.19-OS3.0.303.0.WPFEUXM
+SDK's aapt2 : Android Asset Packaging Tool (aapt) 2.19-SOONG BUILD NUMBER PLACEHOLDER
+What to do
+Use the SDK's aapt2 for the phone engine. It is already installed, it is arm64, and it parses the API 35 resources correctly. The Gradle path already does this through android.aapt2FromMavenOverride; the phone engine should point at the same one.
+Or update the bundled aapt2 to a build that understands the platform resource table you ship.
+Make the self-test a gate. Step 10 exists to catch exactly this. It should fail the release, not sit there red.
+Done when
+the self-test in the app shows every step green
+closecode selftest passes on a fresh phone
+the acceptance script's step 17 passes
+Rules
+One installer, two front ends. Anything in Settings must also be reachable from closecode setup, and the reverse. One template, two front ends, too.
+The app installs, the user consents. The AI must never need curl, tar, chmod, or a hand-written license file.
+Never destroy a working install or a cache to install or remove something.
+One signing key for every engine and every build path.
+A failed build exits non-zero with one root cause, diagnostics and a log path.
+Reject unknown flags. Unknown arguments print usage and exit with no side effects.
+Never claim a capability the code does not have. If a screen says a tool works, it must work. A command that produces an unsigned APK must not report ok:true. A command that reports a certificate must report the one the file really has.
+A template that does not compile is a broken product. Anything you generate must be built and run before it reaches a user.
+A path means what the user typed. Resolve it against the folder they are in.
+Never install something that cannot run on this phone, and never leave a half-installed package where a build can find it.
+A validation message must be true. If the app says a name is taken, it is taken. If it is not, the message is worse than no message.
+One tool, one answer. The phone engine and the Gradle path must not disagree about what a file is or whether it works.
+Before you ship — run this yourself
+Do not send me a build until these are true on your side. Each one takes a minute.
+
+# bug 1 — the editor's template
+# create a project from the New project screen, then:
+grep -n "material3.Text" <project>/app/src/main/java/*/*/MainActivity.kt
+
+# bug 2 — the uniqueness check
+# enter a package name that exists nowhere, such as com.zztest.aa11
+# it must be accepted
+
+# bug 3 — the phone engine's aapt2
+closecode tool aapt2 dump badging sdk/platforms/android-35/android.jar
+# must print: package: name='android' versionCode='35'
+
+closecode selftest                       # every step green
+sh closecode-acceptance.sh               # the whole board, steps 16 and 17 are new
+Then, and only then, send me the board.
+
+The test script
+Save this as closecode-acceptance.sh next to the project.
+
+sh closecode-acceptance.sh          # safe checks, about 10 minutes
+sh closecode-acceptance.sh --all    # also removes and reinstalls Gradle
+It is written for Android's toybox, so it uses grep -E for alternation. The only thing it changes is a temporary syntax error in app/build.gradle.kts, which it puts back immediately.
+
+Steps 16 and 17 are new:
+
+16 — every project in the registry imports what its source uses
+17 — the phone engine can read the platform resources
+#!/system/bin/sh
+# =============================================================================
+# CloseCode acceptance test — run it ON THE PHONE, no computer needed.
+#
+#   sh closecode-acceptance.sh          safe checks only
+#   sh closecode-acceptance.sh --all    also runs the destructive checks
+#                                           (destroys the Gradle cache)
+#
+# Exit code 0 = everything passed. Non-zero = read the FAIL lines.
+# Every check prints PASS / FAIL / SKIP with the number it measured.
+#
+# NOTE: this runs on Android's toybox, so it uses `grep -E` for alternation
+# (toybox grep does not understand `\|`).
+# =============================================================================
+
+PASS=0
+FAIL=0
+SKIP=0
+FAILED_LINES=""
+ROOT=$(cd "$(dirname "$0")" && pwd)
+TMP="$ROOT/.acceptance"
+RUN_ALL="$1"
+
+say()  { printf '%s\n' "$*"; }
+ok()   { PASS=$((PASS+1)); printf '  PASS  %s\n' "$1"; }
+bad()  { FAIL=$((FAIL+1)); FAILED_LINES="$FAILED_LINES
+    - $1"; printf '  FAIL  %s\n' "$1"; }
+skip() { SKIP=$((SKIP+1)); printf '  SKIP  %s\n' "$1"; }
+head_() { printf '\n%s\n' "$1"; }
+
+# ---- small helpers ----------------------------------------------------------
+jget() {  # jget <file> <key>  -> first string value of key
+  sed -n "s/.*\"$2\":\"\([^\"]*\)\".*/\1/p" "$1" 2>/dev/null | head -1
+}
+jnum() {  # jnum <file> <key>  -> first numeric value of key
+  sed -n "s/.*\"$2\":\([0-9][0-9]*\).*/\1/p" "$1" 2>/dev/null | head -1
+}
+du_k() { du -sk "$1" 2>/dev/null | cut -f1; }
+
+rm -rf "$TMP"; mkdir -p "$TMP"
+STATUS="$TMP/status.json"
+
+say "==========================================================="
+say " CloseCode acceptance test"
+say " project : $ROOT"
+say " date    : $(date '+%Y-%m-%d %H:%M')"
+say "==========================================================="
+
+# =============================================================================
+head_ "1. Toolchain is installed and complete"
+closecode toolchain status --json > "$STATUS" 2>/dev/null
+if [ ! -s "$STATUS" ]; then
+  bad "closecode toolchain status produced no output"
+else
+  GRADLE_HOME=$(jget "$STATUS" gradleUserHome)
+  SDK_ROOT=$(jget "$STATUS" sdkRoot)
+  JDK_PATH=$(sed -n 's/.*"jdk":{[^}]*"path":"\([^"]*\)".*/\1/p' "$STATUS" | head -1)
+
+  [ -n "$JDK_PATH" ] && [ -x "$JDK_PATH/bin/java" ] \
+    && ok "JDK installed: $JDK_PATH" || bad "no usable JDK reported by toolchain status"
+
+  [ -n "$GRADLE_HOME" ] && [ -d "$GRADLE_HOME" ] \
+    && ok "GRADLE_USER_HOME exists: $GRADLE_HOME" || bad "GRADLE_USER_HOME missing"
+
+  [ -n "$SDK_ROOT" ] && [ -d "$SDK_ROOT" ] \
+    && ok "SDK root exists: $SDK_ROOT" || bad "SDK root missing"
+
+  grep -q '"api":35,"path":"[^"]*","ok":true' "$STATUS" \
+    && ok "Android platform 35 installed" || bad "Android platform 35 not installed"
+
+  grep -q '"buildTools":\[{"version"' "$STATUS" \
+    && ok "build-tools installed" || bad "build-tools not installed"
+
+  [ -d "$SDK_ROOT/platform-tools" ] \
+    && ok "platform-tools installed" || bad "platform-tools missing"
+
+  if [ -f "$SDK_ROOT/licenses/android-sdk-license" ]; then
+    ok "SDK licenses accepted ($(ls "$SDK_ROOT/licenses" | wc -l | tr -d ' ') files)"
+  else
+    bad "SDK licenses missing (android-sdk-license not found)"
+  fi
+
+  [ -d "$SDK_ROOT/ndk" ] && [ -d "$SDK_ROOT/cmake" ] \
+    && ok "NDK and CMake installed" || bad "NDK or CMake missing"
+fi
+
+# =============================================================================
+head_ "2. The size the app shows matches the disk"
+if [ -n "$SDK_ROOT" ] && [ -d "$SDK_ROOT" ]; then
+  REPORTED=$(jnum "$STATUS" sdkBytes)
+  # du of everything in the SDK except the native toolchain, which the app
+  # reports separately under "Native tools".
+  ONDISK=0
+  for D in build-tools platforms platform-tools licenses; do
+    K=$(du_k "$SDK_ROOT/$D" 2>/dev/null)
+    [ -n "$K" ] && ONDISK=$((ONDISK + K))
+  done
+  REPORTED_K=0
+  [ -n "$REPORTED" ] && REPORTED_K=$((REPORTED / 1024))
+  if [ "$ONDISK" -gt 0 ] && [ "$REPORTED_K" -gt 0 ]; then
+    say "        app reports ${REPORTED_K} KB, disk has ${ONDISK} KB"
+    # A previous build showed 3.6 GB for 1.8 GB of NDK + CMake, exactly double.
+    # Catch that class of bug without demanding byte-exact accounting.
+    if [ "$REPORTED_K" -gt $((ONDISK * 3 / 2)) ] || [ "$REPORTED_K" -lt $((ONDISK / 2)) ]; then
+      bad "reported SDK size is more than 1.5x away from the disk"
+    else
+      ok "reported SDK size is in the right range"
+    fi
+  else
+    skip "no size reported by toolchain status"
+  fi
+else
+  skip "SDK root missing"
+fi
+
+# =============================================================================
+head_ "3. closecode build produces a signed APK"
+# Remove the old logs so check 9 only sees what this build writes.
+rm -f "$ROOT/build/logs/build.log" "$ROOT/build/logs/exec.log" 2>/dev/null
+closecode build > "$TMP/build.json" 2>&1
+BUILD_EXIT=$?
+APK="$ROOT/app/build/outputs/apk/debug/app-debug.apk"
+if [ "$BUILD_EXIT" -eq 0 ] && [ -f "$APK" ]; then
+  ok "closecode build exited 0 ($(wc -c < "$APK" | tr -d ' ') bytes)"
+  cp "$APK" "$TMP/apk-pipeline.apk"
+else
+  bad "closecode build exited $BUILD_EXIT"
+  tail -c 400 "$TMP/build.json" | sed 's/^/        /'
+fi
+
+# =============================================================================
+head_ "4. ./gradlew assembleDebug succeeds"
+if [ -x "$ROOT/gradlew" ]; then
+  ( cd "$ROOT" && ./gradlew assembleDebug ) > "$TMP/gradlew.log" 2>&1
+  GW_EXIT=$?
+  if [ "$GW_EXIT" -eq 0 ]; then
+    ok "./gradlew assembleDebug exited 0"
+    cp "$ROOT/app/build/outputs/apk/debug/app-debug.apk" "$TMP/apk-gradle.apk"
+  else
+    bad "./gradlew assembleDebug exited $GW_EXIT"
+    grep -iE "error|what went wrong" "$TMP/gradlew.log" | head -3 | sed 's/^/        /'
+  fi
+else
+  skip "no gradlew shim in the project"
+fi
+
+# =============================================================================
+head_ "5. Both build paths sign with the same key"
+[ -n "$JAVA_HOME" ] || export JAVA_HOME="$JDK_PATH"
+# Some installed build-tools have '#!/bin/bash' shebangs, which Android does not
+# have, so try every apksigner until one actually answers.
+cert_of() {  # cert_of <apk> -> signer certificate SHA-256, or empty
+  for C in "$SDK_ROOT"/build-tools/*/apksigner; do
+    [ -f "$C" ] || continue
+    OUT=$("$C" verify --print-certs "$1" 2>/dev/null | grep "SHA-256 digest" | head -1 | sed 's/.*digest: //')
+    if [ -n "$OUT" ]; then echo "$OUT"; return; fi
+  done
+  echo ""
+}
+if [ ! -f "$TMP/apk-pipeline.apk" ] || [ ! -f "$TMP/apk-gradle.apk" ]; then
+  skip "no APK from one of the two paths"
+else
+  CERT_A=$(cert_of "$TMP/apk-pipeline.apk")
+  CERT_B=$(cert_of "$TMP/apk-gradle.apk")
+  say "        closecode build : ${CERT_A:-none}"
+  say "        ./gradlew       : ${CERT_B:-none}"
+  if [ -z "$CERT_A" ] || [ -z "$CERT_B" ]; then
+    skip "no working apksigner found (build-tools scripts may need /bin/sh)"
+  elif [ "$CERT_A" = "$CERT_B" ]; then
+    ok "both build paths sign with the same key"
+  else
+    bad "the two build paths use different signing keys"
+  fi
+  if [ "$CERT_A" = "30fae35d64645323304340c4f570a58377de8153477a5e334dc62c036a87f979" ]; then
+    ok "the key is CN=Closecode Debug"
+  else
+    bad "the key is not CN=Closecode Debug"
+  fi
+fi
+
+# =============================================================================
+head_ "6. A failed build exits non-zero with one clear cause"
+GRADLE_FILE="$ROOT/app/build.gradle.kts"
+if [ -f "$GRADLE_FILE" ]; then
+  cp "$GRADLE_FILE" "$TMP/build.gradle.kts.bak"
+  printf '\nthis is not valid kotlin !!!\n' >> "$GRADLE_FILE"
+  ( cd "$ROOT" && closecode build ) > "$TMP/badbuild.log" 2>&1
+  BAD_EXIT=$?
+  cp "$TMP/build.gradle.kts.bak" "$GRADLE_FILE"        # always put it back
+  if [ "$BAD_EXIT" -ne 0 ]; then
+    ok "a broken project exits $BAD_EXIT (non-zero)"
+    if grep -qE "Gradle failed \(exit 1\)" "$TMP/badbuild.log"; then
+      ok "the failure names one root cause"
+      grep -o '"summary":"[^"]*"' "$TMP/badbuild.log" | head -1 | sed 's/^/        /'
+    else
+      bad "the failure does not name one root cause"
+    fi
+    if grep -qE "[a-zA-Z]+\.log" "$TMP/badbuild.log"; then
+      ok "the failure output names a log file"
+    else
+      bad "the failure output does not name a log file"
+    fi
+  else
+    bad "a broken project built successfully"
+  fi
+else
+  skip "no app/build.gradle.kts to break"
+fi
+
+# =============================================================================
+head_ "7. A JDK can be chosen, and the choice is real"
+JDK21="/data/user/0/com.closecode/file/j/lib/jvm/java-21-openjdk"
+if [ ! -x "$JDK21/bin/java" ]; then
+  skip "JDK 21 is not installed (closecode setup --java21)"
+else
+  # a) some command must accept a JDK selection
+  ACCEPTED=""
+  for KEY in jdk javaHome java.home jdkPath java; do
+    OUT=$(closecode config set "$KEY" "$JDK21" 2>&1)
+    if ! echo "$OUT" | grep -qi "unknown key"; then
+      ACCEPTED="$KEY"
+      break
+    fi
+  done
+  if [ -n "$ACCEPTED" ]; then
+    ok "closecode config set $ACCEPTED <jdk> is accepted"
+  else
+    bad "no command can select a JDK (config set rejects every key)"
+  fi
+
+  # b) the toolchain status must show the selection
+  closecode toolchain status --json > "$STATUS" 2>/dev/null
+  if grep -q "java-21-openjdk" "$STATUS"; then
+    ok "toolchain status reports the selected JDK 21"
+  else
+    bad "toolchain status does not report the selected JDK 21"
+  fi
+
+  # c) the wrapper must use it for launcher AND daemon
+  ( cd "$ROOT" && env -u JAVA_HOME ./gradlew --version ) > "$TMP/version.log" 2>&1
+  LAUNCH=$(grep "Launcher JVM" "$TMP/version.log" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  DAEMON=$(grep "Daemon JVM" "$TMP/version.log" | grep -oE 'java-[0-9]+' | head -1)
+  if [ "$DAEMON" = "java-21" ]; then
+    ok "./gradlew daemon runs on the selected JDK ($DAEMON)"
+  else
+    bad "./gradlew daemon runs on ${DAEMON:-unknown}, expected java-21"
+  fi
+  case "$LAUNCH" in
+    21.*) ok "./gradlew launcher runs on the selected JDK ($LAUNCH)" ;;
+    *)    bad "./gradlew launcher runs on ${LAUNCH:-unknown}, expected 21.x" ;;
+  esac
+
+  # d) closecode build must use the same JDK
+  closecode build > "$TMP/build21.json" 2>&1
+  if grep -qE "21\.0\." "$ROOT/build/logs/exec.log" 2>/dev/null \
+     || grep -qE "21\.0\." "$ROOT/build/logs/build.log" 2>/dev/null; then
+    ok "closecode build ran on JDK 21"
+  else
+    bad "closecode build did not run on JDK 21"
+    head -2 "$ROOT/build/logs/exec.log" 2>/dev/null | sed 's/^/        /'
+  fi
+
+  # put it back
+  if [ -n "$ACCEPTED" ]; then closecode config unset "$ACCEPTED" >/dev/null 2>&1; fi
+fi
+
+# =============================================================================
+head_ "8. python3 -m venv works"
+( cd "$TMP" && python3 -m venv venvtest ) > "$TMP/venv.log" 2>&1
+if [ -x "$TMP/venvtest/bin/pip" ] && "$TMP/venvtest/bin/pip" --version >/dev/null 2>&1; then
+  ok "python3 -m venv creates a working pip"
+else
+  bad "python3 -m venv does not create a working pip"
+  tail -2 "$TMP/venv.log" | sed 's/^/        /'
+fi
+
+# =============================================================================
+head_ "9. The build log contains no error"
+# Step 6 breaks the build on purpose, so rebuild cleanly first: this check must
+# look at the log of a successful build, not of the deliberate failure.
+rm -f "$ROOT/build/logs/build.log" "$ROOT/build/logs/exec.log" 2>/dev/null
+closecode build > "$TMP/build9.json" 2>&1
+if [ -f "$ROOT/build/logs/build.log" ]; then
+  if grep -qE "BUILD FAILED|^FAILURE:" "$ROOT/build/logs/build.log"; then
+    bad "build/logs/build.log contains a failed build"
+    grep -m2 -E "BUILD FAILED|^FAILURE:" "$ROOT/build/logs/build.log" | sed 's/^/        /'
+  else
+    ok "build/logs/build.log has no failed build"
+  fi
+  if grep -q "Could not connect to Kotlin compile daemon" "$ROOT/build/logs/build.log" 2>/dev/null; then
+    printf '  WARN  the Kotlin compile daemon did not connect; the build fell back to in-process compilation\n'
+  fi
+else
+  skip "no build/logs/build.log"
+fi
+if [ -f "$ROOT/build/logs/exec.log" ]; then
+  if grep -qE "Error|Exception" "$ROOT/build/logs/exec.log"; then
+    bad "build/logs/exec.log contains an error"
+    grep -m2 -E "Error|Exception" "$ROOT/build/logs/exec.log" | sed 's/^/        /'
+  else
+    ok "build/logs/exec.log is clean"
+  fi
+else
+  skip "the build does not write build/logs/exec.log"
+fi
+
+# =============================================================================
+head_ "10. Removing a component keeps the dependency cache"
+if [ "$RUN_ALL" = "--all" ]; then
+  say "        removing Gradle and reinstalling — this takes about 25 minutes"
+  GRADLE_HOME=$(jget "$STATUS" gradleUserHome)
+  before=$(du_k "$GRADLE_HOME" 2>/dev/null)
+  closecode setup --remove gradle > "$TMP/remove.log" 2>&1
+  if [ -d "$GRADLE_HOME" ]; then
+    after=$(du_k "$GRADLE_HOME" 2>/dev/null)
+    say "        cache before ${before} KB, after ${after} KB"
+    if [ "$after" -ge "$before" ]; then
+      ok "removing Gradle kept the dependency cache"
+    else
+      bad "removing Gradle deleted the dependency cache"
+    fi
+    closecode setup --gradle > "$TMP/reinstall.log" 2>&1
+    ok "Gradle reinstalled"
+  else
+    bad "removing Gradle deleted $GRADLE_HOME (the whole cache)"
+    closecode setup --gradle > "$TMP/reinstall.log" 2>&1
+    ok "Gradle reinstalled"
+  fi
+else
+  skip "destructive — run with --all to test it"
+fi
+
+# =============================================================================
+head_ "11. A failed download resumes"
+skip "needs a network that fails on purpose — test manually"
+
+# =============================================================================
+head_ "12. Commands that take a path accept a relative one"
+cd "$TMP" 2>/dev/null || cd "$ROOT"
+if [ -f "$TMP/apk-pipeline.apk" ]; then
+  cp "$TMP/apk-pipeline.apk" "$TMP/rel.apk"
+  OUT=$(closecode sign-apk rel.apk 2>&1)
+  if echo "$OUT" | grep -qi '"ok":true'; then
+    ok "closecode sign-apk rel.apk works with a relative path"
+  else
+    bad "closecode sign-apk does not accept a relative path"
+    echo "$OUT" | head -c 200 | sed 's/^/        /'
+  fi
+else
+  skip "no APK to test with"
+fi
+cd "$TMP" 2>/dev/null || cd "$ROOT"
+rm -rf "$TMP/relvenv" 2>/dev/null
+OUT=$(closecode venv relvenv 2>&1)
+if echo "$OUT" | grep -qi '"ok":true'; then
+  ok "closecode venv relvenv works with a relative path"
+else
+  bad "closecode venv does not accept a relative path"
+  echo "$OUT" | head -c 200 | sed 's/^/        /'
+fi
+
+# =============================================================================
+head_ "13. Every installed build-tools can run on this phone"
+BAD=""
+for D in "$SDK_ROOT"/build-tools/*/; do
+  [ -d "$D" ] || continue
+  A="$D/aapt2"
+  [ -f "$A" ] || continue
+  if ! "$A" version >/dev/null 2>&1; then
+    BAD="$BAD $(basename "$D")"
+  fi
+done
+if [ -n "$BAD" ]; then
+  bad "these installed build-tools cannot run on this phone:$BAD"
+  for D in "$SDK_ROOT"/build-tools/*/; do
+    [ -f "$D/aapt2" ] || continue
+    "$D/aapt2" version 2>&1 | head -1 | sed 's/^/        /'
+  done
+else
+  ok "every installed build-tools runs on this phone"
+fi
+
+# =============================================================================
+head_ "14. No half-finished install is left in the SDK"
+LEFTOVER=$(find "$SDK_ROOT" -maxdepth 3 -name ".installer" 2>/dev/null | head -3)
+if [ -n "$LEFTOVER" ]; then
+  bad "an unfinished install is still in the SDK"
+  printf '%s\n' "$LEFTOVER" | sed 's/^/        /'
+else
+  ok "no unfinished install is left in the SDK"
+fi
+
+# =============================================================================
+head_ "15. The NDK compiler runs on this phone"
+NDK_DIR=$(ls -d "$SDK_ROOT"/ndk/*/ 2>/dev/null | head -1)
+if [ -z "$NDK_DIR" ]; then
+  skip "no NDK installed"
+else
+  CC=""
+  for CAND in "$NDK_DIR"toolchains/llvm/prebuilt/linux-aarch64/bin/aarch64-linux-android21-clang \
+              "$NDK_DIR"toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang; do
+    [ -f "$CAND" ] && CC="$CAND" && break
+  done
+  if [ -z "$CC" ]; then
+    bad "the NDK has no android clang"
+  elif "$CC" --version >/dev/null 2>&1; then
+    ok "the NDK compiler runs on this phone"
+  else
+    bad "the NDK compiler cannot run on this phone"
+    "$CC" --version 2>&1 | head -1 | sed 's/^/        /'
+    head -1 "$CC" | sed 's/^/        shebang: /'
+  fi
+  # broken symlinks that were extracted as plain text files
+  BIN="$NDK_DIR"toolchains/llvm/prebuilt/linux-aarch64/bin
+  BROKEN=0
+  for f in "$BIN"/*; do
+    [ -f "$f" ] || continue
+    SIZE=$(wc -c < "$f" 2>/dev/null || echo 0)
+    if [ "$SIZE" -gt 0 ] && [ "$SIZE" -lt 40 ]; then
+      TARGET=$(cat "$f" 2>/dev/null)
+      if [ -n "$TARGET" ] && [ -f "$BIN/$TARGET" ]; then
+        BROKEN=$((BROKEN+1))
+      fi
+    fi
+  done
+  if [ "$BROKEN" -gt 0 ]; then
+    bad "$BROKEN NDK symlinks were extracted as plain text files"
+  else
+    ok "the NDK symlinks are intact"
+  fi
+fi
+
+# =============================================================================
+head_ "16. Every generated project uses the imports it needs"
+BADPROJ=""
+for PROJ in /data/user/0/com.closecode/files/projects/*/; do
+  [ -d "$PROJ" ] || continue
+  for KT in "$PROJ"app/src/main/java/*/*/MainActivity.kt; do
+    [ -f "$KT" ] || continue
+    if grep -q "Text(" "$KT" 2>/dev/null && ! grep -q "material3.Text" "$KT" 2>/dev/null; then
+      BADPROJ="$BADPROJ $(basename "$PROJ")"
+    fi
+  done
+done
+if [ -n "$BADPROJ" ]; then
+  bad "these projects were generated without the Text import:$BADPROJ"
+else
+  ok "every generated project imports what it uses"
+fi
+
+# =============================================================================
+head_ "17. The phone engine can read the platform resources"
+PJ=$(ls "$SDK_ROOT"/platforms/android-*/android.jar 2>/dev/null | head -1)
+if [ -z "$PJ" ]; then
+  skip "no platform android.jar found"
+else
+  OUT=$(closecode tool aapt2 dump badging "$PJ" 2>&1 | head -2)
+  if echo "$OUT" | grep -q "package: name='android'"; then
+    ok "the phone engine reads the platform resources"
+  else
+    bad "the phone engine cannot read the platform resources"
+    printf '%s\n' "$OUT" | sed 's/^/        /'
+  fi
+fi
+
+# =============================================================================
+say ""
+say "==========================================================="
+say " PASS $PASS   FAIL $FAIL   SKIP $SKIP"
+if [ "$FAIL" -gt 0 ]; then
+  say ""
+  say " Still failing:"
+  printf '%s\n' "$FAILED_LINES"
+fi
+say "==========================================================="
+rm -rf "$TMP"
+[ "$FAIL" -eq 0 ] && exit 0
+exit 1

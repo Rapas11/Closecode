@@ -47,6 +47,11 @@ object BuildSetupFactory {
                 SharedPreferencesKeyValueStore(context),
             )
             runCatching { AndroidProjectFiles.prepare(project.directory, platformStore.rootDir()) }
+            // The leftovers of an interrupted install are not an install. A build that finds
+            // one fetches the package itself — and the package it fetches for a desktop is
+            // one this phone cannot run.
+            runCatching { platformStore.removeIncompleteInstalls() }
+            runCatching { platformStore.removeUnusableBuildTools() }
             val facts = GradleReader.read(project.directory)
             val settings = ProjectSettings.read(project.directory)
             val nativeUsage = NativeProject.detect(project.directory, facts)
