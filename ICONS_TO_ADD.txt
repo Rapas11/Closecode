@@ -1,118 +1,106 @@
-CloseCode — build 87 brief: the installer still puts broken packages on the phone
+CloseCode — build 88 brief: the NDK is installed broken
 You are the developer of my phone app CloseCode. You have everything you need to build it. This file is the complete instruction for the next build.
 
-Last build tested: 86 (CloseCode 0.86.1651, commit bd9ac05) Device: one Android phone, arm64, Android 16, 8 cores, 11.9 GB RAM Test project: com.rapas.redit — AGP 8.12.0, Kotlin 1.9.24, Compose BOM 2024.09.03, Media3 + MediaPipe + Vosk, minSdk 26, targetSdk 35
+Last build tested: 87 (CloseCode 0.87.1656, commit a6e2f6c) Device: one Android phone, arm64, Android 16, 8 cores, 11.9 GB RAM Test project: com.rapas.redit — AGP 8.12.0, Kotlin 1.9.24, Compose BOM 2024.09.03, Media3 + MediaPipe + Vosk, minSdk 26, targetSdk 35
 
 The short version (read this first)
 I am the person who uses CloseCode on my phone. I want to build my Android app on my phone, with no computer and no AI helping me.
 
-Almost everything works now. One thing went wrong in build 86, and it is the same problem I reported in build 83 — you made the app report it, but the app still does it.
+Everything on my list is done and verified. Build 87 gives PASS 27, FAIL 0.
+
+But while checking whether it can build anything, I found that the NDK it installs cannot compile anything at all. It is the last broken piece.
 
 #	What I want	In one sentence
-1	Stop installing build-tools that cannot run on this phone	The app now says "arch":"x86_64","ok":false and then installs it anyway.
-2	A build must not break while an install is running	Mine failed with "Software caused connection abort" because the install was half-finished.
+1	The NDK must work on the phone	123 of its wrappers need bash, which Android does not have, and 14 of its symlinks were extracted as plain text files.
 How you will know it worked: run the script at the end of this file on the phone. When it prints FAIL 0, we are done.
 
 Please do not send me a build before that script says FAIL 0.
 
 Where we are
-Build 86 fixed both things from the last brief. Verified directly on the phone:
+Build 87 finished every item. Verified on the phone:
 
-$ closecode sign-apk my.apk
-{"ok":true,"apk":"/…/relcheck/my.apk","signed":true,
- "certificate":"CN=Closecode Debug (30fae35d…)"}
+ PASS 27   FAIL 0   SKIP 3
+I have also now checked, by building them on the phone, that CloseCode can produce every kind of project:
 
-$ closecode venv myenv
-{"ok":true,"path":"/…/relcheck/myenv","pip":"/…/relcheck/myenv/bin/pip"}
-Both now accept a relative path and report the resolved absolute path.
+Result
+Your app — Media3, MediaPipe, Vosk, Compose	✅ builds three ways, one signing key
+A brand-new Android app from the template	✅ 246 s, signed, no manual edits
+A release build	✅ signed, installable
+An app with native C++ code (CMake + NDK + JNI)	✅ after I fixed the NDK by hand — see below
+Unit tests and lint	✅ pass
+All six templates generate correct files	✅ android-compose, python-fastapi, python-cli, node-express, web-vite, web-static
+Python venvs	✅ pip install works inside them
+A faster build on demand	✅ closecode speed
+The only thing that was broken was the NDK, and I fixed it on the phone by hand to prove the fix works.
 
-But the board had one failure, and it is the build-tools problem from build 83 coming back:
-
-4. ./gradlew assembleDebug succeeds
-  FAIL  ./gradlew assembleDebug exited 1
-        Warning: An error occurred while preparing SDK package Android SDK Build-Tools 35:
-        Software caused connection abort.
-Everything else passed — the signing check, the JDK check, the venv check, and the new relative-path check (step 12).
-
-Do not break these — they are proven on the phone
-Behaviour	Evidence
-Both build paths sign with one key	closecode build → 30fae35d…; ./gradlew assembleDebug → the same; sign-apk replaces an existing signature
-A brand-new app builds	closecode init --template android-compose → closecode build --gradle → exit 0, 246 s, signed 30fae35d…, no manual edits
-A release build is signed	closecode release → app-release.apk, "signed":true, certificate reported
-A broken download resumes	"Continuing alsa-lib from 7860 of 453056 bytes…", partial cleaned up after success
-A JDK can be chosen and every path follows	toolchain status --json returns a jdks array with selected; closecode config set jdk <path> is accepted
-Removing a tool keeps the cache	closecode setup --remove gradle → cache 2060368 KB before, 2060368 KB after
-python3 -m venv	the runtime installs its own matching ensurepip wheel; pip install requests into a fresh venv works
-Paths work	closecode sign-apk my.apk and closecode venv myenv both work from the current folder
-closecode build	BUILD SUCCESSFUL, exit 0, 75 s, APK 77,145,483 bytes
-./gradlew assembleDebug	BUILD SUCCESSFUL, exit 0
-closecode check	engine:"gradle", errors:0, exit 0
-closecode test	testDebugUnitTest, exit 0, 162 s, "passed"
-closecode lint	lintDebug, exit 0, 638 s, "passed"
-Settings installs the whole toolchain	JDK 17, Gradle 8.13, platform 35, build-tools 35.0.1, platform-tools, 4 SDK licenses, NDK 27.1.12297006, CMake 3.22.1 — each with a size and a Remove button
-The gradlew shim fixes AAPT2	it writes android.aapt2FromMavenOverride into $GRADLE_USER_HOME/gradle.properties before starting Gradle
-A failed build	exits 1 with one root cause and a log path
-Item 1 — do not install packages that cannot run on this phone
-This is the item I reported in build 83. You made the app report it. The app still does it.
-
+Item 1 — the NDK must work on the phone
 The evidence
-Right now, on the phone, after closecode setup --gradle ran:
+The NDK that closecode setup --native installs cannot run a single command.
 
-$ closecode toolchain status --json
-"buildTools":[
-  {"version":"35.0.0","path":"…/build-tools/35.0.0","shim":false,"arch":"x86_64","ok":false},
-  {"version":"35.0.1","path":"…/build-tools/35.0.1","shim":false,"arch":"arm64","ok":true}]
-The app knows. It says x86_64 and ok:false. And it installed it anyway — that directory was created by closecode setup --gradle today.
+1. Its wrappers need bash, and Android has no bash.
 
-And it cannot run:
+$ head -1 …/ndk/27.1.12297006/toolchains/llvm/prebuilt/linux-aarch64/bin/aarch64-linux-android21-clang
+#!/usr/bin/env bash
 
-$ file …/build-tools/35.0.0/aapt2
-ELF shared object, 64-bit LSB x86-64, dynamic
+$ …/aarch64-linux-android21-clang --version
+/system/bin/sh: …/aarch64-linux-android21-clang: No such file or directory
+There are 123 such wrappers in that one directory.
 
-$ …/build-tools/35.0.0/aapt2 version
-/system/bin/sh: …/build-tools/35.0.0/aapt2: not executable: 64-bit ELF file
-That is the same x86-64 problem as the original AAPT2 bug, and the same package I raised in build 83.
+2. Its symlinks were extracted as plain text files.
+
+$ ls -l …/bin/clang
+-rwxr-xr-x  8  …/bin/clang
+
+$ cat …/bin/clang
+clang-18
+clang should be a symlink to clang-18. It is an 8-byte text file that says clang-18. There are 14 of these:
+
+clang -> clang-18          clang++ -> clang        ld -> ld.lld
+ld.lld -> lld              ld64.lld -> lld         lld-link -> lld
+llvm-addr2line -> llvm-symbolizer   llvm-dlltool -> llvm-ar
+llvm-lib -> llvm-ar        llvm-ranlib -> llvm-ar  llvm-readelf -> llvm-readobj
+llvm-strip -> llvm-objcopy
+3. The real compiler is fine. It is an arm64 binary and it runs:
+
+$ …/linux-aarch64/bin/clang-18 --version
+Android (dev, +pgo, -bolt, +lto, -mlgo, based on r522817b) clang version 18.0.2
+Target: aarch64-unknown-linux-android28
+CMake 3.22.1 and ninja 1.11.1 are arm64 and run correctly too. Only the wrappers and the symlinks are broken.
+
+The fix I applied by hand on the phone
+symlinks fixed: 14
+shebangs fixed: 123
+That is: replace each text file with a real symlink to the file it names, and change each #!/usr/bin/env bash to #!/system/bin/sh. The wrapper bodies are plain POSIX shell, so they work unchanged.
+
+After that, native code builds on the phone. I made a test project with a CMake build, a JNI native.cpp and an externalNativeBuild block:
+
+$ closecode build --gradle
+BUILD SUCCESSFUL in 6m 50s
+Built app-debug.apk in 411 s (7921846 bytes)
+
+$ unzip -l app-debug.apk | grep .so
+     4408  lib/arm64-v8a/libnativetest.so
+     3448  lib/x86/libnativetest.so
+     4376  lib/x86_64/libnativetest.so
+     3000  lib/armeabi-v7a/libnativetest.so
+
+$ apksigner verify --print-certs app-debug.apk
+Signer #1 certificate DN: CN=Closecode Debug
+So the native path works end to end once the NDK is whole.
 
 What to do
-Do not download a package whose binaries are for the wrong processor. If a build-tools version is not available for arm64, do not install it — not as the default, not as an option, not at all.
-One build-tools version is enough. 35.0.1 is the one that works on this phone and the one every build actually uses. Installing a second, broken copy gives the user a choice between a working version and a broken one, and it is the broken one AGP reaches for first.
-setup --gradle should ask for 35.0.1, not 35.0.0. The usage line still shows --build-tools 35.0.0.
-ok:false should stop the install, not just the report. If the app can already tell that a package is for the wrong processor, that check belongs in the installer, before anything is written to disk.
+Fix the NDK when you install it — the same two things:
+restore the symlinks the archive contains
+change every bash shebang to #!/system/bin/sh
+You already do this for build-tools. build-tools/35.0.1/apksigner starts with #!/bin/sh and works; build-tools/35.0.0/apksigner still starts with #!/bin/bash and cannot run. The same treatment belongs on the NDK, the CMake package and anything else you unpack.
+
+Better: make it impossible to get wrong. After unpacking, walk the tree and fix every #!/bin/bash and #!/usr/bin/env bash, and restore every symlink the archive contained. One helper used by all of the SDK components is better than remembering it per package.
+Check the result before you call the install done. The app should be able to answer "can I run this?" — run clang --version and check the result, the way it already checks arch for build-tools.
+Remove the broken build-tools/35.0.0 leftovers. If an old x86-64 copy is still on disk from an earlier install, the installer should clean it up rather than leave it beside the working one.
 Done when
-closecode setup --gradle leaves exactly one build-tools on the phone, and it is arm64
-the acceptance script's step 13 passes: every installed build-tools runs on this phone
-Item 2 — a build must not break while an install is running
-What happened
-The acceptance script was running at the same time as closecode setup --gradle. The build failed like this:
-
-4. ./gradlew assembleDebug succeeds
-  FAIL  ./gradlew assembleDebug exited 1
-        Warning: An error occurred while preparing SDK package Android SDK Build-Tools 35:
-        Software caused connection abort.
-While the install was running, the folder existed but was not finished:
-
-$ ls -la …/build-tools/35.0.0/
-drwx------ 3 …  .
-drwx------ 4 …  ..
-drwx------ 2 …  .installer        ← only a marker, no files
-Gradle saw a build-tools 35 package directory, decided it was not usable, and tried to fetch the package itself. That download failed, and the error blamed the network:
-
-Software caused connection abort.
-
-Nothing to do with the network. The message is misleading, and the build died for a reason the user cannot see or act on.
-
-Once the install finished, the very same command worked:
-
-$ ./gradlew assembleDebug
-BUILD SUCCESSFUL in 4m 15s
-What to do
-Install atomically. Unpack into a temporary folder and move it into place when it is complete. A half-installed package must never be visible at its final path.
-The .installer marker should mean "not installed". Either the SDK manager must ignore that directory, or the app must remove it before anything else can look at the folder.
-A build that fails because an install is running should say so. Something like "an install is in progress, try again when it finishes" is useful. "Software caused connection abort" is not.
-A build and an install should not fight. If closecode setup is running, a build should either wait or say plainly that it cannot start.
-Done when
-running closecode setup --gradle and a build at the same time never produces "preparing SDK package" or "connection abort"
-the acceptance script's step 14 passes: no .installer directory is left behind
+closecode setup --native on a fresh phone gives an NDK whose compiler runs
+the acceptance script's step 15 passes: the NDK compiler runs and its symlinks are intact
+a project with externalNativeBuild builds and its .so lands in the APK
 Rules
 One installer, two front ends. Anything in Settings must also be reachable from closecode setup, and the reverse.
 The app installs, the user consents. The AI must never need curl, tar, chmod, or a hand-written license file.
@@ -127,12 +115,11 @@ Never install something that cannot run on this phone, and never leave a half-in
 Before you ship — run this yourself
 Do not send me a build until these are true on your side. Each one takes a minute.
 
-closecode setup --gradle
-ls file/sdk/build-tools/                     # must be ONE version, arm64
-file file/sdk/build-tools/*/aapt2             # every one must be arm64
-file/sdk/build-tools/*/aapt2 version          # every one must actually run
-find file/sdk -name .installer                # must be empty
-sh closecode-acceptance.sh                   # the whole board, steps 13 and 14 are new
+closecode setup --native
+…/ndk/*/toolchains/llvm/prebuilt/linux-aarch64/bin/aarch64-linux-android21-clang --version
+file …/ndk/*/toolchains/llvm/prebuilt/linux-aarch64/bin/clang     # must be a symlink
+grep -rl "^#!.*bash" …/ndk/*/ | wc -l                              # must be 0
+sh closecode-acceptance.sh                                         # step 15 is new
 Then, and only then, send me the board.
 
 The test script
@@ -142,7 +129,7 @@ sh closecode-acceptance.sh          # safe checks, about 9 minutes
 sh closecode-acceptance.sh --all    # also removes and reinstalls Gradle
 It is written for Android's toybox, so it uses grep -E for alternation. The only thing it changes is a temporary syntax error in app/build.gradle.kts, which it puts back immediately.
 
-Steps 13 and 14 are new: they check that every installed build-tools can run on this phone, and that no half-finished install is left behind.
+Step 15 is new: it checks that the NDK compiler runs on this phone and that the NDK's symlinks are intact.
 
 #!/system/bin/sh
 # =============================================================================
@@ -537,6 +524,46 @@ else
 fi
 
 # =============================================================================
+head_ "15. The NDK compiler runs on this phone"
+NDK_DIR=$(ls -d "$SDK_ROOT"/ndk/*/ 2>/dev/null | head -1)
+if [ -z "$NDK_DIR" ]; then
+  skip "no NDK installed"
+else
+  CC=""
+  for CAND in "$NDK_DIR"toolchains/llvm/prebuilt/linux-aarch64/bin/aarch64-linux-android21-clang \
+              "$NDK_DIR"toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang; do
+    [ -f "$CAND" ] && CC="$CAND" && break
+  done
+  if [ -z "$CC" ]; then
+    bad "the NDK has no android clang"
+  elif "$CC" --version >/dev/null 2>&1; then
+    ok "the NDK compiler runs on this phone"
+  else
+    bad "the NDK compiler cannot run on this phone"
+    "$CC" --version 2>&1 | head -1 | sed 's/^/        /'
+    head -1 "$CC" | sed 's/^/        shebang: /'
+  fi
+  # broken symlinks that were extracted as plain text files
+  BIN="$NDK_DIR"toolchains/llvm/prebuilt/linux-aarch64/bin
+  BROKEN=0
+  for f in "$BIN"/*; do
+    [ -f "$f" ] || continue
+    SIZE=$(wc -c < "$f" 2>/dev/null || echo 0)
+    if [ "$SIZE" -gt 0 ] && [ "$SIZE" -lt 40 ]; then
+      TARGET=$(cat "$f" 2>/dev/null)
+      if [ -n "$TARGET" ] && [ -f "$BIN/$TARGET" ]; then
+        BROKEN=$((BROKEN+1))
+      fi
+    fi
+  done
+  if [ "$BROKEN" -gt 0 ]; then
+    bad "$BROKEN NDK symlinks were extracted as plain text files"
+  else
+    ok "the NDK symlinks are intact"
+  fi
+fi
+
+# =============================================================================
 say ""
 say "==========================================================="
 say " PASS $PASS   FAIL $FAIL   SKIP $SKIP"
@@ -549,3 +576,51 @@ say "==========================================================="
 rm -rf "$TMP"
 [ "$FAIL" -eq 0 ] && exit 0
 exit 1
+
+
+
+bug when I stop opencode it will crash with this 
+
+CloseCode 0.87.1656 (build 87) · a6e2f6c · debug
+crashed at 2026-11-13 09:41:51 on thread opencode-proxy
+
+java.lang.InterruptedException
+	at java.lang.Object.wait(Native Method)
+	at java.lang.Object.wait(Object.java:390)
+	at java.lang.Thread.join(Thread.java:2224)
+	at java.lang.Thread.join(Thread.java:2297)
+	at com.closecode.ai.OpenCodeProxy.tunnel(OpenCodeProxy.kt:184)
+	at com.closecode.ai.OpenCodeProxy.handle(OpenCodeProxy.kt:111)
+	at com.closecode.ai.OpenCodeProxy.acceptLoop$lambda$0$0(OpenCodeProxy.kt:77)
+	at com.closecode.ai.OpenCodeProxy.$r8$lambda$cAyHCVAmMyg-2CKWvtDugodPjWE(OpenCodeProxy.kt:0)
+	at com.closecode.ai.OpenCodeProxy$$ExternalSyntheticLambda3.run(D8$$SyntheticClass:0)
+	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1100)
+	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:624)
+	at java.lang.Thread.run(Thread.java:1571)
+
+
+--- the last 24 events ---
+07:57:17.947 CONTROL listening on 127.0.0.1:37967
+07:57:18.370 BACK route=[hero]
+07:57:22.510 BACK route=[hero > ide]
+07:57:26.971 BUILD project check · 0 errors · 1 warnings
+07:57:58.321 AICO server answering
+08:00:03.971 BUILD wake lock acquired
+08:00:04.222 BUILD gradle 8.13 assembleDebug
+08:05:25.379 BUILD wake lock acquired
+08:05:25.629 BUILD gradle 8.13 assembleDebug
+08:07:28.382 SDK removed 1 build-tools folders that cannot run here
+08:07:37.604 BUILD wake lock acquired
+08:07:37.783 BUILD gradle 8.13 assembleDebug
+08:13:31.526 BUILD wake lock acquired
+08:13:31.746 BUILD gradle 8.13 assembleDebug
+08:22:27.548 BUILD wake lock acquired
+08:22:27.784 BUILD gradle 8.13 assembleDebug
+08:35:53.860 BUILD wake lock acquired
+08:35:53.965 BUILD gradle 8.13 assembleDebug
+08:47:57.575 BUILD wake lock acquired
+08:48:11.725 BUILD wake lock acquired
+08:48:11.765 BUILD gradle 8.13 assembleDebug
+08:52:40.589 BUILD wake lock acquired
+08:52:40.699 BUILD gradle 8.13 assembleDebug
+09:41:43.339 BACK back stack=[hero > ide] consumed=main panel=AI ime=false popups=none branch=panel-to-Code

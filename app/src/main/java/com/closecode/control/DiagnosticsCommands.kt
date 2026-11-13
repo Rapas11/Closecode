@@ -145,6 +145,10 @@ object ToolchainStatusCommand {
             add("native", JsonObject().apply {
                 addProperty("ndk", native.ndkHome.takeIf { native.ndkReady() }?.absolutePath)
                 addProperty("cmake", native.cmakeHome.takeIf { native.cmakeReady() }?.absolutePath)
+                // "Can I run this?" — the compiler that matters, and whether it answers.
+                val clang = native.compiler()
+                addProperty("compiler", clang?.absolutePath ?: "")
+                addProperty("compilerRuns", native.compilerRuns())
             })
             add("missing", missing)
             add("optionalMissing", optionalMissing)

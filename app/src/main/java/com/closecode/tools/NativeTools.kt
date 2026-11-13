@@ -148,6 +148,9 @@ class NativeToolsStore(
                 }
             }
             if (!isReady()) throw IOException("The native tools did not install completely.")
+            // The install is only done when the compiler actually runs here: a package that
+            // unpacks but cannot execute is not an install.
+            verifyCompilerRuns()
             DebugLog.crumb("TOOLS", "Native tools installed")
             return ShellToolsStore.Result(true)
         } catch (error: Throwable) {
@@ -210,6 +213,16 @@ class NativeToolsStore(
         target.deleteRecursively()
         target.parentFile?.mkdirs()
         unpack(temp, target)
+        // A package built for a desktop is not runnable on Android as it arrives: the
+        // symlinks can arrive as text files, and the wrappers ask for bash. Both are
+        // fixed here, for every SDK component, before the install is called done.
+        val repaired = PackageRepair.repair(target)
+        if (repaired.changed) {
+            DebugLog.crumb(
+                "TOOLS",
+                "$label repaired: ${repaired.symlinks} links, ${repaired.shebangs} shebangs",
+            )
+        }
         temp.deleteRecursively()
         zip.delete()
         File(target, INSTALLED).writeText("${packageInfo.version}\n${packageInfo.sha256}\n")
@@ -315,6 +328,51 @@ class NativeToolsStore(
         if (!renameTo(target)) {
             copyRecursively(target, overwrite = true)
             deleteRecursively()
+        }
+    }
+
+    /** The NDK's C/C++ compiler, the one a native build uses. */
+    fun compiler(): File? {
+        val clang = File(ndkHome, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang")
+        return clang.takeIf { it.exists() }
+    }
+
+    /** True when the compiler really answers on this phone. */
+    fun compilerRuns(): Boolean {
+        val clang = compiler() ?: return false
+        return runCatching {
+            com.closecode.build.DriverExec.runNative(
+                bin = clang,
+                args = listOf("--version"),
+                workDir = ndkHome,
+                timeoutMs = 60_000,
+            ).code == 0
+        }.getOrDefault(false)
+    }
+
+    /**
+     * Checks that the NDK's compiler runs on this phone.
+     *
+     * A package can unpack completely and still be useless here: the symlinks can arrive as
+     * text files and the wrappers can ask for bash. Running the compiler is the only honest
+     * answer to "can I use this?".
+     */
+    private fun verifyCompilerRuns() {
+        val clang = File(ndkHome, "toolchains/llvm/prebuilt/linux-aarch64/bin/clang")
+        if (!clang.exists()) {
+            throw IOException("The NDK has no compiler at ${clang.path}.")
+        }
+        val result = com.closecode.build.DriverExec.runNative(
+            bin = clang,
+            args = listOf("--version"),
+            workDir = ndkHome,
+            timeoutMs = 60_000,
+        )
+        if (result.code != 0 || result.output.isBlank()) {
+            throw IOException(
+                "The NDK was installed, but its compiler does not run on this phone: " +
+                    (result.output.trim().take(200).ifBlank { "it exited with ${result.code}" }),
+            )
         }
     }
 

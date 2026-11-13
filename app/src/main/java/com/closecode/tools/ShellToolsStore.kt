@@ -141,6 +141,8 @@ class ShellToolsStore(
                 },
             )
 
+            // The same treatment every unpacked package gets.
+            PackageRepair.repair(temp)
             // P1-1: the pip wheel this runtime's own ensurepip asks for is put in place
             // while the new prefix is still in the staging area, so the swap below installs
             // a prefix that already works. The interpreter is pointed at a wheels directory

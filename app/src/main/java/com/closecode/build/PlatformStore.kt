@@ -389,7 +389,9 @@ class PlatformStore(
             throw IOException("The build-tools archive has no aapt2.")
         }
         if (licenseAccepted()) installLicenses()
-        repairBuildToolsScripts()
+        // The same treatment every unpacked package gets: links that arrived as text files
+        // are links again, and the wrappers use the shell Android has.
+        com.closecode.tools.PackageRepair.repair(target)
         // A build-tools folder whose binaries are for another processor can never run on this
         // phone. Leaving it next to the working one only gives the user a broken choice.
         removeUnusableBuildTools(keep = target)

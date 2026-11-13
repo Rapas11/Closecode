@@ -2,10 +2,10 @@
 
 **One file containing all ten required documents.**
 
-- Build: **87** (`0.87.1656`), on top of commit `a6e2f6c`.
-- Unit suite: **1656 tests, 0 failures, 0 errors, 8 skipped**.
-- Artifact: `build/CloseCode-build87-tests1656-debug.apk`,
-  SHA-256 `d302b7e65160089ff453cf3cec61f9f3fa50ececdbc0f1bb2cea1c6a59bb1e39`.
+- Build: **88** (`0.88.1661`), on top of commit `69d9f7d`.
+- Unit suite: **1661 tests, 0 failures, 0 errors, 8 skipped**.
+- Artifact: `build/CloseCode-build88-tests1661-debug.apk`,
+  SHA-256 `8a9e66ccdb716d9c6cecf717f2aed140f5a5770ef0dca235579b7d2765c02aa8`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -33,7 +33,7 @@
 
 # PART 1 — CURRENT CAPABILITIES
 
-Status: audit snapshot for build **87** (versionName `0.87.1656`), on top of commit `a6e2f6c`.
+Status: audit snapshot for build **88** (versionName `0.88.1661`), on top of commit `69d9f7d`.
 
 How to read this file: every claim is either **Proven** (a test run, a device run, or a
 host POC produced it) or **Code-verified** (the implementation is present and traced, but
@@ -42,7 +42,7 @@ the strength of a class name, a config key or an endpoint existing.
 
 Source of truth for the build under test:
 `app/build.gradle.kts:14` (`closecodeBuild = 80`), `app/build.gradle.kts:16`
-(`closecodeTests = 1656`).
+(`closecodeTests = 1661`).
 
 ---
 
@@ -50,9 +50,9 @@ Source of truth for the build under test:
 
 | Evidence | Result | Where |
 |---|---|---|
-| JVM unit suite | **1656 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
+| JVM unit suite | **1661 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build87-tests1656-debug.apk`, SHA-256 `d302b7e65160089ff453cf3cec61f9f3fa50ececdbc0f1bb2cea1c6a59bb1e39` | `build/` |
+| Delivered artifact | `build/CloseCode-build88-tests1661-debug.apk`, SHA-256 `8a9e66ccdb716d9c6cecf717f2aed140f5a5770ef0dca235579b7d2765c02aa8` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -340,7 +340,7 @@ is a hand-maintained constant that can drift from the real result.
 #### 1.9 Real device-level tests
 
 `app/src/androidTest/` contains one stock template assertion
-(`ExampleInstrumentedTest.kt`). All 1656 tests are JVM tests; nothing is exercised on a
+(`ExampleInstrumentedTest.kt`). All 1661 tests are JVM tests; nothing is exercised on a
 real Android runtime in CI.
 
 ---
@@ -618,7 +618,7 @@ audit log. This is defect D11 and is addressed in the roadmap, not silently.
 
 ### 8. Test and delivery infrastructure
 
-- 146 JVM test files under `app/src/test/java/com/closecode/`; 1656 tests in the last run
+- 146 JVM test files under `app/src/test/java/com/closecode/`; 1661 tests in the last run
   (0 failures, 0 errors, 8 skipped).
 - One stock instrumentation test in `app/src/androidTest/` — no real device tests.
 - CI: `.github/workflows/build.yml:32` (unit suite), `:35` (assemble + upload). No lint,
@@ -1543,9 +1543,9 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | JDK | 17.0.20.1+1 at `/opt/java/jdk-17.0.20.1+1` |
 | Android SDK | `/opt/android_sdk`, platform 35 |
 | Gradle | 8.13 (wrapper) |
-| Unit suite | **1656 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
+| Unit suite | **1661 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build87-tests1656-debug.apk`, SHA-256 `d302b7e65160089ff453cf3cec61f9f3fa50ececdbc0f1bb2cea1c6a59bb1e39` |
+| Artifact | `build/CloseCode-build88-tests1661-debug.apk`, SHA-256 `8a9e66ccdb716d9c6cecf717f2aed140f5a5770ef0dca235579b7d2765c02aa8` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |
@@ -1858,7 +1858,7 @@ the bundled OpenCode server is prevented from downloading one
 
 | Limit | Consequence | Evidence |
 |---|---|---|
-| All 1656 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
+| All 1661 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
 | One stock instrumentation test | No real device test exists | `app/src/androidTest/java/com/closecode/ExampleInstrumentedTest.kt` |
 | No lint or static analysis task | Style and some correctness issues are not machine-checked | `app/build.gradle.kts`; `.github/workflows/build.yml:32`, `:35` |
 | The test-count constant is hand-maintained | The version number could claim a count that was never run (defect D8) | `app/build.gradle.kts:16` |
@@ -2388,4 +2388,65 @@ user: install `build/CloseCode-build87-tests1656-debug.apk` and run
 
 ```sh
 sh closecode-acceptance.sh --all
+```
+
+---
+
+# PART 18 — BUILD 88: THE NDK HAS TO WORK ON THE PHONE
+
+The agent's board read **PASS 27 FAIL 0 SKIP 3** on build 87 — everything on the list was
+done. What the agent found afterwards, while checking whether CloseCode can build *anything*,
+was the last broken piece: the NDK that `closecode setup --native` installs cannot run a
+single command.
+
+## 18.1 What was wrong
+
+1. **The symlinks arrived as plain text files.** `clang` was an eight byte file that said
+   `clang-18` instead of a link to it. Fourteen of them were like that — `clang`, `clang++`,
+   `ld`, `lld`, `llvm-strip` and the rest. Every command in the NDK failed with "No such
+   file or directory".
+2. **123 wrappers asked for bash.** `#!/usr/bin/env bash` cannot run on Android, which has
+   no bash.
+
+The cause is in the archive, not in the app's logic: the zip carries **no** symlink metadata
+at all. Inspecting the CMake package confirms it — 3080 entries, every one a plain file or
+a directory, no unix modes, no link entries. So the links arrive as small files whose whole
+content is the name of the file they point at.
+
+## 18.2 The fix — one helper for every package
+
+`tools/PackageRepair.kt` does the same two things for every unpacked component, instead of
+each package remembering its own:
+
+- **A file that is executable, small, holds a single line, and that line names a file next
+  to it is a link that lost its link.** It becomes a real, *relative* symlink again — the
+  way the archive had it, so the package can still be moved.
+- **A script that starts with a bash shebang gets `#!/system/bin/sh`.** The body is kept
+  exactly as it was; the wrappers are plain POSIX shell.
+
+It runs for the NDK, for CMake, for the build-tools and for the Termux packs.
+
+## 18.3 The app can now answer "can I run this?"
+
+An install that unpacks but cannot execute is not an install. After the NDK is unpacked and
+repaired, the app runs `clang --version` and **fails the install with the compiler's own
+error** if it does not answer. `closecode toolchain status --json` reports the compiler's
+path and `compilerRuns`, so the question can be asked at any time.
+
+## 18.4 What is proven here, and what still needs the phone
+
+| Claim | Proof |
+|---|---|
+| The suite is green | 1661 tests, 0 failures, 0 errors, 8 skipped |
+| A text file that names its sibling becomes a link again | Five tests build the NDK's broken state and check the repair |
+| The link is relative | The test reads the link back and gets `clang-18` |
+| A real file that is not a link is left alone | The same tests |
+| The archive really has no link metadata | The CMake package was downloaded and its 3080 entries inspected |
+| The phone | **Still to be measured.** The board runs on the phone |
+
+Build 88 is *implemented and tested here*. The board is the last step, and it belongs to the
+user: install `build/CloseCode-build88-tests1661-debug.apk` and run
+
+```sh
+sh closecode-acceptance.sh
 ```
