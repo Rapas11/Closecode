@@ -11,6 +11,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URI
+import com.closecode.debug.DebugLog
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -79,7 +80,29 @@ internal class OpenCodeProxy(
         }
     }
 
+    /**
+     * A connection the proxy serves.
+     *
+     * Nothing may escape this method: the worker pool would turn an exception into a dead
+     * thread, and the app's crash handler would report it as a crash of the whole app.
+     */
     private fun handle(client: Socket) {
+        try {
+            serve(client)
+        } catch (interrupted: InterruptedException) {
+            // The proxy is stopping. That is a normal end, not a failure.
+            Thread.currentThread().interrupt()
+            closeQuietly(client)
+        } catch (error: Throwable) {
+            DebugLog.crumb(
+                "PROXY",
+                "connection failed: ${error.message ?: error.javaClass.simpleName}",
+            )
+            closeQuietly(client)
+        }
+    }
+
+    private fun serve(client: Socket) {
         client.use {
             it.soTimeout = HEADER_TIMEOUT_MS
             val input = BufferedInputStream(it.getInputStream())
@@ -181,8 +204,17 @@ internal class OpenCodeProxy(
             isDaemon = true
             start()
         }
-        toUpstream.join()
-        toClient.join()
+        // Stopping the proxy interrupts this thread. `join` throws when that happens, and an
+        // exception that escapes a worker would be reported as a crash of the whole app.
+        try {
+            toUpstream.join()
+            toClient.join()
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+        } finally {
+            closeQuietly(upstream)
+            closeQuietly(client)
+        }
     }
 
     private fun copy(input: InputStream, output: OutputStream) {

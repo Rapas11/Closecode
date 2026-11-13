@@ -2,10 +2,10 @@
 
 **One file containing all ten required documents.**
 
-- Build: **88** (`0.88.1661`), on top of commit `69d9f7d`.
-- Unit suite: **1661 tests, 0 failures, 0 errors, 8 skipped**.
-- Artifact: `build/CloseCode-build88-tests1661-debug.apk`,
-  SHA-256 `8a9e66ccdb716d9c6cecf717f2aed140f5a5770ef0dca235579b7d2765c02aa8`.
+- Build: **89** (`0.89.1663`), on top of commit `5d91d26`.
+- Unit suite: **1663 tests, 0 failures, 0 errors, 8 skipped**.
+- Artifact: `build/CloseCode-build89-tests1663-debug.apk`,
+  SHA-256 `2748a83f6f9adb4cd828b77941e018da899390379ce144a88d6e84715c9ea1a8`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -33,7 +33,7 @@
 
 # PART 1 — CURRENT CAPABILITIES
 
-Status: audit snapshot for build **88** (versionName `0.88.1661`), on top of commit `69d9f7d`.
+Status: audit snapshot for build **89** (versionName `0.89.1663`), on top of commit `5d91d26`.
 
 How to read this file: every claim is either **Proven** (a test run, a device run, or a
 host POC produced it) or **Code-verified** (the implementation is present and traced, but
@@ -42,7 +42,7 @@ the strength of a class name, a config key or an endpoint existing.
 
 Source of truth for the build under test:
 `app/build.gradle.kts:14` (`closecodeBuild = 80`), `app/build.gradle.kts:16`
-(`closecodeTests = 1661`).
+(`closecodeTests = 1663`).
 
 ---
 
@@ -50,9 +50,9 @@ Source of truth for the build under test:
 
 | Evidence | Result | Where |
 |---|---|---|
-| JVM unit suite | **1661 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
+| JVM unit suite | **1663 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build88-tests1661-debug.apk`, SHA-256 `8a9e66ccdb716d9c6cecf717f2aed140f5a5770ef0dca235579b7d2765c02aa8` | `build/` |
+| Delivered artifact | `build/CloseCode-build89-tests1663-debug.apk`, SHA-256 `2748a83f6f9adb4cd828b77941e018da899390379ce144a88d6e84715c9ea1a8` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -340,7 +340,7 @@ is a hand-maintained constant that can drift from the real result.
 #### 1.9 Real device-level tests
 
 `app/src/androidTest/` contains one stock template assertion
-(`ExampleInstrumentedTest.kt`). All 1661 tests are JVM tests; nothing is exercised on a
+(`ExampleInstrumentedTest.kt`). All 1663 tests are JVM tests; nothing is exercised on a
 real Android runtime in CI.
 
 ---
@@ -618,7 +618,7 @@ audit log. This is defect D11 and is addressed in the roadmap, not silently.
 
 ### 8. Test and delivery infrastructure
 
-- 146 JVM test files under `app/src/test/java/com/closecode/`; 1661 tests in the last run
+- 146 JVM test files under `app/src/test/java/com/closecode/`; 1663 tests in the last run
   (0 failures, 0 errors, 8 skipped).
 - One stock instrumentation test in `app/src/androidTest/` — no real device tests.
 - CI: `.github/workflows/build.yml:32` (unit suite), `:35` (assemble + upload). No lint,
@@ -1543,9 +1543,9 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | JDK | 17.0.20.1+1 at `/opt/java/jdk-17.0.20.1+1` |
 | Android SDK | `/opt/android_sdk`, platform 35 |
 | Gradle | 8.13 (wrapper) |
-| Unit suite | **1661 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
+| Unit suite | **1663 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build88-tests1661-debug.apk`, SHA-256 `8a9e66ccdb716d9c6cecf717f2aed140f5a5770ef0dca235579b7d2765c02aa8` |
+| Artifact | `build/CloseCode-build89-tests1663-debug.apk`, SHA-256 `2748a83f6f9adb4cd828b77941e018da899390379ce144a88d6e84715c9ea1a8` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |
@@ -1858,7 +1858,7 @@ the bundled OpenCode server is prevented from downloading one
 
 | Limit | Consequence | Evidence |
 |---|---|---|
-| All 1661 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
+| All 1663 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
 | One stock instrumentation test | No real device test exists | `app/src/androidTest/java/com/closecode/ExampleInstrumentedTest.kt` |
 | No lint or static analysis task | Style and some correctness issues are not machine-checked | `app/build.gradle.kts`; `.github/workflows/build.yml:32`, `:35` |
 | The test-count constant is hand-maintained | The version number could claim a count that was never run (defect D8) | `app/build.gradle.kts:16` |
@@ -2446,6 +2446,67 @@ path and `compilerRuns`, so the question can be asked at any time.
 
 Build 88 is *implemented and tested here*. The board is the last step, and it belongs to the
 user: install `build/CloseCode-build88-tests1661-debug.apk` and run
+
+```sh
+sh closecode-acceptance.sh
+```
+
+---
+
+# PART 19 — BUILD 89: STOPPING OPENCODE MUST NOT CRASH THE APP
+
+The agent found a crash in the report it sent with the build-88 brief:
+
+```
+CloseCode 0.87.1656 (build 87) · a6e2f6c · debug
+crashed at 2026-11-13 09:41:51 on thread opencode-proxy
+
+java.lang.InterruptedException
+	at java.lang.Thread.join(Thread.java:2224)
+	at com.closecode.ai.OpenCodeProxy.tunnel(OpenCodeProxy.kt:184)
+	at com.closecode.ai.OpenCodeProxy.handle(OpenCodeProxy.kt:111)
+```
+
+## 19.1 What was happening
+
+The proxy tunnels a connection in two threads — one pumping bytes to the server, one pumping
+them back — and waits for both with `Thread.join()`. Stopping OpenCode shuts the worker
+pool down, which **interrupts** the worker; `join()` then throws `InterruptedException`.
+Nothing caught it, so it escaped the worker thread, and the app's crash handler reported a
+dead proxy thread as a crash of the whole app.
+
+## 19.2 The fix
+
+- The joins are wrapped: an interrupt is a normal end, the interrupt flag is restored, and
+  both sockets are closed.
+- `handle()` no longer lets anything escape into the worker pool: an interrupt is a normal
+  end, and any other failure is logged as a proxy problem rather than an app crash.
+
+## 19.3 The proof
+
+`OpenCodeProxyStopTest` starts the proxy, opens a real tunnel through it, stops the proxy
+while the tunnel is open, and fails if anything reaches the app's uncaught-exception handler.
+
+The test was checked against the **original** code first: it fails there with exactly the
+reported error —
+
+```
+stopping the proxy crashed the app: java.lang.InterruptedException
+```
+
+— and passes with the fix. A test that cannot fail is not evidence, so this was checked
+rather than assumed.
+
+## 19.4 What is proven here, and what still needs the phone
+
+| Claim | Proof |
+|---|---|
+| The suite is green | 1663 tests, 0 failures, 0 errors, 8 skipped |
+| Stopping the proxy no longer crashes | The test fails on the original code and passes on the fixed code |
+| The phone | **Still to be measured.** The board runs on the phone |
+
+Build 89 is *implemented and tested here*. The board is the last step, and it belongs to the
+user: install `build/CloseCode-build89-tests1663-debug.apk` and run
 
 ```sh
 sh closecode-acceptance.sh
