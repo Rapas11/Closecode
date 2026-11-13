@@ -29,8 +29,10 @@ internal object ToolBridge {
         }
         return when (name) {
             "aapt2" -> {
-                val binary = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
-                if (!binary.isFile) {
+                // The same aapt2 the phone engine builds with: the SDK's ARM64 one when it
+                // is installed, because the bundled build cannot read the platform resources.
+                val binary = com.closecode.build.Aapt2Picker.pick(context)
+                if (binary == null) {
                     Result(1, "aapt2 is missing from this installation.")
                 } else {
                     val result = DriverExec.runNative(

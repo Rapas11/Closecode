@@ -189,9 +189,40 @@ class ProjectRegistry(private val file: File) {
         load().any { it.id != exceptId && key in it.names }
     }
 
-    fun packageTaken(packageName: String, exceptId: String? = null): Boolean = synchronized(lock) {
+    /**
+     * The whole package name is compared — never a segment, a fragment or a substring.
+     *
+     * `com` matches every package that starts with `com`, so a comparison on anything
+     * shorter than the whole name refuses every name on the phone. The comparison is
+     * case-insensitive, because Android package names are.
+     */
+    fun packageTaken(packageName: String, exceptId: String? = null): Boolean =
+        packageHolder(packageName, exceptId) != null
+
+    /**
+     * The project that holds this package name, so the user can be told which one.
+     *
+     * A deleted project keeps its identity reserved — that is the registry's rule, and the
+     * screen and the creation path both follow it, so the two can never disagree about
+     * whether a name is free.
+     */
+    fun packageHolder(packageName: String, exceptId: String? = null): String? = synchronized(lock) {
         val key = ProjectIdentity.packageKey(packageName)
-        load().any { it.id != exceptId && key in it.packages }
+        if (key.isBlank()) return null
+        load().firstOrNull { it.id != exceptId && key in it.packages }
+            ?.name?.takeIf { it.isNotBlank() }
+    }
+
+    /** Every package name in use, and the project that holds it. */
+    fun packagesInUse(exceptId: String? = null): Map<String, String> = synchronized(lock) {
+        val out = linkedMapOf<String, String>()
+        load().forEach { entry ->
+            if (entry.id == exceptId) return@forEach
+            entry.packages.forEach { key ->
+                if (key.isNotBlank() && key !in out) out[key] = entry.name
+            }
+        }
+        out
     }
 
     fun slugTaken(slug: String, exceptId: String? = null): Boolean = synchronized(lock) {
@@ -219,9 +250,10 @@ class ProjectRegistry(private val file: File) {
         exceptId: String?,
     ) {
         val key = ProjectIdentity.packageKey(packageName)
-        if (entries.any { it.id != exceptId && key in it.packages }) {
+        val holder = entries.firstOrNull { it.id != exceptId && key in it.packages }
+        if (holder != null) {
             throw ProjectConflictException(
-                "Another project uses this package. Choose a different package name.",
+                "That package name is already used by \"${holder.name}\". Pick a unique one.",
             )
         }
     }

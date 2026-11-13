@@ -168,6 +168,19 @@ class MainActivity : ComponentActivity() {
                             javaHome.takeIf { File(it, "bin/java").isFile },
                         )
                     }
+                    // The projects CloseCode generated before the template was fixed still
+                    // miss an import, and every one of them fails its first build. The
+                    // repair only adds an import the source uses; a project the user brought
+                    // in is never touched.
+                    runCatching {
+                        val repository = com.closecode.ui.project.ProjectRepository(applicationContext)
+                        repository.listProjects().forEach { record ->
+                            com.closecode.ui.project.GeneratedProjectRepair.repair(
+                                repository.projectDir(record.slug),
+                                record.imported,
+                            )
+                        }
+                    }
                 }
             }
             LaunchedEffect(settings.gitName, settings.gitEmail, settings.gitDefaultBranch) {
@@ -218,10 +231,14 @@ class MainActivity : ComponentActivity() {
                 // composition path and onto Dispatchers.IO.
                 var recentCount by remember { mutableIntStateOf(0) }
                 var recentProjects by remember { mutableStateOf<List<ProjectRecord>>(emptyList()) }
+                // Every package name in use, and the project that holds it. The registry is
+                // the one list; the New project screen must not answer from a shorter one.
+                var packagesInUse by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
                 LaunchedEffect(encoded, repository) {
                     val projects = withContext(Dispatchers.IO) { repository.listProjects() }
                     recentCount = projects.size
                     recentProjects = projects
+                    packagesInUse = withContext(Dispatchers.IO) { repository.packagesInUse() }
                 }
 
                 // "Open last project" decides what a launch lands on. The system restores the last
@@ -304,6 +321,7 @@ class MainActivity : ComponentActivity() {
                             }
                                 HeroScreen(
                                     recentProjects = recentProjects,
+                                    packagesInUse = packagesInUse,
                                     tokenEpoch = githubTokenEpoch,
                                     branchOf = { record -> repository.headBranch(record.slug) },
                                     onGitHubChanged = { githubTokenEpoch++ },

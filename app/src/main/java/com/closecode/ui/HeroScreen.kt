@@ -383,6 +383,9 @@ fun HeroScreen(
     onProjectCloned: (ProjectRecord) -> Unit,
     onOpenProject: (ProjectRecord) -> Unit,
     recentProjects: List<ProjectRecord> = emptyList(),
+    /** Every package name in use, and the project that holds it. The registry is the one
+     *  list; the screen must not answer from a shorter one. */
+    packagesInUse: Map<String, String> = emptyMap(),
     branchOf: (ProjectRecord) -> String? = { null },
     // Moves when the GitHub account changes elsewhere — a sign-in or a disconnect done on the
     // settings screen. The token is read again when it does, so this screen never keeps
@@ -793,10 +796,7 @@ fun HeroScreen(
     if (sheetOpen) {
         StartProjectSheet(
             onDismiss = { sheetOpen = false },
-            existingPackages = recentProjects
-                .map { it.config.packageName.trim() }
-                .filter { it.isNotEmpty() }
-                .toSet(),
+            packagesInUse = packagesInUse,
             onCreate = { projectName, selection, config ->
                 val templateName = Templates[selection.tab]
                     .orEmpty()

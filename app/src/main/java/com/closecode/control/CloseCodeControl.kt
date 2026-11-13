@@ -1912,6 +1912,7 @@ object CloseCodeControl {
             directory = directory,
             id = record.id,
             savedPackage = configured?.packageName?.takeIf { it.isNotBlank() },
+            imported = record.imported,
             savedMinSdk = configured?.minSdk?.toIntOrNull(),
             savedTargetSdk = configured?.targetSdk?.toIntOrNull(),
             savedCompileSdk = configured?.compileSdk?.toIntOrNull(),

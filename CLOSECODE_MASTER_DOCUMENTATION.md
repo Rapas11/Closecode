@@ -2,10 +2,10 @@
 
 **One file containing all ten required documents.**
 
-- Build: **90** (`0.90.1663`), on top of commit `70d1cf0`.
-- Unit suite: **1663 tests, 0 failures, 0 errors, 8 skipped**.
-- Artifact: `build/CloseCode-build90-tests1663-debug.apk`,
-  SHA-256 `4d60e3b62f87309b7732b6fd2bc79d3a18da0ab51472148932d66c7585ceefac`.
+- Build: **91** (`0.91.1674`), on top of commit `107819f`.
+- Unit suite: **1674 tests, 0 failures, 0 errors, 8 skipped**.
+- Artifact: `build/CloseCode-build91-tests1674-debug.apk`,
+  SHA-256 `64a63296403b280fb0490d4139e9ac059fedbf5a51a2f65bb234c2aa9a0d2ae9`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -33,7 +33,7 @@
 
 # PART 1 — CURRENT CAPABILITIES
 
-Status: audit snapshot for build **90** (versionName `0.90.1663`), on top of commit `70d1cf0`.
+Status: audit snapshot for build **91** (versionName `0.91.1674`), on top of commit `107819f`.
 
 How to read this file: every claim is either **Proven** (a test run, a device run, or a
 host POC produced it) or **Code-verified** (the implementation is present and traced, but
@@ -42,7 +42,7 @@ the strength of a class name, a config key or an endpoint existing.
 
 Source of truth for the build under test:
 `app/build.gradle.kts:14` (`closecodeBuild = 80`), `app/build.gradle.kts:16`
-(`closecodeTests = 1663`).
+(`closecodeTests = 1674`).
 
 ---
 
@@ -50,9 +50,9 @@ Source of truth for the build under test:
 
 | Evidence | Result | Where |
 |---|---|---|
-| JVM unit suite | **1663 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
+| JVM unit suite | **1674 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build90-tests1663-debug.apk`, SHA-256 `4d60e3b62f87309b7732b6fd2bc79d3a18da0ab51472148932d66c7585ceefac` | `build/` |
+| Delivered artifact | `build/CloseCode-build91-tests1674-debug.apk`, SHA-256 `64a63296403b280fb0490d4139e9ac059fedbf5a51a2f65bb234c2aa9a0d2ae9` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -340,7 +340,7 @@ is a hand-maintained constant that can drift from the real result.
 #### 1.9 Real device-level tests
 
 `app/src/androidTest/` contains one stock template assertion
-(`ExampleInstrumentedTest.kt`). All 1663 tests are JVM tests; nothing is exercised on a
+(`ExampleInstrumentedTest.kt`). All 1674 tests are JVM tests; nothing is exercised on a
 real Android runtime in CI.
 
 ---
@@ -618,7 +618,7 @@ audit log. This is defect D11 and is addressed in the roadmap, not silently.
 
 ### 8. Test and delivery infrastructure
 
-- 146 JVM test files under `app/src/test/java/com/closecode/`; 1663 tests in the last run
+- 146 JVM test files under `app/src/test/java/com/closecode/`; 1674 tests in the last run
   (0 failures, 0 errors, 8 skipped).
 - One stock instrumentation test in `app/src/androidTest/` — no real device tests.
 - CI: `.github/workflows/build.yml:32` (unit suite), `:35` (assemble + upload). No lint,
@@ -1543,9 +1543,9 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | JDK | 17.0.20.1+1 at `/opt/java/jdk-17.0.20.1+1` |
 | Android SDK | `/opt/android_sdk`, platform 35 |
 | Gradle | 8.13 (wrapper) |
-| Unit suite | **1663 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
+| Unit suite | **1674 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build90-tests1663-debug.apk`, SHA-256 `4d60e3b62f87309b7732b6fd2bc79d3a18da0ab51472148932d66c7585ceefac` |
+| Artifact | `build/CloseCode-build91-tests1674-debug.apk`, SHA-256 `64a63296403b280fb0490d4139e9ac059fedbf5a51a2f65bb234c2aa9a0d2ae9` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |
@@ -1858,7 +1858,7 @@ the bundled OpenCode server is prevented from downloading one
 
 | Limit | Consequence | Evidence |
 |---|---|---|
-| All 1663 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
+| All 1674 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
 | One stock instrumentation test | No real device test exists | `app/src/androidTest/java/com/closecode/ExampleInstrumentedTest.kt` |
 | No lint or static analysis task | Style and some correctness issues are not machine-checked | `app/build.gradle.kts`; `.github/workflows/build.yml:32`, `:35` |
 | The test-count constant is hand-maintained | The version number could claim a count that was never run (defect D8) | `app/build.gradle.kts:16` |
@@ -2545,6 +2545,70 @@ folders that cannot run, before every build it prepares.
 
 Build 90 is *implemented and tested here*. The board is the last step, and it belongs to the
 user: install `build/CloseCode-build90-tests1663-debug.apk` and run
+
+```sh
+sh closecode-acceptance.sh
+```
+
+---
+
+# PART 21 — BUILD 91: THREE BUGS IN THE APP ITSELF
+
+The board read **PASS 29 FAIL 0** on build 89: the build engine is finished. What was left
+were three bugs in the app, all of them visible only on the phone.
+
+## 21.1 A project created in the app must compile
+
+The Compose template used `Text("Hello, world")` without importing
+`androidx.compose.material3.Text`. Build 84 fixed the template — but the app had **two**
+templates, and the self-test built its own hand-written copy, so nothing ever checked the
+one the user gets.
+
+- **One template, one source.** The screen and `closecode init` both write
+  `Scaffold.filesFor` ✓ — and a test now proves the template imports what it uses.
+- **The self-test builds the shipped template**, not a copy of it. Step 10 is a gate now:
+  a template that does not compile fails the self-test instead of reaching the user.
+- **Projects generated before the fix are repaired.** The app adds the missing import to the
+  files it wrote itself — never to a project the user brought in.
+
+## 21.2 The "package name already used" message must be true
+
+The app refused a package name that existed nowhere on the phone, and gave a message with
+nothing to act on.
+
+- **One rule, one list.** The screen and the creation path now compare against the same
+  registry list, so the two front ends cannot disagree. The comparison is on the **whole**
+  package name — a fragment would match every name that starts with `com`.
+- **The message names the project that holds it**: "That package name is already used by
+  \"Notes\". Pick a unique one."
+- **The deliberate policy was kept.** A deleted project keeps its identity reserved, and a
+  legacy migration may record a duplicate — both are existing, tested behaviour. An earlier
+  attempt of mine removed them, the existing tests caught it, and the policy was restored.
+
+## 21.3 The phone engine must be able to read the platform resources
+
+The self-test failed at step 10 because the `aapt2` inside the APK is an older build that
+cannot parse an Android 15 resource table ("illegal map type 'string'"). The SDK's ARM64
+`aapt2` — the one every Gradle build already uses — reads them without trouble.
+
+There is now **one picker** for the whole app (`build/Aapt2Picker`): the SDK's `aapt2` when
+it is installed, the bundled one only as a fallback. The engine, `closecode tool aapt2`, the
+self-test and the preview loader all use it, so the phone engine and the Gradle path cannot
+disagree about what works.
+
+## 21.4 What is proven here, and what still needs the phone
+
+| Claim | Proof |
+|---|---|
+| The suite is green | 1674 tests, 0 failures, 0 errors, 8 skipped |
+| The template imports what it uses | A test over the shipped template |
+| An old generated project is repaired, a user's project is not | Two tests |
+| A name used nowhere is free; a name in use names its holder | Five tests |
+| The deliberate registry policy still holds | The pre-existing registry tests pass unchanged |
+| The phone | **Still to be measured.** The board runs on the phone |
+
+Build 91 is *implemented and tested here*. The board is the last step, and it belongs to the
+user: install `build/CloseCode-build91-tests1674-debug.apk` and run
 
 ```sh
 sh closecode-acceptance.sh

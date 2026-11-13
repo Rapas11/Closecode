@@ -25,6 +25,8 @@ data class BuildSetup(
         val directory: File,
         val id: String = slug,
         val savedPackage: String? = null,
+        /** True when the project was brought in by the user rather than generated here. */
+        val imported: Boolean = false,
         val savedMinSdk: Int? = null,
         val savedTargetSdk: Int? = null,
         val savedCompileSdk: Int? = null,
@@ -47,6 +49,12 @@ object BuildSetupFactory {
                 SharedPreferencesKeyValueStore(context),
             )
             runCatching { AndroidProjectFiles.prepare(project.directory, platformStore.rootDir()) }
+            // A project CloseCode generated before the template was fixed still misses an
+            // import, and every build of it fails in a source file. The repair only adds an
+            // import the source uses; a project the user brought in is never touched.
+            runCatching {
+                com.closecode.ui.project.GeneratedProjectRepair.repair(project.directory, project.imported)
+            }
             // The leftovers of an interrupted install are not an install. A build that finds
             // one fetches the package itself — and the package it fetches for a desktop is
             // one this phone cannot run.
@@ -59,14 +67,10 @@ object BuildSetupFactory {
                 ?: project.savedCompileSdk
                 ?: facts.compileSdk
                 ?: ProjectPins.COMPILE_SDK
-            val bundledAapt2 = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
-                .takeIf { it.isFile }
+            // One picker for the whole app: the SDK's ARM64 aapt2 when it is installed,
+            // because the bundled build cannot read the platform resources.
             val downloadedAapt2 = platformStore.buildToolsAapt2()
-            val aapt2 = selectAapt2(
-                bundledAapt2,
-                downloadedAapt2,
-                File(context.filesDir, "toolchain"),
-            )
+            val aapt2 = Aapt2Picker.pick(context, File(context.filesDir, "toolchain"))
             val androidJar = platformStore.androidJar(compileSdk) ?: store.jar("android-jar")
             val stdlib = store.jar("kotlin-stdlib")
             val signer = runCatching { SigningStore(context).identity() }.getOrNull()

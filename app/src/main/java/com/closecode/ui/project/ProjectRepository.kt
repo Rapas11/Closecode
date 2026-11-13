@@ -362,6 +362,15 @@ class ProjectRepository(context: Context) {
     fun packageTaken(packageName: String, exceptId: String? = null): Boolean =
         registry.packageTaken(packageName, exceptId)
 
+    /** The project that holds a package name, so the user can be told which one. */
+    fun packageHolder(packageName: String, exceptId: String? = null): String? =
+        registry.packageHolder(packageName, exceptId)
+
+    /** Every package name in use and the project that holds it — the one list both front
+     *  ends compare against. */
+    fun packagesInUse(exceptId: String? = null): Map<String, String> =
+        registry.packagesInUse(exceptId)
+
     /** Every package ever reserved, including projects that have since been deleted. */
     fun reservedPackages(exceptId: String? = null): Set<String> =
         registry.reservedPackages(exceptId)

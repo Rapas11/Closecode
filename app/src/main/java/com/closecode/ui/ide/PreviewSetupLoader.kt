@@ -31,8 +31,8 @@ internal fun loadPreviewSetup(
     val toolFiles = ids.distinct()
         .mapNotNull { id -> store.jar(id)?.let { id to it } }
         .toMap()
-    val aapt2 = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
-        .takeIf { it.isFile } ?: return null
+    val aapt2 = com.closecode.build.Aapt2Picker.pick(context)
+        ?.takeIf { it.isFile } ?: return null
     val androidJar = store.jar("android-jar") ?: return null
     val stdlib = store.jar("kotlin-stdlib") ?: return null
     if (toolFiles.size != ids.distinct().size) return null

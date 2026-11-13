@@ -64,7 +64,9 @@ private fun isValidPackageName(value: String): Boolean = PackageName.matches(val
 @Composable
 fun StartProjectSheet(
     onDismiss: () -> Unit,
-    existingPackages: Set<String> = emptySet(),
+    /** Every package name in use, and the project that holds it. The whole name is
+     *  compared — a fragment would match every package that starts with `com`. */
+    packagesInUse: Map<String, String> = emptyMap(),
     onCreate: (name: String, selection: SelectedTemplate, config: ProjectConfig) -> String?,
 ) {
     val c = LocalPageColors.current
@@ -111,12 +113,13 @@ fun StartProjectSheet(
         val templateName = Templates[selection.tab].orEmpty().getOrNull(selection.index)?.name
         val finalName = name.trim().ifEmpty { templateName ?: "Untitled" }
         val packageName = config.packageName.trim().ifEmpty { defaultPackageName(finalName) }
+        val holder = packagesInUse[com.closecode.ui.project.ProjectIdentity.packageKey(packageName)]
         val problem = when {
             packageName.isEmpty() -> "Enter a package name in project settings."
             !isValidPackageName(packageName) ->
                 "Use a package name like com.yourname.app — letters, numbers, dots and underscores."
-            packageName in existingPackages ->
-                "That package name is already used by another project. Pick a unique one."
+            holder != null ->
+                "That package name is already used by \"$holder\". Pick a unique one."
             else -> null
         }
         if (problem != null) {

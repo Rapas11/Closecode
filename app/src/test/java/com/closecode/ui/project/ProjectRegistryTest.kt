@@ -47,8 +47,9 @@ class ProjectRegistryTest {
             registry.begin(ProjectIdentity.newId(), "other", "Other", "com.closecode.notes")
         }.exceptionOrNull()
         assertTrue(packageError is ProjectConflictException)
+        // The message names the project that holds the name, so the user can act on it.
         assertEquals(
-            "Another project uses this package. Choose a different package name.",
+            "That package name is already used by \"Notes\". Pick a unique one.",
             packageError?.message,
         )
     }

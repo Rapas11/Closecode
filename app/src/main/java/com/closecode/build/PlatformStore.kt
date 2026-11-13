@@ -56,9 +56,10 @@ val SdkPlatforms = listOf(
  * Downloads and keeps Android SDK packages under `files/sdk/`.
  *
  * The platform download is the official Google zip, checked against the SHA-1 in the repository
- * index. The build-tools download is the AndroidIDE Rv2 Android-native 35.0.1 archive; the
- * APK's bundled libaapt2.so is preferred, and the downloaded aapt2 is the fallback. Nothing
- * is unpacked into a directory the user can write: every path is derived here.
+ * index. The build-tools download is the AndroidIDE Rv2 Android-native 35.0.1 archive, and it
+ * is the `aapt2` the app builds with: the copy of `libaapt2.so` inside the APK is older and
+ * cannot read the platform resources the app installs. Nothing is unpacked into a directory
+ * the user can write: every path is derived here.
  */
 class PlatformStore(
     private val context: Context,

@@ -431,6 +431,39 @@ else
 fi
 
 # =============================================================================
+head_ "16. Every generated project uses the imports it needs"
+BADPROJ=""
+for PROJ in /data/user/0/com.closecode/files/projects/*/; do
+  [ -d "$PROJ" ] || continue
+  for KT in "$PROJ"app/src/main/java/*/*/MainActivity.kt; do
+    [ -f "$KT" ] || continue
+    if grep -q "Text(" "$KT" 2>/dev/null && ! grep -q "material3.Text" "$KT" 2>/dev/null; then
+      BADPROJ="$BADPROJ $(basename "$PROJ")"
+    fi
+  done
+done
+if [ -n "$BADPROJ" ]; then
+  bad "these projects were generated without the Text import:$BADPROJ"
+else
+  ok "every generated project imports what it uses"
+fi
+
+# =============================================================================
+head_ "17. The phone engine can read the platform resources"
+PJ=$(ls "$SDK_ROOT"/platforms/android-*/android.jar 2>/dev/null | head -1)
+if [ -z "$PJ" ]; then
+  skip "no platform android.jar found"
+else
+  OUT=$(closecode tool aapt2 dump badging "$PJ" 2>&1 | head -2)
+  if echo "$OUT" | grep -q "package: name='android'"; then
+    ok "the phone engine reads the platform resources"
+  else
+    bad "the phone engine cannot read the platform resources"
+    printf '%s\n' "$OUT" | sed 's/^/        /'
+  fi
+fi
+
+# =============================================================================
 say ""
 say "==========================================================="
 say " PASS $PASS   FAIL $FAIL   SKIP $SKIP"

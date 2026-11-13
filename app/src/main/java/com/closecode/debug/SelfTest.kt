@@ -290,8 +290,8 @@ object SelfTest {
      * version line. A binary that cannot start is a plain Fail with the reason.
      */
     private fun checkAapt2(context: Context): Check {
-        val binary = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
-        if (!binary.isFile) {
+        val binary = com.closecode.build.Aapt2Picker.pick(context)
+        if (binary == null || !binary.isFile) {
             return Check(
                 5,
                 names[4],
@@ -514,8 +514,8 @@ object SelfTest {
             )
         val libraries = LibraryIndex.load(librariesDir)
             ?: return Check(10, names[9], Status.Fail, "The library cache has no readable index.")
-        val aapt2 = File(context.applicationInfo.nativeLibraryDir, "libaapt2.so")
-        if (!aapt2.isFile) {
+        val aapt2 = com.closecode.build.Aapt2Picker.pick(context)
+        if (aapt2 == null || !aapt2.isFile) {
             return Check(10, names[9], Status.Fail, "aapt2 is missing from this build of the app.")
         }
         val androidJar = store.jar("android-jar")
@@ -593,89 +593,23 @@ object SelfTest {
     }
 
     /** The smallest real Compose app: a screen, a theme and a preview. */
+    /**
+     * Writes the project the self-test builds: the **shipped template**, not a copy of it.
+     *
+     * A template that does not compile is a broken product, and step 10 exists to catch
+     * exactly that. When the self-test used its own hand-written project, a template with a
+     * missing import still passed every check and reached the user.
+     */
     private fun writeSelfTestProject(project: File) {
-        File(project, "app/build.gradle.kts").apply {
-            parentFile?.mkdirs()
-            writeText(
-                """
-                plugins {
-                    id("com.android.application")
-                    id("org.jetbrains.kotlin.android")
-                }
-                android {
-                    namespace = "com.closecode.selftest"
-                    compileSdk = 35
-                    defaultConfig {
-                        applicationId = "com.closecode.selftest"
-                        minSdk = 29
-                        targetSdk = 35
-                        versionCode = 1
-                        versionName = "1.0"
-                    }
-                }
-                """.trimIndent() + "\n",
-            )
-        }
-        File(project, "app/src/main/AndroidManifest.xml").apply {
-            parentFile?.mkdirs()
-            writeText(
-                """
-                <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-                    <application android:label="@string/app_name">
-                        <activity android:name=".MainActivity" android:exported="true">
-                            <intent-filter>
-                                <action android:name="android.intent.action.MAIN" />
-                                <category android:name="android.intent.category.LAUNCHER" />
-                            </intent-filter>
-                        </activity>
-                    </application>
-                </manifest>
-                """.trimIndent() + "\n",
-            )
-        }
-        File(project, "app/src/main/res/values/strings.xml").apply {
-            parentFile?.mkdirs()
-            writeText(
-                """
-                <resources>
-                    <string name="app_name">Self test</string>
-                </resources>
-                """.trimIndent() + "\n",
-            )
-        }
-        File(project, "app/src/main/java/com/closecode/selftest/MainActivity.kt").apply {
-            parentFile?.mkdirs()
-            writeText(
-                """
-                package com.closecode.selftest
-
-                import android.os.Bundle
-                import androidx.activity.ComponentActivity
-                import androidx.activity.compose.setContent
-                import androidx.compose.material3.MaterialTheme
-                import androidx.compose.material3.Text
-                import androidx.compose.runtime.Composable
-                import androidx.compose.ui.tooling.preview.Preview
-
-                class MainActivity : ComponentActivity() {
-                    override fun onCreate(savedInstanceState: Bundle?) {
-                        super.onCreate(savedInstanceState)
-                        setContent { MaterialTheme { Hello() } }
-                    }
-                }
-
-                @Composable
-                fun Hello() {
-                    Text("CloseCode built me")
-                }
-
-                @Preview(showBackground = true)
-                @Composable
-                fun HelloPreview() {
-                    MaterialTheme { Hello() }
-                }
-                """.trimIndent() + "\n",
-            )
+        val files = com.closecode.ui.project.Scaffold.filesFor(
+            "selftest",
+            com.closecode.ui.model.SelectedTemplate(com.closecode.ui.model.TemplateTab.App, 0),
+            com.closecode.ui.model.ProjectConfig(packageName = "com.closecode.selftest"),
+        )
+        files.forEach { file ->
+            val target = File(project, file.path)
+            target.parentFile?.mkdirs()
+            target.writeText(file.content)
         }
     }
 
