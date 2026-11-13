@@ -108,6 +108,7 @@ object BuildCoordinator {
                 } else {
                     "closecode setup --all"
                 },
+                context = context,
             )
             val summary = BuildReport.summary(outcome)
             last = Last(project.id, project.slug, project.name, outcome, summary)

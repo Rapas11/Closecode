@@ -69,6 +69,21 @@ object AndroidProjectFiles {
         "if [ ! -x \"\$CLOSECODE_CLI\" ]; then\n" +
         "  CLOSECODE_CLI=\$(command -v closecode 2>/dev/null)\n" +
         "fi\n" +
+        "if [ -n \"\$CLOSECODE_CLI\" ]; then\n" +
+        "  # A build that starts while the toolchain is being changed fails in a way the\n" +
+        "  # user cannot act on, so the build says what is really happening.\n" +
+        "  STATUS=\$(\"\$CLOSECODE_CLI\" toolchain status --json 2>/dev/null)\n" +
+        "  case \"\$STATUS\" in\n" +
+        "    *'\"installing\":true'*)\n" +
+        "      echo 'closecode: an install is running right now, so the toolchain is not ready. Wait for it to finish and run the build again.' >&2\n" +
+        "      exit 1\n" +
+        "      ;;\n" +
+        "  esac\n" +
+        "  # The build-tools this project asks for have to exist before Gradle starts, or\n" +
+        "  # AGP fetches that revision itself — and Google's package holds x86-64 binaries\n" +
+        "  # that cannot run on this phone.\n" +
+        "  \"\$CLOSECODE_CLI\" ensure-build-tools >/dev/null 2>&1 || true\n" +
+        "fi\n" +
         "\"\$GRADLE_BIN\" \"\$@\"\n" +
         "GRADLE_CODE=\$?\n" +
         "if [ \"\$GRADLE_CODE\" -eq 0 ] && [ -n \"\$CLOSECODE_CLI\" ]; then\n" +

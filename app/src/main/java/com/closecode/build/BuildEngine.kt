@@ -1,5 +1,6 @@
 package com.closecode.build
 
+import android.content.Context
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -48,6 +49,7 @@ class BuildEngine(
         useGradle: Boolean = false,
         gradle: GradleToolchain? = null,
         setupCommand: String? = null,
+        context: Context? = null,
     ): BuildOutcome {
         cancelled = false
         return BuildLock.mutex.withLock {
@@ -62,6 +64,7 @@ class BuildEngine(
                 useGradle,
                 gradle,
                 setupCommand,
+                context,
             )
         }
     }
@@ -77,8 +80,18 @@ class BuildEngine(
         useGradle: Boolean,
         gradle: GradleToolchain?,
         setupCommand: String?,
+        context: Context?,
     ): BuildOutcome = withContext(Dispatchers.IO) {
         val type = if (buildType == "release") "release" else "debug"
+        // A build that starts while the toolchain is being changed fails in a way the user
+        // cannot act on. This says what is really happening.
+        val installing = context != null && InstallLock.isBusy(context)
+        if (installing) {
+            val message = InstallLock.busyMessage()
+            _state.value = BuildState.Failed(Step.CheckProject, message)
+            onLog(message)
+            return@withContext BuildOutcome.Failed(message)
+        }
         if (useGradle) {
             // Toolchain first: a missing Gradle is the one blocker worth reporting before
             // dozens of custom-engine findings that do not apply to a real Gradle build.

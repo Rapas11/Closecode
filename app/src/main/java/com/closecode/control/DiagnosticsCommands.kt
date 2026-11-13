@@ -105,6 +105,8 @@ object ToolchainStatusCommand {
         }
         return JsonObject().apply {
             addProperty("ok", missing.size() == 0)
+            // A build must be able to see that the toolchain is being changed right now.
+            addProperty("installing", com.closecode.build.InstallLock.isBusy(context))
             addProperty("prefix", paths.shellTools.absolutePath)
             add("jdk", JsonObject().apply {
                 addProperty("path", gradle.javaHome.absolutePath)

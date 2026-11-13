@@ -156,6 +156,10 @@ class MainActivity : ComponentActivity() {
                         // A build-tools folder with binaries for another processor can never
                         // run here; it is only a broken choice, so it goes.
                         platform.removeUnusableBuildTools()
+                        // A half-finished install leaves a .installer folder behind. A build
+                        // that finds one fetches the package itself, which is how a phone
+                        // ends up with an x86-64 package it cannot run.
+                        platform.removeIncompleteInstalls()
                         val javaHome = JdkStore.selected(applicationContext)?.home
                             ?: File(applicationContext.dataDir, "file/g/lib/jvm/java-17-openjdk")
                         GradleUserProperties.ensure(

@@ -1,109 +1,118 @@
-CloseCode — build 86 brief: one small bug, one suggestion
+CloseCode — build 87 brief: the installer still puts broken packages on the phone
 You are the developer of my phone app CloseCode. You have everything you need to build it. This file is the complete instruction for the next build.
 
-Last build tested: 85 (CloseCode 0.85.1646, commit 9c8a541) Device: one Android phone, arm64, Android 16, 8 cores, 11.9 GB RAM Test project: com.rapas.redit — AGP 8.12.0, Kotlin 1.9.24, Compose BOM 2024.09.03, Media3 + MediaPipe + Vosk, minSdk 26, targetSdk 35
+Last build tested: 86 (CloseCode 0.86.1651, commit bd9ac05) Device: one Android phone, arm64, Android 16, 8 cores, 11.9 GB RAM Test project: com.rapas.redit — AGP 8.12.0, Kotlin 1.9.24, Compose BOM 2024.09.03, Media3 + MediaPipe + Vosk, minSdk 26, targetSdk 35
 
 The short version (read this first)
 I am the person who uses CloseCode on my phone. I want to build my Android app on my phone, with no computer and no AI helping me.
 
-The app now does everything I asked for. Build 85 fixed the last two problems and nothing is broken any more.
-
-Two small things are left, and neither of them stops me working:
+Almost everything works now. One thing went wrong in build 86, and it is the same problem I reported in build 83 — you made the app report it, but the app still does it.
 
 #	What I want	In one sentence
-1	closecode sign-apk must accept a relative path	It says "There is no APK at t.apk" while the file is right there in the folder I am in.
-2	Suggestion: give my existing project the same speed settings	The new projects got them; mine did not.
+1	Stop installing build-tools that cannot run on this phone	The app now says "arch":"x86_64","ok":false and then installs it anyway.
+2	A build must not break while an install is running	Mine failed with "Software caused connection abort" because the install was half-finished.
 How you will know it worked: run the script at the end of this file on the phone. When it prints FAIL 0, we are done.
 
 Please do not send me a build before that script says FAIL 0.
 
 Where we are
-Build 85 is the first build where everything on my list works. The acceptance script at the bottom of this file runs on the phone and prints PASS/FAIL for everything. On build 85:
+Build 86 fixed both things from the last brief. Verified directly on the phone:
 
- PASS 23   FAIL 0   SKIP 3
-and the two skips that matter were verified separately:
+$ closecode sign-apk my.apk
+{"ok":true,"apk":"/…/relcheck/my.apk","signed":true,
+ "certificate":"CN=Closecode Debug (30fae35d…)"}
 
-Removing a tool keeps the cache — verified in build 84 with --all: cache 2060368 KB before removing Gradle, 2060368 KB after
-A broken download resumes — verified by hand in build 84: killed a download at 6 MB, the app kept the partial, the next run said "Continuing alsa-lib from 7860 of 453056 bytes…" and finished
-Build 85 fixed the signing regression I reported. I took an APK, signed it with the wrong key, and ran closecode sign-apk on it:
+$ closecode venv myenv
+{"ok":true,"path":"/…/relcheck/myenv","pip":"/…/relcheck/myenv/bin/pip"}
+Both now accept a relative path and report the resolved absolute path.
 
-before : a6811008ffe66d61dd679b8a1954418a642e9a065de06cccd10a9bac3f41ddcc
-after  : 30fae35d64645323304340c4f570a58377de8153477a5e334dc62c036a87f979
-It really replaces the signature now, and the acceptance script's step 5 passes:
+But the board had one failure, and it is the build-tools problem from build 83 coming back:
 
-closecode build : 30fae35d…
-./gradlew       : 30fae35d…      ← both the same again
-It also fixed closecode venv with a relative path, and closecode venv relvenv now creates the environment in the folder I am standing in.
+4. ./gradlew assembleDebug succeeds
+  FAIL  ./gradlew assembleDebug exited 1
+        Warning: An error occurred while preparing SDK package Android SDK Build-Tools 35:
+        Software caused connection abort.
+Everything else passed — the signing check, the JDK check, the venv check, and the new relative-path check (step 12).
 
 Do not break these — they are proven on the phone
 Behaviour	Evidence
 Both build paths sign with one key	closecode build → 30fae35d…; ./gradlew assembleDebug → the same; sign-apk replaces an existing signature
 A brand-new app builds	closecode init --template android-compose → closecode build --gradle → exit 0, 246 s, signed 30fae35d…, no manual edits
-A release build is signed	closecode release → app-release.apk, "signed":true, certificate reported, apksigner verify agrees
+A release build is signed	closecode release → app-release.apk, "signed":true, certificate reported
 A broken download resumes	"Continuing alsa-lib from 7860 of 453056 bytes…", partial cleaned up after success
-A JDK can be chosen and every path follows	toolchain status --json returns a jdks array with selected; closecode config set jdk <path> is accepted; the gradlew shim exports the selected JDK unconditionally
+A JDK can be chosen and every path follows	toolchain status --json returns a jdks array with selected; closecode config set jdk <path> is accepted
 Removing a tool keeps the cache	closecode setup --remove gradle → cache 2060368 KB before, 2060368 KB after
 python3 -m venv	the runtime installs its own matching ensurepip wheel; pip install requests into a fresh venv works
-Only runnable build-tools	35.0.0 removed, only arm64 35.0.1, and the status reports "arch":"arm64"
+Paths work	closecode sign-apk my.apk and closecode venv myenv both work from the current folder
 closecode build	BUILD SUCCESSFUL, exit 0, 75 s, APK 77,145,483 bytes
 ./gradlew assembleDebug	BUILD SUCCESSFUL, exit 0
 closecode check	engine:"gradle", errors:0, exit 0
 closecode test	testDebugUnitTest, exit 0, 162 s, "passed"
 closecode lint	lintDebug, exit 0, 638 s, "passed"
 Settings installs the whole toolchain	JDK 17, Gradle 8.13, platform 35, build-tools 35.0.1, platform-tools, 4 SDK licenses, NDK 27.1.12297006, CMake 3.22.1 — each with a size and a Remove button
-Component sizes match the disk	Native tools reports 1.8 GB; du says NDK 1.7 GB + CMake 73 MB
 The gradlew shim fixes AAPT2	it writes android.aapt2FromMavenOverride into $GRADLE_USER_HOME/gradle.properties before starting Gradle
-A failed build	exits 1 with one root cause and a log path: "summary":"Gradle failed (exit 1): file:///…/MainActivity.kt:12:17 Unresolved reference: Text"
-Item 1 — closecode sign-apk must accept a relative path
+A failed build	exits 1 with one root cause and a log path
+Item 1 — do not install packages that cannot run on this phone
+This is the item I reported in build 83. You made the app report it. The app still does it.
+
 The evidence
-The file is right there, in the folder I am standing in:
+Right now, on the phone, after closecode setup --gradle ran:
 
-$ cd /data/user/0/com.closecode/cache/opencode/opencode/signtest
-$ ls -l t.apk
--rw------- 1 u0_a428 u0_a428_cache 20340621 21:44 t.apk
+$ closecode toolchain status --json
+"buildTools":[
+  {"version":"35.0.0","path":"…/build-tools/35.0.0","shim":false,"arch":"x86_64","ok":false},
+  {"version":"35.0.1","path":"…/build-tools/35.0.1","shim":false,"arch":"arm64","ok":true}]
+The app knows. It says x86_64 and ok:false. And it installed it anyway — that directory was created by closecode setup --gradle today.
 
-$ closecode sign-apk t.apk
-{"ok":false,"error":"There is no APK at t.apk.","code":"failed","exitCode":1}
-With the absolute path the same command works perfectly:
+And it cannot run:
 
-$ closecode sign-apk /data/user/0/com.closecode/cache/opencode/opencode/signtest/t.apk
-{"ok":true,"signed":true,"certificate":"CN=Closecode Debug (30fae35d…)"}
-This is the same bug you fixed for closecode venv in build 85 — a relative path is not resolved against the current directory, so the command looks for it somewhere else.
+$ file …/build-tools/35.0.0/aapt2
+ELF shared object, 64-bit LSB x86-64, dynamic
+
+$ …/build-tools/35.0.0/aapt2 version
+/system/bin/sh: …/build-tools/35.0.0/aapt2: not executable: 64-bit ELF file
+That is the same x86-64 problem as the original AAPT2 bug, and the same package I raised in build 83.
 
 What to do
-Resolve relative paths against the current working directory, in every command that takes a path — not one command at a time. closecode venv is fixed; closecode sign-apk is not. Please fix it once, in the shared place, so the next command does not have the same problem.
-Check the others while you are there. I tested these and they already work, so they are probably fine — but please confirm: closecode install <apk>, closecode export <file>, closecode files read/write, closecode gradle <task>.
-Say which file you actually touched, in the reply, so I can see it went where I expected.
+Do not download a package whose binaries are for the wrong processor. If a build-tools version is not available for arm64, do not install it — not as the default, not as an option, not at all.
+One build-tools version is enough. 35.0.1 is the one that works on this phone and the one every build actually uses. Installing a second, broken copy gives the user a choice between a working version and a broken one, and it is the broken one AGP reaches for first.
+setup --gradle should ask for 35.0.1, not 35.0.0. The usage line still shows --build-tools 35.0.0.
+ok:false should stop the install, not just the report. If the app can already tell that a package is for the wrong processor, that check belongs in the installer, before anything is written to disk.
 Done when
-cd /some/folder
-closecode sign-apk my.apk
-signs ./my.apk, and the acceptance script's step 12 passes.
+closecode setup --gradle leaves exactly one build-tools on the phone, and it is arm64
+the acceptance script's step 13 passes: every installed build-tools runs on this phone
+Item 2 — a build must not break while an install is running
+What happened
+The acceptance script was running at the same time as closecode setup --gradle. The build failed like this:
 
-Item 2 — suggestion: the same speed settings for existing projects
-Not a bug, and nothing is broken by it. You put the three settings in the gradle.properties that closecode init writes, which is exactly right. The project I already had did not get them:
+4. ./gradlew assembleDebug succeeds
+  FAIL  ./gradlew assembleDebug exited 1
+        Warning: An error occurred while preparing SDK package Android SDK Build-Tools 35:
+        Software caused connection abort.
+While the install was running, the folder existed but was not finished:
 
-# what a new project gets now
-org.gradle.parallel=true
-org.gradle.caching=true
-kotlin.compiler.execution.strategy=in-process
+$ ls -la …/build-tools/35.0.0/
+drwx------ 3 …  .
+drwx------ 4 …  ..
+drwx------ 2 …  .installer        ← only a marker, no files
+Gradle saw a build-tools 35 package directory, decided it was not usable, and tried to fetch the package itself. That download failed, and the error blamed the network:
 
-# what my existing project still has
-android.useAndroidX=true
-android.enableJetifier=true
-org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
-Two thoughts, your call:
+Software caused connection abort.
 
-Could CloseCode offer these as an action? A one-tap "Speed up this project" in Settings, or a hint when it notices a project is missing them. I would rather not edit my project by hand — that is exactly the kind of thing the app should do.
-android.enableJetifier=true is deprecated. It rewrites old support-library dependencies on every build and it is not needed by anything modern. If it can be dropped safely, dropping it makes builds faster.
-Measured on this phone, so you can see what is worth it:
+Nothing to do with the network. The message is misleading, and the build died for a reason the user cannot see or act on.
 
-Task	Time
-closecode build (warm)	75 s
-closecode test	162 s
-closecode lint	638 s
-closecode release (small project)	836 s
-closecode release (my project)	1879 s
-A brand-new project, first build	246 s, including the one-time library download
+Once the install finished, the very same command worked:
+
+$ ./gradlew assembleDebug
+BUILD SUCCESSFUL in 4m 15s
+What to do
+Install atomically. Unpack into a temporary folder and move it into place when it is complete. A half-installed package must never be visible at its final path.
+The .installer marker should mean "not installed". Either the SDK manager must ignore that directory, or the app must remove it before anything else can look at the folder.
+A build that fails because an install is running should say so. Something like "an install is in progress, try again when it finishes" is useful. "Software caused connection abort" is not.
+A build and an install should not fight. If closecode setup is running, a build should either wait or say plainly that it cannot start.
+Done when
+running closecode setup --gradle and a build at the same time never produces "preparing SDK package" or "connection abort"
+the acceptance script's step 14 passes: no .installer directory is left behind
 Rules
 One installer, two front ends. Anything in Settings must also be reachable from closecode setup, and the reverse.
 The app installs, the user consents. The AI must never need curl, tar, chmod, or a hand-written license file.
@@ -114,15 +123,16 @@ Reject unknown flags. Unknown arguments print usage and exit with no side effect
 Never claim a capability the code does not have. If a screen says a tool works, it must work. A command that produces an unsigned APK must not report ok:true. A command that reports a certificate must report the one the file really has.
 A template that does not compile is a broken product. Anything you generate must be built and run before it reaches a user.
 A path means what the user typed. Resolve it against the folder they are in.
+Never install something that cannot run on this phone, and never leave a half-installed package where a build can find it.
 Before you ship — run this yourself
 Do not send me a build until these are true on your side. Each one takes a minute.
 
-cd /tmp && closecode sign-apk some.apk     # must sign /tmp/some.apk
-cd /tmp && closecode venv myenv            # must create /tmp/myenv
-closecode init --template android-compose freshapp
-cd freshapp && closecode build --gradle    # must exit 0, no edits
-cd .. && closecode release                  # must report signed:true
-sh closecode-acceptance.sh                 # the whole board, including the new step 12
+closecode setup --gradle
+ls file/sdk/build-tools/                     # must be ONE version, arm64
+file file/sdk/build-tools/*/aapt2             # every one must be arm64
+file/sdk/build-tools/*/aapt2 version          # every one must actually run
+find file/sdk -name .installer                # must be empty
+sh closecode-acceptance.sh                   # the whole board, steps 13 and 14 are new
 Then, and only then, send me the board.
 
 The test script
@@ -132,7 +142,7 @@ sh closecode-acceptance.sh          # safe checks, about 9 minutes
 sh closecode-acceptance.sh --all    # also removes and reinstalls Gradle
 It is written for Android's toybox, so it uses grep -E for alternation. The only thing it changes is a temporary syntax error in app/build.gradle.kts, which it puts back immediately.
 
-Step 12 is new: it checks that closecode sign-apk and closecode venv accept a relative path.
+Steps 13 and 14 are new: they check that every installed build-tools can run on this phone, and that no half-finished install is left behind.
 
 #!/system/bin/sh
 # =============================================================================
@@ -493,6 +503,37 @@ if echo "$OUT" | grep -qi '"ok":true'; then
 else
   bad "closecode venv does not accept a relative path"
   echo "$OUT" | head -c 200 | sed 's/^/        /'
+fi
+
+# =============================================================================
+head_ "13. Every installed build-tools can run on this phone"
+BAD=""
+for D in "$SDK_ROOT"/build-tools/*/; do
+  [ -d "$D" ] || continue
+  A="$D/aapt2"
+  [ -f "$A" ] || continue
+  if ! "$A" version >/dev/null 2>&1; then
+    BAD="$BAD $(basename "$D")"
+  fi
+done
+if [ -n "$BAD" ]; then
+  bad "these installed build-tools cannot run on this phone:$BAD"
+  for D in "$SDK_ROOT"/build-tools/*/; do
+    [ -f "$D/aapt2" ] || continue
+    "$D/aapt2" version 2>&1 | head -1 | sed 's/^/        /'
+  done
+else
+  ok "every installed build-tools runs on this phone"
+fi
+
+# =============================================================================
+head_ "14. No half-finished install is left in the SDK"
+LEFTOVER=$(find "$SDK_ROOT" -maxdepth 3 -name ".installer" 2>/dev/null | head -3)
+if [ -n "$LEFTOVER" ]; then
+  bad "an unfinished install is still in the SDK"
+  printf '%s\n' "$LEFTOVER" | sed 's/^/        /'
+else
+  ok "no unfinished install is left in the SDK"
 fi
 
 # =============================================================================

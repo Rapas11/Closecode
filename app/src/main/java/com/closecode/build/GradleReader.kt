@@ -28,6 +28,9 @@ data class BuildFacts(
     val targetSdkPlace: Place? = null,
     val compileSdk: Int? = null,
     val compileSdkPlace: Place? = null,
+    /** The build-tools revision the project pins, when it pins one. */
+    val buildToolsVersion: String? = null,
+    val buildToolsPlace: Place? = null,
     val kotlinVersion: String? = null,
     val kotlinPlace: Place? = null,
     val composeCompiler: String? = null,
@@ -108,6 +111,8 @@ object GradleReader {
             targetSdkPlace = app?.targetSdkPlace,
             compileSdk = app?.compileSdk,
             compileSdkPlace = app?.compileSdkPlace,
+            buildToolsVersion = app?.buildToolsVersion,
+            buildToolsPlace = app?.buildToolsPlace,
             kotlinVersion = kotlinPlugin?.version,
             kotlinPlace = kotlinPlugin?.place,
             composeCompiler = composeCompiler,
@@ -285,6 +290,8 @@ object GradleReader {
         var targetSdkPlace: Place? = null
         var compileSdk: Int? = null
         var compileSdkPlace: Place? = null
+        var buildToolsVersion: String? = null
+        var buildToolsPlace: Place? = null
         var composeCompiler: String? = null
         var composeCompilerPlace: Place? = null
 
@@ -439,6 +446,13 @@ object GradleReader {
             intValue(code, "minSdk")?.let { minSdk = it; minSdkPlace = place }
             intValue(code, "targetSdk")?.let { targetSdk = it; targetSdkPlace = place }
             intValue(code, "compileSdk")?.let { compileSdk = it; compileSdkPlace = place }
+            // The build-tools revision the project pins. The app has to know it: a project
+            // that asks for a revision the SDK does not have makes AGP download its own,
+            // and Google's package holds x86-64 binaries that cannot run on this phone.
+            Regex("^\\s*buildToolsVersion\\s*=\\s*\"([^\"]+)\"").find(code)?.let {
+                buildToolsVersion = it.groupValues[1]
+                buildToolsPlace = place
+            }
             Regex(
                 "kotlinCompilerExtensionVersion\\s*=\\s*(?:\"([^\"]+)\"|" +
                     "libs\\.versions\\.([A-Za-z0-9_.]+)(?:\\.get\\(\\))?)",

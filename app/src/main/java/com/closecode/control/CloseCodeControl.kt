@@ -269,6 +269,17 @@ object CloseCodeControl {
                 "venv" -> send(output, VenvCommand.run(context, args(request), string(request, "cwd")))
                 "downloads" -> send(output, pendingDownloads(context))
                 "speed" -> send(output, speedUp(context, request))
+                "ensure-build-tools" -> send(
+                    output,
+                    EnsureBuildToolsCommand.run(
+                        context,
+                        resolveProject(
+                            context,
+                            cwd = string(request, "cwd"),
+                            slug = string(request, "project"),
+                        )?.directory,
+                    ),
+                )
                 "build" -> {
                     it.soTimeout = 0
                     val run = runBlocking { build(context, request, output) }
@@ -1122,6 +1133,13 @@ object CloseCodeControl {
         }
         if (BuildCoordinator.active() != null) {
             send(output, error("A build is already running."))
+            return false
+        }
+        // A build that starts while the toolchain is being changed fails in a way the user
+        // cannot act on: the build sees a package that is not finished and tries to fetch
+        // it itself, which ends in a message about the network.
+        if (com.closecode.build.InstallLock.isBusy(context)) {
+            send(output, error(com.closecode.build.InstallLock.busyMessage()))
             return false
         }
         val setup = try {
@@ -2058,6 +2076,7 @@ internal fun controlCommandScript(basePath: String): String = """
         venv) echo "usage: closecode venv <directory>" ;;
         downloads) echo "usage: closecode downloads" ;;
         speed) echo "usage: closecode speed [--drop-jetifier]" ;;
+        ensure-build-tools) echo "usage: closecode ensure-build-tools" ;;
         gradle|g) echo "usage: closecode gradle <task> [--gradle]" ;;
         check|chk) echo "usage: closecode check" ;;
         github|gh) echo "usage: closecode github push|pull [--force]" ;;
@@ -2078,7 +2097,7 @@ internal fun controlCommandScript(basePath: String): String = """
         ui) echo "usage: closecode ui [dump|tap|text|...]" ;;
         *)
           echo "usage: closecode <command> [args...]"
-          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing sign-apk venv downloads speed gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
+          echo "commands: build status cancel ping install launch logcat export screenshot input accessibility describe tool tools setup doctor toolchain signing sign-apk venv downloads speed ensure-build-tools gradle check github run app stop restart ui apps intent device files exec consent audit notifications screen deploy secrets selftest stop-all test-ui clean serve preview jobs init config test lint format package release"
           echo "Run 'closecode help <command>' for details."
           ;;
       esac
@@ -2127,6 +2146,7 @@ internal fun controlCommandScript(basePath: String): String = """
       venv) CMD=venv ;;
       downloads) CMD=downloads ;;
       speed) CMD=speed ;;
+      ensure-build-tools) CMD=ensure-build-tools ;;
       g|gradle) CMD=gradle ;;
       chk|check) CMD=check ;;
       gh|github) CMD=github ;;
@@ -2140,7 +2160,7 @@ internal fun controlCommandScript(basePath: String): String = """
       rel|release) CMD=release ;;
     esac
     case "${'$'}CMD" in
-      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|sign-apk|resign|venv|downloads|speed|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|notifications|screen|deploy|secrets|selftest|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
+      build|status|cancel|ping|install|launch|logcat|export|screenshot|input|accessibility|describe|tool|tools|setup|doctor|doc|toolchain|signing|sign|sign-apk|resign|venv|downloads|speed|ensure-build-tools|gradle|check|github|run|app|stop|restart|ui|apps|intent|device|files|exec|consent|audit|notifications|screen|deploy|secrets|selftest|stop-all|test-ui|clean|serve|preview|jobs|init|config|test|lint|format|package|release) ;;
       *) help >&2; exit 2 ;;
     esac
     case "${'$'}{2:-}" in

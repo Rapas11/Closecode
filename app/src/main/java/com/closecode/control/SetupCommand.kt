@@ -188,7 +188,7 @@ object SetupCommand {
     }
 
     fun usage(): String = """
-        usage: closecode setup --gradle [--sdk 35] [--build-tools 35.0.0] [--ndk] [--cmake]
+        usage: closecode setup --gradle [--sdk 35] [--build-tools 35.0.1] [--ndk] [--cmake]
                closecode setup --gradle --gradle-version 8.12
                closecode setup --web
                closecode setup --python
@@ -228,9 +228,13 @@ object SetupCommand {
             return error("Nothing to install. ${usage()}", "setup")
         }
         SetupKeepAliveService.start(context)
+        // The lock tells a build that the toolchain is being changed right now, so it can
+        // say that instead of failing with a message about the network.
         return try {
-            if (!options.remove.isNullOrBlank()) return remove(context, options.remove, emit)
-            install(context, options, cwd, emit)
+            com.closecode.build.InstallLock.hold(context) {
+                if (!options.remove.isNullOrBlank()) return@hold remove(context, options.remove, emit)
+                install(context, options, cwd, emit)
+            }
         } catch (error: Throwable) {
             DebugLog.crumb("SETUP", "failed: ${error.message ?: error.javaClass.simpleName}")
             emit(event("error").apply {

@@ -189,19 +189,21 @@ class PlatformStore(
         if (version.isBlank()) return null
         val existing = buildToolsDir(version)
         if (existing != null && buildToolsUsable(existing)) return existing
-        val source = buildToolsDir()?.takeIf { buildToolsUsable(it) } ?: return existing
+        val source = buildToolsDir()?.takeIf { buildToolsUsable(it) } ?: return null
         if (version == source.name) return source
         val target = File(buildTools, version)
+        // A copy that is not finished must never be visible at its final path: a build that
+        // finds a half-copied build-tools fails in a way the user cannot act on.
+        val staging = File(buildTools, ".$version.incoming")
+        staging.deleteRecursively()
         runCatching {
-            target.deleteRecursively()
-            source.copyRecursively(target, overwrite = true)
-            File(target, ".closecode-shim").writeText(
+            source.copyRecursively(staging, overwrite = true)
+            File(staging, ".closecode-shim").writeText(
                 "Compatibility copy of build-tools ${source.name} for $version\n",
             )
-            // AGP reads the version from these files, so the copy has to claim the version
-            // the project asked for.
+            // AGP expects the version it asked for, so the copy has to claim it.
             for (name in listOf("source.properties", "package.xml")) {
-                val file = File(target, name)
+                val file = File(staging, name)
                 if (!file.isFile) continue
                 val major = version.substringBefore('.').trim()
                 val minor = version.substringAfter('.', "").substringBefore('.').trim()
@@ -219,10 +221,45 @@ class PlatformStore(
                         ),
                 )
             }
+            // Only a copy that can actually run is moved into place.
+            if (!buildToolsUsable(staging)) {
+                staging.deleteRecursively()
+                return null
+            }
+            target.deleteRecursively()
+            if (!staging.renameTo(target)) {
+                staging.copyRecursively(target, overwrite = true)
+                staging.deleteRecursively()
+            }
         }.onFailure {
             DebugLog.crumb("SDK", "build-tools alias failed: ${it.javaClass.simpleName}")
+            runCatching { staging.deleteRecursively() }
         }
         return target.takeIf { buildToolsUsable(it) }
+    }
+
+    /**
+     * Removes the leftovers of an interrupted install.
+     *
+     * A half-downloaded package leaves a `.installer` folder behind. A build that finds one
+     * decides the package is unusable and fetches it itself — which is how a build ends up
+     * downloading an x86-64 package on an ARM phone.
+     */
+    fun removeIncompleteInstalls(): Int {
+        var removed = 0
+        root.listFiles()
+            ?.filter { it.isDirectory }
+            ?.forEach { area ->
+                area.walkTopDown()
+                    .filter { it.isDirectory && it.name == ".installer" }
+                    .forEach { marker ->
+                        if (marker.deleteRecursively()) removed++
+                    }
+            }
+        if (removed > 0) {
+            DebugLog.crumb("SDK", "removed $removed half-finished installs")
+        }
+        return removed
     }
 
     /** The highest installed build-tools at or above [minimum], with its directory name. */
@@ -299,7 +336,9 @@ class PlatformStore(
         onProgress: (done: Long, total: Long) -> Unit = { _, _ -> },
     ): Result<File> = runCatching {
         buildToolsDir()?.let { dir ->
-            if (File(dir, "aapt2").isFile) {
+            // Only a folder whose binaries can run here counts as installed. A folder with
+            // x86-64 binaries is not an install; it is a broken one, and it is replaced.
+            if (buildToolsUsable(dir)) {
                 GradleUserProperties.ensure(
                     File(context.filesDir, "gradle/home"),
                     buildToolsAapt2(),
@@ -307,6 +346,8 @@ class PlatformStore(
                 )
                 return@runCatching dir
             }
+            DebugLog.crumb("SDK", "replacing build-tools that cannot run on this phone")
+            dir.deleteRecursively()
         }
         val part = File(context.cacheDir, "build-tools-$BUILD_TOOLS_VERSION.tar.xz.part")
         download(BUILD_TOOLS_URL, part, BUILD_TOOLS_SIZE, onProgress)
@@ -323,6 +364,18 @@ class PlatformStore(
         val extracted = temp.listFiles()?.singleOrNull()?.takeIf { it.isDirectory } ?: temp
         val aapt2 = extracted.walkTopDown().firstOrNull { it.isFile && it.name == "aapt2" }
         val sourceDir = aapt2?.parentFile ?: extracted
+        // The package is checked before it is moved into place: a package whose binaries
+        // are for another processor is never installed, not even for a moment.
+        if (aapt2 == null) {
+            throw IOException("The build-tools archive has no aapt2.")
+        }
+        val architecture = ElfArchitecture.of(aapt2)
+        if (architecture != ElfArchitecture.ARM64) {
+            throw IOException(
+                "The build-tools package holds ${architecture ?: "unknown"} binaries, which " +
+                    "cannot run on this phone. Nothing was installed.",
+            )
+        }
         val target = File(buildTools, BUILD_TOOLS_VERSION)
         target.deleteRecursively()
         target.parentFile?.mkdirs()

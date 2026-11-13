@@ -110,9 +110,11 @@ object BuildSetupFactory {
                 ?.version
             val requiredBuildTools = settings.buildTools
                 ?: platformStore.requiredBuildToolsVersion(agpVersion)
-            val pinnedBuildTools = settings.buildTools?.let { pin ->
+            val pinnedBuildTools = (facts.buildToolsVersion ?: settings.buildTools)?.let { pin ->
                 // A project may pin a version the app did not install; the working ARM64
-                // build-tools are copied under that name so the build works here.
+                // build-tools are copied under that name so the build works here. Without
+                // this, AGP downloads Google's package for that revision — and Google's
+                // build-tools hold x86-64 binaries that cannot run on this phone.
                 platformStore.ensureBuildToolsVersion(pin)?.let { pin to it }
             }
             val gradleBuildTools = pinnedBuildTools ?: platformStore.bestBuildTools(requiredBuildTools)

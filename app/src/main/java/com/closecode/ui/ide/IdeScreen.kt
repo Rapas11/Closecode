@@ -1730,6 +1730,7 @@ internal fun IdeScreen(
             useGradle = useGradle,
             gradle = setup.gradle,
             setupCommand = if (useGradle) "closecode setup --gradle" else "closecode setup --all",
+            context = context,
         )
         when (outcome) {
             is com.closecode.build.BuildOutcome.Blocked -> {
