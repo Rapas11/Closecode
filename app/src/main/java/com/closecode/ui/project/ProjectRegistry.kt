@@ -173,12 +173,23 @@ class ProjectRegistry(private val file: File) {
         }
     }
 
+    /**
+     * Marks a project as deleted.
+     *
+     * Its **name and folder stay reserved**, so a project with the same name is never
+     * silently put in the old folder. Its **package name is released**: a package belongs to
+     * a project that exists, and a name that is used nowhere must be accepted.
+     */
     fun markDeleted(id: String) {
         synchronized(lock) {
             val entries = load()
             val entry = entries.firstOrNull { it.id == id } ?: return
             if (entry.deleted) return
             entry.deleted = true
+            // The package is released with the project. The record must not keep the old
+            // package name either, or the migration in load() would hand it straight back.
+            entry.packages.clear()
+            entry.packageName = null
             entry.updatedAt = System.currentTimeMillis()
             save(entries)
         }

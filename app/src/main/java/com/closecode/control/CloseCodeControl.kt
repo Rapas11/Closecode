@@ -1916,7 +1916,7 @@ object CloseCodeControl {
             savedMinSdk = configured?.minSdk?.toIntOrNull(),
             savedTargetSdk = configured?.targetSdk?.toIntOrNull(),
             savedCompileSdk = configured?.compileSdk?.toIntOrNull(),
-            otherPackages = repository.reservedPackages(record.id),
+            otherPackages = repository.packagesInUse(record.id),
         )
     }
 

@@ -5,6 +5,7 @@ import com.closecode.ai.OpenCodeSessions
 import com.closecode.ui.model.ProjectConfig
 import com.closecode.ui.model.ProjectFile
 import com.closecode.ui.model.SelectedTemplate
+import com.closecode.ui.model.defaultPackageName
 import com.closecode.ui.model.TemplateTab
 import java.io.File
 import org.json.JSONObject
@@ -147,10 +148,14 @@ class ProjectRepository(context: Context) {
         val id = ProjectIdentity.newId()
         val slug = uniqueSlug(cleanName, id)
         val templateName = templateNameFor(selection)
-        val packageName = config.packageName.takeIf { it.isNotBlank() }
+        // The package is decided here, once, for every front end: what the user typed, or
+        // one derived from the unique folder name so two projects with the same name can
+        // never hold the same package. A website has no package at all.
+        val packageName = resolvePackage(config, selection.tab, slug)
+        val projectConfig = config.copy(packageName = packageName.orEmpty())
         registry.begin(id, slug, cleanName, packageName)
         try {
-            Scaffold.filesFor(cleanName, selection, config).forEach { file ->
+            Scaffold.filesFor(cleanName, selection, projectConfig).forEach { file ->
                 store.createFile(slug, file.path, file.content)
             }
 
@@ -161,7 +166,7 @@ class ProjectRepository(context: Context) {
                 tab = selection.tab,
                 templateIndex = selection.index,
                 templateName = templateName,
-                config = config,
+                config = projectConfig,
                 createdAt = now,
                 lastOpened = now,
             )
@@ -191,7 +196,8 @@ class ProjectRepository(context: Context) {
         val cleanName = cleanName(name)
         val id = ProjectIdentity.newId()
         val slug = uniqueSlug(cleanName, id)
-        val packageName = config.packageName.takeIf { it.isNotBlank() }
+        val packageName = resolvePackage(config, tab, slug)
+        val projectConfig = config.copy(packageName = packageName.orEmpty())
         registry.begin(id, slug, cleanName, packageName)
         try {
             files.forEach { file -> store.createFile(slug, file.path, file.content) }
@@ -202,7 +208,7 @@ class ProjectRepository(context: Context) {
                 tab = tab,
                 templateIndex = 0,
                 templateName = templateName,
-                config = config,
+                config = projectConfig,
                 createdAt = now,
                 lastOpened = now,
             )
@@ -430,6 +436,24 @@ class ProjectRepository(context: Context) {
             .getOrNull(selection.index)
             ?.name
             .orEmpty()
+
+    /**
+     * The package name of a new project.
+     *
+     * What the user typed wins. Otherwise the name is derived from the **unique** folder
+     * name, so a second project called "notes" becomes "notes-2" and cannot hold the same
+     * package as the first. A website has no package, so it holds none.
+     */
+    private fun resolvePackage(
+        config: ProjectConfig,
+        tab: TemplateTab,
+        slug: String,
+    ): String? {
+        if (tab != TemplateTab.App) return null
+        val typed = config.packageName.trim()
+        if (typed.isNotEmpty()) return typed
+        return defaultPackageName(slug)
+    }
 
     private fun uniqueSlug(name: String, id: String): String {
         val base = slugify(name)

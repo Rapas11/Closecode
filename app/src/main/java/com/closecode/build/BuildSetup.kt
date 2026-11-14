@@ -30,7 +30,8 @@ data class BuildSetup(
         val savedMinSdk: Int? = null,
         val savedTargetSdk: Int? = null,
         val savedCompileSdk: Int? = null,
-        val otherPackages: Set<String> = emptySet(),
+        /** Package names in use, and the project that holds each one. */
+        val otherPackages: Map<String, String> = emptyMap(),
     )
 }
 

@@ -57,17 +57,20 @@ class PackageUniquenessTest {
     }
 
     /**
-     * The registry's rule: a deleted project keeps its identity reserved, so a name it held
-     * is not handed to another project. The screen and the creation path both follow it.
+     * The rule changed with build 92: a deleted project keeps its **name** reserved, so a
+     * project with the same name is never silently put in the old folder, but it **releases
+     * its package name**, because a package belongs to a project that exists and a name that
+     * is used nowhere must be accepted.
      */
     @Test
-    fun aDeletedProjectKeepsItsNameReserved() {
+    fun aDeletedProjectKeepsItsNameButReleasesItsPackage() {
         val registry = registry()
         registry.ensure("id-1", "one", "One", "com.closecode.one")
         registry.markDeleted("id-1")
 
-        assertTrue(registry.packageTaken("com.closecode.one"))
-        assertEquals("One", registry.packageHolder("com.closecode.one"))
+        assertTrue(registry.nameTaken("One"))
+        assertFalse(registry.packageTaken("com.closecode.one"))
+        assertNull(registry.packageHolder("com.closecode.one"))
     }
 
     @Test

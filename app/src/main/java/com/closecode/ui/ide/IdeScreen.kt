@@ -1101,7 +1101,7 @@ internal fun IdeScreen(
                     savedMinSdk = templateValue?.config?.minSdk?.toIntOrNull(),
                     savedTargetSdk = templateValue?.config?.targetSdk?.toIntOrNull(),
                     savedCompileSdk = templateValue?.config?.compileSdk?.toIntOrNull(),
-                    otherPackages = repository.reservedPackages(projectId),
+                    otherPackages = repository.packagesInUse(projectId),
                     freeBytes = context.filesDir.usableSpace,
                 )
                 val shown = templateValue?.config?.packageName
@@ -1709,7 +1709,7 @@ internal fun IdeScreen(
                 savedMinSdk = configured?.config?.minSdk?.toIntOrNull(),
                 savedTargetSdk = configured?.config?.targetSdk?.toIntOrNull(),
                 savedCompileSdk = configured?.config?.compileSdk?.toIntOrNull(),
-                otherPackages = repository.reservedPackages(projectId),
+                otherPackages = repository.packagesInUse(projectId),
             ),
         )
         val pinnedEngine = com.closecode.build.ProjectSettings.read(projectRoot).engine

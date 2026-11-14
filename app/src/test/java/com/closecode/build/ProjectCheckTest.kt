@@ -40,7 +40,7 @@ class ProjectCheckTest {
         minSdk: Int = 29,
         targetSdk: Int = 35,
         compileSdk: Int = 35,
-        otherPackages: Set<String> = emptySet(),
+        otherPackages: Map<String, String> = emptyMap(),
         freeBytes: Long? = null,
         cacheModules: Set<String> = emptySet(),
     ): ProjectCheck.Report = ProjectCheck.check(
@@ -121,12 +121,12 @@ class ProjectCheckTest {
     @Test
     fun anotherProjectWithTheSamePackageBlocksTheBuild() {
         template()
-        val report = report(otherPackages = setOf("com.closecode.biz"))
+        val report = report(otherPackages = mapOf("com.closecode.biz" to "Other"))
         assertFalse(report.ok)
         assertTrue(
             report.errors.any {
                 it.message ==
-                    "Another project uses this package. Choose a different package name."
+                    "That package name is already used by \"Other\". Choose a different one."
             },
         )
     }

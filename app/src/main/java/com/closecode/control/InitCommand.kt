@@ -32,12 +32,14 @@ internal object InitCommand {
     data class Options(
         val template: String?,
         val name: String?,
+        val packageName: String? = null,
         val install: Boolean = false,
     )
 
     fun parse(arguments: List<String>): Options {
         var template: String? = null
         var name: String? = null
+        var packageName: String? = null
         var install = false
         var index = 0
         while (index < arguments.size) {
@@ -50,16 +52,21 @@ internal object InitCommand {
                     name = arguments.getOrNull(index + 1)
                     index++
                 }
+                "--package", "-p" -> {
+                    packageName = arguments.getOrNull(index + 1)
+                    index++
+                }
                 "--install", "--deps" -> install = true
                 else -> when {
                     argument.startsWith("--template=") -> template = argument.substringAfter('=')
                     argument.startsWith("--name=") -> name = argument.substringAfter('=')
+                    argument.startsWith("--package=") -> packageName = argument.substringAfter('=')
                     name == null && !argument.startsWith("-") -> name = argument
                 }
             }
             index++
         }
-        return Options(template, name, install)
+        return Options(template, name, packageName, install)
     }
 
     fun run(context: Context, options: Options): JsonObject {
@@ -93,12 +100,12 @@ internal object InitCommand {
                 "android-compose" -> repository.create(
                     name = name,
                     selection = SelectedTemplate(TemplateTab.App, 0),
-                    config = ProjectConfig(packageName = defaultPackageName(name)),
+                    config = ProjectConfig(packageName = options.packageName.orEmpty()),
                 )
                 "web-static" -> repository.create(
                     name = name,
                     selection = SelectedTemplate(TemplateTab.Web, 0),
-                    config = ProjectConfig(packageName = defaultPackageName(name)),
+                    config = ProjectConfig(packageName = ""),
                 )
                 else -> {
                     val files = filesFor(template, name)
@@ -106,7 +113,7 @@ internal object InitCommand {
                         name = name,
                         tab = if (template.startsWith("web")) TemplateTab.Web else TemplateTab.App,
                         templateName = template,
-                        config = ProjectConfig(packageName = defaultPackageName(name)),
+                        config = ProjectConfig(packageName = options.packageName.orEmpty()),
                         files = files,
                     )
                 }

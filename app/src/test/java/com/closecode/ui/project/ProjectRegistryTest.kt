@@ -77,9 +77,13 @@ class ProjectRegistryTest {
         registry.markDeleted(id)
 
         assertTrue(registry.entry(id)?.deleted == true)
+        // The name and the folder stay reserved, so a project with the same name is never
+        // silently put in the old folder.
         assertTrue(registry.nameTaken("Notes"))
-        assertTrue(registry.packageTaken("com.closecode.notes"))
-        assertTrue(registry.reservedPackages().contains("com.closecode.notes"))
+        assertTrue(registry.slugTaken("notes"))
+        // The package name is released: a package belongs to a project that exists, and a
+        // name that is used nowhere must be accepted.
+        assertFalse(registry.packageTaken("com.closecode.notes"))
     }
 
     @Test

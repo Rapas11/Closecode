@@ -2,10 +2,10 @@
 
 **One file containing all ten required documents.**
 
-- Build: **91** (`0.91.1674`), on top of commit `107819f`.
-- Unit suite: **1674 tests, 0 failures, 0 errors, 8 skipped**.
-- Artifact: `build/CloseCode-build91-tests1674-debug.apk`,
-  SHA-256 `64a63296403b280fb0490d4139e9ac059fedbf5a51a2f65bb234c2aa9a0d2ae9`.
+- Build: **92** (`0.92.1679`), on top of commit `34303cc`.
+- Unit suite: **1679 tests, 0 failures, 0 errors, 8 skipped**.
+- Artifact: `build/CloseCode-build92-tests1679-debug.apk`,
+  SHA-256 `a6feb12fa35209bfd505dbdf01dbe658f08d0888dcfc67530115aaca3d23adb1`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -33,7 +33,7 @@
 
 # PART 1 — CURRENT CAPABILITIES
 
-Status: audit snapshot for build **91** (versionName `0.91.1674`), on top of commit `107819f`.
+Status: audit snapshot for build **92** (versionName `0.92.1679`), on top of commit `34303cc`.
 
 How to read this file: every claim is either **Proven** (a test run, a device run, or a
 host POC produced it) or **Code-verified** (the implementation is present and traced, but
@@ -42,7 +42,7 @@ the strength of a class name, a config key or an endpoint existing.
 
 Source of truth for the build under test:
 `app/build.gradle.kts:14` (`closecodeBuild = 80`), `app/build.gradle.kts:16`
-(`closecodeTests = 1674`).
+(`closecodeTests = 1679`).
 
 ---
 
@@ -50,9 +50,9 @@ Source of truth for the build under test:
 
 | Evidence | Result | Where |
 |---|---|---|
-| JVM unit suite | **1674 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
+| JVM unit suite | **1679 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build91-tests1674-debug.apk`, SHA-256 `64a63296403b280fb0490d4139e9ac059fedbf5a51a2f65bb234c2aa9a0d2ae9` | `build/` |
+| Delivered artifact | `build/CloseCode-build92-tests1679-debug.apk`, SHA-256 `a6feb12fa35209bfd505dbdf01dbe658f08d0888dcfc67530115aaca3d23adb1` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -340,7 +340,7 @@ is a hand-maintained constant that can drift from the real result.
 #### 1.9 Real device-level tests
 
 `app/src/androidTest/` contains one stock template assertion
-(`ExampleInstrumentedTest.kt`). All 1674 tests are JVM tests; nothing is exercised on a
+(`ExampleInstrumentedTest.kt`). All 1679 tests are JVM tests; nothing is exercised on a
 real Android runtime in CI.
 
 ---
@@ -618,7 +618,7 @@ audit log. This is defect D11 and is addressed in the roadmap, not silently.
 
 ### 8. Test and delivery infrastructure
 
-- 146 JVM test files under `app/src/test/java/com/closecode/`; 1674 tests in the last run
+- 146 JVM test files under `app/src/test/java/com/closecode/`; 1679 tests in the last run
   (0 failures, 0 errors, 8 skipped).
 - One stock instrumentation test in `app/src/androidTest/` — no real device tests.
 - CI: `.github/workflows/build.yml:32` (unit suite), `:35` (assemble + upload). No lint,
@@ -1543,9 +1543,9 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | JDK | 17.0.20.1+1 at `/opt/java/jdk-17.0.20.1+1` |
 | Android SDK | `/opt/android_sdk`, platform 35 |
 | Gradle | 8.13 (wrapper) |
-| Unit suite | **1674 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
+| Unit suite | **1679 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build91-tests1674-debug.apk`, SHA-256 `64a63296403b280fb0490d4139e9ac059fedbf5a51a2f65bb234c2aa9a0d2ae9` |
+| Artifact | `build/CloseCode-build92-tests1679-debug.apk`, SHA-256 `a6feb12fa35209bfd505dbdf01dbe658f08d0888dcfc67530115aaca3d23adb1` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |
@@ -1858,7 +1858,7 @@ the bundled OpenCode server is prevented from downloading one
 
 | Limit | Consequence | Evidence |
 |---|---|---|
-| All 1674 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
+| All 1679 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
 | One stock instrumentation test | No real device test exists | `app/src/androidTest/java/com/closecode/ExampleInstrumentedTest.kt` |
 | No lint or static analysis task | Style and some correctness issues are not machine-checked | `app/build.gradle.kts`; `.github/workflows/build.yml:32`, `:35` |
 | The test-count constant is hand-maintained | The version number could claim a count that was never run (defect D8) | `app/build.gradle.kts:16` |
@@ -2609,6 +2609,73 @@ disagree about what works.
 
 Build 91 is *implemented and tested here*. The board is the last step, and it belongs to the
 user: install `build/CloseCode-build91-tests1674-debug.apk` and run
+
+```sh
+sh closecode-acceptance.sh
+```
+
+---
+
+# PART 22 — BUILD 92: STARTING A PROJECT, FIXED IN ONE PLACE
+
+The user found three surprises in the **New project** screen, and the cause of all three was
+the same: the app let you create a project without a name, and it never showed you what it was
+about to create.
+
+| Surprise | Cause | Fix |
+|---|---|---|
+| "It made a website project although I was on the Android tab" | The sheet opens on Websites and the Create button said only "Create" — the template was invisible | The button names it: *"Create · Blank app"*, *"Create · Landing page"* |
+| "It let me create a project without a name" | An unnamed project was named after its template, so a project called "Landing page" appeared — and then it held the package name the user had typed | **A name is required.** Create stays greyed out until one is written |
+| "It said my package name was taken, and the name existed nowhere" | The registry kept the package names of deleted projects reserved | A deleted project **releases its package name**. Its *name* and *folder* stay reserved, so nothing is silently reused |
+
+## 22.1 The package name is yours to write
+
+The screen now shows a package field for app projects, empty until you write one, with the
+hint `com.yourname.app`. Two rules follow from it:
+
+- What you type is what the project gets.
+- If you leave it empty, the app derives one from the **unique folder name** it already uses
+  (`notes`, `notes-2`), so two projects with the same name can never hold the same package.
+
+A website has no package at all, so it reserves none — it can never be the project that
+"uses" a name.
+
+**One place decides this**, for both front ends: `ProjectRepository.resolvePackage`. The
+command line got the same door with `closecode init --package com.foo.bar`.
+
+## 22.2 One rule, one list, one message
+
+The screen, the creation path and the project check compare against the same registry list,
+on the **whole** package name, and the message names the project that holds it:
+*"That package name is already used by \"Notes\". Pick a unique one."*
+
+## 22.3 The one test whose expectation changed
+
+`ProjectRegistryTest.deletingKeepsTheIdentityReserved` used to assert that a deleted
+project keeps its **package** reserved. The user's rule says it must not, so that assertion
+changed — and only that one:
+
+```kotlin
+assertTrue(registry.nameTaken("Notes"))      // unchanged: the name stays reserved
+assertTrue(registry.slugTaken("notes"))      // unchanged: the folder stays reserved
+assertFalse(registry.packageTaken("com.closecode.notes"))   // changed: the package is released
+```
+
+Every other rule — renaming keeps the old name reserved, a cancelled creation leaves no
+reservation, a legacy migration may record a duplicate — still holds and is still tested.
+
+## 22.4 What is proven here, and what still needs the phone
+
+| Claim | Proof |
+|---|---|
+| The suite is green | 1679 tests, 0 failures, 0 errors, 8 skipped |
+| Two same-named projects get different packages | A test over the unique folder name |
+| A deleted project releases its package but keeps its name and folder | Two tests, one of them the changed assertion |
+| The derived package is a legal Java package | A test |
+| The phone | **Still to be measured.** The board runs on the phone |
+
+Build 92 is *implemented and tested here*. The board is the last step, and it belongs to the
+user: install `build/CloseCode-build92-tests1679-debug.apk` and run
 
 ```sh
 sh closecode-acceptance.sh

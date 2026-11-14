@@ -48,7 +48,8 @@ object ProjectCheck {
         val savedMinSdk: Int? = null,
         val savedTargetSdk: Int? = null,
         val savedCompileSdk: Int? = null,
-        val otherPackages: Set<String> = emptySet(),
+        /** Package names in use, and the project that holds each one. */
+        val otherPackages: Map<String, String> = emptyMap(),
         val freeBytes: Long? = null,
         /** "module:version" entries the library cache holds (verse 5 fills this in). */
         val cacheModules: Set<String> = emptySet(),
@@ -180,12 +181,13 @@ object ProjectCheck {
                 packageLine,
             )
         }
-        if (packageName != null && isValidPackage(packageName) &&
-            packageName.lowercase() in input.otherPackages
-        ) {
+        val packageHolder = packageName
+            ?.takeIf { isValidPackage(it) }
+            ?.let { input.otherPackages[it.lowercase()] }
+        if (packageHolder != null) {
             findings += Finding(
                 Severity.Error,
-                "Another project uses this package. Choose a different package name.",
+                "That package name is already used by \"$packageHolder\". Choose a different one.",
                 packageFile,
                 packageLine,
             )

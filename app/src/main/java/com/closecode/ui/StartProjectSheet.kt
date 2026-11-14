@@ -83,18 +83,16 @@ fun StartProjectSheet(
     val currentStep = Step.valueOf(step)
     val config = ProjectConfig.decode(configEncoded)
 
-    // Pre-fill the package from the project name so creation never stalls on an empty package.
-    LaunchedEffect(name) {
-        val n = name.trim()
-        if (n.isNotEmpty() && config.packageName.isBlank()) {
-            configEncoded = config.copy(packageName = defaultPackageName(n)).encode()
-        }
-    }
     val selected = if (selectedIndex >= 0 && selectedTab.isNotEmpty()) {
         SelectedTemplate(TemplateTab.valueOf(selectedTab), selectedIndex)
     } else {
         null
     }
+    val selectedTemplateName = selected?.let { choice ->
+        Templates[choice.tab].orEmpty().getOrNull(choice.index)?.name.orEmpty()
+    }
+    // A website has no package, so it never shows one and never reserves one.
+    val appProject = selected?.tab != TemplateTab.Web
     val pickTabEnum = TemplateTab.valueOf(pickTab)
     val templates = Templates[pickTabEnum].orEmpty().mapIndexed { index, template ->
         Triple(pickTabEnum, index, template)
@@ -111,12 +109,22 @@ fun StartProjectSheet(
     fun createNow() {
         val selection = selected ?: return
         val templateName = Templates[selection.tab].orEmpty().getOrNull(selection.index)?.name
-        val finalName = name.trim().ifEmpty { templateName ?: "Untitled" }
-        val packageName = config.packageName.trim().ifEmpty { defaultPackageName(finalName) }
-        val holder = packagesInUse[com.closecode.ui.project.ProjectIdentity.packageKey(packageName)]
+        val finalName = name.trim()
+        if (finalName.isEmpty()) {
+            // A project without a name would be named after its template, and the name is
+            // what the user recognises it by.
+            createError = "Give the project a name first."
+            return
+        }
+        // The package is typed, or left empty for the app to derive one from the folder name.
+        val packageName = config.packageName.trim()
+        val holder = if (appProject && packageName.isNotEmpty()) {
+            packagesInUse[com.closecode.ui.project.ProjectIdentity.packageKey(packageName)]
+        } else {
+            null
+        }
         val problem = when {
-            packageName.isEmpty() -> "Enter a package name in project settings."
-            !isValidPackageName(packageName) ->
+            appProject && packageName.isNotEmpty() && !isValidPackageName(packageName) ->
                 "Use a package name like com.yourname.app — letters, numbers, dots and underscores."
             holder != null ->
                 "That package name is already used by \"$holder\". Pick a unique one."
@@ -269,6 +277,49 @@ fun StartProjectSheet(
                         modifier = Modifier.padding(start = 4.dp, bottom = 8.dp),
                     )
                 }
+                if (currentStep == Step.Pick && appProject) {
+                    // The package name is the user's to choose. It stays empty until they
+                    // write one, and the app derives a unique one from the folder name when
+                    // they do not — so a hidden default can never block a name later.
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp),
+                    ) {
+                        Text(
+                            text = "Package name",
+                            color = c.mock.muted,
+                            fontSize = 12.sp,
+                            fontFamily = Sans,
+                        )
+                        BasicTextField(
+                            value = config.packageName,
+                            onValueChange = {
+                                configEncoded = config.copy(packageName = it.trimStart()).encode()
+                                createError = null
+                            },
+                            singleLine = true,
+                            textStyle = LocalTextStyle.current.copy(
+                                color = c.mock.text,
+                                fontSize = 14.5.sp,
+                                fontFamily = Sans,
+                            ),
+                            cursorBrush = SolidColor(c.mock.accent),
+                            modifier = Modifier.fillMaxWidth(),
+                            decorationBox = { inner ->
+                                if (config.packageName.isEmpty()) {
+                                    Text(
+                                        text = "com.yourname.app — leave empty and the app uses one",
+                                        color = c.mock.muted,
+                                        fontSize = 13.sp,
+                                        fontFamily = Sans,
+                                    )
+                                }
+                                inner()
+                            },
+                        )
+                    }
+                }
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -328,19 +379,26 @@ fun StartProjectSheet(
                             )
                         }
                     }
+                    val canCreate = selected != null && name.isNotBlank()
                     Row(
                         Modifier
-                            .width(130.dp)
+                            .width(170.dp)
                             .height(50.dp)
                             .clip(RoundedCornerShape(15.dp))
-                            .background(if (selected != null) c.mock.accent else c.mock.field)
-                            .clickable(enabled = selected != null, onClick = ::createNow),
+                            .background(if (canCreate) c.mock.accent else c.mock.field)
+                            .clickable(enabled = canCreate, onClick = ::createNow),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.Center,
                     ) {
                         Text(
-                            text = "Create",
-                            color = if (selected != null) c.mock.onAccent else c.mock.muted,
+                            // The button says what it will make, so a template is never
+                            // chosen by accident.
+                            text = if (selectedTemplateName.orEmpty().isBlank()) {
+                                "Create"
+                            } else {
+                                "Create · $selectedTemplateName"
+                            },
+                            color = if (canCreate) c.mock.onAccent else c.mock.muted,
                             fontSize = 14.5.sp,
                             fontFamily = Sans,
                             fontWeight = FontWeight.Bold,

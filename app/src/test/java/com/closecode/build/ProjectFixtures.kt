@@ -43,7 +43,7 @@ object ProjectFixtures {
         minSdk: Int = 29,
         targetSdk: Int = 35,
         compileSdk: Int = 35,
-        otherPackages: Set<String> = emptySet(),
+        otherPackages: Map<String, String> = emptyMap(),
         freeBytes: Long? = null,
         cacheModules: Set<String> = emptySet(),
     ): ProjectCheck.Input = ProjectCheck.Input(
