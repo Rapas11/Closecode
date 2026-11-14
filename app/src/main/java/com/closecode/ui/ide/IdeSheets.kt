@@ -1059,11 +1059,42 @@ internal data class RunResultInfo(
  * Stop within reach. Nothing here starts a build silently; the sheet is the one place a run
  * is chosen, and its buttons are the only doors in and out.
  */
+/** One line of the project's options. */
+@Composable
+private fun OptionLine(label: String, value: String) {
+    val c = LocalPageColors.current
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = label,
+            color = c.mock.muted,
+            fontSize = 12.sp,
+            fontFamily = Sans,
+            modifier = Modifier.width(74.dp),
+        )
+        Text(
+            text = value,
+            color = c.mock.text,
+            fontSize = 12.5.sp,
+            fontFamily = Sans,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
 @Composable
 internal fun IdeRunSheet(
     appName: String,
     buildType: String,
     onBuildType: (String) -> Unit,
+    packageName: String = "",
+    minSdk: String = "",
+    targetSdk: String = "",
+    appVersion: String = "",
+    onOpenSettings: (() -> Unit)? = null,
     openAfterInstall: Boolean,
     onOpenAfterInstall: (Boolean) -> Unit,
     building: Boolean,
@@ -1160,7 +1191,53 @@ internal fun IdeRunSheet(
                     modifier = Modifier.weight(1f),
                 )
             }
-            Spacer(Modifier.height(16.dp))
+            // The project's own options, so the sheet answers "what am I about to make?"
+            // without a trip to Project settings.
+            if (packageName.isNotBlank() || minSdk.isNotBlank() || appVersion.isNotBlank()) {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    text = "PROJECT OPTIONS",
+                    color = c.mock.muted,
+                    fontSize = 11.sp,
+                    fontFamily = Sans,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                )
+                Spacer(Modifier.height(8.dp))
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(c.mock.content)
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    if (packageName.isNotBlank()) {
+                        OptionLine("Package", packageName)
+                    }
+                    if (minSdk.isNotBlank() || targetSdk.isNotBlank()) {
+                        OptionLine("Android", "min $minSdk · target $targetSdk")
+                    }
+                    if (appVersion.isNotBlank()) {
+                        OptionLine("Version", appVersion)
+                    }
+                }
+                if (onOpenSettings != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "Change project options",
+                        color = c.mock.accent,
+                        fontSize = 12.5.sp,
+                        fontFamily = Sans,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onOpenSettings)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+            }
             Text(
                 text = "BUILD TYPE",
                 color = c.mock.muted,

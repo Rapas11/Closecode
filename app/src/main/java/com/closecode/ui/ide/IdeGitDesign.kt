@@ -109,6 +109,17 @@ internal fun gitRemoteLabel(url: String?): String? {
     return "${match.groupValues[1]}/${match.groupValues[2]}"
 }
 
+/**
+ * The repository the Source Control header names.
+ *
+ * It is the repository **this** project is connected to. A project with no remote says so;
+ * it must never wear the account's name, because that reads like it belongs to somebody
+ * else's repository.
+ */
+internal fun gitProjectRepoLabel(remoteUrl: String?, projectName: String): String =
+    gitRemoteLabel(remoteUrl)
+        ?: if (remoteUrl.isNullOrBlank()) "Not connected to GitHub" else projectName
+
 internal fun gitAllChanges(snapshot: com.closecode.ui.git.GitSnapshot): List<com.closecode.ui.git.GitChange> {
     val byPath = LinkedHashMap<String, com.closecode.ui.git.GitChange>()
     snapshot.staged.forEach { byPath[it.path] = it }

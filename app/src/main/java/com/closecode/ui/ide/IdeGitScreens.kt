@@ -309,9 +309,10 @@ fun IdeGitPanel(
         }
     } else {
         val branch = snapshot?.branch ?: "main"
-        val repoLabel = gitRemoteLabel(remoteUrl)
-            ?: account?.login?.let { "@$it" }
-            ?: projectName
+        // The label is the repository **this** project is connected to. A project with no
+        // remote must not wear the account's name, because that reads like it belongs to
+        // somebody else's repository.
+        val repoLabel = gitProjectRepoLabel(remoteUrl, projectName)
         Column(
             modifier
                 .fillMaxSize()

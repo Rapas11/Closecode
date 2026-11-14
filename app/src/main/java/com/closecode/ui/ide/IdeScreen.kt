@@ -485,6 +485,9 @@ internal fun IdeScreen(
     }
     val engineState by buildEngine.state.collectAsState()
     val buildPanel = buildPanelModel(engineState)
+    // The sheet's progress bar. It is declared here because the state stream below keeps it
+    // up to date while the build runs.
+    var buildProgress by remember { mutableFloatStateOf(0f) }
     // One notification for the real steps. It is updated off the state stream, not off
     // recomposition, so going Home does not stop the updates. The terminal notifications
     // are posted by the build effect once the outcome is known.
@@ -500,6 +503,9 @@ internal fun IdeScreen(
                     state.step.label,
                     progress,
                 )
+                // The sheet's bar must move while the build runs. It used to sit at 0% until
+                // the build finished, so a running build looked like a stalled one.
+                buildProgress = state.progress.coerceIn(0f, 1f)
             }
         }
     }
@@ -888,7 +894,6 @@ internal fun IdeScreen(
     var projectErrorList by remember { mutableStateOf<List<ProjectDiagnostic>>(emptyList()) }
     var projectWarningList by remember { mutableStateOf<List<ProjectDiagnostic>>(emptyList()) }
     // Build panel state: the sweep's own numbers, not a timer walking a list of task names.
-    var buildProgress by remember { mutableFloatStateOf(0f) }
     var buildElapsedMs by remember { mutableStateOf(0L) }
     var buildErrorCount by remember { mutableStateOf(0) }
     var buildWarningCount by remember { mutableStateOf(0) }
@@ -3049,10 +3054,30 @@ internal fun IdeScreen(
             barHeight = with(LocalDensity.current) { navBarHeightPx.toDp() },
         )
 
+        // The app version lives in the project's own build files, so it is read from there.
+        var runAppVersion by remember(projectRoot) { mutableStateOf("") }
+        LaunchedEffect(projectRoot) {
+            runAppVersion = withContext(Dispatchers.IO) {
+                projectRoot?.let {
+                    runCatching { com.closecode.build.GradleReader.read(it).versionName }.getOrNull()
+                }
+            }.orEmpty()
+        }
+
         if (runSheetOpen) {
             IdeRunSheet(
                 appName = projectName,
                 buildType = projectRecord?.config?.buildType ?: "Debug",
+                packageName = projectRecord?.config?.packageName.orEmpty(),
+                minSdk = projectRecord?.config?.minSdk.orEmpty(),
+                targetSdk = projectRecord?.config?.targetSdk.orEmpty(),
+                appVersion = runAppVersion,
+                onOpenSettings = {
+                    // The sheet answers what is being made; Project settings is where it is
+                    // changed.
+                    runSheetOpen = false
+                    projectSettingsOpen = true
+                },
                 onBuildType = { next ->
                     val record = projectRecord
                     if (record != null) {

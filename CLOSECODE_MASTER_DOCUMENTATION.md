@@ -2,10 +2,10 @@
 
 **One file containing all ten required documents.**
 
-- Build: **92** (`0.92.1679`), on top of commit `34303cc`.
-- Unit suite: **1679 tests, 0 failures, 0 errors, 8 skipped**.
-- Artifact: `build/CloseCode-build92-tests1679-debug.apk`,
-  SHA-256 `a6feb12fa35209bfd505dbdf01dbe658f08d0888dcfc67530115aaca3d23adb1`.
+- Build: **93** (`0.93.1682`), on top of commit `9d41854`.
+- Unit suite: **1682 tests, 0 failures, 0 errors, 8 skipped**.
+- Artifact: `build/CloseCode-build93-tests1682-debug.apk`,
+  SHA-256 `c0e136a0dd0485189509c830a7bfbba84a42e880a45b56e5bb196059f2f0ca59`.
 - Source of truth for this round: the master specification `checkmehere.md`.
 - Nothing in this document is claimed as working because a class, a configuration key or
   an endpoint exists. Every capability is marked as proven, code-verified, or missing.
@@ -33,7 +33,7 @@
 
 # PART 1 — CURRENT CAPABILITIES
 
-Status: audit snapshot for build **92** (versionName `0.92.1679`), on top of commit `34303cc`.
+Status: audit snapshot for build **93** (versionName `0.93.1682`), on top of commit `9d41854`.
 
 How to read this file: every claim is either **Proven** (a test run, a device run, or a
 host POC produced it) or **Code-verified** (the implementation is present and traced, but
@@ -42,7 +42,7 @@ the strength of a class name, a config key or an endpoint existing.
 
 Source of truth for the build under test:
 `app/build.gradle.kts:14` (`closecodeBuild = 80`), `app/build.gradle.kts:16`
-(`closecodeTests = 1679`).
+(`closecodeTests = 1682`).
 
 ---
 
@@ -50,9 +50,9 @@ Source of truth for the build under test:
 
 | Evidence | Result | Where |
 |---|---|---|
-| JVM unit suite | **1679 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
+| JVM unit suite | **1682 tests, 0 failures, 0 errors, 8 skipped** | `app/build/test-results/testDebugUnitTest/*.xml` (run after the last source edit) |
 | Debug build | `BUILD SUCCESSFUL` for `:app:assembleDebug` | `app/build/outputs/apk/debug/app-debug.apk` |
-| Delivered artifact | `build/CloseCode-build92-tests1679-debug.apk`, SHA-256 `a6feb12fa35209bfd505dbdf01dbe658f08d0888dcfc67530115aaca3d23adb1` | `build/` |
+| Delivered artifact | `build/CloseCode-build93-tests1682-debug.apk`, SHA-256 `c0e136a0dd0485189509c830a7bfbba84a42e880a45b56e5bb196059f2f0ca59` | `build/` |
 | Device run | User-verified on phone for builds 79 and 80 | `CLOSECODE_BUILD78_RECHECK.md`, plus the build-80 table below |
 
 ---
@@ -340,7 +340,7 @@ is a hand-maintained constant that can drift from the real result.
 #### 1.9 Real device-level tests
 
 `app/src/androidTest/` contains one stock template assertion
-(`ExampleInstrumentedTest.kt`). All 1679 tests are JVM tests; nothing is exercised on a
+(`ExampleInstrumentedTest.kt`). All 1682 tests are JVM tests; nothing is exercised on a
 real Android runtime in CI.
 
 ---
@@ -618,7 +618,7 @@ audit log. This is defect D11 and is addressed in the roadmap, not silently.
 
 ### 8. Test and delivery infrastructure
 
-- 146 JVM test files under `app/src/test/java/com/closecode/`; 1679 tests in the last run
+- 146 JVM test files under `app/src/test/java/com/closecode/`; 1682 tests in the last run
   (0 failures, 0 errors, 8 skipped).
 - One stock instrumentation test in `app/src/androidTest/` — no real device tests.
 - CI: `.github/workflows/build.yml:32` (unit suite), `:35` (assemble + upload). No lint,
@@ -1543,9 +1543,9 @@ steps, the expected result, the actual result, the evidence, and a status of **P
 | JDK | 17.0.20.1+1 at `/opt/java/jdk-17.0.20.1+1` |
 | Android SDK | `/opt/android_sdk`, platform 35 |
 | Gradle | 8.13 (wrapper) |
-| Unit suite | **1679 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
+| Unit suite | **1682 tests, 0 failures, 0 errors, 8 skipped** — `app/build/test-results/testDebugUnitTest/*.xml` |
 | Build | `:app:assembleDebug` BUILD SUCCESSFUL |
-| Artifact | `build/CloseCode-build92-tests1679-debug.apk`, SHA-256 `a6feb12fa35209bfd505dbdf01dbe658f08d0888dcfc67530115aaca3d23adb1` |
+| Artifact | `build/CloseCode-build93-tests1682-debug.apk`, SHA-256 `c0e136a0dd0485189509c830a7bfbba84a42e880a45b56e5bb196059f2f0ca59` |
 | Device | The user's phone (arm64, Android). Runs quoted as "device run" are the user's own verification of builds 79 and 80. |
 | OpenCode | 2.2.5, pinned, SHA-256 verified (`ai/OpenCodeModel.kt:88`, `:101-102`) |
 | No Android device or emulator is attached to this workspace | — |
@@ -1858,7 +1858,7 @@ the bundled OpenCode server is prevented from downloading one
 
 | Limit | Consequence | Evidence |
 |---|---|---|
-| All 1679 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
+| All 1682 tests are JVM tests | Android-runtime behaviour is not covered by CI | `app/src/test/java/com/closecode/` |
 | One stock instrumentation test | No real device test exists | `app/src/androidTest/java/com/closecode/ExampleInstrumentedTest.kt` |
 | No lint or static analysis task | Style and some correctness issues are not machine-checked | `app/build.gradle.kts`; `.github/workflows/build.yml:32`, `:35` |
 | The test-count constant is hand-maintained | The version number could claim a count that was never run (defect D8) | `app/build.gradle.kts:16` |
@@ -2676,6 +2676,62 @@ reservation, a legacy migration may record a duplicate — still holds and is st
 
 Build 92 is *implemented and tested here*. The board is the last step, and it belongs to the
 user: install `build/CloseCode-build92-tests1679-debug.apk` and run
+
+```sh
+sh closecode-acceptance.sh
+```
+
+---
+
+# PART 23 — BUILD 93: THE RUN SHEET, THE PERCENTAGE, AND THE WRONG REPOSITORY
+
+Three things the user saw on the phone, all in the editor.
+
+## 23.1 The Run sheet shows the project's options
+
+The sheet said "Run <name>", offered a build type and a toggle, and said nothing about what
+was being made. It now shows the options themselves:
+
+```
+PROJECT OPTIONS
+Package          com.yourcompany.boss
+Android          min 29 · target 35
+Version          1.0
+
+Change project options            ← opens Project settings
+```
+
+The package and the SDK levels come from the project's own settings, and the version is
+read from the project's build files, so the sheet answers "what am I about to make?" without
+a trip to another screen.
+
+## 23.2 The percentage moves while the build runs
+
+The build state updated the notification but never the sheet's bar, so a running build sat
+at **0%** until it finished and looked stalled. The bar now follows the engine's steps.
+
+## 23.3 The project showed somebody else's repository
+
+The Source Control header read **"GitHub · @youraccount · main"** for a project with no
+remote at all: with no remote to name, the header fell back to the signed-in account, which
+reads like the project belongs to that account's repository. A project with no remote now
+says **"Not connected to GitHub"**.
+
+The rule is a function now (`gitProjectRepoLabel`), with three tests: a GitHub remote is
+named `owner/repo`, a project with no remote says so, and a remote that is not GitHub falls
+back to the project's own name.
+
+## 23.4 What is proven here, and what still needs the phone
+
+| Claim | Proof |
+|---|---|
+| The suite is green | 1682 tests, 0 failures, 0 errors, 8 skipped |
+| The repository label rule | Three tests |
+| The percentage and the sheet | Code; visible on the phone |
+| The phone | **Still to be measured.** The board runs on the phone |
+
+Build 93 is *implemented and tested here*. The board is the last step, and it belongs to the
+user: install `build/CloseCode-build93-tests1682-debug.apk` and run
 
 ```sh
 sh closecode-acceptance.sh
